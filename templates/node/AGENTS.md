@@ -10,10 +10,10 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
 
 - Edit `src/connecta.config.ts` for connectors, authentication, storage, public
   URL, and optional modules. `src/index.ts` only starts it.
-- Keep `executor: quickJsExecutor()` for the prescribed six-tool code-first
-  surface. Keep the required `readOnly` choice in the config: `false` lets
+- Keep `executor: quickJsExecutor()` for the prescribed code-first
+  meta-tool surface. Keep the required `readOnly` choice in the config: `false` lets
   `call_destructive_tool` and programs write and annotates `execute_code` as
-  a write; `true` omits write tools from search and describe and refuses every
+  a write, with `execute_read_code` listed for read-only programs at `/mcp`; `true` omits write tools from search and describe and refuses every
   write call. Named pools inherit it unless they set their own `readOnly`.
   Approval belongs to the MCP host. Do not configure the removed `trust` or
   `execute.approval`.

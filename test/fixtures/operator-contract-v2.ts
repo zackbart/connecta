@@ -30,7 +30,7 @@ const ada: OperatorMember = { kind: "human", namespace: CLERK, id: "user_ada", l
 const grace: OperatorMember = { kind: "human", namespace: CLERK, id: "user_grace", label: null };
 const lin: OperatorMember = { kind: "human", namespace: CLERK, id: "user_lin", label: "Lin Chen" };
 
-const defaults = <T extends Record<string, number>>(values: T) =>
+const defaults = <T extends Record<string, number | boolean>>(values: T) =>
   Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value, source: "default" }])) as Record<
     keyof T,
     DescribedLimit

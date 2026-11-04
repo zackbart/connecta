@@ -1,4 +1,5 @@
 import { META_ROUTES, routeNames } from "./agent-routes.js";
+import { READ_PROGRAM_SOURCE } from "./tool-safety.js";
 import { bytesToHex, utf8Length } from "./bytes.js";
 import { duringViewEffect } from "./runtime/call.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
@@ -51,6 +52,10 @@ function writePolicy(readOnly: boolean, routes: AgentRouteNames): string {
 
 export const CONNECTA_INSTRUCTIONS = `${ROUTE} ${writePolicy(false, META_ROUTES)} Never repeat a write to recover its output. ${RECOVERY}`;
 
+const READ_ROUTE_POLICY = `${READ_PROGRAM_SOURCE} refuses every write before dispatch and needs no write approval. Writes go through ${META_ROUTES.write} or ${META_ROUTES.program}, subject to connector restrictions; the host owns approval; ${META_ROUTES.search} finds their addresses.`;
+
+const READ_ROUTE_INSTRUCTIONS = `${ROUTE.replace(`starts with ${META_ROUTES.program}`, `starts with ${READ_PROGRAM_SOURCE}`)} ${READ_ROUTE_POLICY} Never repeat a write to recover its output. ${RECOVERY}`;
+
 /**
  * The instructions one endpoint serves: pool scope and guide pointer first,
  * then stable routing rules. Plain `/mcp` and a
@@ -62,16 +67,19 @@ export function endpointInstructions(
   description?: string,
   native?: { executeCode: boolean },
   readOnly = false,
+  readRoute = false,
 ): string {
   const instructions = native
     ? nativeInstructions(native.executeCode, readOnly)
     : readOnly
       ? `Choose a route before discovery. One known read uses ${META_ROUTES.read}; other read work uses ${META_ROUTES.program} to discover, call and return the answer. ${writePolicy(true, META_ROUTES)} Never repeat a write for output. ${RECOVERY}`
-      : CONNECTA_INSTRUCTIONS;
+      : readRoute
+        ? READ_ROUTE_INSTRUCTIONS
+        : CONNECTA_INSTRUCTIONS;
   if (description === undefined) return instructions;
   const routing = native
     ? instructions
-    : `Known read: ${META_ROUTES.read}${readOnly ? "" : `; known write: ${META_ROUTES.write}`}. Other work: ${META_ROUTES.program}; discover and call together, return answers, sample unfamiliar reads. ${writePolicy(readOnly, META_ROUTES)} Never repeat writes for output. Give auth handoffs to user/operator; ${META_ROUTES.authorize} refreshes links. Page resultId/format:"paged" with connecta.result(handleOrId,{page?}).`;
+    : `Known read: ${META_ROUTES.read}${readOnly ? "" : `; known write: ${META_ROUTES.write}`}. ${readRoute ? `Read-only programs: ${READ_PROGRAM_SOURCE}, which refuses writes and needs no write approval. ` : ""}Other work: ${META_ROUTES.program}; discover and call together, return answers, sample unfamiliar reads. ${writePolicy(readOnly, META_ROUTES)} Never repeat writes for output. Give auth handoffs to user/operator; ${META_ROUTES.authorize} refreshes links. Page resultId/format:"paged" with connecta.result(handleOrId,{page?}).`;
   return `Use skills. ${description} ${routing}`;
 }
 

@@ -272,7 +272,7 @@ npm run typecheck
 CONNECTA_TOKEN='cta_REPLACE_WITH_RETURNED_SECRET' npm run doctor
 ```
 
-Doctor checks health, the executor, and the exact prescribed six-tool
+Doctor checks health, the executor, and the exact prescribed meta-tool
 model-facing surface by running a harmless sandbox program. It reads the bearer
 from `CONNECTA_TOKEN`; it never accepts the secret as a command-line argument.
 Remote URLs must use HTTPS.

@@ -5,7 +5,7 @@ import type { AgentRouteNames } from "./types.js";
 import { authCall, registerAuthMethod } from "./auth/native.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
-import { cloneTool, isWriteLike, writeRefusal } from "./tool-safety.js";
+import { cloneTool, isWriteLike, READ_PROGRAM_SOURCE, writeRefusal } from "./tool-safety.js";
 import { Cause, Context, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
@@ -247,6 +247,9 @@ export type InvocationOutcome<T> =
  * recorded as an ordinary failed attempt unless `unrecorded` — a write
  * refused only because its program already returned was never an attempt.
  */
+/** Both program routes: no direct-call continuation applies to their calls. */
+const isProgram = (source: ActivityCallSource): boolean => source === "execute_code" || source === READ_PROGRAM_SOURCE;
+
 export type WriteDecision =
   | { kind: "dispatch" }
   | {
@@ -660,7 +663,7 @@ export class InvocationService {
             // The continuation nonce is spent. Let the input boundary supply
             // its fresh-call action instead of generic availability advice.
             if (
-              context.source !== "execute_code" &&
+              !isProgram(context.source) &&
               downstreamContinuation(
                 this.catalog.requestScope,
                 target.connector.id,
@@ -815,10 +818,9 @@ export class InvocationService {
           const writeLike = isWriteLike(target.definition);
           if (writeLike && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
-          const input =
-            context.source !== "execute_code"
-              ? downstreamContinuation(this.catalog.requestScope, target.connector.id, canonicalAddress)
-              : undefined;
+          const input = !isProgram(context.source)
+            ? downstreamContinuation(this.catalog.requestScope, target.connector.id, canonicalAddress)
+            : undefined;
           if (input) recordDownstreamArgumentEcho(this.catalog.requestScope, argumentEcho);
           const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
           if (
@@ -847,7 +849,15 @@ export class InvocationService {
               `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. No write route exists ${connectorReadOnly ? "for this connection" : "on this endpoint"}; tell the user. Only the operator can provide a writable connection.`,
             );
           }
-          if (refusal === "destructive_tool_requires_approval") {
+          // Below the sandbox: no guest code can reach past this, and catching it sends nothing.
+          if (context.source === READ_PROGRAM_SOURCE) {
+            if (writeLike) {
+              return framingError(
+                "destructive_tool_requires_approval",
+                `Tool "${canonicalAddress}" can write, so ${READ_PROGRAM_SOURCE} refused it and nothing was sent. Use call_destructive_tool for this one call, or execute_code for a program that writes; the MCP host can request approval for either.`,
+              );
+            }
+          } else if (refusal === "destructive_tool_requires_approval") {
             return framingError(
               "destructive_tool_requires_approval",
               `Tool "${canonicalAddress}" is a write. ${routePhrases(context).writeNeedsApproval}`,

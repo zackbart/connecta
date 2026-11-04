@@ -69,6 +69,7 @@ export type ActivityCallSource =
   // where a call came from. Never widen this member back into a live source.
   | "batch_call"
   | "execute_code"
+  | "execute_read_code"
   // Read-only history, like `batch_call`: a resumed program's approval and
   // the calls its replay made live, until issue #672 removed
   // `resume_execution`. Older rows still carry it. Never emit it again.
@@ -470,6 +471,7 @@ export function recordOperationActivity(
   context: ActivityRequestContext,
   input: {
     operation: ActivityOperation;
+    source?: "execute_read_code" | undefined;
     durationMs: number;
     resultBytes?: number | undefined;
     outcome: ActivityOutcome;
@@ -485,7 +487,7 @@ export function recordOperationActivity(
     connectorId,
     toolName: operation.name,
     address: `${connectorId}.${operation.name}`,
-    source: "execute_code",
+    source: input.source ?? "execute_code",
     outcome: input.outcome,
     durationMs: input.durationMs,
     ...(input.resultBytes !== undefined ? { resultBytes: input.resultBytes } : {}),

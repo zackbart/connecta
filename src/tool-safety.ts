@@ -48,6 +48,9 @@ export function isWriteLike(tool: ToolDef): boolean {
   return tool.classification !== "read" || sourceClassification(tool) === "write";
 }
 
+/** The surface that runs a read-only program: it never dispatches a write-like call. */
+export const READ_PROGRAM_SOURCE = "execute_read_code" as const;
+
 export function cloneTool(tool: ToolDef): ToolDef {
   return carryToolClassification(tool, structuredClone(tool));
 }
@@ -55,7 +58,8 @@ export function cloneTool(tool: ToolDef): ToolDef {
 /**
  * The only permission decision for a connector call. Approval is client-owned.
  * A read-only endpoint refuses every write on every surface; a writable one
- * sends writes through call_destructive_tool and programs, never call_tool.
+ * sends writes through call_destructive_tool and writing programs, never call_tool
+ * or a read program.
  */
 export function writeRefusal(
   classification: ToolDef["classification"],

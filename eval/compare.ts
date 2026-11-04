@@ -77,7 +77,7 @@ const trialSchema = z
     model: knownString,
     runner: z.enum(["codex", "claude"]),
     target: z.enum(["node", "worker"]).optional(),
-    surface: z.enum(["six", "five", "code", "native", "native-no-code"]),
+    surface: z.enum(["six", "read", "five", "code", "native", "native-no-code"]),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
     status: z.enum(["pass", "fail", "error", "skipped"]),

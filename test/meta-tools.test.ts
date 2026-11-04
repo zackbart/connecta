@@ -82,6 +82,18 @@ Prefer \`notes.search\` over listing databases.
       expect(writes).not.toContain("can't perform writes");
       if (native) expect(writes).not.toContain("call_destructive_tool");
     }
+    const routed = endpointInstructions(undefined, undefined, false, true);
+    expect(routed).toContain("read-only work starts with execute_read_code");
+    expect(routed).toContain("call_destructive_tool");
+    expect(routed).not.toContain("read-only work starts with execute_code");
+    const pooled = endpointInstructions("A pool.", undefined, false, true);
+    expect(pooled).toContain("Read-only programs: execute_read_code");
+    for (const instructions of [
+      endpointInstructions(),
+      endpointInstructions(undefined, undefined, true),
+      endpointInstructions(undefined, { executeCode: true }),
+    ])
+      expect(instructions).not.toContain("execute_read_code");
   });
 
   it("lists the built-in usage guide plus one entry per guided connector", async () => {

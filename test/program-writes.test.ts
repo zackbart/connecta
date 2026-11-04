@@ -9,6 +9,7 @@ import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
+import { MAX_EXECUTE_RESULT_CHARS } from "../src/executor-result.js";
 import { createConnecta, customExecutor } from "../src/index.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -59,6 +60,8 @@ interface WorldOptions {
   provesRefusals?: boolean;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
   read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
+  readProgram?: boolean;
+  classification?: Record<string, Record<string, "read" | "write" | "hidden">>;
 }
 
 function world(options: WorldOptions = {}) {
@@ -100,7 +103,10 @@ function world(options: WorldOptions = {}) {
     },
   };
   if (options.provesRefusals) delegatesEachCall(tracker);
-  const registry = makeRegistry([reader, tracker], { storage: memoryStorage() });
+  const registry = makeRegistry([reader, tracker], {
+    storage: memoryStorage(),
+    ...(options.classification ? { classification: options.classification } : {}),
+  });
   const activity: ActivityRequestContext = {
     recordTool: recordToolActivity,
     sink: { record: (event) => void events.push(event) },
@@ -112,6 +118,7 @@ function world(options: WorldOptions = {}) {
   const programs = new Map<string, Program>();
   const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, activity, {
     readOnly: options.readOnly,
+    ...(options.readProgram ? { readProgram: true, routes: routeNames("read-route") } : {}),
   });
   let next = 0;
   return {
@@ -130,6 +137,100 @@ function world(options: WorldOptions = {}) {
 function value(result: { structuredContent?: Record<string, unknown> }): Record<string, any> {
   return required(result.structuredContent, "structured result") as Record<string, any>;
 }
+
+describe("read programs (execute_read_code)", () => {
+  const readProgram = (classification?: WorldOptions["classification"]) =>
+    world({ readProgram: true, ...(classification ? { classification } : {}) });
+
+  it("INV-2 INV-3: reads, then refuses a write below the sandbox with its next step; catching changes nothing", async () => {
+    const w = readProgram();
+    const refused = await w.run(async (connecta) => {
+      const read = await connecta.call!("reader.get", { id: 1 });
+      const attempts = await Promise.allSettled([
+        connecta.call!("tracker.close_issue", { id: 1 }),
+        connecta.call!("tracker.post", {}),
+      ]);
+      let caught: Record<string, unknown> = {};
+      try {
+        await connecta.call!("tracker.close_issue", { id: 2 });
+      } catch (error) {
+        caught = { ...(error as object), message: (error as Error).message };
+      }
+      return { read: read.data, statuses: attempts.map((a) => a.status), caught };
+    });
+    expect(w.writes()).toEqual([]);
+    const answer = value(refused).result;
+    expect(answer.read).toMatchObject({ id: 1 });
+    expect(answer.statuses).toEqual(["rejected", "rejected"]);
+    expect(answer.caught).toMatchObject({ code: "destructive_tool_requires_approval", retryable: false });
+    expect(answer.caught.message).toContain("call_destructive_tool");
+    expect(answer.caught.message).toContain("execute_code");
+    expect(value(refused).writes).toBeUndefined();
+  });
+
+  it("INV-1 INV-9: refuses a source write a silent override serves as a read, which the host could resend", async () => {
+    const w = readProgram({ tracker: { post: "read" } });
+    const tools = await w.registry.getTools("tracker", BASE, {});
+    expect(tools.find((tool) => tool.name === "post")).toMatchObject({ classification: "read" });
+    const refused = await w.run((connecta) => connecta.call!("tracker.post", {}));
+    expect(value(refused).error).toMatchObject({ code: "destructive_tool_requires_approval", retryable: false });
+    expect(w.writes()).toEqual([]);
+  });
+
+  it("INV-2: a read-only connector's refusal keeps saying no write route exists", async () => {
+    const connector: Connector = {
+      id: "locked",
+      readOnly: true,
+      listTools: async () => [{ name: "update", annotations: { readOnlyHint: false } }],
+      callTool: async () => null,
+    };
+    const programs = new Map<string, Program>([
+      ["async () => program", (connecta) => connecta.call!("locked.update", {})],
+    ]);
+    const execute = createExecuteTool(
+      makeRegistry([connector]),
+      BASE,
+      scriptedExecutor(programs),
+      silentLogger,
+      undefined,
+      {
+        readProgram: true,
+      },
+    );
+    expect(value(await execute({ code: "async () => program" })).error).toMatchObject({ code: "read_only_endpoint" });
+  });
+
+  it("marks writes uncallable in discovery instead of hiding them, and records the route", async () => {
+    const w = readProgram();
+    const found = value(
+      await w.run(async (connecta) => {
+        const search = await connecta.search!({});
+        const described = await connecta.describe!({ addresses: ["tracker.close_issue", "reader.get"] });
+        await connecta.call!("reader.get", { id: 1 });
+        return { search: search.tools, described: described.tools };
+      }),
+    ).result as { search: Array<Record<string, unknown>>; described: Array<Record<string, unknown>> };
+    const marked = (tools: Array<Record<string, unknown>>) =>
+      Object.fromEntries(tools.map((tool) => [tool.address, tool.callable]));
+    expect(marked(found.search)).toEqual({
+      "reader.get": undefined,
+      "tracker.close_issue": false,
+      "tracker.post": false,
+    });
+    expect(marked(found.described)).toEqual({ "tracker.close_issue": false, "reader.get": undefined });
+    expect(w.events.map((event) => event.source)).toEqual(["execute_read_code"]);
+
+    const plain = world();
+    const unmarked = value(await plain.run(async (connecta) => (await connecta.search!({})).tools)).result as object[];
+    expect(unmarked.every((tool) => !("callable" in tool))).toBe(true);
+  });
+
+  it("sends follow-up work from a read program to the read route", async () => {
+    const w = readProgram();
+    const result = value(await w.run(async () => "x".repeat(MAX_EXECUTE_RESULT_CHARS + 1))).result;
+    expect(result.nextAction).toMatchObject({ tool: "execute_read_code" });
+  });
+});
 
 describe("writable-endpoint programs (#706, #820)", () => {
   it.each(["succeeded", "failed", "unknown"] as const)(

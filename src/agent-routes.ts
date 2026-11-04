@@ -31,7 +31,7 @@ import type { AgentRouteNames } from "./types.js";
 
 import { META_ROUTES, routeNames } from "./route-names.js";
 export { META_ROUTES, routeNames } from "./route-names.js";
-export type RouteSurface = "meta" | "code" | "native" | "native-code";
+export type RouteSurface = "meta" | "read-route" | "code" | "native" | "native-code";
 
 /** The names for the surface a connector operation serves; meta for contexts Connecta did not build. */
 export function routesOf(ctx: { routes?: AgentRouteNames | undefined } | undefined): AgentRouteNames {
@@ -117,6 +117,15 @@ const PHRASES: Readonly<Record<RouteSurface, RoutePhrases>> = {
     writeNeedsApproval: "Invoke it through call_destructive_tool so the MCP host can request approval.",
     ...metaAuthorize,
   }),
+  "read-route": Object.freeze({
+    program: "execute_read_code",
+    directOnly: "for a direct call_tool only",
+    forDirect: "for a direct call_tool",
+    onlyDirectRead: "only for a direct call_tool read",
+    callDirectlyAndPage: "call directly (call_tool, connecta.result to page)",
+    writeNeedsApproval: "Invoke it through call_destructive_tool so the MCP host can request approval.",
+    ...metaAuthorize,
+  }),
   // The eval code arm keeps the text its comparator protocol recorded.
   code: Object.freeze({
     program: "execute_code",
@@ -142,7 +151,10 @@ const PHRASES: Readonly<Record<RouteSurface, RoutePhrases>> = {
 };
 
 const SURFACES = new Map<AgentRouteNames, RouteSurface>(
-  (["meta", "code", "native", "native-code"] as RouteSurface[]).map((surface) => [routeNames(surface), surface]),
+  (["meta", "read-route", "code", "native", "native-code"] as RouteSurface[]).map((surface) => [
+    routeNames(surface),
+    surface,
+  ]),
 );
 
 /** The surface a names table belongs to; meta for a table Connecta did not build. */

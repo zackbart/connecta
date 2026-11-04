@@ -107,7 +107,7 @@ describe("connecta doctor's executor line", () => {
     };
     const line = await doctorAgainst(hostile);
     expect(line).toMatch(
-      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed 6-tool surface, MCP 2026-07-28, package /,
+      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed 7-tool surface, MCP 2026-07-28, package /,
     );
     expect(line.endsWith(`package ${CONNECTA_VERSION}.`)).toBe(true);
     expect(line).not.toContain("\u001b");

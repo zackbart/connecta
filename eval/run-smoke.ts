@@ -58,7 +58,7 @@ import {
   wranglerDev,
   type WranglerDev,
 } from "./support/workerd.js";
-import { META_TOOLS } from "./agent/surface.js";
+import { META_TOOLS, READ_TOOLS } from "./agent/surface.js";
 
 const SIX = META_TOOLS;
 
@@ -190,11 +190,21 @@ async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void>
   if (!session) return;
   const live = session;
   try {
-    await step(checks, "tools/list is exactly the six meta-tools", async () => {
+    let readRoute = false;
+    await step(checks, "tools/list is exactly the meta-tools this endpoint serves", async () => {
       const names = (await live.listTools()).map((tool) => tool.name).sort();
-      if (JSON.stringify(names) !== JSON.stringify(SIX)) throw new Error(`got ${names.join(", ")}`);
+      // A writable human endpoint lists the read program route; an agent endpoint holds it back.
+      readRoute = !battery.mcpPath.startsWith("/agent/") && names.includes("execute_read_code");
+      if (JSON.stringify(names) !== JSON.stringify(readRoute ? READ_TOOLS : SIX))
+        throw new Error(`got ${names.join(", ")}`);
       return names.join(", ");
     });
+    if (readRoute)
+      await step(checks, "read through execute_read_code", async () => {
+        const result = await live.call("execute_read_code", { code: battery.readCode });
+        if (result.isError) throw new Error(result.text.slice(0, 400));
+        return battery.expectRead((parseJson(result.text) as { result?: unknown } | undefined)?.result);
+      });
     await step(checks, "read through execute_code", async () => {
       const result = await live.call("execute_code", { code: battery.readCode });
       if (result.isError) throw new Error(result.text.slice(0, 400));

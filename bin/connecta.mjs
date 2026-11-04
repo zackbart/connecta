@@ -2,7 +2,7 @@
 
 import { copyFile, cp, lstat, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { CONNECTA_VERSION } from "./version.mjs";
-import { META_TOOL_NAMES } from "./meta-tool-names.mjs";
+import { META_TOOL_NAMES, READ_PROGRAM_TOOL } from "./meta-tool-names.mjs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -245,6 +245,8 @@ async function doctor() {
   let negotiatedVersion;
   let native = false;
   let executeCode = true;
+  let toolCount = META_TOOL_NAMES.length;
+  let readRoute = false;
   try {
     await client.connect(transport);
     negotiatedVersion = client.getNegotiatedProtocolVersion();
@@ -257,9 +259,12 @@ async function doctor() {
       throw new Error(
         `Native catalogs unavailable: ${surface.catalogErrors.join(", ")}. Inspect connector status and authentication.`,
       );
+    // A writable human endpoint also lists the read program route, unless the deployment turned it off.
+    readRoute = !native && actual.includes(READ_PROGRAM_TOOL);
     const expected = native
       ? ["authorize_connector", "skills", executeCode ? "execute_code" : "read_result"].sort()
-      : [...META_TOOL_NAMES].sort();
+      : [...META_TOOL_NAMES, ...(readRoute ? [READ_PROGRAM_TOOL] : [])].sort();
+    toolCount = expected.length;
     if (
       native
         ? expected.some((name) => !actual.includes(name)) ||
@@ -274,20 +279,14 @@ async function doctor() {
       );
     }
 
-    if (executeCode) {
-      const executed = await client.callTool(
-        {
-          name: "execute_code",
-          arguments: { code: "async () => 42" },
-        },
-        undefined,
-        { timeout: DOCTOR_TIMEOUT_MS },
-      );
+    for (const name of executeCode ? ["execute_code", ...(readRoute ? [READ_PROGRAM_TOOL] : [])] : []) {
+      const executed = await client.callTool({ name, arguments: { code: "async () => 42" } }, undefined, {
+        timeout: DOCTOR_TIMEOUT_MS,
+      });
       const executionResult = executed.structuredContent ?? JSON.parse(executed.content?.[0]?.text ?? "null");
       if (executed.isError || executionResult?.result !== 42) {
         throw new Error(
-          `${executorName ? `${executorName} execution` : "execute_code"} check ` +
-            `failed: ${JSON.stringify(executed)}`,
+          `${executorName ? `${executorName} execution` : name} check ` + `failed: ${JSON.stringify(executed)}`,
         );
       }
     }
@@ -298,7 +297,7 @@ async function doctor() {
   console.log(
     `Connecta doctor passed: ${health.connectors} connector(s), ` +
       `${executeCode ? (executorName ? `${executorName} executed` : "code executed") : "code disabled"}, ` +
-      `${native ? "native tool surface" : `prescribed ${META_TOOL_NAMES.length}-tool surface`}, MCP ${negotiatedVersion}, package ${CONNECTA_VERSION}.`,
+      `${native ? "native tool surface" : `prescribed ${toolCount}-tool surface`}, MCP ${negotiatedVersion}, package ${CONNECTA_VERSION}.`,
   );
 }
 

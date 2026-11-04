@@ -461,7 +461,7 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
               arguments: { id, offset: preview.kind === "prefix" ? preview.bytes : 0 },
             }
           : {
-              tool: "execute_code",
+              tool: results.routes.program,
               // A byte may cost six JSON characters when escaped. Leave room for the
               // result id, page counters, and continuation metadata in the returned page.
               arguments: {
@@ -483,9 +483,21 @@ export function pageProgramResult(
   requestScope: object,
   hostCalls: ProgramHostCalls,
   wireBytes = PROGRAM_RESULT_WIRE_BYTES,
+  routes: AgentRouteNames = META_ROUTES,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
   return runEdge(
-    pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, hostCalls, wireBytes),
+    pageProgramResultNative(
+      registry,
+      baseUrl,
+      resolved,
+      value,
+      format,
+      secrets,
+      requestScope,
+      hostCalls,
+      wireBytes,
+      routes,
+    ),
   );
 }
 const pageProgramResultNative = /* @__PURE__ */ registerAuth(
@@ -500,6 +512,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
     requestScope: object,
     hostCalls: ProgramHostCalls,
     wireBytes: number = PROGRAM_RESULT_WIRE_BYTES,
+    routes: AgentRouteNames = META_ROUTES,
   ) {
     return authFlow<{ data: unknown; format: "json" | "text" } | ProgramResultHandle>(function* () {
       const data = secrets.redact(value);
@@ -513,8 +526,8 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
         stashResult(
           bytes,
           {
-            // Program-call pages name only execute_code, listed wherever programs run.
-            routes: META_ROUTES,
+            // Pages name the program route the run is on, listed wherever it runs.
+            routes,
             binding: {
               identity: registry.resultIdentity(),
               baseUrl,
@@ -565,6 +578,7 @@ export function guardProgramReturn(
   maxChars: number,
   completedWrite: boolean,
   programChars?: number,
+  routes?: AgentRouteNames,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -577,6 +591,7 @@ export function guardProgramReturn(
       maxChars,
       completedWrite,
       programChars,
+      routes,
     ),
   );
 }
@@ -592,6 +607,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     maxChars: number,
     completedWrite: boolean,
     programChars?: number,
+    routes: AgentRouteNames = META_ROUTES,
   ) {
     return authFlow<unknown>(function* () {
       const serialized = serializeResultText(value);
@@ -607,8 +623,8 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
       );
       const results: ResultStash = {
         secrets,
-        // A program return names only execute_code, which every surface running programs lists.
-        routes: META_ROUTES,
+        // A return names the program route the run is on, listed wherever it runs.
+        routes,
         binding: {
           identity: registry.resultIdentity(),
           baseUrl,
@@ -1530,10 +1546,10 @@ function metaToolsForRequest(
 // lives once in the server instructions. A client that drops instructions
 // still routes correctly from these scopes plus execute_code's terse lead.
 // Only the meta surface lists these tools, so they use its names.
-const SEARCH_DESC = (readOnly: boolean) =>
-  `${readOnly ? "Catalog inspection; this read-only endpoint omits write tools." : `Catalog inspection, or finding a write before ${META_ROUTES.write}.`} For read work, search inside one ${META_ROUTES.program} program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement; neither grants authority. Empty query browses. Read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
-const CALL_DESC = (readOnly: boolean) =>
-  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: ${META_ROUTES.program}. ${readOnly ? "This endpoint is read-only and refuses every write." : `Unannotated or write-capable tools fail closed to ${META_ROUTES.write}.`} A truncated result carries a connecta.result action.`;
+const SEARCH_DESC = (readOnly: boolean, program: string) =>
+  `${readOnly ? "Catalog inspection; this read-only endpoint omits write tools." : `Catalog inspection, or finding a write before ${META_ROUTES.write}.`} For read work, search inside one ${program} program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement; neither grants authority. Empty query browses. Read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
+const CALL_DESC = (readOnly: boolean, program: string) =>
+  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: ${program}. ${readOnly ? "This endpoint is read-only and refuses every write." : `Unannotated or write-capable tools fail closed to ${META_ROUTES.write}.`} A truncated result carries a connecta.result action.`;
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
 /** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */
@@ -1716,6 +1732,7 @@ export function registerMetaTools(
     defer: ctx.defer,
   });
 
+  const routeProgram = ctx.routes?.program ?? META_ROUTES.program;
   const bindRequest = (request: ServerContext): void => {
     if (ctx.client) bindMcpClient(request, ctx.client, ctx.activity);
   };
@@ -1812,7 +1829,7 @@ export function registerMetaTools(
   server.registerTool(
     "search_tools",
     {
-      description: describedFor(registry, SEARCH_DESC(ctx.readOnly === true), "search"),
+      description: describedFor(registry, SEARCH_DESC(ctx.readOnly === true, routeProgram), "search"),
       inputSchema: SEARCH_INPUT,
       outputSchema: SEARCH_OUTPUT,
       annotations: READ_ONLY_REMOTE,
@@ -1840,7 +1857,7 @@ export function registerMetaTools(
   server.registerTool(
     "call_tool",
     {
-      description: CALL_DESC(ctx.readOnly === true),
+      description: CALL_DESC(ctx.readOnly === true, routeProgram),
       inputSchema: CALL_INPUT,
       // Default mode returns native content, so no structured result is promised.
       // call_tool admits only tools that are themselves explicitly read-only;

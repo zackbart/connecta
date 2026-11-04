@@ -20,7 +20,7 @@ export const NO_CODE_CAPABILITY_MISMATCHES: Record<string, string> = {
 const NO_CODE_NOT_RUN = "auth-required-recovery";
 
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
-  if (surface === "six") return task;
+  if (surface === "six" || surface === "read") return task;
   if (surface === "five")
     return {
       ...task,

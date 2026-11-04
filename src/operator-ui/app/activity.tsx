@@ -35,6 +35,7 @@ const SOURCE_LABELS: Readonly<Record<string, string>> = {
   call_tool: "Direct",
   call_destructive_tool: "Approved",
   execute_code: "Program",
+  execute_read_code: "Read program",
   batch_call: "Batch",
   catalog_refresh: "Catalog",
 };

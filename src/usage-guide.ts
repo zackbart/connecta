@@ -1,4 +1,5 @@
 import { META_ROUTES } from "./agent-routes.js";
+import { READ_PROGRAM_SOURCE } from "./tool-safety.js";
 import { UNCOUNTED_GUEST_FUNCTIONS } from "./guest-functions.js";
 
 /** Self-contained content for the usage skill; independent of skill registration. */
@@ -15,6 +16,8 @@ Route as the server instructions and ${META_ROUTES.program}'s first sentence say
 Read one account with ${META_ROUTES.read}: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
 On a read-only endpoint search omits writes (guides may name them) and each
 fails read_only_endpoint; tell the user. Unannotated tools fail closed to writes.
+Where listed, ${READ_PROGRAM_SOURCE} takes read-only programs with no write approval:
+it refuses writes before dispatch, and its search marks them \`callable: false\`.
 Connecta classifies and routes a requested write; the host owns approval.
 
 ## The global and the envelopes

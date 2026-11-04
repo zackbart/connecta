@@ -59,7 +59,10 @@ links the executable checks.
   before validation or dispatch; guides may still name them. A connector's `readOnly` applies the same restriction on every endpoint and composes with endpoint policy by OR. A writable endpoint sends writes only through
   `call_destructive_tool`, programs, and on a native pool the write's own
   tool, annotated destructive and run on the `call_destructive_tool` route;
-  it annotates `execute_code` as a write. Approval belongs to the host.
+  it annotates `execute_code` as a write. A writable `/mcp` and `/mcp/<pool>` also
+  list `execute_read_code`, annotated read-only: below the sandbox it refuses every
+  call whose effective or source class is write, before dispatch. Approval belongs
+  to the host.
 - **INV-3: Generated code mints nothing.** No connectors, grants, downstream
   subject choice, client-dereferenceable URIs, or credentials. Enforcement
   lives below the sandbox.

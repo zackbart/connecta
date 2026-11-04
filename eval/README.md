@@ -81,7 +81,7 @@ Each provider-local `smoke` enrollment adds `node-<name>` and, with its
 `eval/worker.ts`, `worker-<name>` to the default targets. The Worker targets run natively in workerd under `wrangler dev`, with the
 compatibility date, flags and bindings read from `examples/worker/wrangler.jsonc`;
 the original two Worker entries use a local Access stand-in. The original four targets check
-`/health`, MCP initialize, the six-tool list, an `execute_code` read and the
+`/health`, MCP initialize, the exact meta-tool list, an `execute_code` read (and an `execute_read_code` read where listed) and the
 operator page in headless Chromium. Targets with a write-capable fake make
 one `call_destructive_tool` write and verify exactly one downstream write and
 the resulting fake state; targets without one claim no write. Steps are bounded
@@ -453,7 +453,9 @@ Run both arms in the same batch window. Historical baseline regrades help
 check the graders; they do not replace a fresh six-arm comparator.
 
 `--surface six` is the default and preserves the six 0.29 meta-tools and the
-normal deployment path. `--surface code` lists exactly `execute_code`, `skills`
+normal deployment path through `/agent/<pool>`. `--surface read` serves the same
+host through a sibling person pool at `/mcp/<pool>`, the real route listing
+`execute_read_code`, after checking its machine token at `/agent/<pool>`. `--surface code` lists exactly `execute_code`, `skills`
 and `authorize_connector`. Calls to `call_tool`, `call_destructive_tool` and
 `search_tools` are refused before dispatch. Authorization remains a top-level
 tool until its program replacement exists.

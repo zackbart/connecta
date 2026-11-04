@@ -5,7 +5,7 @@ import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
-import { readJsonRpc } from "./fixtures/http.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
@@ -365,6 +365,61 @@ describe("agent endpoint admission", () => {
     await mint("/mcp/team-people", "bob");
     expect((await page("/mcp/team-people", "bob")).isError).toBeFalsy();
     expect((await page("/agent/team", bot)).isError).toBe(true);
+    await c.close();
+  });
+});
+
+describe("execute_read_code across endpoints", () => {
+  it("is listed at /mcp/<pool> and held from /agent/<pool>", async () => {
+    const storage = memoryStorage();
+    const c = deployment({
+      storage,
+      pools: {
+        "team-people": { tools: ["docs"], members: ["bob"] },
+        team: { tools: ["docs"], members: ["agent:bot"] },
+      },
+    });
+    const bot = await issueAgentToken(storage, "bot");
+    const names = async (path: string, token: string) =>
+      (
+        await readJsonRpc(await c.fetch(new Request(`${BASE}${path}`, mcpRpc("tools/list", {}, { token }))))
+      ).result.tools.map((tool: { name: string }) => tool.name);
+    expect(await names("/mcp/team-people", "bob")).toContain("execute_read_code");
+    const agent = await names("/agent/team", bot);
+    expect(agent).toHaveLength(6);
+    expect(agent).not.toContain("execute_read_code");
+    await c.close();
+  });
+
+  it("INV-3 INV-4: pages a direct read's handle and a read program's handle, under the existing bindings", async () => {
+    let resultId = "";
+    let oversized = false;
+    const storage = memoryStorage();
+    const c = deployment({
+      storage,
+      calls: { maxResultBytes: 100 },
+      executor: scriptedExecutor(async (fns) =>
+        oversized ? "x".repeat(30_000) : fns.result!(resultId, { maxBytes: 100 }),
+      ),
+      pools: {
+        "team-people": { tools: ["docs"], members: ["bob"] },
+        second: { tools: ["docs"], members: ["bob"] },
+      },
+    });
+    const page = async (path: string) =>
+      (await rpc(c, path, "bob", "execute_read_code", { code: "return await connecta.result(id)" })).result;
+    const first = (await rpc(c, "/mcp/team-people", "bob", "call_tool", { address: "docs.read" })).result;
+    resultId = JSON.parse(first.content[0].text.split("\n")[0]).resultId;
+    expect((await page("/mcp/team-people")).isError).toBeFalsy();
+    expect((await page("/mcp/second")).isError).toBe(true);
+
+    oversized = true;
+    const program = (await rpc(c, "/mcp/team-people", "bob", "execute_read_code", { code: "return big" })).result;
+    expect(program.structuredContent.result.nextAction.tool).toBe("execute_read_code");
+    resultId = program.structuredContent.result.resultId;
+    oversized = false;
+    expect((await page("/mcp/team-people")).isError).toBeFalsy();
+    expect((await page("/mcp/second")).isError).toBe(true);
     await c.close();
   });
 });

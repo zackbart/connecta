@@ -2,6 +2,7 @@ import { operationActivity } from "./operation-activity.js";
 import { SkillLookupError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES, routeNames } from "./agent-routes.js";
+import { READ_PROGRAM_SOURCE } from "./tool-safety.js";
 import type { AgentRouteNames } from "./types.js";
 import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
 import { nativeRecovery } from "./native-recovery.js";
@@ -15,7 +16,7 @@ import {
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
-import type { McpServer } from "@modelcontextprotocol/server";
+import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
 import * as z from "zod";
 import type { ActivityRequestContext } from "./activity.js";
@@ -502,6 +503,8 @@ export async function buildSandboxProviders(
 interface SandboxLimits {
   /** Route names for text the program's calls write: the request's surface. */
   routes?: AgentRouteNames | undefined;
+  /** A read-only program on a writable endpoint: refuse write-like calls, mark them in discovery. */
+  readProgram?: boolean | undefined;
   resultDependencies?: ProgramResultDependency[];
   sentSecrets?: SentSecrets;
   defaultToolTimeoutMs?: number | undefined;
@@ -603,6 +606,7 @@ function sandboxProvider(
     readOnly: limits.readOnly,
     // A program that just missed an address cannot call search_tools.
     searchRoute: "connecta.search",
+    markUncallableWrites: limits.readProgram,
     concurrency: limits.discoveryConcurrency,
     probeTimeoutMs: limits.probeTimeoutMs,
     defer: limits.defer,
@@ -649,7 +653,7 @@ function sandboxProvider(
   };
   /** Budget and account for writes a writable endpoint admits. */
   const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number, writeTimeoutMs: number) => ({
-    source: "execute_code" as const,
+    source: limits.readProgram ? READ_PROGRAM_SOURCE : ("execute_code" as const),
     sentSecrets,
     timeoutMs,
     writeTimeoutMs,
@@ -675,6 +679,7 @@ function sandboxProvider(
               requestScope,
               { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
+              limits.readProgram ? limits.routes : undefined,
             ]);
           const envelope =
             resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
@@ -1278,7 +1283,14 @@ function sandboxProvider(
               : invoke;
             const operationEffect =
               activity?.recordOperation && ["search", "describe", "result", "skill"].includes(name)
-                ? operationActivity(activity, registry, name as "search" | "describe" | "result" | "skill", guarded)
+                ? operationActivity(
+                    activity,
+                    registry,
+                    name as "search" | "describe" | "result" | "skill",
+                    guarded,
+                    undefined,
+                    limits.readProgram ? READ_PROGRAM_SOURCE : undefined,
+                  )
                 : guarded;
             const settled = runEdge(
               operationEffect.pipe(
@@ -1482,6 +1494,8 @@ interface RunnerConfig {
   maxResultChars?: number | undefined;
   /** Route names for text the program's calls write: the request's surface. */
   routes?: AgentRouteNames | undefined;
+  /** A read-only program on a writable endpoint. See `READ_PROGRAM_DESCRIPTION`. */
+  readProgram?: boolean | undefined;
 }
 
 /** Runs one `execute_code` program and answers as the tool does. */
@@ -1592,6 +1606,7 @@ export function createExecuteTool(
                 readOnly: config.readOnly,
                 maxWrites: config.maxWrites,
                 routes: config.routes,
+                readProgram: config.readProgram,
                 programWrites,
                 resultDependencies,
                 dispatchController,
@@ -1663,6 +1678,7 @@ export function createExecuteTool(
             maxResultChars - emitted.textChars,
             programWrites.hasSucceeded,
             maxResultChars,
+            config.readProgram ? config.routes : undefined,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
@@ -1764,6 +1780,7 @@ export function createExecuteTool(
             Effect.mapError((error) => redactAgentOutput(sentSecrets, error)),
           ),
           () => ({ ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded }),
+          config.readProgram ? READ_PROGRAM_SOURCE : undefined,
         );
       }),
   );
@@ -2005,6 +2022,14 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
   return `${prefix}${entries.slice(0, shown).join(", ")}${shown > 0 ? "; " : ""}+${entries.length - shown} more.`;
 }
 
+/**
+ * Short by design: Codex carries every description in each turn's tool list and
+ * `execute_code` already holds the full declaration. It still names the guest
+ * calls, so a host that loads only this tool can write a program.
+ */
+const READ_PROGRAM_DESCRIPTION = (hostLimits: { maxHostCalls: number }) =>
+  `Run a read-only JavaScript program without write approval: same sandbox and connecta API as ${META_ROUTES.program}, ${hostLimits.maxHostCalls} host calls. Use it for read work at an unknown address, joins, loops and reductions. Each call that can write is refused before dispatch with its next step, and catching the refusal sends nothing. search and describe list those tools with callable: false; ${META_ROUTES.write} and ${META_ROUTES.program} run them. Use async () => { ... } with connecta.search({ query }), connecta.describe({ address }), connecta.call(address, args), connecta.result(resultId, { page }), and return the answer.`;
+
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
   hostLimits: { maxHostCalls: number; callTimeoutMs: number; hostCallTimeoutMs: number; runDeadlineMs?: number },
@@ -2014,8 +2039,9 @@ const executeDescription = (
   readOnly: boolean,
   native = false,
   routes: AgentRouteNames = META_ROUTES,
+  readRoute = false,
 ) =>
-  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
+  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : readRoute ? `One known read: ${routes.read}. One known write: ${routes.write}. Read-only programs: ${READ_PROGRAM_SOURCE}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:
@@ -2083,6 +2109,8 @@ export function registerExecuteTool(
     native?: boolean | undefined;
     /** Route names for the description and program text: the request's surface. */
     routes?: AgentRouteNames | undefined;
+    /** Also list `execute_read_code`. Resolved by the host route. */
+    readRoute?: boolean | undefined;
   },
 ): void {
   // Resolved once so the description and the collector cannot disagree about
@@ -2099,7 +2127,7 @@ export function registerExecuteTool(
   };
   const connectors = registry.listConnectors();
   const maxWrites = resolveBudget(ctx.maxWrites, DEFAULT_MAX_WRITES);
-  const execute = createExecuteTool(registry, ctx.baseUrl, ctx.executor, ctx.logger, ctx.activity, {
+  const runnerConfig = {
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
     probeTimeoutMs: ctx.probeTimeoutMs,
@@ -2114,7 +2142,44 @@ export function registerExecuteTool(
     maxResultChars: ctx.maxResultChars,
     requestScope: ctx.requestScope,
     routes: ctx.routes,
-  });
+  };
+  const programHandler = (execute: ExecuteHandler, name: string) => (args: unknown, extra: ServerContext) =>
+    Effect.gen(function* () {
+      if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
+      const run = authMethod(() =>
+        Effect.suspend(() => {
+          const controller = new AbortController();
+          const forwarders = [extra.mcpReq.signal, ctx.requestSignal]
+            .filter((signal): signal is AbortSignal => signal !== undefined)
+            .map((signal) => {
+              const forward = () => controller.abort(signal.reason);
+              if (signal.aborted) forward();
+              else signal.addEventListener("abort", forward, { once: true });
+              return { signal, forward };
+            });
+          return authCall<ToolResult>(execute, [
+            args as { code: string; diagnostics?: boolean },
+            { signal: controller.signal },
+          ]).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                for (const { signal, forward } of forwarders) signal.removeEventListener("abort", forward);
+              }),
+            ),
+          );
+        }),
+      );
+      const result = yield* ctx.authElicitation
+        ? authInvoke<ToolResult | import("@modelcontextprotocol/server").InputRequiredResult>(
+            ctx.authElicitation,
+            "run",
+            [name, args, extra, run],
+          )
+        : authCall(run, []);
+      return ctx.native ? (nativeRecovery(result) as typeof result) : result;
+    });
+  const newRunner = (config: RunnerConfig) =>
+    createExecuteTool(registry, ctx.baseUrl, ctx.executor, ctx.logger, ctx.activity, config);
   server.registerTool(
     "execute_code",
     {
@@ -2134,6 +2199,7 @@ export function registerExecuteTool(
         ctx.readOnly === true,
         ctx.native === true,
         ctx.routes,
+        ctx.readRoute === true,
       ),
       inputSchema: EXECUTE_INPUT,
       outputSchema: EXECUTE_OUTPUT,
@@ -2144,41 +2210,23 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    authMethod((args, extra) =>
-      Effect.gen(function* () {
-        if (ctx.client) bindMcpClient(extra, ctx.client, ctx.activity);
-        const run = authMethod(() =>
-          Effect.suspend(() => {
-            const controller = new AbortController();
-            const forwarders = [extra.mcpReq.signal, ctx.requestSignal]
-              .filter((signal): signal is AbortSignal => signal !== undefined)
-              .map((signal) => {
-                const forward = () => controller.abort(signal.reason);
-                if (signal.aborted) forward();
-                else signal.addEventListener("abort", forward, { once: true });
-                return { signal, forward };
-              });
-            return authCall<ToolResult>(execute, [
-              args as { code: string; diagnostics?: boolean },
-              { signal: controller.signal },
-            ]).pipe(
-              Effect.ensuring(
-                Effect.sync(() => {
-                  for (const { signal, forward } of forwarders) signal.removeEventListener("abort", forward);
-                }),
-              ),
-            );
-          }),
-        );
-        const result = yield* ctx.authElicitation
-          ? authInvoke<ToolResult | import("@modelcontextprotocol/server").InputRequiredResult>(
-              ctx.authElicitation,
-              "run",
-              ["execute_code", args, extra, run],
-            )
-          : authCall(run, []);
-        return ctx.native ? (nativeRecovery(result) as typeof result) : result;
-      }),
-    ),
+    authMethod(programHandler(newRunner(runnerConfig), "execute_code")),
   );
+  if (ctx.readRoute) {
+    server.registerTool(
+      READ_PROGRAM_SOURCE,
+      {
+        description: READ_PROGRAM_DESCRIPTION(hostLimits),
+        inputSchema: EXECUTE_INPUT,
+        outputSchema: EXECUTE_OUTPUT,
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
+      },
+      authMethod(
+        programHandler(
+          newRunner({ ...runnerConfig, readProgram: true, routes: routeNames("read-route") }),
+          READ_PROGRAM_SOURCE,
+        ),
+      ),
+    );
+  }
 }

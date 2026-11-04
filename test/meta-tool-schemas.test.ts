@@ -102,10 +102,26 @@ const GOLDEN: Record<string, unknown> = {
     },
     required: ["code"],
   },
+  execute_read_code: {
+    type: "object",
+    $schema: DRAFT,
+    properties: {
+      code: {
+        type: "string",
+        description:
+          "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
+      },
+      diagnostics: {
+        description: "Add request-local, payload-free timing and result-size summaries.",
+        type: "boolean",
+      },
+    },
+    required: ["code"],
+  },
 };
 
 describe("meta-tool input schemas", () => {
-  it("renders all six exactly as the golden records", async () => {
+  it("renders all seven exactly as the golden records", async () => {
     const body = await readJsonRpc(
       await mcpRpc(makeDeployment({ executor: stubExecutor }), "tools/list", {}, { token: TOKEN }),
     );
@@ -136,8 +152,9 @@ describe("meta-tool output schemas", () => {
         },
         authorize_connector: { connector: "calc" },
         execute_code: { code: "async () => null" },
+        execute_read_code: { code: "async () => null" },
       };
-      expect(list.result.tools).toHaveLength(6);
+      expect(list.result.tools).toHaveLength(7);
       for (const tool of list.result.tools) {
         const directCall = tool.name === "call_tool" || tool.name === "call_destructive_tool";
         if (directCall) expect(tool.outputSchema, tool.name).toBeUndefined();
@@ -194,6 +211,8 @@ describe("meta-tool output schemas", () => {
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
   total: 14_900,
+  // A writable endpoint's execute_read_code: description, shared input and output schemas.
+  readRouteTotal: 3_000,
   instructions: 1_050,
   description: {
     skills: 220,
@@ -201,12 +220,19 @@ const BUDGETS = {
     call_tool: 260,
     call_destructive_tool: 300,
     authorize_connector: 460,
-    execute_code: 2_850,
+    execute_code: 2_900,
+    execute_read_code: 700,
   },
   // search_tools grew for readyCalls, the complete reads that save the
   // details and operation-search host calls; its reasons enum is now shared.
   // Declaring descriptionTruncated adds 37 bytes.
-  outputSchema: { skills: 660, search_tools: 4_190, authorize_connector: 420, execute_code: 1_070 },
+  outputSchema: {
+    skills: 660,
+    search_tools: 4_190,
+    authorize_connector: 420,
+    execute_code: 1_070,
+    execute_read_code: 1_070,
+  },
   usage: 5_700,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
@@ -327,8 +353,16 @@ describe("always-loaded agent surface budgets", () => {
           if (tool.outputSchema) sizes[`${tool.name}.outputSchema`] = JSON.stringify(tool.outputSchema).length;
         }
         expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
-        expect(total, JSON.stringify(sizes)).toBeLessThanOrEqual(BUDGETS.total);
-        expect(tools.map((tool) => tool.name).sort()).toEqual(Object.keys(BUDGETS.description).sort());
+        const readRoute = tools.find((tool) => tool.name === "execute_read_code");
+        expect(total, JSON.stringify(sizes)).toBeLessThanOrEqual(
+          BUDGETS.total + (readRoute ? BUDGETS.readRouteTotal : 0),
+        );
+        if (readRoute) expect(JSON.stringify(readRoute).length).toBeLessThanOrEqual(BUDGETS.readRouteTotal);
+        expect(tools.map((tool) => tool.name).sort()).toEqual(
+          Object.keys(BUDGETS.description)
+            .filter((name) => !readOnly || name !== "execute_read_code")
+            .sort(),
+        );
         for (const tool of tools) {
           const name = tool.name as keyof typeof BUDGETS.description;
           expect(tool.description.length, name).toBeLessThanOrEqual(BUDGETS.description[name]);

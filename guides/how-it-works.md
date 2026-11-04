@@ -77,7 +77,7 @@ account choices, including the Google Workspace exception.
 ## Finding a tool and using it are separate steps
 
 First the agent finds an action and learns what information it needs.
-Then it calls that action. The default connection gives the AI app six small
+Then it calls that action. The default connection gives the AI app a few small
 **meta-tools** to help it do this without loading every service's tools into
 the conversation.
 
@@ -87,6 +87,7 @@ the conversation.
 | `call_tool`             | Call a discovered action that reads data.                                    |
 | `call_destructive_tool` | Call a discovered action that changes data, under the app's approval policy. |
 | `execute_code`          | Combine discovery, actions, and a small answer in a program.                 |
+| `execute_read_code`     | The same for read-only work. It refuses anything that changes data.          |
 | `authorize_connector`   | Request the permitted account-connection handoff.                            |
 | `skills`                | Read guidance for using a connection.                                        |
 

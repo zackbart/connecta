@@ -209,6 +209,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     assertSurface(
       surface.map((tool) => tool.name),
       surfaceArm,
+      deployment.mcpUrl,
     );
     const deny = task.approvals?.deny ?? [];
     const allow = (task.approvals?.allow ?? surface.map((tool) => tool.name)).filter((tool) => !deny.includes(tool));

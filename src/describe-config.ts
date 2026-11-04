@@ -96,7 +96,7 @@ export interface ConnectaConfigDescription {
     discovery: Record<keyof typeof CONFIG_DEFAULTS.discovery, DescribedLimit<number | boolean>>;
     calls: { defaultTimeoutMs: DescribedLimit; maxResultBytes: DescribedLimit };
     results: Record<keyof typeof CONFIG_DEFAULTS.results, DescribedLimit>;
-    execute: Record<keyof typeof CONFIG_DEFAULTS.execute, DescribedLimit>;
+    execute: Record<keyof typeof CONFIG_DEFAULTS.execute, DescribedLimit<number | boolean>>;
     requests: Record<keyof typeof CONFIG_DEFAULTS.admission.requests, DescribedLimit>;
   };
   /** Whether the default /mcp endpoint refuses every write, and exact classification overrides from deployment code. */

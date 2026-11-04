@@ -4,6 +4,7 @@ import { utf8Length } from "./bytes.js";
 import { catalogOwnerPartition } from "./catalog-policy.js";
 import { registerAuthMethod } from "./auth/native.js";
 import { META_ROUTES, routeToolInPlace } from "./agent-routes.js";
+import { isWriteLike } from "./tool-safety.js";
 import type { AgentRouteNames } from "./types.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { carryCatalogFreshness, catalogIsFresh, catalogGenerationFor } from "./catalog-freshness.js";
@@ -378,6 +379,8 @@ interface CatalogSearchEntry {
     outputKeys?: string[];
     annotations?: ToolDef["annotations"];
     classification?: ToolDef["classification"];
+    /** A read program's marker: this route refuses the tool. See `markUncallableWrites`. */
+    callable?: false;
     guideRequired?: true;
     guideRequiredReasons?: GuideRequiredReason[];
   };
@@ -760,6 +763,7 @@ export class CatalogService {
   private readonly searchRoute: SearchRoute;
   private readonly requestSignal: AbortSignal | undefined;
   private readonly readOnly: boolean;
+  private readonly markUncallableWrites: boolean;
   // The request-scoped catalog cache: one shared read per connector asked
   // about, started by the first asker and joined by every later one. A
   // success stays while its in-process invalidation fence matches, so a search
@@ -805,6 +809,12 @@ export class CatalogService {
        * still finds a write, so the call that names one is refused by code.
        */
       readOnly?: boolean | undefined;
+      /**
+       * A read program lists writes instead of omitting them, marked `callable: false`.
+       * Omission would read as absence, and a program can drop a page-level note but
+       * keeps the marker on the entry it selects.
+       */
+      markUncallableWrites?: boolean | undefined;
       /** The serving surface's names: declared schema descriptions are listed in its wording. */
       routes?: AgentRouteNames | undefined;
     } = {},
@@ -819,6 +829,7 @@ export class CatalogService {
     this.requestSignal = options.requestSignal;
     this.defer = options.defer;
     this.readOnly = options.readOnly === true;
+    this.markUncallableWrites = options.markUncallableWrites === true;
   }
 
   /**
@@ -1671,6 +1682,7 @@ export class CatalogService {
             ...(schemaKeys?.outputKeys && !renderedOutput?.truncated ? { outputKeys: schemaKeys.outputKeys } : {}),
             ...(match.tool.annotations ? { annotations: match.tool.annotations } : {}),
             classification: match.tool.classification,
+            ...(this.markUncallableWrites && isWriteLike(match.tool) ? { callable: false as const } : {}),
             ...(requiredReasons
               ? {
                   guideRequired: true as const,
@@ -2127,6 +2139,7 @@ export class CatalogService {
           ...(output.source ? { outputSchemaSource: output.source } : {}),
           ...(tool.annotations ? { annotations: tool.annotations } : {}),
           classification: tool.classification,
+          ...(this.markUncallableWrites && isWriteLike(tool) ? { callable: false as const } : {}),
         };
       });
     });
