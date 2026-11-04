@@ -17,6 +17,10 @@ export function brandExecutor<T extends Executor>(executor: T, lifecycle: Execut
 }
 
 export function assertExecutor(executor: Executor): void {
+  const { deadlineMs } = executor;
+  if (deadlineMs !== undefined && (!Number.isSafeInteger(deadlineMs) || deadlineMs < 1)) {
+    throw new Error("ConnectaConfig.executor.deadlineMs must be a positive whole number of milliseconds.");
+  }
   const descriptor = Object.getOwnPropertyDescriptor(executor, EXECUTOR_BRAND);
   const brand = descriptor?.value;
   if (
@@ -61,6 +65,7 @@ export function customExecutor(executor: Executor, options: CustomExecutorOption
   const name = executorName(executor);
   const wrapper = {
     ...(name ? { name } : {}),
+    ...(executor.deadlineMs !== undefined ? { deadlineMs: executor.deadlineMs } : {}),
     execute: executor.execute.bind(executor),
     ...(executor.close ? { close: executor.close.bind(executor) } : {}),
     ...(isAdmittingExecutor(executor)

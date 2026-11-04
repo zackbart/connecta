@@ -142,6 +142,12 @@ export function withDeadlineEffect<A, E, R>(
     if (options.timeoutMs !== undefined) {
       contenders.push(
         Effect.sleep(Duration.millis(options.timeoutMs)).pipe(
+          Effect.andThen(
+            Effect.suspend(() => {
+              const more = options.extendMs?.() ?? 0;
+              return more > 0 ? Effect.sleep(Duration.millis(more)) : Effect.void;
+            }),
+          ),
           Effect.andThen(Effect.sync(() => controller.abort(options.timeoutError))),
           Effect.andThen(Effect.never),
         ),
