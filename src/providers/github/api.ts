@@ -157,7 +157,7 @@ export function githubConnection() {
 export const kit = {
   operations: operations(GitHubApi),
   pageSize: { default: 30, max: 100 },
-  hatch: { name: GITHUB_HATCH.name, verdicts: GITHUB_HATCH.verdicts, paging: "argument" as const },
+  hatch: { name: GITHUB_HATCH.name, verdicts: GITHUB_HATCH.verdicts },
   errors: errorMeanings(errors)!,
   idempotencyKey: false,
 };

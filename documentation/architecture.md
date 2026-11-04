@@ -2604,11 +2604,9 @@ this declaration keep parameter-based continuation.
 An explicit initialAnchor adapter on parameter-based paging can retain a numeric
 timestamp as a first-page time-window anchor; opaque string continuations still
 require a signed token.
-The generated Paging convention follows the read tool's input schema: tools
-that take `cursor` restore `page.nextCursor` as that top-level argument; tools
-without it restore the token in `query[page.param]` or `body[page.param]`, as
-`page.in` specifies. `kit.hatch.paging` still validates declared mode values as
-a sanity check; it does not select the generated continuation instruction.
+A read tool's input schema states how to continue: tools that take `cursor`
+restore `page.nextCursor` as that top-level argument; tools without it restore
+the token in `query[page.param]` or `body[page.param]`, as `page.in` specifies.
 An unsafe continuation keeps the safe page data with `hasMore: true` and no
 `nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
@@ -2669,8 +2667,7 @@ Admission iteratively visits keys and values before the write program runs;
 it checks agent arguments, not whole bodies later composed from internal
 reads. The kit connection also checks actual typed path parameters and query
 values before transport. Legacy non-kit tools retain their link-only admission;
-arbitrary binary/base64 bytes are not decoded by this scalar rule. The kit
-sets `refusesWithheld` for the standard hatch, enabling the generated convention.
+arbitrary binary/base64 bytes are not decoded by this scalar rule.
 Declared error-code facts use the closed `ConnectorCallErrorCode` set at
 construction (INV-11); classification callbacks are not run at construction.
 

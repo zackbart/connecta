@@ -32,7 +32,8 @@ An omitted attribute stays; `null` clears it. Archiving is reversible; deleting 
 profile is permanent. Resolve the card id and its person id before acting on a
 workflow card. Promoting completes a step; skipping moves on without completing
 it. Card notes and profile notes are different records, and note categories can
-notify subscribers. The API cannot submit a form on someone's behalf.
+notify subscribers. No named form-submission tool exists; the generic hatch
+admits that endpoint as a destructive operation.
 <!-- end -->
 
 <!-- when: lists -->

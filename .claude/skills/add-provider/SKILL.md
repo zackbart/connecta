@@ -445,8 +445,7 @@ vendors"). The steps:
 
 ## Hatch admission and paging
 
-1. Use the standard hatch's withheld-scalar admission and derived
-   `kit.refusesWithheld` fact. Hatch request paths, query keys/values and
+1. Use the standard hatch's withheld-scalar admission. Hatch request paths, query keys/values and
    bodies reject whole `[redacted]` values (including decoded spellings) and
    withheld links with `invalid_args` before dispatch; paths and queries reject
    any containment. Longer prose may mention the marker. Kit write builders
