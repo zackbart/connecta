@@ -4,12 +4,13 @@ import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 
 /** Facts actually returned to the agent, excluding discovery and final prose. */
-export function deliveredValues(trace: AgentTrace): any[] {
+export function deliveredValues(trace: AgentTrace, omitKeys: string[] = []): any[] {
   const values: any[] = [];
   const visit = (value: unknown) => {
     values.push(value);
     if (Array.isArray(value)) value.forEach(visit);
-    else if (value && typeof value === "object") Object.values(value).forEach(visit);
+    else if (value && typeof value === "object")
+      for (const [key, child] of Object.entries(value)) if (!omitKeys.includes(key)) visit(child);
   };
   for (const use of trace.toolUses) {
     if (use.isError || !["call_tool", "call_destructive_tool", "execute_code", "read_result"].includes(use.tool))

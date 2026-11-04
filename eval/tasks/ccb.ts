@@ -46,7 +46,8 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
   if (i === 3) {
     destination = reached("/search/individuals/results");
     evidence &&= new RegExp(`ANSWER:\\s*${inactive}\\b`, "i").test(answer);
-    const delivered = deliveredValues(trace);
+    // A page envelope's total is pagination metadata, not a delivered record fact.
+    const delivered = deliveredValues(trace, ["page"]);
     add(
       "delivered-data",
       seed.people.filter((p) => !p.active).every((p) => delivered.some((row) => row?.id === p.id)) ||
