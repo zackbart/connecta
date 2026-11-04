@@ -126,8 +126,13 @@ Prefer \`notes.search\` over listing databases.
     const fetched = await mt.skills({ name: "connector:notes" });
     expect(fetched.isError).toBeFalsy();
     expect(textFrom(fetched)).toBe(NOTES_GUIDE);
+    // Plain-text guidance travels once; the listing and errors stay structured.
+    expect(fetched.structuredContent).toBeUndefined();
+    expect((await mt.skills({})).structuredContent).toHaveProperty("skills");
+    expect((await mt.skills({ name: "connector:missing" })).structuredContent).toHaveProperty("error");
     const usage = textFrom(await mt.skills({ name: "usage" }));
-    expect(usage.startsWith("# Connecta usage\n")).toBe(true);
+    expect(usage.startsWith("# Connecta usage
+")).toBe(true);
   });
 
   it("states the effective read-only endpoint policy without editing guide procedures", async () => {

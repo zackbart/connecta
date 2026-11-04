@@ -134,6 +134,7 @@ export const gmail = defineApiProvider<GmailOptions>({
   result,
   safety: () => safety,
   probe,
+  blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,

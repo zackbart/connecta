@@ -352,6 +352,17 @@ guide's first meaningful body paragraph. `required: true` is reserved for
 generic API wrappers and cross-operation conventions a complete downstream
 schema cannot express.
 
+A maintained provider's guide states only what no schema, description or typed
+refusal already tells the agent where it acts. Generic rules live at the point of
+use: `cursor` and hatch `page` schemas for continuation, `fields` for narrowing,
+withheld values and cuts, hatch descriptions and `withheld` hints for operation
+discovery, and the `write_outcome_unknown` error for write-once. A hatch `page`
+with `hasMore: true` and no `nextCursor` also adds a `warnings` notice that the
+result is incomplete. Money units, account or environment selection, sensitive
+data reduction and "absence does not prove" rules stay in the guide, as does any
+disqualifier that no refusal enforces. A read-only connection is not served its
+guide's `writes` blocks.
+
 Describe results carry a `guide: "connector:<id>"` pointer and a
 `guideSummary`; a search page carries both once per connector in
 `connectors[<id>]`. A matching tool row or description also carries
@@ -541,7 +552,9 @@ dropping the text copy waits on host-forwarding measurements showing supported
 clients do not need it. Direct-call failures set `isError: true` and carry the
 same `{ ok: false, error, durationMs, attempts }` envelope in both forms, whether
 `resultMode` is omitted, `"mcp"`, or `"value"`. Plain-text guidance stays
-text-only. Successful direct calls with `resultMode` omitted or `"mcp"` return
+text-only: a `skills` fetch returns the guide once, in `content`, and the tool
+advertises no `outputSchema`, while its listing and errors keep `structuredContent`.
+A program's `connecta.skill` returns its own `{ name, format, text }` value. Successful direct calls with `resultMode` omitted or `"mcp"` return
 their data only in `content`, with the downstream format in
 `_meta["dev.connecta/format"]`. They omit `structuredContent`, including on
 truncated results, so clients that prefer it cannot replace data or a preview

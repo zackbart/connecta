@@ -140,7 +140,9 @@ describe("meta-tool output schemas", () => {
       expect(list.result.tools).toHaveLength(6);
       for (const tool of list.result.tools) {
         const directCall = tool.name === "call_tool" || tool.name === "call_destructive_tool";
-        if (directCall) expect(tool.outputSchema, tool.name).toBeUndefined();
+        // Guidance is text-only, so skills cannot promise a structured result.
+        const undeclared = directCall || tool.name === "skills";
+        if (undeclared) expect(tool.outputSchema, tool.name).toBeUndefined();
         else expect(tool.outputSchema, tool.name).toMatchObject({ type: "object", properties: expect.any(Object) });
         const response = await readJsonRpc(
           await mcpRpc(app, "tools/call", { name: tool.name, arguments: cases[tool.name] }, { token: TOKEN }),
@@ -150,7 +152,7 @@ describe("meta-tool output schemas", () => {
         if (directCall) {
           expect(JSON.parse(response.result.content[0].text), tool.name).toEqual(response.result.structuredContent);
         }
-        if (!directCall) {
+        if (!undeclared) {
           expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(
             true,
           );
@@ -174,6 +176,10 @@ describe("meta-tool output schemas", () => {
       expect(searchValidator.validate({ ...flat, catalogErrors: [unscoped] }).valid).toBe(false);
       expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(false);
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
+      // The paging rule no guide repeats: stop before the limit and resume in the next program.
+      expect(execute.description).toContain(
+        "Near the host-call limit, return page.nextCursor and resume in the next program.",
+      );
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
       expect(
         new Validator(execute.outputSchema).validate({
@@ -210,7 +216,7 @@ const BUDGETS = {
   // search_tools grew for readyCalls, the complete reads that save the
   // details and operation-search host calls; its reasons enum is now shared.
   // Declaring descriptionTruncated adds 37 bytes.
-  outputSchema: { skills: 660, search_tools: 4_190, authorize_connector: 420, execute_code: 1_070 },
+  outputSchema: { search_tools: 4_190, authorize_connector: 420, execute_code: 1_070 },
   usage: 5_500,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
@@ -341,7 +347,7 @@ describe("always-loaded agent surface budgets", () => {
           else expect(JSON.stringify(tool.outputSchema).length, name).toBeLessThanOrEqual(schemaBudget!);
         }
         const usage = await callTool(app, "skills", { name: "usage" });
-        expect(usage.structuredContent.text.length).toBeLessThanOrEqual(BUDGETS.usage);
+        expect(usage.content[0].text.length).toBeLessThanOrEqual(BUDGETS.usage);
         for (const mode of ["default", "compact"] as const) {
           const page = await callTool(app, "search_tools", {
             connector: "crm",

@@ -201,6 +201,7 @@ describe("repairing error envelopes", () => {
           await mt.callDestructiveTool({ address: "notes.create", args: { title: "argument-sentinel" }, ...mode }),
           {
             code: "write_outcome_unknown",
+            message: expect.stringContaining("It was sent once; its outcome is unknown."),
             retryable: false,
             uncertainCall: { address: "notes.create", args: { title: "argument-sentinel" } },
             retry: expect.stringContaining("Do not retry automatically"),
