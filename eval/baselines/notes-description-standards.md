@@ -110,7 +110,7 @@ call. This is a hypothesis to test, not a result.
 ## Not measured
 
 - QuickBooks writes, because the journey cannot pass with an agent, and most
-  named writes. Successful writes covered here are three hatches plus
-  `batch_update_spreadsheet`.
+  named writes. Writes exercised here are the Stripe, CCB, GitHub and Sheets
+  hatches plus `batch_update_spreadsheet`.
 - Providers outside the six.
 - Any host that inlines the full native list.
