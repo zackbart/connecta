@@ -54,7 +54,7 @@ import {
 } from "./registry.js";
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
-import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
+import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
@@ -1226,7 +1226,8 @@ function metaToolsForRequest(
             };
           }
           const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name]));
-          return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
+          // Guidance is text-only: a structured copy would double every fetch on the wire (result-representation).
+          return { content: [{ type: "text", text }] };
         } catch (error) {
           if (error instanceof SkillLookupError) return toolError(skillLookupRecovery(error.message));
           return toolError(
@@ -1771,7 +1772,6 @@ export function registerMetaTools(
       description: describedFor(registry, SKILLS_DESC, "skills"),
       ...(ctx.native ? { _meta: { "dev.connecta/surface": { surface: "native", ...ctx.native } } } : {}),
       inputSchema: SKILLS_INPUT,
-      outputSchema: SKILLS_OUTPUT,
       annotations: READ_ONLY_LOCAL,
     },
     authMethod((args: { name?: string | undefined }, request: ServerContext) =>
