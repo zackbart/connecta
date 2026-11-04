@@ -217,7 +217,16 @@ await import("eve/bin/eve.js");
                     type: "tool_result",
                     tool_use_id: data.callId,
                     is_error: data.outcome !== "completed" || output?.isError === true,
-                    content: output?.content ?? [{ type: "text", text: JSON.stringify(data.error ?? output) }],
+                    // A host rejection is one refused attempt, whatever Eve's own wording.
+                    content:
+                      data.outcome === "rejected"
+                        ? [
+                            {
+                              type: "text",
+                              text: `Host refused this tool call: permission denied. ${JSON.stringify(data.error ?? output)}`,
+                            },
+                          ]
+                        : (output?.content ?? [{ type: "text", text: JSON.stringify(data.error ?? output) }]),
                   },
                 ],
               },

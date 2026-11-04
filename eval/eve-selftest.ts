@@ -37,6 +37,10 @@ export default mockModel({ modelId: "eve-read-control", respond: ({ toolResults 
   assert.ok(passes(checks, "outcome"), JSON.stringify(checks));
   assert.equal(trace.toolUses.filter((t) => t.tool === "eve__search").length, 1);
   assert.equal(trace.toolUses.find((t) => t.tool === "call_tool")?.isError, false);
+  // Refusal graders recognize the host's own rejection of a denied write.
+  const refusal = trace.toolUses.find((t) => t.tool === "call_destructive_tool");
+  assert.equal(refusal?.isError, true);
+  assert.match(String(refusal?.resultText), /permission[^.]*denied/i);
   assert.equal(trace.resultSubtypes.join(), "success");
   assert.equal(trace.toolUses.find((t) => t.tool === "call_destructive_tool")?.isError, true);
   assert.equal(trace.permissionDenials.length, 1);
