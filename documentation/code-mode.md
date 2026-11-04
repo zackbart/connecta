@@ -1124,7 +1124,8 @@ failed, which are proven not applied, leave the failure's own verdict standing.
 Work after the run that can hold its response, such as storing an oversized return
 for paging, stops at most 2 s past the ceiling, or a tenth of it if that is smaller
 (57 s by default). Storage still stalled then costs the paging: the program's return
-comes back as its preview with no `resultId`.
+comes back as its preview with no `resultId`. Sealing a failed run's finished outputs
+(`R9`) stops by the same deadline; its calls are then marked `dropped`.
 
 The ceiling exists because MCP clients abandon a request at about 60 s, and a client's
 timeout tells the agent nothing: no typed error, no counts, no write outcome.

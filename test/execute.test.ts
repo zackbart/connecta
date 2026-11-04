@@ -427,6 +427,37 @@ describe("execute_code run deadline", () => {
     expect(out.structuredContent?.result).not.toHaveProperty("resultId");
   });
 
+  it("L3: a run the ceiling ends keeps its answer in time when storage stalls on what it finished", async () => {
+    const reader: Connector = {
+      id: "reader",
+      kind: "api",
+      async listTools() {
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      callTool: async () => ({ ok: true }),
+    };
+    const storage = memoryStorage();
+    storage.set = () => new Promise<never>(() => {});
+    const started = Date.now();
+    const out = await createExecuteTool(
+      makeRegistry([reader], { storage }),
+      "https://example.test",
+      running(5_000, async (fns) => {
+        await fns.call!("reader.read", {});
+        await new Promise<never>(() => {});
+      }),
+      silentLogger,
+      undefined,
+      // The ceiling and 200 ms of storage room, not another host-call deadline past it.
+      { watchdogMs: 2_000, hostCallTimeoutMs: 60_000, requestStartedAt: started - 1_500 },
+    )({ code: "async () => {}" });
+    expect(Date.now() - started).toBeLessThan(3_000);
+    const { error } = required(out.structuredContent) as { error: Record<string, any> };
+    expect(error).toMatchObject({ code: "timeout", details: { stage: "response ceiling" } });
+    expect(error["completed"].calls).toEqual([{ address: "reader.read", dropped: true }]);
+    expect(error["completed"]).not.toHaveProperty("resultId");
+  });
+
   it("INV-11: warns when an executor's deadline does not end before the ceiling", () => {
     const warn = vi.fn();
     makeDeployment({

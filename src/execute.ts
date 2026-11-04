@@ -1874,7 +1874,7 @@ export function createExecuteTool(
             const error = result.structuredContent?.error;
             if (!kept || !result.isError || error === null || typeof error !== "object") return Effect.succeed(result);
             const sealing: Effect.Effect<unknown, unknown> =
-              kept.storageStalled || options.signal?.aborted
+              kept.storageStalled || options.signal?.aborted || Date.now() >= ceiling.answerBy
                 ? Effect.void
                 : withDeadlineEffect(
                     () =>
@@ -1907,7 +1907,8 @@ export function createExecuteTool(
                           authCall<string | undefined>(resealResult, [registry, entry, sentSecrets, logger]),
                       }),
                     {
-                      timeoutMs: hostCallTimeoutMs,
+                      // A run the ceiling ended still answers in time, stored or not.
+                      timeoutMs: Math.min(hostCallTimeoutMs, ceiling.answerBy - Date.now()),
                       ...(options.signal ? { signal: options.signal } : {}),
                       timeoutError: new Error("Result storage did not answer."),
                     },

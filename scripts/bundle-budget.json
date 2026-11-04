@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-04: The response ceiling and kept outputs together, with sealing bound by the shared response deadline. Node 22.23.4 measures 426,630 B and 811,293 B. The caps move to 426,700 B and 811,350 B; the combined branch sets the final numbers.",
     "2026-11-04: The response ceiling lives in the root: its clock, its queue refusal, the unsent refusals, the storage deadline and the direct-call cap. Node 22.23.4 measures this PR at 425,019 B and 809,333 B on the merged read-deadline base. The caps move to 425,100 B and 809,400 B; the combined branch sets final caps.",
     "2026-11-04: Keeping a failed program's completed outputs (code mode R9) adds a retention ledger and one failure path to the root, about 1,000 B and 1,200 B gzip. Sealing recovery ids against the final secret set adds to that. CI on 98c2f7b0 measures 425,772 B and 810,350 B. The caps move to 425,850 B and 810,450 B; the combined branch sets the final numbers.",
     "2026-11-04: Run-deadline read caps on top of the failure-recovery text, with their discovery cancellation. CI on 92d32845 measures the root at 424,205 B and examples/worker at 808,467 B. The caps move to 424,300 B and 808,550 B.",
@@ -62,7 +63,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 425850
+      "maxGzip": 426700
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -145,7 +146,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 810450
+      "maxGzip": 811350
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
