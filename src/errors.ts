@@ -64,6 +64,7 @@ export type ClassificationCode =
   | "ambiguous_tool_alias"
   | "catalog_lookup_failed"
   | "result_too_large"
+  | "result_not_retained"
   | "destructive_tool_requires_approval"
   | "read_only_endpoint"
   | "auth_replay_refused"
@@ -100,6 +101,7 @@ const CLASSIFICATION_CODE_TABLE = {
   ambiguous_tool_alias: true,
   catalog_lookup_failed: true,
   result_too_large: true,
+  result_not_retained: true,
   destructive_tool_requires_approval: true,
   read_only_endpoint: true,
   auth_replay_refused: true,
