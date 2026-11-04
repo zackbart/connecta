@@ -343,7 +343,7 @@ function setup(
 describe("native downstream input", { tags: ["workers"] }, () => {
   it("INV-4 INV-9: native form and URL continuations preserve wire identity and send each read or write once", async () => {
     for (const url of [undefined, "https://input.test/continue"]) {
-      for (const name of ["service__read", "service__write"]) {
+      for (const name of ["service__read", "service__WRITE__write"]) {
         const flow = setup({ native: true, ...(url ? { url } : {}) });
         const capabilities = { elicitation: url ? { url: {} } : { form: {} } };
         const first = (await flow.rpc({ name, capabilities })).result;
@@ -354,7 +354,7 @@ describe("native downstream input", { tags: ["workers"] }, () => {
         const responses = {
           "downstream/service/0": { action: "accept", ...(!url ? { content: { name: "Alice" } } : {}) },
         };
-        const other = name === "service__read" ? "service__write" : "service__read";
+        const other = name === "service__read" ? "service__WRITE__write" : "service__read";
         expect((await flow.rpc({ name: other, state, responses, capabilities })).error.data.reason).toBe(
           "invalid_request_state",
         );
