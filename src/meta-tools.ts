@@ -35,6 +35,7 @@ import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
+import { base64Of, RESULT_ENVELOPE_V4, type HeldResults } from "./result-seal.js";
 import { guardExecuteResultValue, MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import { InvocationService, type InvocationTiming } from "./invocation.js";
 import {
@@ -169,8 +170,8 @@ function alignEndToCharBoundary(bytes: Uint8Array, offset: number, end: number, 
 }
 
 /** Every readable stash carries host-admitted bindings; older entries fail closed. */
-const RESULT_ENVELOPE_V4 = "connecta-result-v4:";
 const RESULT_ENVELOPE_V4_HEADER = /^connecta-result-v4:([A-Za-z0-9+/=]+):(\d+):(\d+):(\d+):/;
+const RESULT_REFUSED_V4_HEADER = /^connecta-result-refused-v4:([A-Za-z0-9+/=]+):$/;
 
 export type { ProgramResultDependency } from "./registry.js";
 
@@ -205,19 +206,6 @@ const RESULT_MAX_CHUNKS = 32;
 /** Chunk width for a result of `totalBytes`, always a multiple of three. */
 function resultChunkBytes(totalBytes: number): number {
   return Math.max(RESULT_CHUNK_BYTES, Math.ceil(totalBytes / RESULT_MAX_CHUNKS / 3) * 3);
-}
-
-/**
- * Base64 of `bytes`, in three-byte-aligned batches so the argument list of one
- * spread never grows with the result. Alignment matters: an unaligned batch
- * would pad mid-stream and the concatenation would no longer decode.
- */
-function base64Of(bytes: Uint8Array): string {
-  let out = "";
-  for (let offset = 0; offset < bytes.length; offset += 12_288) {
-    out += btoa(String.fromCharCode(...bytes.subarray(offset, offset + 12_288)));
-  }
-  return out;
 }
 
 // --- result-size guard + connecta.result (feature 1) ---------------------------
@@ -256,6 +244,11 @@ interface ResultStash {
   programChars?: number;
   /** `execute.maxHostCalls` of a program that loops over this result. Default 20. */
   programHostCalls?: number;
+  /**
+   * A program's result: the run seals it at its end, so its header waits in `results`.
+   * `passed` is the secret set's revision from before the bytes were checked.
+   */
+  held?: { results: HeldResults; passed: number; format: "json" | "text" };
 }
 
 /** Calls a whole-result loop leaves the program, so it can also act on what it finds. */
@@ -298,6 +291,27 @@ function readHandleHint(id: string, cap: number, totalBytes: number, calls: Prog
 function programPageBytes(results: ResultStash): number {
   const fits = Math.floor(((results.programChars ?? MAX_EXECUTE_RESULT_CHARS) - 1024) / 6);
   return Math.max(4, Math.min(fits, results.cap, PROGRAM_RESULT_PAGE_BYTES));
+}
+
+/** A retained result its run could not seal: a typed answer, and repeating this page cannot help. */
+function resultNotRetained(write: boolean, id: string): CallErrorDetails {
+  const label = `"${boundedEchoText(id, 96)}"`;
+  return write
+    ? {
+        code: "result_not_retained",
+        message: `Result ${label} is not retrievable: it was not retained past the run that produced it. ${WRITE_ALREADY_RAN}`,
+        retryable: false,
+        nextAction: {
+          action: "recover_result",
+          purpose: "Read the write's target for its outcome, or report the missing output. Never repeat the write.",
+        },
+      }
+    : {
+        code: "result_not_retained",
+        message: `Result ${label} was not retained past the run that produced it. Rerun the read for a fresh result.`,
+        retryable: false,
+        nextAction: { action: "recover_result", purpose: "Rerun the read in a new call or program." },
+      };
 }
 
 /** Opens a write's notice, ahead of any paging instruction. */
@@ -421,15 +435,38 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
       // reader below maps a byte offset back to chunk index and base64 quad.
       const chunkBytes = resultChunkBytes(totalBytes);
       const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
-      const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
+      const head = `${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`;
+      const chunks = [head];
       for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
         const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
         if (offset === 0) chunks[0] += chunk;
         else chunks.push(chunk);
       }
-      if (!(yield* upwardStep(authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS])))) {
-        throw new Error("Result stash capacity exhausted");
-      }
+      const held = results.held;
+      // Taken before the booking, so a held header can never outlive the chunks it describes.
+      const expiresAtMs = Date.now() + RESULT_TTL_SECONDS * 1000;
+      if (held && !held.results.accepts()) throw new Error("The run already sealed its results");
+      const stashed = yield* upwardStep(
+        authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS, ...(held ? [{ holdFirst: true }] : [])]),
+      );
+      if (!stashed) throw new Error("Result stash capacity exhausted");
+      if (
+        held &&
+        !held.results.add({
+          id,
+          binding,
+          total: totalBytes,
+          chunkBytes,
+          cap: results.cap,
+          first: chunks[0]!.slice(head.length),
+          chunks: chunks.length,
+          passed: held.passed,
+          format: held.format,
+          write: results.binding.classification === "write",
+          expiresAtMs,
+        })
+      )
+        throw new Error("The run already sealed its results");
     } catch {
       // Paging is advisory after a completed call, including an approved write.
       // Neither backend prose nor a retry hint belongs in this successful result.
@@ -483,9 +520,21 @@ export function pageProgramResult(
   requestScope: object,
   hostCalls: ProgramHostCalls,
   wireBytes = PROGRAM_RESULT_WIRE_BYTES,
+  held?: HeldResults,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
   return runEdge(
-    pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, hostCalls, wireBytes),
+    pageProgramResultNative(
+      registry,
+      baseUrl,
+      resolved,
+      value,
+      format,
+      secrets,
+      requestScope,
+      hostCalls,
+      wireBytes,
+      held,
+    ),
   );
 }
 const pageProgramResultNative = /* @__PURE__ */ registerAuth(
@@ -500,8 +549,10 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
     requestScope: object,
     hostCalls: ProgramHostCalls,
     wireBytes: number = PROGRAM_RESULT_WIRE_BYTES,
+    held?: HeldResults,
   ) {
     return authFlow<{ data: unknown; format: "json" | "text" } | ProgramResultHandle>(function* () {
+      const passed = held?.secrets.revision ?? 0;
       const data = secrets.redact(value);
       const wire = JSON.stringify({ data, format });
       if (enc.encode(wire).length <= wireBytes) return { data, format };
@@ -524,8 +575,9 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
             },
             write,
             cap,
-            set: authMethod((id: string, chunks: string[], ttl: number) =>
-              registryProgram(registry, "stashResult", id, chunks, ttl),
+            ...(held ? { held: { results: held, passed, format } } : {}),
+            set: authMethod((id: string, chunks: string[], ttl: number, options?: { holdFirst?: boolean }) =>
+              registryProgram(registry, "stashResult", id, chunks, ttl, options),
             ),
             warn: () =>
               logFailure(
@@ -565,6 +617,7 @@ export function guardProgramReturn(
   maxChars: number,
   completedWrite: boolean,
   programChars?: number,
+  held?: HeldResults,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -577,6 +630,7 @@ export function guardProgramReturn(
       maxChars,
       completedWrite,
       programChars,
+      held,
     ),
   );
 }
@@ -592,10 +646,12 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     maxChars: number,
     completedWrite: boolean,
     programChars?: number,
+    held?: HeldResults,
   ) {
     return authFlow<unknown>(function* () {
       const serialized = serializeResultText(value);
       if (serialized.length <= maxChars) return value;
+      const passed = held?.secrets.revision ?? 0;
       const text = secrets.text(serialized);
       const bytes = enc.encode(text);
       const write = dependencies.some((dependency) => dependency.classification === "write");
@@ -618,8 +674,9 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         write: completedWrite,
         cap,
         ...(programChars !== undefined ? { programChars } : {}),
-        set: authMethod((id: string, chunks: string[], ttl: number) =>
-          registryProgram(registry, "stashResult", id, chunks, ttl),
+        ...(held ? { held: { results: held, passed, format: "json" as const } } : {}),
+        set: authMethod((id: string, chunks: string[], ttl: number, options?: { holdFirst?: boolean }) =>
+          registryProgram(registry, "stashResult", id, chunks, ttl, options),
         ),
         warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
       };
@@ -900,6 +957,8 @@ function metaToolsForRequest(
     defer?: DeferredWork | undefined;
     /** Request identity shared by credential redaction, paging, and downstream invocation. */
     requestScope?: object | undefined;
+    /** The running program's unsealed results, which only its own pages may read. */
+    heldResults?: HeldResults | undefined;
     onResultRead?: (dependencies: ProgramResultDependency[]) => void;
     downstreamInput?: boolean;
     /** A native endpoint without execute_code: truncation notices page with read_result. */
@@ -1296,7 +1355,9 @@ function metaToolsForRequest(
               return value;
             }),
           );
-          const stored = yield* upwardStep(authCall<string | false | null>(read, [resultKeys.chunk(args.id, 0)]));
+          const stored =
+            opts.heldResults?.stored(args.id) ??
+            (yield* upwardStep(authCall<string | false | null>(read, [resultKeys.chunk(args.id, 0)])));
           if (stored === false) return unavailableResult();
           if (stored === null) {
             return toolError(
@@ -1305,7 +1366,8 @@ function metaToolsForRequest(
           }
           const denied = () =>
             toolError(utilityRecovery("not_found", `Unknown or expired result id "${boundedEchoText(args.id, 96)}"`));
-          const header = RESULT_ENVELOPE_V4_HEADER.exec(stored);
+          const refused = RESULT_REFUSED_V4_HEADER.exec(stored);
+          const header = refused ?? RESULT_ENVELOPE_V4_HEADER.exec(stored);
           if (!header) return denied();
           let binding: ResultBinding;
           try {
@@ -1338,6 +1400,7 @@ function metaToolsForRequest(
             !["read", "write"].includes(binding.classification)
           )
             return denied();
+          if (refused) return toolError(resultNotRetained(binding.classification === "write", args.id));
           const allowed = authMethod(() =>
             authFlow<boolean>(function* () {
               options.onStage?.("access validation");

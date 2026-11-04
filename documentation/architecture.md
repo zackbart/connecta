@@ -358,6 +358,10 @@ reader. `program-result.ts` owns executor-independent byte limits;
 values through provider preludes. Cursors hold only an ID and offset for the
 current run. Result bytes, expiry, authority and capacity charges stay in the
 existing storage and ledger; no executor-specific store or storage key is added.
+`result-seal.ts` keeps a run's results unreadable to other requests until they pass
+its final secret set ([`R4a`](./code-mode.md#results-and-projection)): chunk 0 waits in a
+request-owned ledger and is written last, so a run that ends without sealing, however it
+ends, leaves no entry a reader can open.
 
 ## Admission, in two places
 

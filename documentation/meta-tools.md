@@ -761,6 +761,13 @@ a paging-unavailable notice, without a handle or recovery action. A write's
 notice still says it already ran. Activity records success; operator logs receive
 a fixed warning without storage error prose. Never repeat a write to recover output.
 
+A result a program retained is readable from later requests once it has passed
+that run's final secret set. A run that could not check it refuses it: paging
+answers `result_not_retained` with `retryable: false`, telling a read to rerun and a
+write not to repeat ([code mode `R4a`](./code-mode.md#results-and-projection)).
+A direct call's stash passes its own request's set when stored; a later direct call
+in another request shares no set with it.
+
 ## Lexical discovery
 
 `search_tools` and in-program `connecta.search` return the same flat discovery

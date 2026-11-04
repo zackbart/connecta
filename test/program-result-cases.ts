@@ -7,7 +7,7 @@ import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resultKeys, scopes } from "../src/storage/keys.js";
 import { activitySink, silentLogger } from "./helpers.js";
-import type { Connector, Executor, KVStorage } from "../src/types.js";
+import type { Connector, ConnectorContext, Executor, KVStorage } from "../src/types.js";
 
 const BASE = "https://program-results.test";
 
@@ -516,5 +516,333 @@ export async function checkProgramReturnWriteWarning(executor: Executor): Promis
       });
       expect(readonly.isError).toBe(true);
     }
+  }
+}
+
+const RETAINED_SECRET = 'retained"secret/value+with space-0123456789';
+const retainedForms = (secret: string): Record<string, string> => ({
+  plain: secret,
+  json: JSON.stringify(secret).slice(1, -1),
+  url: encodeURIComponent(secret),
+  base64: btoa(secret),
+});
+
+/** A connector whose reads echo a value and whose `use` registers it, as sending a credential does. */
+function retainedRegistry(storage: KVStorage, echoed: () => unknown, onUse?: () => void) {
+  const state = { writes: 0, ctx: undefined as ConnectorContext | undefined };
+  const connector: Connector = {
+    id: "vault",
+    kind: "api",
+    async listTools() {
+      return [
+        { name: "read", annotations: { readOnlyHint: true } },
+        { name: "use", annotations: { readOnlyHint: true } },
+        { name: "write", annotations: { readOnlyHint: false } },
+      ];
+    },
+    async callTool(name, _args, ctx) {
+      state.ctx = ctx;
+      if (name === "use") {
+        sentSecretsFor(ctx).add(RETAINED_SECRET);
+        onUse?.();
+        return "used";
+      }
+      if (name === "write") state.writes++;
+      return echoed();
+    },
+  };
+  return { registry: new Registry([connector], { storage, logger: silentLogger }), state };
+}
+
+/** Everything a later request with an empty secret set can page out of `id`. */
+async function pageFromLaterRun(registry: Registry, id: string): Promise<string> {
+  const meta = createMetaTools(registry, BASE, { readOnly: false });
+  let text = "";
+  for (let offset = 0; ;) {
+    const page = await meta.readResult({ id, offset, maxBytes: 24_000 });
+    expect(page.isError, JSON.stringify(page.structuredContent)).toBeUndefined();
+    text += page.structuredContent!.text as string;
+    if (!page.structuredContent!.hasMore) return text;
+    offset = page.structuredContent!.nextOffset as number;
+  }
+}
+
+const storedResultText = async (inner: KVStorage) => {
+  const keys = await inner.list(scopes.results + "result:");
+  return (await Promise.all(keys.map((key) => inner.get(key))))
+    .map((value) => {
+      const body = value!.replace(/^connecta-result(?:-refused)?-v4:[^:]*:(?:\d+:\d+:\d+:)?/, "");
+      return new TextDecoder().decode(Uint8Array.from(atob(body), (char) => char.charCodeAt(0)));
+    })
+    .join("");
+};
+
+const expectNoForms = (text: string, secret = RETAINED_SECRET) => {
+  for (const [name, form] of Object.entries(retainedForms(secret)))
+    expect(text.includes(form), `${name} form survived`).toBe(false);
+};
+
+const PAD = "x".repeat(1_100_000);
+const RETAINED_PROGRAM = (tool: string) => `async () => {
+  const handle = await connecta.call("vault.${tool}");
+  await connecta.call("vault.use");
+  return handle.resultId;
+}`;
+
+/** Bytes a run stored before a later call in it registered a secret, read after it ended. */
+export async function checkRetainedResultsPassFinalSet(executor: Executor): Promise<void> {
+  const forms = Object.values(retainedForms(RETAINED_SECRET));
+  const cases: Array<{ label: string; tool: string; echoed: unknown; marker: string }> = [
+    { label: "oversized JSON", tool: "read", echoed: { forms, keep: "kept-json", PAD }, marker: "kept-json" },
+    { label: "oversized text", tool: "read", echoed: `kept-text ${forms.join(" ")} ${PAD}`, marker: "kept-text" },
+    { label: "paged write", tool: "write", echoed: { forms, keep: "kept-write", PAD }, marker: "kept-write" },
+  ];
+  for (const { label, tool, echoed, marker } of cases) {
+    const inner = memoryStorage();
+    const { registry, state } = retainedRegistry(inner, () => echoed);
+    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: RETAINED_PROGRAM(tool),
+    });
+    expect(outcome.isError, `${label}: ${JSON.stringify(outcome.structuredContent)}`).toBeUndefined();
+    expect(outcome.structuredContent).not.toHaveProperty("note");
+    const paged = await pageFromLaterRun(registry, outcome.structuredContent!.result as string);
+    expectNoForms(paged);
+    expect(paged.includes(marker), label).toBe(true);
+    expect(paged).toContain("[redacted]");
+    // The old bytes are gone from storage too, not only from what a page returns.
+    expectNoForms(await storedResultText(inner));
+    expect(state.writes).toBe(tool === "write" ? 1 : 0);
+  }
+
+  // A secret split across two text blocks is one match, as it is when the result enters.
+  const split = RETAINED_SECRET.length >> 1;
+  const inner = memoryStorage();
+  const { registry } = retainedRegistry(inner, () => ({
+    content: [
+      { type: "text", text: RETAINED_SECRET.slice(0, split) },
+      { type: "text", text: RETAINED_SECRET.slice(split) },
+    ],
+    keep: "kept-blocks",
+    PAD,
+  }));
+  const blocks = await createExecuteTool(registry, BASE, executor, silentLogger)({ code: RETAINED_PROGRAM("read") });
+  const paged = await pageFromLaterRun(registry, blocks.structuredContent!.result as string);
+  expect(paged).toContain("kept-blocks");
+  expect(paged).not.toContain(RETAINED_SECRET.slice(0, split));
+  expect(paged).not.toContain(RETAINED_SECRET.slice(split));
+
+  // An id in a program's error is delivered as surely as one in its return.
+  const thrown = memoryStorage();
+  const failing = retainedRegistry(thrown, () => ({ forms, PAD }));
+  const failed = await createExecuteTool(
+    failing.registry,
+    BASE,
+    executor,
+    silentLogger,
+  )({
+    code: `async () => {
+      const handle = await connecta.call("vault.read");
+      await connecta.call("vault.use");
+      throw new Error("id " + handle.resultId);
+    }`,
+  });
+  expect(failed.isError).toBe(true);
+  const id = /id ([0-9a-f-]{36})/.exec(JSON.stringify(failed.structuredContent))![1]!;
+  expectNoForms(await pageFromLaterRun(failing.registry, id));
+}
+
+/** The same run keeps paging; a run that retained nothing new pays nothing new. */
+export async function checkRetainedResultsSameRunAndCost(executor: Executor): Promise<void> {
+  const inner = memoryStorage();
+  const sets: string[] = [];
+  let gets = 0;
+  const prefix = scopes.results + "result:";
+  const storage: KVStorage = {
+    ...inner,
+    async get(key) {
+      if (key.startsWith(prefix)) gets++;
+      return inner.get(key);
+    },
+    async set(key, value, options) {
+      if (key.startsWith(prefix)) sets.push(key);
+      return inner.set(key, value, options);
+    },
+  };
+  const { registry } = retainedRegistry(storage, () => `same-run ${PAD}`);
+  const execute = createExecuteTool(registry, BASE, executor, silentLogger);
+  const outcome = await execute({
+    code: `async () => {
+      const handle = await connecta.call("vault.read");
+      const before = await connecta.result(handle, { maxBytes: 8 });
+      await connecta.call("vault.use");
+      const after = await connecta.result(handle.resultId, { offset: 500000, maxBytes: 8 });
+      return { id: handle.resultId, before: before.text, after: after.text, total: after.totalBytes };
+    }`,
+  });
+  expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBeUndefined();
+  const result = outcome.structuredContent!.result as { id: string; before: string; after: string; total: number };
+  expect(result).toMatchObject({ before: "same-run", after: "xxxxxxxx", total: 1_100_009 });
+
+  // One write per chunk, chunk 0 last, as a stash has always cost; the clean recheck wrote nothing.
+  const chunks = Math.ceil(result.total / 49_152);
+  expect(sets).toHaveLength(chunks);
+  expect(new Set(sets).size).toBe(chunks);
+  expect(sets.at(-1)).toBe(scopes.results + resultKeys.chunk(result.id, 0));
+
+  // No growth after the stash: storage sees exactly the stash and nothing is read back.
+  sets.length = 0;
+  gets = 0;
+  const quiet = await execute({
+    code: `async () => { await connecta.call("vault.use"); return (await connecta.call("vault.read")).resultId; }`,
+  });
+  expect(quiet.isError).toBeUndefined();
+  expect(sets).toHaveLength(chunks);
+  expect(new Set(sets).size).toBe(chunks);
+  expect(gets).toBe(0);
+  // A run that retained nothing touches no result key.
+  sets.length = 0;
+  await execute({ code: `async () => 1` });
+  expect(sets).toEqual([]);
+  expect(gets).toBe(0);
+}
+
+/** Growth during sealing is checked again or refused; a failed seal is refused, never served. */
+export async function checkRetainedResultsSealingRaces(executor: Executor): Promise<void> {
+  const LATE = 'late"secret/value+with space-9876543210';
+  const forms = Object.values(retainedForms(RETAINED_SECRET)).concat(Object.values(retainedForms(LATE)));
+  const prefix = scopes.results + "result:";
+  const isHeader = (key: string) => key.startsWith(prefix) && !key.includes("#");
+  const harness = (
+    hooks: { get?: (key: string) => unknown; set?: (key: string) => unknown },
+    tool = "read",
+    watchdogMs?: number,
+  ) => {
+    const inner = memoryStorage();
+    const armed = { on: false };
+    const storage: KVStorage = {
+      ...inner,
+      async get(key) {
+        if (armed.on && key.startsWith(prefix)) await hooks.get?.(key);
+        return inner.get(key);
+      },
+      async set(key, value, options) {
+        if (armed.on && key.startsWith(prefix)) await hooks.set?.(key);
+        return inner.set(key, value, options);
+      },
+    };
+    const built = retainedRegistry(
+      storage,
+      () => ({ forms, keep: "kept", PAD }),
+      () => {
+        armed.on = true;
+      },
+    );
+    const run = async () => {
+      const outcome = await createExecuteTool(built.registry, BASE, executor, silentLogger, undefined, {
+        readOnly: false,
+        ...(watchdogMs ? { watchdogMs } : {}),
+      })({
+        code: `async () => {
+          const handle = await connecta.call("vault.${tool}");
+          await connecta.call("vault.use");
+          return handle.resultId;
+        }`,
+      });
+      // The later run reads from storage that has recovered: the refusal is what is stored.
+      armed.on = false;
+      return outcome;
+    };
+    return { ...built, inner, run };
+  };
+  const refusal = async (registry: Registry, id: string) =>
+    (await createMetaTools(registry, BASE, { readOnly: false }).readResult({ id })).structuredContent?.error as
+      | { code: string; message: string; retryable: boolean }
+      | undefined;
+
+  // A credential read that finishes during the recheck is checked in another round.
+  {
+    let registered = false;
+    const late = harness({
+      get() {
+        if (registered) return;
+        registered = true;
+        sentSecretsFor(late.state.ctx!).add(LATE);
+      },
+    });
+    const outcome = await late.run();
+    expect(outcome.structuredContent).not.toHaveProperty("note");
+    expect(registered).toBe(true);
+    const paged = await pageFromLaterRun(late.registry, outcome.structuredContent!.result as string);
+    expectNoForms(paged);
+    expectNoForms(paged, LATE);
+    expect(paged).toContain("kept");
+  }
+  // One that finishes while the header is on its way was checked by nothing, so it is refused.
+  {
+    let registered = false;
+    const late = harness({
+      set(key) {
+        if (registered || !isHeader(key)) return;
+        registered = true;
+        sentSecretsFor(late.state.ctx!).add(LATE);
+      },
+    });
+    const outcome = await late.run();
+    expect(registered).toBe(true);
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
+    const error = await refusal(late.registry, outcome.structuredContent!.result as string);
+    expect(error).toMatchObject({ code: "result_not_retained", retryable: false });
+    expect(error!.message).toContain("Rerun the read");
+    expectNoForms(await storedResultText(late.inner), LATE);
+  }
+  // A failed recheck refuses: a read says to rerun, and a write says not to repeat itself.
+  for (const tool of ["read", "write"]) {
+    const failing = harness(
+      {
+        get() {
+          throw new Error("storage offline");
+        },
+      },
+      tool,
+    );
+    const outcome = await failing.run();
+    expect(outcome.isError).toBeUndefined();
+    const error = await refusal(failing.registry, outcome.structuredContent!.result as string);
+    expect(error).toMatchObject({ code: "result_not_retained", retryable: false });
+    if (tool === "write") {
+      expect(error!.message).toContain("not retrievable");
+      expect(error!.message).toContain("do not call it again");
+      expect(outcome.structuredContent?.note).toContain("do not repeat it");
+      expect(failing.state.writes).toBe(1);
+    } else {
+      expect(error!.message).toContain("Rerun the read");
+      expect(outcome.structuredContent?.note).toContain("Rerun the read");
+    }
+    expectNoForms(await storedResultText(failing.inner));
+  }
+  // Storage that refuses every later write cannot mark the entry, and still serves nothing.
+  {
+    const failing = harness({
+      get() {
+        throw new Error("storage offline");
+      },
+      set() {
+        throw new Error("storage offline");
+      },
+    });
+    const outcome = await failing.run();
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
+    expect(await refusal(failing.registry, outcome.structuredContent!.result as string)).toMatchObject({
+      code: "not_found",
+      retryable: false,
+    });
+  }
+  // Storage that never answers cannot hold the response past the deadline.
+  {
+    const hung = harness({ get: () => new Promise(() => {}), set: () => new Promise(() => {}) }, "read", 3000);
+    const started = Date.now();
+    const outcome = await hung.run();
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
   }
 }

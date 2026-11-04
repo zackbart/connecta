@@ -37,6 +37,9 @@ import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.j
 import {
   checkLargeProgramRead,
   checkLargeProgramWrite,
+  checkRetainedResultsPassFinalSet,
+  checkRetainedResultsSameRunAndCost,
+  checkRetainedResultsSealingRaces,
   checkProgramResultBom,
   checkProgramResultSurrogates,
   checkProgramReturnFallback,
@@ -422,6 +425,21 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
+    it(`INV-5: ${custom ? "customExecutor: " : ""}a retained result passes its run's final secret set before later runs can page it`, async () => {
+      await checkRetainedResultsPassFinalSet(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
+    it(`INV-5: ${custom ? "customExecutor: " : ""}same-run paging keeps working and a run pays no extra storage to seal`, async () => {
+      await checkRetainedResultsSameRunAndCost(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
+    it(`INV-5 INV-7: ${custom ? "customExecutor: " : ""}a secret registered during sealing is rechecked or refused, and a failed seal is refused`, async () => {
+      await checkRetainedResultsSealingRaces(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
     it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
       const executor = required(workerExecutor);
       await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
