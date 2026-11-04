@@ -628,13 +628,13 @@ retain the existing partial-evidence rules.
 [step-reduction-plan.ts](step-reduction-plan.ts) fixes the tasks, batch settings, trial cap, primary metrics and decision rule before any paid trial. Experiments share one control batch per runner.
 
 ```sh
-pnpm run eval:selftest --step-arms-only --target worker
+pnpm run eval:selftest --step-arms-only --target worker --arm merged-tools
 pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --target worker --catalog-tools 300 --grading outcome --repeats 2 --concurrency 2 --step-arm control --tasks <STEP_CONTROL_TASKS> --pair-id <id> --out eval/results/step-claude-control.json
 pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --target worker --catalog-tools 300 --grading outcome --repeats 2 --concurrency 2 --no-build --step-arm ready-rows --tasks <STEP_EXPERIMENTS["ready-rows"]> --pair-id <id> --out eval/results/step-claude-ready-rows.json
 pnpm run eval:compare --step-arms --a eval/results/step-claude-control.json --b eval/results/step-claude-ready-rows.json
 ```
 
-The result config and every trial record `stepArm`. The six/code, native and cross-target comparators refuse any file that has one, even with `--allow-mismatch`. Only `--step-arms` pairs them: `--a` must be a control batch, `--b` an arm running exactly its registered tasks, and every other setting, hash and source must match, apart from the control's additional tasks. Its report gives the rule's inputs per model: pass counts, duplicate writes, paired primary-metric wins and losses, how many decisive pairs a sign test would need at that rate, and per-task evidence. A person applies the registered rule across both runners. These figures never change a grade.
+The result config and every trial record `stepArm`. The six/code, native and cross-target comparators refuse any file that has one, even with `--allow-mismatch`. Only `--step-arms` pairs them: `--a` must be a control batch, `--b` an arm running exactly its registered tasks, and every other setting, hash and source must match, apart from the control's additional tasks. Its report gives the rule's inputs per model: pass counts, duplicate writes, paired primary-metric wins and losses, how many decisive pairs a sign test would need at that rate, and per-task evidence. A person applies the registered rule across both runners. These figures never change a grade. `--diagnostic` forgives a dirty checkout, differing harness bytes, repeats or a subset of the arm's tasks, keeping the source tree, task hash and every other setting. It prints what it forgave and is not the registered comparison.
 
 [report/steps.ts](report/steps.ts) derives step metrics from saved grading inputs, so no trial field is added: steps to the first successful vendor call, discovery and guide steps, `invalid_args`, `unknown_tool`, retries before success, unresolved errors, discovery between a hinted list and the next vendor call, and a failed overlapping tool followed by its sibling.
 

@@ -166,6 +166,43 @@ function mergedDispatch(address: unknown, args: unknown): { address: string; arg
   return undefined;
 }
 
+/** A merged address is described by its first original; the reply's row is then merged. */
+function mergedDescribe(args: Json): Json {
+  const original = (address: unknown) =>
+    address === `${VERCEL}.${ENV_TOOL}`
+      ? `${VERCEL}.${ENV_ORIGINALS[0]}`
+      : address === `${VERCEL}.${LOG_TOOL}`
+        ? `${VERCEL}.${LOG_ORIGINALS[0]}`
+        : address;
+  return {
+    ...args,
+    ...(args.address === undefined ? {} : { address: original(args.address) }),
+    ...(Array.isArray(args.addresses) ? { addresses: [...new Set(args.addresses.map(original))] } : {}),
+  };
+}
+
+/** A real validator knows one original's keys: state the merged tool's contract instead. */
+function mergedError(address: unknown, args: unknown, error: Json): Json {
+  if (address !== `${VERCEL}.${LOG_TOOL}` || error.code !== "invalid_args") return error;
+  const accepted = Object.keys(MERGED[LOG_TOOL]!.json.properties);
+  const kind = isObject(args) ? args.kind : undefined;
+  const issues =
+    kind === "build" || kind === "runtime"
+      ? [{ path: "/<key>", expected: `one of the accepted keys for kind ${kind}, per the tool's schema` }]
+      : [
+          {
+            path: "/kind",
+            expected: 'one of "build", "runtime" (required)',
+            received: kind === undefined ? "missing" : typeof kind,
+          },
+        ];
+  return {
+    ...error,
+    message: `Invalid arguments for "${address}": ${issues[0]!.path}: expected ${issues[0]!.expected}`,
+    validation: { ...error.validation, issues, acceptedKeys: accepted },
+  };
+}
+
 function renamed<T>(value: T): T {
   if (typeof value === "string") return value.replace(RENAMES, renameOriginal) as T;
   if (Array.isArray(value)) return value.map(renamed) as T;
@@ -195,6 +232,7 @@ function mergedRows(rows: unknown[]): unknown[] {
         ...(row.inputSchema === undefined
           ? {}
           : { inputSchema: typeof row.inputSchema === "string" ? merged.compact : merged.json }),
+        ...(row.signature === undefined ? {} : { signature: `(args: ${merged.compact}) => unknown` }),
         ...(row.outputSchema === undefined ? {} : { outputSchema: undefined }),
         ...(row.inputKeys === undefined
           ? {}
@@ -599,10 +637,18 @@ export class StepRuntime {
   async reply(name: unknown, requested: Json | undefined, result: Json): Promise<Json> {
     if (!this.#active()) return result;
     if (this.arm === "merged-tools") {
-      const merged = renamed(result);
-      if (name !== "search_tools" && name !== "skills") return merged;
+      const rows =
+        name === "search_tools"
+          ? this.#mapText(result, (value) =>
+              isObject(value) && Array.isArray(value.tools) ? { ...value, tools: mergedRows(value.tools) } : value,
+            )
+          : result;
+      const merged = renamed(rows);
+      if (!merged.isError || (name !== "call_tool" && name !== "call_destructive_tool")) return merged;
       return this.#mapText(merged, (value) =>
-        isObject(value) && Array.isArray(value.tools) ? { ...value, tools: mergedRows(value.tools) } : value,
+        isObject(value) && isObject(value.error)
+          ? { ...value, error: mergedError(requested?.address, requested?.args, value.error) }
+          : value,
       );
     }
     if (name === "search_tools" && this.arm === "teach-errors") return this.#mapText(result, quietGuides);
@@ -673,18 +719,18 @@ export class StepRuntime {
     }
     if (name === "connecta.search" && isObject(args[0]))
       return [this.request("search_tools", args[0]), ...args.slice(1)];
+    if (name === "connecta.describe" && isObject(args[0])) return [mergedDescribe(args[0]), ...args.slice(1)];
     return args;
   }
 
   async guestResult(name: string, args: unknown[], value: unknown): Promise<unknown> {
     if (!this.#active()) return value;
     if (this.arm === "merged-tools") {
-      const merged = renamed(value);
-      return (name === "connecta.search" || name === "connecta.describe") &&
-        isObject(merged) &&
-        Array.isArray(merged.tools)
-        ? { ...merged, tools: mergedRows(merged.tools) }
-        : merged;
+      const rows =
+        (name === "connecta.search" || name === "connecta.describe") && isObject(value) && Array.isArray(value.tools)
+          ? { ...value, tools: mergedRows(value.tools) }
+          : value;
+      return renamed(rows);
     }
     if (this.arm === "teach-errors" && (name === "connecta.search" || name === "connecta.describe"))
       return quietGuides(value);
@@ -698,8 +744,10 @@ export class StepRuntime {
     if (!this.#active() || !isObject(error)) return error;
     const fields = error as Json;
     if (this.arm === "merged-tools") {
-      if (isObject(fields.details)) fields.details = renamed(fields.details);
-      if (typeof fields.message === "string") fields.message = renamed(fields.message);
+      const address = name === "connecta.call" ? args[0] : undefined;
+      if (isObject(fields.details)) fields.details = mergedError(address, args[1], renamed(fields.details));
+      if (typeof fields.message === "string")
+        fields.message = isObject(fields.details) ? fields.details.message : renamed(fields.message);
       return error;
     }
     if (this.arm !== "teach-errors" || name !== "connecta.call" || typeof args[0] !== "string") return error;

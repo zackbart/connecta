@@ -2,7 +2,7 @@
  * No paid model: each step-reduction arm against real deployments, through real
  * MCP and real programs. An arm must keep every grader's reference passing and
  * must leave refusals, read/write routing, value safety and required guides as
- * they were. `pnpm run eval:selftest --step-arms-only [--target node|worker]`.
+ * they were. `pnpm run eval:selftest --step-arms-only [--target node|worker] [--arm <arm>]`.
  */
 import assert from "node:assert/strict";
 import { playReference } from "./agent/reference.js";
@@ -17,7 +17,9 @@ import { STEP_CONTROL_TASKS, STEP_EXPERIMENTS, STEP_TRIAL_COUNT, STEP_BATCH } fr
 import { REST_TOOL_KINDS } from "./deploy/rest-tools.js";
 import { vercel } from "@zackbart/connecta/providers/vercel";
 
-const target = (flags(process.argv.slice(2)).get("target") ?? "node") as Target;
+const cli = flags(process.argv.slice(2));
+const target = (cli.get("target") ?? "node") as Target;
+const only = cli.get("arm") as StepArm | undefined;
 const taskOf = (id: string) => {
   const task = ACTIVE_TASKS.find((candidate) => candidate.id === id);
   if (!task) throw new Error(`Unknown plan task ${id}`);
@@ -256,7 +258,29 @@ async function mergedControls() {
     const names = page.tools.map((row: any) => row.name);
     assert.ok(names.includes("upsert_project_env"));
     assert.ok(!names.includes("upsert_project_env_var") && !names.includes("update_project_env_var"));
+    assert.equal(names.filter((name: string) => name === "upsert_project_env").length, 1, "one merged row");
     const row = page.tools.find((candidate: any) => candidate.name === "upsert_project_env");
+    assert.match(row.inputSchema, /envVarId\?/, "the merged schema is served, not an original's");
+    assert.deepEqual(row.requiredInputKeys, ["projectId"]);
+    for (const includeSchemas of ["compact", "json", "typescript"]) {
+      const logs = parse(
+        (await mcp.call("search_tools", { query: "logs", connector: "vercel_rest", includeSchemas, limit: 20 })).text,
+      ).tools.filter((candidate: any) => candidate.address === "vercel_rest.get_logs");
+      assert.equal(logs.length, 1, `one get_logs row in ${includeSchemas}`);
+      assert.match(JSON.stringify(logs[0]), /runtime/, `${includeSchemas} serves kind`);
+      assert.doesNotMatch(logs[0].description, /without following live output\. Bounded/, "the merged description");
+    }
+    const described = await program(
+      mcp,
+      `async () => (await connecta.describe({ address: "vercel_rest.get_logs", format: "compact" })).tools`,
+    );
+    assert.equal(described.length, 1);
+    assert.match(JSON.stringify(described[0]), /runtime/, "describe serves the merged schema");
+    const listed = await program(
+      mcp,
+      `async () => (await connecta.search({ connector: "vercel_rest", limit: 50 })).tools.map((t) => t.address)`,
+    );
+    assert.equal(listed.filter((address: string) => address === "vercel_rest.get_logs").length, 1);
     assert.notEqual(row.classification, "read", "the merged write stays a write");
     assert.equal(row.guideRequired, true);
     // The write route is required: call_tool refuses the merged write before dispatch.
@@ -301,20 +325,34 @@ async function mergedControls() {
     });
     assert.equal(missing.isError, true);
     assert.equal(world.ledger.calls.length, before);
+    assert.match(parse(missing.text).error.message, /\/kind: expected one of "build", "runtime"/);
+    const runtime = await mcp.call("call_tool", {
+      address: "vercel_rest.get_logs",
+      args: { kind: "runtime", projectId: "prj_web", deploymentId: "dpl_release000", waitMs: 1000, levels: ["error"] },
+    });
+    assert.equal(runtime.isError, false, runtime.text);
+    const build = await mcp.call("call_tool", {
+      address: "vercel_rest.get_logs",
+      args: { kind: "build", deploymentId: "dpl_release002" },
+    });
+    assert.equal(build.isError, false, build.text);
   });
 }
 
-await teachControls();
-console.log("teach-errors controls passed");
-await readyControls();
-console.log("ready-rows controls passed");
-await hintControls();
-console.log("next-hints controls passed");
-await mergedControls();
-console.log("merged-tools controls passed");
+for (const [arm, controls] of [
+  ["teach-errors", teachControls],
+  ["ready-rows", readyControls],
+  ["next-hints", hintControls],
+  ["merged-tools", mergedControls],
+] as const) {
+  if (only && only !== arm) continue;
+  await controls();
+  console.log(`${arm} controls passed`);
+}
 
 // Each grader's scripted reference still passes on every arm that runs it, and doing nothing still fails.
 for (const [arm, tasks] of Object.entries(STEP_EXPERIMENTS) as [StepArm, readonly string[]][]) {
+  if (only && only !== arm) continue;
   for (const id of tasks) {
     const task = taskOf(id);
     const checks = await playReference(task, { mode: "reference", target, stepArm: arm }, ({ world, trace }) =>

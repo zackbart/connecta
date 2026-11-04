@@ -315,10 +315,20 @@ describe("step metrics", () => {
     expect(steps.topStepsToFirstVendorOk).toBe(6);
     expect(steps.discoverySteps).toBe(3);
     expect(steps.guideFetches).toBe(1);
+    expect(steps.callsBeforeGuide).toBe(0);
     expect(steps.invalidArgs).toBe(1);
     expect(steps.wrongPathErrors).toBe(1);
     expect(steps.retriesToSuccess).toBe(0);
     expect(steps.unresolvedErrors).toBe(0);
+  });
+
+  it("counts vendor calls made before the connector's guide", () => {
+    const steps = flow([
+      { tool: "call_tool", input: { address: "ccb.list_groups" }, resultText: "{}" },
+      { tool: "skills", input: { name: "connector:ccb" }, resultText: "guide" },
+      { tool: "call_tool", input: { address: "ccb.get_group" }, resultText: "{}" },
+    ]);
+    expect(steps.callsBeforeGuide).toBe(1);
   });
 
   it("separates a retry from an unresolved wrong guess", () => {
@@ -414,5 +424,20 @@ describe("step metrics", () => {
     expect(() => crossTarget(file("control"), file("control"))).toThrow(/step-reduction arms/);
     expect(() => compareStepArms(file("control"), file("control"))).toThrow(/must be a step-reduction arm/);
     expect(() => compareStepArms(file("control"), file())).toThrow(/must be a step-reduction arm/);
+    expect(() =>
+      compareStepArms(
+        {
+          ...(file("control") as object),
+          config: { stepArm: "control", tasks: [], models: [] },
+          meta: { git: { srcTree: "aaaaaaaaaaaa" } },
+        } as never,
+        {
+          ...(file("merged-tools") as object),
+          config: { stepArm: "merged-tools", tasks: [], models: [] },
+          meta: { git: { srcTree: "bbbbbbbbbbbb" } },
+        } as never,
+        { diagnostic: true },
+      ),
+    ).toThrow(/same source tree/);
   });
 });

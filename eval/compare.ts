@@ -14,7 +14,7 @@ import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
 import { STEP_ARMS } from "./deploy/step-arms.js";
 import { STEP_DECISION_RULE, STEP_EXPERIMENTS, STEP_PRIMARY_METRIC } from "./step-reduction-plan.js";
-import { signTest, trialSteps, type TrialSteps } from "./report/steps.js";
+import { signTest, treatmentExposures, trialSteps, type TrialSteps } from "./report/steps.js";
 import { describeInjection, injectionOf, sameInjection } from "./fakes/injection.js";
 import {
   efficiencyLines,
@@ -507,6 +507,7 @@ const STEP_METRICS: readonly (keyof TrialSteps)[] = [
   "searchesBetweenListAndDetail",
   "wrongToolCalls",
   "guideFetches",
+  "callsBeforeGuide",
 ];
 
 /** Lower is better. Pass counts decide nothing here without the registered safety vetoes. */
@@ -523,9 +524,13 @@ function primaryMetric(arm: keyof typeof STEP_EXPERIMENTS, steps: TrialSteps, to
  * the only permitted difference. Prints the registered rule's inputs; a person
  * applies it across both runners.
  */
-export function compareStepArms(control: AgentResultFile, armFile: AgentResultFile): string {
+export function compareStepArms(
+  control: AgentResultFile,
+  armFile: AgentResultFile,
+  options: { diagnostic?: boolean } = {},
+): string {
   const arm = armFile.config.stepArm;
-  const reasons: string[] = [];
+  let reasons: string[] = [];
   if (control.config.stepArm !== "control") reasons.push("--a must be a --step-arm control batch");
   if (arm === undefined || arm === "control") throw new Error("Comparison refused: --b must be a step-reduction arm");
   const planned = STEP_EXPERIMENTS[arm];
@@ -545,15 +550,36 @@ export function compareStepArms(control: AgentResultFile, armFile: AgentResultFi
   reasons.push(
     ...settingMismatches(control, armFile, ["stepArm", "tasks"]).map((label) => `Arms must use the same ${label}`),
   );
+  // Measured source and task definitions must still match. A diagnostic forgives only harness bytes
+  // outside them, such as report edits or a fix to this arm's own adapter, and says so in its header.
+  const forgiven: string[] = [];
+  if (options.diagnostic) {
+    const forgivable = [
+      /: dirty must be recorded false$/,
+      /: harnessHash is missing or differs from the current protocol$/,
+      /must use the same (?:harnessHash|source commit|repeats)$/,
+      /must run exactly .* registered tasks$/,
+    ];
+    if (control.meta?.git?.srcTree !== armFile.meta?.git?.srcTree)
+      throw new Error("Comparison refused: a diagnostic still needs the same source tree");
+    forgiven.push(...reasons.filter((reason) => forgivable.some((pattern) => pattern.test(reason))));
+    reasons = reasons.filter((reason) => !forgiven.includes(reason));
+  }
   if (reasons.length) throw new Error(`Comparison refused:\n${[...new Set(reasons)].map((r) => `- ${r}`).join("\n")}`);
   const runner = control.config.runner === "claude" ? "claude" : "codex";
   const left = new Map(control.trials.filter((t) => planned.includes(t.task)).map((t) => [key(t), t]));
   const right = new Map(armFile.trials.map((t) => [key(t), t]));
+  if (options.diagnostic) for (const id of left.keys()) if (!right.has(id)) left.delete(id);
   if (left.size !== right.size || [...left.keys()].some((id) => !right.has(id)))
     throw new Error("Comparison refused: arms must have identical model/task/repeat pairs");
   const lines = [
     `STEP ARM ${arm} vs control; ${runner}; paired ${control.protocol!.pairId}; registered metric ${STEP_PRIMARY_METRIC[arm]}`,
     `Rule: ${STEP_DECISION_RULE}`,
+    ...(forgiven.length
+      ? [
+          `DIAGNOSTIC, NOT THE REGISTERED COMPARISON: ${[...new Set(forgiven)].join("; ")}. Same source tree and task hash.`,
+        ]
+      : []),
   ];
   for (const model of control.config.models) {
     const pairs = [...left.entries()]
@@ -570,6 +596,7 @@ export function compareStepArms(control: AgentResultFile, armFile: AgentResultFi
     const test = signTest(deltas);
     lines.push(
       `${model}: outcome ${passed(0)}/${pairs.length} control, ${passed(1)}/${pairs.length} arm; infrastructure-invalid pairs ${infrastructure}; duplicate writes ${safety(pairs.map((p) => p[0])).duplicates} control, ${safety(pairs.map((p) => p[1])).duplicates} arm`,
+      `  treatment reached ${pairs.filter((pair) => treatmentExposures(pair[1], arm) > 0).length}/${pairs.length} arm trials`,
       `  primary: arm better ${test.better}, worse ${test.worse}, tied ${test.tied}, unmeasured ${pairs.length - deltas.length}; decisive pairs a sign test needs at this rate: ${test.pairsNeeded ?? "not separable"}`,
     );
     for (const [label, side] of [
@@ -667,14 +694,14 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const args = flags(process.argv.slice(2));
   if (!args.has("a") || !args.has("b"))
     throw new Error(
-      "Usage: eval:compare --a <six.json> --b <code.json> [--allow-mismatch] | --cross-target --a <node.json> --b <worker.json> | --step-arms --a <control.json> --b <arm.json>",
+      "Usage: eval:compare --a <six.json> --b <code.json> [--allow-mismatch] | --cross-target --a <node.json> --b <worker.json> | --step-arms --a <control.json> --b <arm.json> [--diagnostic]",
     );
   const [a, b] = await Promise.all(
     [args.get("a")!, args.get("b")!].map(async (p) => JSON.parse(await readFile(p, "utf8")) as AgentResultFile),
   );
   console.log(
     args.has("step-arms")
-      ? compareStepArms(a!, b!)
+      ? compareStepArms(a!, b!, { diagnostic: args.has("diagnostic") })
       : args.has("cross-target")
         ? crossTarget(a!, b!)
         : compare(a!, b!, { allowMismatch: args.has("allow-mismatch") }),
