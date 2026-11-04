@@ -291,6 +291,8 @@ export interface InvocationContext<T> {
     sentSecrets: SentSecrets,
     format: "json" | "text",
     raw: unknown,
+    /** The output's serialized size, already measured; undefined if it cannot serialize. */
+    bytes: number | undefined,
   ) => T | Promise<T>;
   /**
    * Optional payload-free friction class derived from a *successful* result —
@@ -1108,7 +1110,14 @@ export class InvocationService {
       const processing: Effect.Effect<T, unknown> = inputRequiredValue
         ? Effect.succeed(inputRequiredValue.value)
         : processResult
-          ? authCall<T>(processResult, [sentSecrets.redact(result), completed, sentSecrets, valueFormat, rawResult])
+          ? authCall<T>(processResult, [
+              sentSecrets.redact(result),
+              completed,
+              sentSecrets,
+              valueFormat,
+              rawResult,
+              resultBytes,
+            ])
           : Effect.succeed(result as T);
       const processed = yield* Effect.exit(
         timed(

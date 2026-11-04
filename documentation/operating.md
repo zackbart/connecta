@@ -127,6 +127,11 @@ which URIs may be read. Connector guides and native skills are described in
 
 ## Recover without replaying a write
 
+A failed `execute_code` run may carry `error.completed`: the calls that finished
+before it failed. Read their outputs with `connecta.result(error.completed.resultId)`
+in a new program instead of repeating any of them
+([`R9`](./code-mode.md#results-and-projection)).
+
 Read typed failures and their `nextAction`. Authorization recovery can point
 to consent, operator credential setup, or deployment configuration. Discovery
 and status do not begin consent on their own. Follow

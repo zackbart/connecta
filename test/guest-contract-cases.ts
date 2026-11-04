@@ -1,4 +1,4 @@
-import { recordToolActivity } from "../src/activity.js";
+import { recordOperationActivity, recordToolActivity } from "../src/activity.js";
 // The guest API contract cases from documentation/code-mode.md, written once
 // and run against every executor. Each case names the clauses it verifies; a
 // case that behaves differently under two executors is either a bug or a
@@ -10,6 +10,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { GUEST_FUNCTIONS } from "../src/guest-functions.js";
 import { createMetaTools, type ToolResult } from "../src/meta-tools.js";
+import { sentSecretsForRequest } from "../src/sent-secrets.js";
 import { downstreamSkillUri } from "../src/skills.js";
 import { createConnecta } from "../src/index.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -150,7 +151,7 @@ export async function checkNativeSnapshots(executor: Executor): Promise<void> {
  * Pool access is static (#837), so what can change between a stash and its
  * page is the endpoint, the caller, and what the auth provider answers now.
  */
-export async function checkStashAuthority(executor: Executor, programReturn = false): Promise<void> {
+export async function checkStashAuthority(executor: Executor, programReturn = false, failedRun = false): Promise<void> {
   // What `control.revoke` does to authentication mid-program: refuse it, or
   // admit a different member of the same pool.
   let revoke: "refused" | "swapped" = "refused";
@@ -239,12 +240,19 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
     expect(refused.isError).toBe(true);
     expect(refused.structuredContent).toMatchObject({ error: { code: "read_only_endpoint", retryable: false } });
     expect(JSON.stringify(refused)).not.toContain("stash-disclosure-sentinel");
-    const direct = programReturn
-      ? await rpc("execute_code", { code: 'async () => (await connecta.call("docs.write")).data' })
-      : await rpc("call_destructive_tool", { address: "docs.write" });
-    let id = programReturn
-      ? (direct.structuredContent!.result as { resultId: string }).resultId
-      : JSON.parse(required(direct.content[0]).text.split("\n")[0]!).resultId;
+    const direct = failedRun
+      ? await rpc("execute_code", {
+          code: 'async () => { await connecta.call("docs.write"); throw new Error("after the write"); }',
+        })
+      : programReturn
+        ? await rpc("execute_code", { code: 'async () => (await connecta.call("docs.write")).data' })
+        : await rpc("call_destructive_tool", { address: "docs.write" });
+    if (failedRun) expect(JSON.stringify(direct)).not.toContain("stash-disclosure-sentinel");
+    let id = failedRun
+      ? (direct.structuredContent!.error as { completed: { resultId: string } }).completed.resultId
+      : programReturn
+        ? (direct.structuredContent!.result as { resultId: string }).resultId
+        : JSON.parse(required(direct.content[0]).text.split("\n")[0]!).resultId;
     expect(id).toMatch(/^[a-f0-9-]{36}$/);
     if (programReturn) {
       const derived = await rpc("execute_code", {
@@ -262,9 +270,10 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
       expect(id).toMatch(/^[a-f0-9-]{36}$/);
     }
     const code = `async () => await connecta.result(${JSON.stringify(id)}, { maxBytes: 20 })`;
+    const firstBytes = failedRun ? '{"calls":[{"address"' : JSON.stringify(secret).slice(0, 20);
     const visible = await rpc("execute_code", { code });
     expect(visible.isError).toBeFalsy();
-    expect(visible.structuredContent).toMatchObject({ result: { text: JSON.stringify(secret).slice(0, 20) } });
+    expect(visible.structuredContent).toMatchObject({ result: { text: firstBytes } });
     const deny = async (options: Parameters<typeof rpc>[2] = {}, prefix = "") => {
       const result = await rpc(
         "execute_code",
@@ -318,7 +327,7 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
     // Every refusal above was scoped; the admitted caller still pages it.
     const again = await rpc("execute_code", { code });
     expect(again.isError).toBeFalsy();
-    expect(again.structuredContent).toMatchObject({ result: { text: JSON.stringify(secret).slice(0, 20) } });
+    expect(again.structuredContent).toMatchObject({ result: { text: firstBytes } });
   } finally {
     await app.close();
     await readonly.close();
@@ -835,6 +844,348 @@ export async function checkReadDeadlineUtilities(executor: Executor): Promise<vo
     { status: "rejected", code: "timeout", retryable: true },
   ]);
   expect(Date.now() - started).toBeGreaterThan(1_000);
+}
+
+const OUTPUT_SENTINEL = "completed-output-sentinel";
+
+/** A connector whose writes have one physical count each, for the R9 controls. */
+function completedFixture() {
+  const physical: Record<string, number> = {};
+  const connector: Connector = {
+    id: "books",
+    kind: "api",
+    async listTools() {
+      const write = (name: string): ToolDef => ({ name, annotations: { readOnlyHint: false } });
+      return [
+        write("create"),
+        write("slow_create"),
+        write("big_create"),
+        write("lost_create"),
+        readOnly("read"),
+        readOnly("sized"),
+        readOnly("note"),
+        readOnly("hang"),
+      ];
+    },
+    async callTool(name, args) {
+      physical[name] = (physical[name] ?? 0) + 1;
+      if (name === "create") return { id: "inv_1", marker: OUTPUT_SENTINEL };
+      if (name === "slow_create") {
+        await new Promise((resolve) => setTimeout(resolve, 2_500));
+        return { id: "inv_slow", marker: OUTPUT_SENTINEL };
+      }
+      if (name === "big_create") return { id: "inv_big", marker: OUTPUT_SENTINEL, pad: "x".repeat(2_000_000) };
+      if (name === "lost_create") throw new Error("the connection dropped");
+      if (name === "sized") return { pad: "r".repeat((args as { chars: number }).chars) };
+      if (name === "note") return "plain text output";
+      if (name === "hang") return new Promise<never>(() => {});
+      return { value: "read-output" };
+    },
+  };
+  return { connector, physical };
+}
+
+const completedOf = (out: ToolResult) =>
+  (required(out.structuredContent).error as Record<string, any>).completed as {
+    resultId?: string;
+    calls: { address: string; write?: true; dropped?: true; resultId?: string }[];
+    note: string;
+  };
+
+/** Read a failed run's kept outputs the way an agent would, in a new program. */
+async function recoverCompleted(execute: ReturnType<typeof createExecuteTool>, id: string) {
+  const out = await execute({
+    code: `async () => {
+      let text = "", offset = 0, page;
+      do {
+        page = await connecta.result(${JSON.stringify(id)}, { offset });
+        text += page.text; offset = page.nextOffset;
+      } while (page.hasMore);
+      return JSON.parse(text);
+    }`,
+  });
+  expect(out.isError, out.content[0]?.text).toBeFalsy();
+  return required(out.structuredContent).result as { calls: Record<string, any>[] };
+}
+
+/** R9 INV-9: every way a run fails keeps finished outputs, and recovery sends nothing again. */
+export async function checkCompletedOutputs(executor: Executor, shortDeadline: Executor): Promise<void> {
+  // A later throw.
+  {
+    const { connector, physical } = completedFixture();
+    const execute = createExecuteTool(makeRegistry([connector]), CONTRACT_BASE, executor, silentLogger);
+    const failed = await execute({
+      code: `async () => {
+        await connecta.call("books.read");
+        await connecta.call("books.note");
+        await connecta.call("books.create");
+        throw new Error("later step failed");
+      }`,
+    });
+    expect(failed.isError).toBe(true);
+    expect(required(failed.structuredContent).error).toMatchObject({
+      code: "program_error",
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    const completed = completedOf(failed);
+    expect(completed.calls).toEqual([
+      { address: "books.read" },
+      { address: "books.note" },
+      { address: "books.create", write: true },
+    ]);
+    // Addresses only: the output stays in the stash, in both response forms.
+    expect(JSON.stringify(failed)).not.toContain(OUTPUT_SENTINEL);
+    const recovered = await recoverCompleted(execute, required(completed.resultId));
+    expect(recovered.calls).toEqual([
+      { address: "books.read", format: "json", data: { value: "read-output" } },
+      { address: "books.note", format: "text", data: "plain text output" },
+      { address: "books.create", write: true, format: "json", data: { id: "inv_1", marker: OUTPUT_SENTINEL } },
+    ]);
+    // The INV-9 control: the output came back with no second physical write.
+    expect(physical.create).toBe(1);
+  }
+  // The run deadline, with a write that only the drain sees finish.
+  {
+    const { connector, physical } = completedFixture();
+    const execute = createExecuteTool(makeRegistry([connector]), CONTRACT_BASE, shortDeadline, silentLogger);
+    const failed = await execute({
+      code: `async () => {
+        await connecta.call("books.create");
+        await connecta.call("books.slow_create", {}, { timeoutMs: 600000 });
+        return "never";
+      }`,
+    });
+    expect(required(failed.structuredContent).error).toMatchObject({
+      code: "timeout",
+      retryable: false,
+      writes: { succeeded: 2, failed: 0, unknown: 0 },
+    });
+    const completed = completedOf(failed);
+    expect(completed.calls).toEqual([
+      { address: "books.create", write: true },
+      { address: "books.slow_create", write: true },
+    ]);
+    const recovered = await recoverCompleted(execute, required(completed.resultId));
+    expect(recovered.calls.map(({ data }) => data.id)).toEqual(["inv_1", "inv_slow"]);
+    expect(physical).toMatchObject({ create: 1, slow_create: 1 });
+  }
+  // The host-call budget, whose refusal the guest cannot catch.
+  {
+    const { connector, physical } = completedFixture();
+    const execute = createExecuteTool(makeRegistry([connector]), CONTRACT_BASE, executor, silentLogger, undefined, {
+      maxHostCalls: 2,
+    });
+    const failed = await execute({
+      code: `async () => {
+        await connecta.call("books.create");
+        await connecta.call("books.read");
+        await connecta.call("books.read");
+        return "never";
+      }`,
+    });
+    expect(required(failed.structuredContent).error).toMatchObject({ code: "budget_exceeded" });
+    const completed = completedOf(failed);
+    expect(completed.calls).toEqual([{ address: "books.create", write: true }, { address: "books.read" }]);
+    expect(physical.create).toBe(1);
+    const recovered = await recoverCompleted(execute, required(completed.resultId));
+    expect(recovered.calls.map(({ address }) => address)).toEqual(["books.create", "books.read"]);
+  }
+  // A write with no known outcome replaces a program's return; what finished survives that.
+  {
+    const { connector, physical } = completedFixture();
+    const execute = createExecuteTool(makeRegistry([connector]), CONTRACT_BASE, executor, silentLogger);
+    const failed = await execute({
+      code: `async () => {
+        await connecta.call("books.create");
+        await connecta.call("books.lost_create").catch(() => {});
+        return "returned";
+      }`,
+    });
+    expect(required(failed.structuredContent).error).toMatchObject({
+      code: "write_outcome_unknown",
+      writes: { succeeded: 1, unknown: 1 },
+    });
+    expect(completedOf(failed).calls).toEqual([{ address: "books.create", write: true }]);
+    const recovered = await recoverCompleted(execute, required(completedOf(failed).resultId));
+    expect(recovered.calls[0]!.data.id).toBe("inv_1");
+    expect(physical).toMatchObject({ create: 1, lost_create: 1 });
+  }
+  // An output too large to hold keeps its own stash entry, and no second one is written.
+  {
+    const { connector, physical } = completedFixture();
+    const execute = createExecuteTool(makeRegistry([connector]), CONTRACT_BASE, executor, silentLogger);
+    const failed = await execute({
+      code: `async () => {
+        const made = await connecta.call("books.big_create");
+        throw new Error(made.format);
+      }`,
+    });
+    const completed = completedOf(failed);
+    expect(completed.resultId).toBeUndefined();
+    expect(completed.calls).toEqual([
+      { address: "books.big_create", write: true, resultId: expect.stringMatching(/^[a-f0-9-]{36}$/) },
+    ]);
+    const page = await execute({
+      code: `async () => await connecta.result(${JSON.stringify(completed.calls[0]!.resultId)}, { maxBytes: 40 })`,
+    });
+    expect(required(page.structuredContent).result).toMatchObject({ hasMore: true });
+    expect(physical.big_create).toBe(1);
+  }
+  // Reads give way, oldest first, to stay within what one run holds.
+  {
+    const { connector } = completedFixture();
+    const execute = createExecuteTool(makeRegistry([connector]), CONTRACT_BASE, executor, silentLogger);
+    const failed = await execute({
+      code: `async () => {
+        for (let i = 0; i < 6; i++) await connecta.call("books.sized", { chars: 200000 });
+        await connecta.call("books.create");
+        throw new Error("later step failed");
+      }`,
+    });
+    const completed = completedOf(failed);
+    expect(completed.calls.map(({ dropped }) => dropped === true)).toEqual([
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(completed.note).toContain("did not fit");
+    // Larger than one program's host calls can page: the tail is a later offset.
+    const tail = await execute({
+      code: `async () => (await connecta.result(${JSON.stringify(completed.resultId)}, { offset: 1000000 })).text`,
+    });
+    expect(required(tail.structuredContent).result).toContain('"id":"inv_1"');
+  }
+  // A full stash leaves only addresses, and says so.
+  {
+    const { connector, physical } = completedFixture();
+    const execute = createExecuteTool(
+      makeRegistry([connector], { results: { maxStashEntries: 0 } }),
+      CONTRACT_BASE,
+      executor,
+      silentLogger,
+    );
+    const failed = await execute({
+      code: `async () => { await connecta.call("books.create"); throw new Error("later step failed"); }`,
+    });
+    const completed = completedOf(failed);
+    expect(completed).not.toHaveProperty("resultId");
+    expect(completed.calls).toEqual([{ address: "books.create", write: true, dropped: true }]);
+    expect(completed.note).toContain("only addresses survive");
+    expect(JSON.stringify(failed)).not.toContain(OUTPUT_SENTINEL);
+    expect(physical.create).toBe(1);
+  }
+  // A cancelled caller starts no storage work.
+  {
+    const { connector, physical } = completedFixture();
+    const registry = makeRegistry([connector]);
+    const stash = vi.spyOn(registry, "stashResult");
+    const controller = new AbortController();
+    const execute = createExecuteTool(registry, CONTRACT_BASE, executor, silentLogger);
+    const run = execute(
+      {
+        code: `async () => {
+          await connecta.call("books.create");
+          await connecta.call("books.hang");
+        }`,
+      },
+      { signal: controller.signal },
+    );
+    await vi.waitFor(() => expect(physical.hang).toBe(1), { timeout: 10_000 });
+    controller.abort();
+    const failed = await run;
+    expect(required(failed.structuredContent).error).toMatchObject({ code: "executor_cancelled" });
+    expect(completedOf(failed).calls[0]).toEqual({ address: "books.create", write: true, dropped: true });
+    expect(stash).not.toHaveBeenCalled();
+  }
+  // A run that succeeds keeps nothing, and pays no stash write.
+  {
+    const { connector } = completedFixture();
+    const registry = makeRegistry([connector]);
+    const stash = vi.spyOn(registry, "stashResult");
+    const out = await createExecuteTool(
+      registry,
+      CONTRACT_BASE,
+      executor,
+      silentLogger,
+    )({
+      code: `async () => (await connecta.call("books.create")).data.id`,
+    });
+    expect(out.isError).toBeFalsy();
+    expect(required(out.structuredContent).result).toBe("inv_1");
+    expect(stash).not.toHaveBeenCalled();
+  }
+}
+
+/** INV-5 INV-6: kept outputs reach only the stash, redacted with everything the run sent. */
+export async function checkCompletedPrivacy(executor: Executor): Promise<void> {
+  const secret = "late-registered-credential";
+  let requestScope = {};
+  const events: unknown[] = [];
+  const logged: unknown[] = [];
+  const logger = {
+    debug: (...args: unknown[]) => logged.push(args),
+    info: (...args: unknown[]) => logged.push(args),
+    warn: (...args: unknown[]) => logged.push(args),
+    error: (...args: unknown[]) => logged.push(args),
+  };
+  const connector: Connector = {
+    id: "books",
+    kind: "api",
+    async listTools() {
+      return [{ name: "create", annotations: { readOnlyHint: false } }, readOnly("authenticate")];
+    },
+    async callTool(name) {
+      // The credential goes out after the output that echoes it came back.
+      if (name === "authenticate") {
+        sentSecretsForRequest(requestScope).add(secret);
+        return { authenticated: true };
+      }
+      return { marker: OUTPUT_SENTINEL, echoed: secret };
+    },
+  };
+  const activity: ActivityRequestContext = {
+    recordTool: recordToolActivity,
+    recordOperation: recordOperationActivity,
+    sink: { record: (event) => void events.push(event) },
+    actor: { kind: "contract" },
+    requestId: "completed-privacy-request",
+    serverInfo: { name: "connecta-contract", version: "0" },
+    logger,
+  };
+  for (const results of [undefined, { maxStashEntries: 0 }]) {
+    const registry = makeRegistry([connector], { logger, ...(results ? { results } : {}) });
+    requestScope = {};
+    const failed = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, { requestScope })({
+      code: `async () => {
+        await connecta.call("books.create");
+        await connecta.call("books.authenticate");
+        throw new Error("later step failed");
+      }`,
+    });
+    expect(failed.isError).toBe(true);
+    const text = JSON.stringify(failed);
+    expect(text).not.toContain(OUTPUT_SENTINEL);
+    expect(text).not.toContain(secret);
+    expect(completedOf(failed).calls).toHaveLength(2);
+    for (const sink of [events, logged]) {
+      expect(JSON.stringify(sink)).not.toContain(OUTPUT_SENTINEL);
+      expect(JSON.stringify(sink)).not.toContain(secret);
+    }
+    if (results) continue;
+    requestScope = {};
+    const stored = await createExecuteTool(registry, CONTRACT_BASE, executor, logger, activity, { requestScope })({
+      code: `async () => (await connecta.result(${JSON.stringify(completedOf(failed).resultId)})).text`,
+    });
+    const page = required(stored.structuredContent).result as string;
+    expect(page).toContain(OUTPUT_SENTINEL);
+    expect(page).not.toContain(secret);
+    expect(JSON.stringify(events)).not.toContain(OUTPUT_SENTINEL);
+  }
+  expect(events.length).toBeGreaterThan(0);
 }
 
 export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {

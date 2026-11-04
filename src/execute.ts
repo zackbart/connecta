@@ -47,6 +47,7 @@ import { MAX_EXECUTE_LOG_CHARS, MAX_EXECUTE_RESULT_CHARS, truncateExecuteText } 
 import { ExecutorAdmissionError, ExecutorExecutionError, isAdmittingExecutor } from "./executor-admission.js";
 import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
+import { CompletedCalls } from "./program-completed.js";
 import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
 import { EXECUTE_OUTPUT } from "./meta-output.js";
@@ -532,6 +533,8 @@ interface SandboxLimits {
   maxWrites?: number | undefined;
   /** The program's writes, for close and drain. */
   programWrites?: ProgramWrites | undefined;
+  /** Finished calls' outputs, kept only for a run that fails (R9). */
+  completedCalls?: CompletedCalls | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
   /** Set when a failed program had read a result field off an unawaited host call. */
@@ -565,6 +568,12 @@ interface HostCalls {
 }
 
 type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
+
+/** One connecta.call on its way out. */
+interface Sending {
+  settle?: SettleWrite;
+  completed?: ReturnType<CompletedCalls["record"]>;
+}
 
 type GuestOperation = (...args: unknown[]) => Effect.Effect<unknown, unknown>;
 
@@ -648,7 +657,7 @@ function sandboxProvider(
     return value;
   };
   /** Budget and account for writes a writable endpoint admits. */
-  const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number, writeTimeoutMs: number) => ({
+  const invocationContext = (sending: Sending, timeoutMs: number, writeTimeoutMs: number) => ({
     source: "execute_code" as const,
     sentSecrets,
     timeoutMs,
@@ -659,10 +668,20 @@ function sandboxProvider(
     unwrapResult: true,
     readOnly: limits.readOnly,
     processResult: authMethod(
-      (value: unknown, resolved: ResolvedCatalogTool, secrets: SentSecrets, format: "json" | "text", raw: unknown) =>
+      (
+        value: unknown,
+        resolved: ResolvedCatalogTool,
+        secrets: SentSecrets,
+        format: "json" | "text",
+        raw: unknown,
+        bytes: number | undefined,
+      ) =>
         Effect.gen(function* () {
           // Dispatch succeeded before presentation began. Cancellation of paging
-          // cannot turn this completed write into an unknown or failed write.
+          // cannot turn this completed write into an unknown or failed write,
+          // or cost it the output a failed run keeps. Record it before settling:
+          // settling lets the drain end the run.
+          sending.completed = limits.completedCalls?.record(resolved, value, format, bytes);
           sending.settle?.("ok");
           const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
             authCall<Awaited<ReturnType<typeof pageProgramResult>>>(pageProgramResult, [
@@ -848,7 +867,7 @@ function sandboxProvider(
       const writeTimeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A program write settles here — unknown if the call never returned an
       // outcome. Credentials are filtered from arguments; submitted private values are not.
-      const sending: { settle?: SettleWrite } = {};
+      const sending: Sending = {};
       const outcome = yield* invocation
         .pipeline(
           address,
@@ -879,6 +898,7 @@ function sandboxProvider(
       }
       diagnostics?.recordCall(outcome);
       if (!outcome.ok) return yield* Effect.fail(new InvocationFailure(outcome.error));
+      limits.completedCalls?.presented(sending.completed, outcome.value);
       return outcome.value;
     });
 
@@ -1492,6 +1512,8 @@ export function createExecuteTool(
     requestScope: object,
     hostCalls: HostCalls,
     programWrites: ProgramWrites,
+    completedCalls: CompletedCalls,
+    resultDependencies: ProgramResultDependency[],
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
@@ -1502,7 +1524,6 @@ export function createExecuteTool(
         diagnostics,
         maxResultChars,
       );
-      const resultDependencies: ProgramResultDependency[] = [];
       const unawaited = { read: false };
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
@@ -1572,6 +1593,7 @@ export function createExecuteTool(
                 maxWrites: config.maxWrites,
                 routes: config.routes,
                 programWrites,
+                completedCalls,
                 resultDependencies,
                 dispatchController,
                 unawaited,
@@ -1694,6 +1716,8 @@ export function createExecuteTool(
         if (!owner.open) return Effect.fail(owner.controller.signal.reason);
         const hostCalls: HostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
         const programWrites = new ProgramWrites();
+        const completedCalls = new CompletedCalls();
+        const resultDependencies: ProgramResultDependency[] = [];
         const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
           // that first so a huge direct-call string is never encoded in full.
@@ -1713,18 +1737,77 @@ export function createExecuteTool(
             requestScope,
             hostCalls,
             programWrites,
+            completedCalls,
+            resultDependencies,
           );
         });
+        // Every failure, however it ended, so write accounting replacing the
+        // envelope cannot cost it this field. The stash binds every contributor
+        // the run touched, the same authority a program return gets (R4).
+        const keepCompleted = (result: ToolResult): Effect.Effect<ToolResult> =>
+          Effect.suspend(() => {
+            const kept = completedCalls.close();
+            const error = result.structuredContent?.error;
+            if (!kept || !result.isError || error === null || typeof error !== "object") return Effect.succeed(result);
+            const stashed: Effect.Effect<unknown, unknown> =
+              kept.stashed === undefined || options.signal?.aborted
+                ? Effect.void
+                : withDeadlineEffect(
+                    () =>
+                      authCall<unknown>(guardProgramReturn, [
+                        kept.stashed,
+                        registry,
+                        baseUrl,
+                        [
+                          ...new Map(
+                            [...resultDependencies, ...kept.dependencies].map((dependency) => [
+                              JSON.stringify(dependency),
+                              dependency,
+                            ]),
+                          ).values(),
+                        ],
+                        sentSecrets,
+                        logger,
+                        0,
+                        programWrites.hasSucceeded,
+                        maxResultChars,
+                      ]),
+                    {
+                      timeoutMs: hostCallTimeoutMs,
+                      ...(options.signal ? { signal: options.signal } : {}),
+                      timeoutError: new Error("Result storage did not answer."),
+                    },
+                  );
+            return stashed.pipe(
+              Effect.catchCause(() => Effect.void),
+              Effect.map((notice) => {
+                const resultId = (notice as { resultId?: unknown } | undefined)?.resultId;
+                const structured = result.structuredContent!;
+                return {
+                  ...result,
+                  structuredContent: {
+                    ...structured,
+                    error: {
+                      ...(error as object),
+                      completed: kept.report(typeof resultId === "string" ? resultId : undefined),
+                    },
+                  },
+                };
+              }),
+            );
+          });
         return operationActivity(
           activity,
           registry,
           "program",
           response.pipe(
+            Effect.map((unfinished) => programWrites.finish(unfinished)),
+            Effect.flatMap(keepCompleted),
             Effect.provideService(RequestScope, owner),
-            Effect.map((unfinished) => {
+            Effect.map((finished) => {
               // Every response, including intake refusals, crosses accounting and
               // exactly one envelope check at this operation boundary.
-              const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
+              const result = redactAgentOutput(sentSecrets, finished);
               // Calls abandoned by the guest are failed when the run cancels them.
               // Connecta attaches its own integers after the envelope check.
               const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };

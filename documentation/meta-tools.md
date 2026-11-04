@@ -517,6 +517,10 @@ and [2026-07-28 Resources](https://modelcontextprotocol.io/specification/2026-07
 
 ## Result representation
 
+`execute_code` errors use the [code mode](./code-mode.md#errors) envelope. A failed
+run's `error.completed` lists its finished calls by address and points at their
+outputs in the result stash, never carrying the outputs itself (`R9`).
+
 For structured envelopes, `structuredContent` is the canonical full-fidelity value and
 `content` carries the same complete value as compact JSON for clients that only
 consume text. Keeping both follows MCP's backwards-compatibility guidance;

@@ -9,6 +9,8 @@ import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
+import { CompletedCalls } from "../src/program-completed.js";
+import type { ResolvedCatalogTool } from "../src/catalog-service.js";
 import { createConnecta, customExecutor } from "../src/index.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -449,4 +451,79 @@ it("INV-11: requires every deployment to choose readOnly, while pools inherit it
     expect(construct).toThrow("Choose readOnly: true");
     expect(construct).toThrow("or readOnly: false");
   }
+});
+
+describe("CompletedCalls", () => {
+  const KIB = 1024;
+  const tool = (name: string, annotations: ToolDef["annotations"]) =>
+    ({
+      connector: { id: "books" },
+      toolName: name,
+      definition: {
+        name,
+        annotations,
+        classification: annotations?.readOnlyHint === true ? "read" : "write",
+      },
+    }) as unknown as ResolvedCatalogTool;
+  const read = tool("read", { readOnlyHint: true });
+  const write = tool("write", { readOnlyHint: false });
+  const add = (calls: CompletedCalls, target: ResolvedCatalogTool, kib: number) =>
+    calls.record(target, "x".repeat(kib * KIB - 2), "text", kib * KIB);
+  const kept = (calls: CompletedCalls) => {
+    const closed = required(calls.close());
+    return { closed, report: closed.report("id") as { calls: { address: string; dropped?: true }[] } };
+  };
+
+  it("R9: drops the oldest reads first and never a write before a read", () => {
+    const calls = new CompletedCalls();
+    add(calls, write, 200);
+    add(calls, read, 300);
+    add(calls, read, 300);
+    add(calls, write, 400);
+    const { report } = kept(calls);
+    expect(report.calls.map(({ dropped }) => dropped === true)).toEqual([false, true, false, false]);
+  });
+
+  it("R9: a read that cannot fit beside writes gives way, and writes evict the oldest write last", () => {
+    const reads = new CompletedCalls();
+    add(reads, write, 600);
+    add(reads, write, 400);
+    add(reads, read, 100);
+    expect(kept(reads).report.calls.map(({ dropped }) => dropped === true)).toEqual([false, false, true]);
+    const writes = new CompletedCalls();
+    add(writes, write, 600);
+    add(writes, read, 200);
+    add(writes, write, 500);
+    add(writes, write, 500);
+    expect(kept(writes).report.calls.map(({ dropped }) => dropped === true)).toEqual([true, true, false, false]);
+  });
+
+  it("R9: an output over the limit displaces nothing and is never serialized", () => {
+    const calls = new CompletedCalls();
+    add(calls, read, 100);
+    const toJSON = vi.fn(() => "never");
+    calls.record(write, { toJSON }, "json", 1024 * KIB + 1);
+    expect(toJSON).not.toHaveBeenCalled();
+    const { closed, report } = kept(calls);
+    expect(report.calls.map(({ dropped }) => dropped === true)).toEqual([false, true]);
+    expect((closed.stashed as { calls: unknown[] }).calls).toHaveLength(1);
+  });
+
+  it("R9: lists every write and the newest reads, with an omission count", () => {
+    const calls = new CompletedCalls();
+    for (let i = 0; i < 40; i++) calls.record(tool(`read${i}`, { readOnlyHint: true }), i, "json", 2);
+    calls.record(write, 1, "json", 1);
+    const report = required(calls.close()).report("id") as { calls: { address: string }[]; callsOmitted: number };
+    expect(report.calls).toHaveLength(32);
+    expect(report.callsOmitted).toBe(9);
+    expect(report.calls.at(0)!.address).toBe("books.read9");
+    expect(report.calls.at(-1)!.address).toBe("books.write");
+  });
+
+  it("INV-7: holds nothing once the run has closed it", () => {
+    const calls = new CompletedCalls();
+    expect(calls.close()).toBeUndefined();
+    expect(add(calls, write, 1)).toBeUndefined();
+    expect(calls.close()).toBeUndefined();
+  });
 });

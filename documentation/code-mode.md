@@ -648,7 +648,8 @@ the model as an error result. One seam: a host call still in flight when the run
 is cancelled fails with `cancelled`, catchable on the way out but never worth
 acting on (`Y3`). When shutdown tears down a program that had already started,
 accepted blocks are reported as discarded under `M4`; a failure before execution
-started carries no discard fields. A returned `error` field is a failure even
+started carries no discard fields. Calls that finished first are reported in
+`error.completed` (`R9`). A returned `error` field is a failure even
 when empty. An empty string reports `program_error` with
 `Program Error: Execution failed without an error message.`
 
@@ -809,6 +810,61 @@ addresses, arguments, results, code, credentials, logs, or raw errors. Result
 sizes are numbers, never previews. The collector exists only for the opted-in
 request; it is not activity, a session, or a stream.
 
+**R9.** A failed run reports the `connecta.call`s that finished before it failed
+as `error.completed`, however it failed: a later throw, the run deadline, the
+host-call budget, cancellation, or a write with no known outcome replacing the
+program's return. A call finished when its dispatch answered, so a write the
+drain saw finish is included, and a read the guest never received may be.
+`connecta.read`, `result`, `skill` and discovery are not listed. A run with no
+finished call, and any run that succeeds, has no such field.
+
+```json
+{
+  "error": {
+    "code": "program_error",
+    "message": "Program Error: later step failed",
+    "retryable": false,
+    "writes": { "succeeded": 1, "failed": 0, "unknown": 0 },
+    "completed": {
+      "resultId": "9e433461-a095-4176-a1ed-c42f9c7eec66",
+      "calls": [{ "address": "crm.list_accounts" }, { "address": "crm.create_invoice", "write": true }],
+      "note": "These calls finished before the run failed and are not undone. …"
+    }
+  }
+}
+```
+
+| Field              | Meaning                                                                                                                              |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `resultId`         | Stash entry holding the kept outputs. Absent when nothing was kept or storage could not keep it                                      |
+| `calls[].address`  | Canonical address, in call order. Never arguments or output                                                                          |
+| `calls[].write`    | Write-like, a source write overridden to read included (`W9`). Not to be repeated                                                    |
+| `calls[].resultId` | The call's own stash entry, for an output too large to inline. It is not also in the kept outputs                                    |
+| `calls[].dropped`  | The output is gone: it did not fit, could not serialize, or could not be stored                                                      |
+| `callsOmitted`     | Calls past the envelope's limit of 32, which lists every write first and then the newest reads. Their kept outputs stay in the stash |
+| `note`             | Fixed recovery text, including when storage could not keep the outputs and only addresses survive                                    |
+
+Recovery is a new program. `connecta.result(resultId)` pages UTF-8 text that
+parses as `{ calls: [{ address, write?, format, data }] }`, and nothing is sent
+again (`W9`), so never repeat a write to recover its output. One program pages
+only what its host-call budget allows; continue from `nextOffset` in the next.
+
+The host holds at most 1 MiB of serialized outputs in memory for the length of
+the run. Past that it drops the oldest read, and only an incoming write may then
+displace the oldest write. A read never displaces a write, and an output over
+1 MiB displaces nothing. Memory ends with the run, and a run that succeeds writes
+nothing to the stash. A failure writes once, after the executor has finished,
+bounded by `execute.hostCallTimeoutMs`. A cancelled caller starts no storage
+work, so it receives addresses only.
+
+The entry is an ordinary program-return stash (`R4`): the same redaction, using
+every secret the run sent, even one sent after the output arrived; the same
+15-minute expiry and capacity charges; and the same binding to the admitted
+subject, principal, endpoint or pool, origin and every contributing connector
+and tool, rechecked on each page. Outputs reach only that stash, never activity,
+logs or status (INV-6). Measured size is what is charged, so holding an output
+costs one `JSON.stringify` of it, and an output over the limit costs none.
+
 ## Emitted output
 
 Guest-authored images accept only `image/png`, `image/jpeg`, `image/gif`, or `image/webp`
@@ -965,7 +1021,7 @@ appear in `timeouts`, bounded to ten entries.
 
 **L3.** Every execution runs under a wall-clock deadline that includes time
 spent waiting on host calls. Expiry ends the run with an execution error and no
-partial result; the deadline's length is executor configuration (`X1`), which
+partial result, though finished calls' outputs stay recoverable (`R9`); the deadline's length is executor configuration (`X1`), which
 an executor publishes as `deadlineMs` (QuickJS 30 s, Dynamic Worker 60 s by
 default).
 
@@ -1223,7 +1279,8 @@ if the program does not await it, bounded by its host-call deadline. A write
 that reaches accounting after the program settles is not sent. An unanswered
 write makes the run fail `write_outcome_unknown` with
 `writes: { succeeded, failed, unknown }`, regardless of its return value.
-A failed program that already wrote carries those counts on its error. No
+A failed program that already wrote carries those counts on its error, and
+`error.completed` recovers finished writes' outputs (`R9`). No
 write is automatically retried, including an ambiguous timeout. A downstream
 refusal can establish failure only when it covers the whole call: a request
 connecta never sent, or an HTTP 4xx refusal (not 408) of the only request the
@@ -1418,6 +1475,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `M6`, `M9`             | verdicts; `R2`'s guard, `M1`'s strict typing, and `M2`'s collect-then-deliver are their enforcement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `R5`                   | `test/guest-api-contract.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `R6`–`R8`              | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion)                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `R9`                   | `test/guest-api-contract.test.ts` and `test/guest-api-contract-quickjs.node.test.ts` (every way a run fails, recovery with no second physical write, stash authority, redaction and payload-free records), `test/program-writes.test.ts` (retention order and limits)                                                                                                                                                                                                                                                                                                                         |
 | `Y1`, `Y2`, `Y3`       | `test/guest-api-contract.test.ts` (one attempt per call, retryable flags by code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `Y4`                   | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `L1`, `L2`             | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease)                                                                                                                                                                                                                                                                                     |

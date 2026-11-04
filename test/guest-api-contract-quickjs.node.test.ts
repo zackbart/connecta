@@ -14,6 +14,8 @@ import {
   checkProgramReadDependencies,
   checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
+  checkCompletedOutputs,
+  checkCompletedPrivacy,
   checkReadDeadlineUtilities,
   checkSharedPreludes,
   checkStashAuthority,
@@ -168,6 +170,18 @@ describe("guest API contract (QuickJS executor)", () => {
 
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(readDeadlineExecutor);
+  });
+
+  it("[R9] INV-9: a failed run keeps finished outputs, and recovering them sends nothing again", async () => {
+    await checkCompletedOutputs(executor, readDeadlineExecutor);
+  });
+
+  it("[R9] INV-5 INV-6: kept outputs reach only the stash, under the run's redaction", async () => {
+    await checkCompletedPrivacy(executor);
+  });
+
+  it("[R4, R9] INV-2 INV-3 INV-4: a failed run's stash rechecks identity, endpoint, pool and live authentication", async () => {
+    await checkStashAuthority(executor, false, true);
   });
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
