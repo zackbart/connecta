@@ -142,12 +142,12 @@ export const slides = defineApiProvider<SlidesOptions>({
     binding: ({ connection }) => slidesBinding(connection),
   },
   probe,
+  blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,
       "Workspace delegation is configured. Each call acts as the account deployment code maps the caller to; an agent uses its pool owner unless one shared account is configured. No argument selects a subject.",
-      "Content windows: get_presentation defaults to 20 slides (maximum 100); get_page to 50 elements (maximum 500); list_layouts to 100 rows (maximum 500); list_comments to 50 threads (maximum 500). Slides has no vendor list pagination.",
-      "Generic thumbnails/preview links are refused; get_slide_thumbnail is the reviewed short-lived-link workflow. The generic batch retains only the 49 shipped request kinds; no extra preview methods are admitted.",
+      "The generic batch retains only the 49 shipped request kinds.",
       ...(options.readOnly ? ["This connection is read-only; writes are refused."] : []),
     ],
     summary: "Load for deck text, notes, layouts, comments and guarded Slides edits.",

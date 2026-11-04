@@ -234,7 +234,8 @@ function withCodeSurface(connecta: Connecta, surface: Surface): Connecta {
           !reply.result.isError
         ) {
           reply.result.content = [{ type: "text", text: usage }];
-          reply.result.structuredContent = codeSkill(body.params.arguments.name, reply.result.structuredContent);
+          if (reply.result.structuredContent !== undefined)
+            reply.result.structuredContent = codeSkill(body.params.arguments.name, reply.result.structuredContent);
         }
         if (usage && body?.method === "resources/read" && isUsage(body.params?.uri) && reply.result?.contents) {
           reply.result.contents = reply.result.contents.map((item: Record<string, unknown>) => ({
