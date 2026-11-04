@@ -343,6 +343,13 @@ export type ConnectorSkillResourceContents = {
 } & ({ text: string; blob?: never } | { blob: string; text?: never });
 
 /** The whole plugin contract — the one open seam. */
+/** A complete cached catalog and the times it was fetched and expires, in epoch milliseconds. */
+export interface ConnectorCatalogPeek {
+  tools: ToolDef[];
+  fetchedAt: number;
+  expiresAt: number;
+}
+
 export interface Connector {
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
@@ -407,6 +414,16 @@ export interface Connector {
    * fetched lazily over the network and are not known at construction time.
    */
   staticTools?: ToolDef[];
+  /**
+   * Optional: the newest complete catalog this context could be served, fresh
+   * or stale, read from storage alone. No transport, no authorization and no
+   * writes. Discovery lists its result and marks it; call resolution never
+   * reads it. `remoteMcp()` implements it. A custom connector omits it and
+   * discovery falls back to the catalog core retains for an authenticated owner.
+   * A wrapper that replaces `listTools` must replace or remove this as well, or
+   * discovery lists what the wrapper would have changed.
+   */
+  peekCatalog?(ctx: ConnectorContext): Promise<ConnectorCatalogPeek | undefined>;
   /**
    * Optional: what this connector is, for `Connecta.describeConfig()` and the
    * operator surfaces built on it — where it points, how it authenticates,

@@ -17,13 +17,14 @@ import {
   catalogExpiry,
   catalogFetchedAt,
   customCatalogFallback,
+  customCatalogPeek,
   invalidateCatalogCache,
   observeUncachedCatalogRefresh,
   retainedCatalogIdentity,
   storeCustomCatalogFallback,
   type CatalogToolFingerprint,
 } from "./catalog-cache.js";
-import { carryCatalogFreshness, markCatalogFreshness } from "./catalog-freshness.js";
+import { carryCatalogFreshness, markCatalogFreshness, markCatalogStale } from "./catalog-freshness.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { usesCallerIdentity, type ConnectorCaller } from "./connector-caller.js";
@@ -78,6 +79,7 @@ import { carryToolClassification, classifyTool } from "./tool-safety.js";
 import type {
   CatalogAccessObservation,
   Connector,
+  ConnectorCatalogPeek,
   ConnectorContext,
   ConnectorStatus,
   KVStorage,
@@ -244,6 +246,14 @@ export interface ProgramResultDependency {
   classification: "read" | "write";
 }
 
+/** A cached catalog as discovery may list it. */
+export interface CatalogPeek {
+  tools: ToolDef[];
+  fetchedAt: number;
+  /** Whether the connector's own cache would serve this now, with no failure to report. */
+  fresh: boolean;
+}
+
 export interface RegistryView {
   credentialUiAvailable(): boolean;
   /** Deployment-wide result-size cap threaded to the meta-tools. */
@@ -261,6 +271,17 @@ export interface RegistryView {
     requestScope?: object,
     callOptions?: ConnectorOperationOptions,
   ): Promise<ToolDef[]>;
+  /**
+   * The newest complete catalog this caller could be listed, classified and
+   * filtered as a listing is, from storage alone. For discovery; a call never
+   * resolves through it. Undefined for a static catalog or a miss.
+   */
+  peekCatalog(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions?: ConnectorOperationOptions,
+  ): Promise<CatalogPeek | undefined>;
   contextFor(
     id: string,
     baseUrl: string,
@@ -1055,6 +1076,9 @@ export class Registry implements RegistryView {
       }
       const provenance = catalogExpiry(ctx);
       const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
+      // A transient-failure fallback answers the listing; discovery still reports its age.
+      if (provenance?.staleFallback)
+        markCatalogStale(accepted, { code: "unavailable", ageMs: Math.max(0, Date.now() - provenance.fetchedAt) });
       // Principal-forwarded listings belong to one caller, never to the shared
       // operator observation store. The actual catalog cache is identity-bound.
       if (!forwardsPrincipal(connector)) {
@@ -1065,6 +1089,35 @@ export class Registry implements RegistryView {
         });
       }
       return markCatalogFreshness(accepted, freshUntil);
+    });
+  }
+
+  /** See {@link RegistryView.peekCatalog}. Same classification and filtering as `loadTools`. */
+  private loadPeek(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions: ConnectorOperationOptions = {},
+    scope?: RegistryScope,
+  ): Effect.Effect<CatalogPeek | undefined, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const connector = this.connectors.get(id);
+      if (!connector || connector.staticTools) return undefined;
+      const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
+      const peek = connector.peekCatalog
+        ? yield* authInvoke<ConnectorCatalogPeek | undefined>(connector, "peekCatalog", [ctx])
+        : yield* authCall<ConnectorCatalogPeek | undefined>(customCatalogPeek, [ctx, id]);
+      if (!peek) return undefined;
+      const facts = redactCatalog(ctx, peek.tools).map(({ classification: _ignored, ...fact }) => fact);
+      const overrides = this.classification[id];
+      return {
+        tools: this.acceptToolNames(frozenFacts(structuredClone(facts)))
+          .filter((tool) => overrides?.[tool.name] !== "hidden")
+          .map((tool) => this.publishTool(id, tool)),
+        fetchedAt: peek.fetchedAt,
+        // A custom catalog is always listed anew, so its retained copy is never current.
+        fresh: connector.peekCatalog !== undefined && peek.expiresAt > Date.now(),
+      };
     });
   }
 
@@ -1152,6 +1205,18 @@ export class Registry implements RegistryView {
         `classification override ${quoted} is dormant because the runtime catalog lists no such tool`,
       );
     }
+  }
+
+  peekCatalog(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions: ConnectorOperationOptions = {},
+    scope?: RegistryScope,
+  ): Promise<CatalogPeek | undefined> {
+    return runEdge(
+      registryEdgeProgram(Registry.prototype, this, "peekCatalog", id, baseUrl, requestScope, callOptions, scope),
+    );
   }
 
   getTools(
@@ -1392,6 +1457,14 @@ export class Registry implements RegistryView {
             }),
           );
         }),
+      peekCatalog: (self, id, baseUrl, requestScope, callOptions = {}, scope) =>
+        Effect.suspend(() => {
+          if (!self.connectors.has(id)) return Effect.succeed(undefined);
+          const owner = self.contextFor(id, baseUrl, requestScope, callOptions, scope);
+          return duringViewEffect(owner, (signal) =>
+            self.loadPeek(id, baseUrl, owner.requestScope, { ...callOptions, signal }, scope),
+          );
+        }),
       credentialDriftFor: (self, id, requestScope) =>
         Effect.gen(function* () {
           const credential = self.connectors.get(id)?.credential;
@@ -1542,6 +1615,10 @@ class ScopedRegistryView implements RegistryView {
     return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "getTools", ...args));
   }
 
+  peekCatalog(...args: Parameters<RegistryView["peekCatalog"]>): Promise<CatalogPeek | undefined> {
+    return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "peekCatalog", ...args));
+  }
+
   contextFor(...args: Parameters<RegistryView["contextFor"]>): ConnectorContext {
     const registry = this.registryFor(args[0]);
     if (!registry) throw new Error(`Unknown connector "${args[0]}"`);
@@ -1663,6 +1740,15 @@ class ScopedRegistryView implements RegistryView {
             }
           }
           return carryCatalogFreshness(tools, visible);
+        }),
+      peekCatalog: (self, ...args) =>
+        Effect.gen(function* () {
+          const registry = self.registryFor(args[0]);
+          if (!registry) return undefined;
+          const peek = yield* registryProgram(registry, "peekCatalog", args[0], args[1], args[2], args[3], self.scope);
+          const granted = self.scope.toolAccess?.get(args[0]);
+          // A pool grant binds a stale listing exactly as it binds a live one.
+          return peek && granted ? { ...peek, tools: peek.tools.filter((tool) => granted.has(tool.name)) } : peek;
         }),
       credentialDriftFor: (self, id, requestScope) =>
         Effect.suspend(() => {

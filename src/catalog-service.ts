@@ -6,11 +6,18 @@ import { registerAuthMethod } from "./auth/native.js";
 import { META_ROUTES, routeToolInPlace } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
-import { carryCatalogFreshness, catalogIsFresh, catalogGenerationFor } from "./catalog-freshness.js";
+import {
+  carryCatalogFreshness,
+  catalogGenerationFor,
+  catalogIsFresh,
+  catalogStaleness,
+  markCatalogStale,
+  type CatalogStaleness,
+} from "./catalog-freshness.js";
 import { retainedCatalogIdentity } from "./catalog-cache.js";
 import { cloneTool } from "./tool-safety.js";
 import { hasControlCharacters } from "./tool-name.js";
-import { Effect, Result } from "effect";
+import { Effect, Result, Semaphore } from "effect";
 import {
   prepareLexicalCatalog,
   carryLexicalCatalog,
@@ -29,12 +36,13 @@ import {
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { boundedEchoText, classifyCallError, ConnectorCallError, framingError } from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
-import type { ConnectorOperationOptions, RegistryView } from "./registry.js";
+import type { CatalogPeek, ConnectorOperationOptions, RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { connectorGuide, connectorGuideRequired, connectorGuideSummary, connectorSkillName } from "./skills.js";
-import { runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { detach, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { registryProgram } from "./runtime/registry.js";
 import { SharedRead } from "./runtime/shared-read.js";
+import { closeScope } from "./runtime/connector-scope.js";
 import { duringViewEffect } from "./runtime/call.js";
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
@@ -44,6 +52,7 @@ import {
 } from "./timeout.js";
 import {
   claimDiscoveryProbe,
+  type HealthSlot,
   readDiscoveryHealth,
   settleDiscoveryHealth,
   type HealthVerdict,
@@ -61,6 +70,21 @@ interface SearchProbe {
 
 /** The slice of an unscoped search's budget kept for recording what its probes saw. */
 const SETTLE_RESERVE_MS = 500;
+/** Cached reads running at once in one discovery. Storage only, so they never wait for a probe slot. */
+const CATALOG_PEEK_CONCURRENCY = 16;
+/** The longest a stale catalog's read holds up a finished probe, and the least any peek gets. */
+const STALE_READ_TIMEOUT_MS = 1_000;
+/** One deferred refresh's whole deadline. Inside the 30 seconds Workers keeps `waitUntil` alive. */
+const CATALOG_REFRESH_TIMEOUT_MS = 20_000;
+/**
+ * Failures that say the connector did not answer, so its last complete catalog
+ * can stand in for the listing. Auth and permission failures, refusals and
+ * malformed catalogs are answers, and stay failures.
+ */
+const STALE_LISTING_CODES: ReadonlySet<string> = new Set(["timeout", "unavailable", "rate_limited"]);
+/** A retryable downstream failure (HTTP 502, 503 or 504); a refusal under this code is not retryable. */
+const staleListingAllowed = (code: string, retryable: boolean) =>
+  STALE_LISTING_CODES.has(code) || (code === "connector_call_failed" && retryable);
 const lexicalStores = new WeakMap<object, number>();
 let nextLexicalStore = 0;
 /** How long a probe claim outlives its request's discovery budget, for settlement and clock skew. */
@@ -452,7 +476,27 @@ interface CatalogSearchFailure extends CatalogFailureDetail {
   connector: string;
   nextAction?: NonNullable<CallErrorDetails["nextAction"]>;
   retry?: string;
+  /** This connector's tools are listed, from its last complete catalog. A call still checks the live one. */
+  stale?: true;
+  /** With `stale`: milliseconds since the downstream last confirmed that catalog. */
+  ageMs?: number;
 }
+
+/** Fixed text and typed facts only: nothing here comes from the connector. */
+function staleCatalogFailure(connector: string, stale: CatalogStaleness): CatalogSearchFailure {
+  return {
+    connector,
+    code: stale.code,
+    message: `Connector "${connector}" did not answer discovery (${stale.code}), so its tools are listed from its last complete catalog. Calls still check the live catalog. Search with connector "${connector}" to try it now.`,
+    retryable: true,
+    ...(stale.retryAfterMs === undefined ? {} : { retryAfterMs: stale.retryAfterMs }),
+    stale: true,
+    ageMs: stale.ageMs,
+  };
+}
+
+const staleListedText = (count: number) =>
+  `${count} connector catalog${count === 1 ? " is" : "s are"} listed from an older complete catalog; inspect catalogErrors.`;
 
 /** A complete read call search found in offline operation vocabulary. */
 interface CatalogReadyCall {
@@ -536,6 +580,8 @@ const catalogFailureProperties = {
   message: { type: "string" },
   retryable: { type: "boolean" },
   retryAfterMs: { type: "integer", minimum: 0 },
+  stale: { const: true },
+  ageMs: { type: "integer" },
   connector: { type: "string" },
   recovery: { enum: ["oauth", "operator_config", "unavailable"] },
   status: { const: "auth_required" },
@@ -779,6 +825,13 @@ export class CatalogService {
   // current by its own probes, so repeated searches read no storage.
   private readonly health = new Map<string, HealthVerdict>();
   private readonly routes: AgentRouteNames;
+  // This request's peeks: a stale listing is kept here, never in `catalogs`,
+  // because resolve reads `catalogs` and a call must never resolve through it.
+  private readonly peeks = new Map<string, { identity: string; read: SharedRead<CatalogPeek | undefined> }>();
+  // At most one deferred refresh per connector per request.
+  private readonly refreshed = new Set<string>();
+  private refreshSlots: Semaphore.Semaphore | undefined;
+  private readonly unscopedProbeTimeoutMs: number;
 
   constructor(
     private readonly registry: RegistryView,
@@ -788,10 +841,12 @@ export class CatalogService {
       probeTimeoutMs?: number | undefined;
       /** Unscoped search's whole fan-out budget. Default `UNSCOPED_DISCOVERY_BUDGET_MS`. */
       discoveryBudgetMs?: number | undefined;
+      /** Each unscoped probe's deadline. Default `UNSCOPED_PROBE_TIMEOUT_MS`. */
+      unscopedProbeTimeoutMs?: number | undefined;
       concurrency?: number | undefined;
       /** The discovery route recovery records name. Default `search_tools`. */
       searchRoute?: SearchRoute | undefined;
-      /** Runtime-owned connector teardown tail. */
+      /** Runtime-owned tail: connector teardown, and catalog refreshes past a probe deadline. */
       defer?: DeferredWork | undefined;
       /** The request's cancellation; discovery probes end with it. */
       requestSignal?: AbortSignal | undefined;
@@ -809,6 +864,7 @@ export class CatalogService {
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs = normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.discoveryBudgetMs = normalizeTimeoutMs(options.discoveryBudgetMs) ?? UNSCOPED_DISCOVERY_BUDGET_MS;
+    this.unscopedProbeTimeoutMs = normalizeTimeoutMs(options.unscopedProbeTimeoutMs) ?? UNSCOPED_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
     this.searchRoute = options.searchRoute ?? "search_tools";
     this.requestSignal = options.requestSignal;
@@ -935,9 +991,137 @@ export class CatalogService {
     if (!view) {
       view = toolsForSafety(readOnly ? tools.filter((tool) => tool.classification === "read") : tools, safety ?? "all");
       carryLexicalCatalog(tools, view);
+      const stale = catalogStaleness(tools);
+      if (stale) markCatalogStale(view, stale);
       views.set(key, view);
     }
     return view;
+  }
+
+  // One connector's cached catalog, read at most once per request and identity.
+  // Storage only (INV-10), under its own deadline and the request's signal. A
+  // read that fails or runs out of time is a miss: discovery never fails on it.
+  private peek(id: string, timeoutMs: number): Effect.Effect<CatalogPeek | undefined> {
+    return withDeadlineEffect((signal) => this.joinPeek(id, signal), {
+      ...(this.requestSignal ? { signal: this.requestSignal } : {}),
+      timeoutMs,
+      timeoutError: new ConnectorCallError("timeout", `catalog peek of "${id}" timed out`),
+    }).pipe(Effect.catchCause(() => Effect.succeed(undefined)));
+  }
+
+  private joinPeek(id: string, signal: AbortSignal): Effect.Effect<CatalogPeek | undefined, unknown> {
+    return Effect.suspend(() => {
+      const identity = retainedCatalogIdentity(this.registry.contextFor(id, this.baseUrl, this.requestScope));
+      let retained = this.peeks.get(id);
+      if (!retained || retained.identity !== identity) {
+        const started: SharedRead<CatalogPeek | undefined> = new SharedRead(
+          (signal) =>
+            registryProgram(this.registry, "peekCatalog", id, this.baseUrl, this.requestScope, { signal }).pipe(
+              Effect.map((peek) => {
+                if (!peek) return undefined;
+                const connector = this.registry.getConnector(id);
+                for (const tool of peek.tools) routeToolInPlace(connector, tool, this.routes);
+                return peek;
+              }),
+            ),
+          (succeeded) => {
+            if (!succeeded && this.peeks.get(id)?.read === started) this.peeks.delete(id);
+          },
+          this.requestScope,
+        );
+        retained = { identity, read: started };
+        this.peeks.set(id, retained);
+      }
+      return retained.read.join(signal);
+    });
+  }
+
+  /**
+   * A peek as this discovery's answer for a connector that did not. Whatever a
+   * listing would hide stays hidden: the view is filtered like a live one, and
+   * the mark is what makes search and native listing report it.
+   */
+  private staleListing(
+    id: string,
+    peek: CatalogPeek,
+    includeWrites: boolean,
+    failure: { code: string; retryAfterMs?: number },
+  ): ToolDef[] {
+    const source = markCatalogStale(
+      peek.tools.map((tool) => cloneTool(tool)),
+      {
+        code: failure.code,
+        ageMs: Math.max(0, Date.now() - peek.fetchedAt),
+        ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }),
+      },
+    );
+    return this.searchView(id, source, includeWrites, "all");
+  }
+
+  /**
+   * Refresh a catalog whose probe ran out of time, in a request scope of its
+   * own under `defer`, the runtime's tail. Nothing here shares this request's
+   * signal, transports or reads, so nothing request-bound outlives the request
+   * (INV-7); the refresh owns its transport and closes it within its own
+   * deadline, which Workers `waitUntil` covers. It lists like any discovery:
+   * a partial walk publishes nothing (INV-8) and no authorization starts
+   * (INV-10). The health record's lease keeps other requests from starting
+   * another while this one runs, and its result settles that record.
+   */
+  private refreshLater(id: string, slot: HealthSlot, spentMs: number): void {
+    const timeoutMs = Math.min(this.probeTimeoutMs, CATALOG_REFRESH_TIMEOUT_MS);
+    if (!this.defer || this.refreshed.has(id) || timeoutMs <= spentMs) return;
+    this.refreshed.add(id);
+    const scope = {};
+    const connector = this.registry.getConnector(id);
+    // Measured from now: time queued behind other refreshes counts, so every
+    // refresh of this request ends inside the runtime's tail.
+    const endsAt = Date.now() + timeoutMs;
+    const refresh = Effect.gen({ self: this }, function* () {
+      const timeoutMs = endsAt - Date.now();
+      if (timeoutMs <= 0) return;
+      const claimed = yield* claimDiscoveryProbe(slot, endsAt + CLAIM_MARGIN_MS);
+      if (!claimed || !connector) return;
+      const timeoutError = new ConnectorCallError("timeout", `catalog refresh of "${id}" timed out`);
+      const started = Date.now();
+      const result = yield* Effect.result(
+        withDeadlineEffect(
+          (signal) =>
+            registryProgram(this.registry, "getTools", id, this.baseUrl, scope, {
+              signal,
+              timeoutMs,
+              ...(this.defer ? { defer: this.defer } : {}),
+            }),
+          { timeoutMs, timeoutError },
+        ),
+      );
+      yield* settleDiscoveryHealth(
+        slot,
+        Result.isSuccess(result)
+          ? { ok: true }
+          : {
+              ok: false,
+              failure: result.failure,
+              timedOut: result.failure === timeoutError,
+              elapsedMs: Date.now() - started,
+            },
+      );
+    });
+    this.refreshSlots ??= Semaphore.makeUnsafe(this.concurrency);
+    detach(
+      this.refreshSlots
+        .withPermits(1)(refresh)
+        .pipe(
+          Effect.ensuring(
+            Effect.suspend(() =>
+              connector
+                ? closeScope(connector, this.registry.contextFor(id, this.baseUrl, scope), this.defer)
+                : Effect.void,
+            ),
+          ),
+        ),
+      { waitUntil: this.defer },
+    );
   }
 
   // Every named catalog under its own probe deadline, `concurrency` at a time,
@@ -976,14 +1160,26 @@ export class CatalogService {
   // it, then runs to its end. A lapsed record is claimed as its probe is
   // dispatched, leased to the end of this budget plus a margin.
   // Caller cancellation and a probe the budget cut short leave health as it was.
+  //
+  // Unscoped search and a native listing also serve a connector's last complete
+  // catalog, marked stale, when it did not answer in time. A cached or authored
+  // catalog is read without a probe slot, so only a connector that must actually
+  // be asked waits for one. A native listing has no budget and gives a connector
+  // with nothing to fall back on its full deadline, since it would otherwise vanish.
   private searchCatalogs(
     ids: readonly string[],
-    scoped: boolean,
+    mode: "scoped" | "unscoped" | "native",
+    includeWrites = false,
   ): Effect.Effect<Array<Result.Result<ToolDef[], unknown>>> {
     return Effect.gen({ self: this }, function* () {
-      const deadline = scoped ? this.probeTimeoutMs : Math.min(this.probeTimeoutMs, UNSCOPED_PROBE_TIMEOUT_MS);
-      const budgetEnd = scoped ? Infinity : Date.now() + this.discoveryBudgetMs;
-      const settleReserve = scoped ? 0 : Math.min(SETTLE_RESERVE_MS, Math.floor(this.discoveryBudgetMs / 10));
+      const scoped = mode === "scoped";
+      const shortDeadline = Math.min(this.probeTimeoutMs, this.unscopedProbeTimeoutMs);
+      const budgeted = mode === "unscoped";
+      const route = mode === "native" ? "tools/list" : this.searchRoute;
+      const budgetEnd = budgeted ? Date.now() + this.discoveryBudgetMs : Infinity;
+      const settleReserve = budgeted ? Math.min(SETTLE_RESERVE_MS, Math.floor(this.discoveryBudgetMs / 10)) : 0;
+      const slots = yield* Semaphore.make(this.concurrency);
+      const peekSlots = yield* Semaphore.make(CATALOG_PEEK_CONCURRENCY);
       // Health storage starts only while budget remains and the caller is
       // here; running out is not a failure, health is then unknown. Once
       // started, an operation is awaited to its end, never raced or detached:
@@ -1032,13 +1228,54 @@ export class CatalogService {
       };
       const probeOne = (id: string): Effect.Effect<SearchProbe> =>
         Effect.gen({ self: this }, function* () {
-          const verdict = scoped ? undefined : this.health.get(id);
-          const skip = verdict?.skip;
-          if (skip && skip.retryAt > Date.now())
+          const connector = this.registry.getConnector(id);
+          // An authored catalog answers from configuration: no slot, no budget, no health.
+          if (!scoped && connector?.staticTools)
             return {
               id,
-              result: Result.fail(new DiscoverySkipped(skip.code, Math.ceil(skip.retryAt - Date.now()))),
+              result: yield* Effect.result(
+                this.probe(
+                  id,
+                  includeWrites,
+                  this.probeTimeoutMs,
+                  new ConnectorCallError(
+                    "timeout",
+                    `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`,
+                  ),
+                ),
+              ),
             };
+          // Storage only, so a connector with a current catalog never queues
+          // behind one that must be asked. A custom connector is always listed
+          // anew and starts no cache I/O here; it peeks only if that fails.
+          let peek =
+            !scoped && connector?.peekCatalog && Date.now() < budgetEnd
+              ? yield* peekSlots.withPermits(1)(this.peek(id, Math.max(shortDeadline, STALE_READ_TIMEOUT_MS)))
+              : undefined;
+          const verdict = scoped ? undefined : this.health.get(id);
+          const skip = verdict?.skip;
+          const staleAnswer = (failure: { code: string; retryAfterMs?: number }) =>
+            Effect.gen({ self: this }, function* () {
+              // Caller cancellation is not a connector that failed to answer.
+              if (scoped || this.requestSignal?.aborted) return undefined;
+              // A custom connector's first peek, or another try at one that ran out of time.
+              peek ??= yield* this.peek(id, STALE_READ_TIMEOUT_MS);
+              return peek ? this.staleListing(id, peek, includeWrites, failure) : undefined;
+            });
+          if (skip && skip.retryAt > Date.now() && !peek?.fresh) {
+            const retryAfterMs = Math.ceil(skip.retryAt - Date.now());
+            // Discovery health records only timeouts and retryable failures.
+            if (staleListingAllowed(skip.code, true)) {
+              const stale = yield* staleAnswer({ code: skip.code, retryAfterMs });
+              if (stale) return { id, result: Result.succeed(stale) };
+            }
+            // A native listing has no search to come back through: it still asks.
+            if (mode !== "native") return { id, result: Result.fail(new DiscoverySkipped(skip.code, retryAfterMs)) };
+          }
+          // With something to fall back on a short deadline is enough. Without
+          // it, a native listing waits its full deadline, as the connector
+          // would otherwise be absent; unscoped search keeps its short one.
+          const deadline = scoped || (mode === "native" && !peek) ? this.probeTimeoutMs : shortDeadline;
           const timeoutFor = (remaining: number) => {
             const budgetCut = remaining < deadline;
             return {
@@ -1047,49 +1284,89 @@ export class CatalogService {
               timeoutError: budgetCut
                 ? new ConnectorCallError(
                     "timeout",
-                    `${this.searchRoute} stopped probing "${id}" at the ${this.discoveryBudgetMs}ms discovery budget`,
+                    `${route} stopped probing "${id}" at the ${this.discoveryBudgetMs}ms discovery budget`,
                   )
-                : new ConnectorCallError(
-                    "timeout",
-                    `${this.searchRoute} probe of "${id}" timed out after ${deadline}ms`,
-                  ),
+                : new ConnectorCallError("timeout", `${route} probe of "${id}" timed out after ${deadline}ms`),
             };
           };
-          let plan = timeoutFor(Math.ceil(budgetEnd - settleReserve - Date.now()));
-          if (plan.timeoutMs <= 0) return { id, result: Result.fail(plan.timeoutError) };
-          // A lapsed record: claim this probe now, as it is dispatched. The
-          // lease runs to an absolute time, the end of this request's
-          // discovery budget plus a margin, so however long the claim write
-          // takes, the probe the budget still allows ends inside it.
-          if (skip && verdict?.slot) {
-            const leaseUntil = budgetEnd + CLAIM_MARGIN_MS;
-            const claimed = yield* withinBudget(claimDiscoveryProbe(verdict.slot, leaseUntil), false);
-            if (!claimed) {
-              this.health.set(id, { slot: verdict.slot, skip: { code: skip.code, retryAt: leaseUntil } });
-              return {
-                id,
-                result: Result.fail(new DiscoverySkipped(skip.code, Math.max(1, Math.ceil(leaseUntil - Date.now())))),
-              };
+          const asked = Effect.gen({ self: this }, function* () {
+            // A current catalog is a storage read in hand, not a probe the budget has to bound.
+            const remaining = () => (peek?.fresh ? Infinity : Math.ceil(budgetEnd - settleReserve - Date.now()));
+            let plan = timeoutFor(remaining());
+            if (plan.timeoutMs <= 0)
+              return { result: Result.fail(plan.timeoutError) as Result.Result<ToolDef[], unknown>, plan };
+            // A lapsed record: claim this probe now, as it is dispatched. The
+            // lease runs to an absolute time, the end of this request's
+            // discovery budget plus a margin, so however long the claim write
+            // takes, the probe the budget still allows ends inside it.
+            if (budgeted && skip && verdict?.slot && !peek?.fresh) {
+              const leaseUntil = budgetEnd + CLAIM_MARGIN_MS;
+              const claimed = yield* withinBudget(claimDiscoveryProbe(verdict.slot, leaseUntil), false);
+              if (!claimed) {
+                this.health.set(id, { slot: verdict.slot, skip: { code: skip.code, retryAt: leaseUntil } });
+                return {
+                  result: Result.fail(
+                    new DiscoverySkipped(skip.code, Math.max(1, Math.ceil(leaseUntil - Date.now()))),
+                  ) as Result.Result<ToolDef[], unknown>,
+                  plan,
+                };
+              }
+              this.health.set(id, { slot: verdict.slot });
+              plan = timeoutFor(remaining());
+              if (plan.timeoutMs <= 0)
+                return { result: Result.fail(plan.timeoutError) as Result.Result<ToolDef[], unknown>, plan };
             }
-            this.health.set(id, { slot: verdict.slot });
-            plan = timeoutFor(Math.ceil(budgetEnd - settleReserve - Date.now()));
-            if (plan.timeoutMs <= 0) return { id, result: Result.fail(plan.timeoutError) };
+            const started = Date.now();
+            const result = yield* Effect.result(this.probe(id, includeWrites, plan.timeoutMs, plan.timeoutError));
+            // Elapsed time is this probe's own, measured as it settles.
+            return { result, plan, elapsedMs: Date.now() - started };
+          });
+          // A current catalog's read takes no slot: it hands the peek to the listing.
+          const { result, plan, elapsedMs } = (peek?.fresh ? yield* asked : yield* slots.withPermits(1)(asked)) as {
+            result: Result.Result<ToolDef[], unknown>;
+            plan: ReturnType<typeof timeoutFor>;
+            elapsedMs?: number;
+          };
+          if (elapsedMs === undefined) {
+            if (Result.isFailure(result)) {
+              const failure = result.failure;
+              const stale = yield* staleAnswer(
+                failure instanceof DiscoverySkipped
+                  ? { code: failure.code, retryAfterMs: failure.retryAfterMs }
+                  : { code: "timeout" },
+              );
+              if (stale) return { id, result: Result.succeed(stale) };
+            }
+            return { id, result };
           }
-          const started = Date.now();
-          const result = yield* Effect.result(this.probe(id, false, plan.timeoutMs, plan.timeoutError));
-          // Elapsed time is this probe's own, measured as it settles.
-          const elapsedMs = Date.now() - started;
           const outcome: SearchProbe =
             plan.budgetCut && Result.isFailure(result) && result.failure === plan.timeoutError
               ? { id, result }
               : { id, result, settle: { timeoutError: plan.timeoutError, elapsedMs } };
           if (scoped) return outcome;
-          yield* settleOne(outcome);
+          // A catalog served from cache says nothing about a recorded failure.
+          if (!(skip && peek?.fresh)) yield* settleOne(outcome);
+          if (Result.isSuccess(result)) return { id, result };
+          const failure = result.failure;
+          // A probe that ran out of time: its abort left nothing cached, so ask
+          // again past this request, under the longer deadline the runtime's tail allows.
+          if (failure === plan.timeoutError && !plan.budgetCut) {
+            const slot = this.health.get(id)?.slot;
+            if (slot) this.refreshLater(id, slot, plan.timeoutMs);
+          }
+          const classified =
+            failure === plan.timeoutError
+              ? { code: "timeout", retryable: true }
+              : classifyCallError(failure, "catalog_lookup_failed");
+          if (staleListingAllowed(classified.code, classified.retryable)) {
+            const stale = yield* staleAnswer({ code: classified.code });
+            if (stale) return { id, result: Result.succeed(stale) };
+          }
           return { id, result };
         });
       if (!scoped) {
         yield* readHealth;
-        const probed = yield* Effect.forEach(ids, probeOne, { concurrency: this.concurrency });
+        const probed = yield* Effect.forEach(ids, probeOne, { concurrency: "unbounded" });
         return probed.map((outcome) => outcome.result);
       }
       const [, probed] = yield* Effect.all(
@@ -1122,20 +1399,24 @@ export class CatalogService {
   listCatalogs(
     includeWrites = false,
     connectors = this.registry.listConnectors(),
+    allowStale = false,
   ): Promise<Array<{ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown }>> {
-    return runEdge(this.listCatalogsEffect(includeWrites, connectors));
+    return runEdge(this.listCatalogsEffect(includeWrites, connectors, allowStale));
   }
 
-  listCatalogsEffect(includeWrites = false, connectors?: Connector[]) {
+  /**
+   * `allowStale` is for a listing only. Resolving a native call must not pass
+   * it: uniqueness and authority come from a catalog that answered.
+   */
+  listCatalogsEffect(includeWrites = false, connectors?: Connector[], allowStale = false) {
     return duringViewEffect({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
       Effect.suspend(() => {
         const visible = connectors ?? this.registry.listConnectors();
+        const ids = visible.map((connector) => connector.id);
         return Effect.map(
-          this.discoveryCatalogs(
-            visible.map((connector) => connector.id),
-            "tools/list",
-            includeWrites,
-          ),
+          allowStale
+            ? this.searchCatalogs(ids, "native", includeWrites)
+            : this.discoveryCatalogs(ids, "tools/list", includeWrites),
           (results) =>
             results.map((result, index) => {
               const connector = visible[index]!;
@@ -1373,7 +1654,7 @@ export class CatalogService {
       // Timeout messages name the route the caller used.
       const catalogs = yield* this.searchCatalogs(
         connectors.map((connector) => connector.id),
-        args.connector !== undefined,
+        args.connector !== undefined ? "scoped" : "unscoped",
       );
       const searchableCatalogs = catalogs.map((catalog, index) =>
         Result.map(catalog, (tools) => {
@@ -1693,12 +1974,17 @@ export class CatalogService {
         }
       }
       const unavailableCatalogs = catalogs.filter(Result.isFailure).length;
+      const staleCatalogs = catalogs.filter(
+        (catalog) => Result.isSuccess(catalog) && catalogStaleness(catalog.success),
+      ).length;
       const catalogErrors = (yield* Effect.forEach(
         catalogs,
-        (catalog, index) =>
-          Result.isSuccess(catalog)
-            ? Effect.succeed([])
-            : this.catalogFailure(connectors[index]!, catalog.failure).pipe(Effect.map((error) => [error])),
+        (catalog, index) => {
+          if (Result.isFailure(catalog))
+            return this.catalogFailure(connectors[index]!, catalog.failure).pipe(Effect.map((error) => [error]));
+          const stale = catalogStaleness(catalog.success);
+          return Effect.succeed(stale ? [staleCatalogFailure(connectors[index]!.id, stale)] : []);
+        },
         { concurrency: "unbounded" },
       )).flat();
       const needsAuth = (error: CatalogSearchFailure) =>
@@ -1706,7 +1992,8 @@ export class CatalogService {
         error.code === "downstream_oauth_required" ||
         error.code === "provider_permission_denied";
       catalogErrors.sort((a, b) => Number(needsAuth(b)) - Number(needsAuth(a)));
-      const scopedFailure = args.connector ? catalogErrors[0] : undefined;
+      // A stale row beside listed tools is not this scoped search's failure.
+      const scopedFailure = args.connector ? catalogErrors.find((error) => !error.stale) : undefined;
       const scopedCatalogError: CatalogFailureDetail | undefined = scopedFailure
         ? scopedFailure.code === "auth_required" || scopedFailure.code === "downstream_oauth_required"
           ? scopedFailure
@@ -1795,6 +2082,7 @@ export class CatalogService {
             (unavailableCatalogs
               ? ` ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable; inspect catalogErrors.`
               : "") +
+            (staleCatalogs ? ` ${staleListedText(staleCatalogs)}` : "") +
             filterRecovery;
       // A scope that resolved to nothing is the same silence one step earlier in
       // the lookup: no connector resolved, so no catalog was even attempted, so
@@ -1830,7 +2118,7 @@ export class CatalogService {
             : "The query contained no searchable lexical terms. Use 2–4 ASCII action/object terms, or browse with an empty query.";
         }
         if (queryTerms.length === 0) {
-          if (unavailableCatalogs === 0) return undefined;
+          if (unavailableCatalogs === 0) return staleCatalogs ? staleListedText(staleCatalogs) : undefined;
           return scopedConnector
             ? `Connector "${scopedConnector.id}" could not be browsed because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
             : `${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable, so this browse is incomplete. Inspect catalogErrors for the typed reasons and recovery actions.`;
@@ -1850,6 +2138,8 @@ export class CatalogService {
               [identityGuidance, apiSearchGuidance].filter(Boolean).join(" ") +
               (apiSearchGuidance ? "" : filterRecovery)
             );
+          if (unavailableCatalogs === 0 && staleCatalogs)
+            return `No matching ${safetyLabel}capability was found. ${staleListedText(staleCatalogs)} Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`;
           return unavailableCatalogs === 0
             ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
             : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`;

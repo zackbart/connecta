@@ -9,7 +9,7 @@ import {
   observeCompletedCatalogRefresh,
   type CompletedCatalogRefresh,
 } from "../src/catalog-cache.js";
-import { catalogIsFresh } from "../src/catalog-freshness.js";
+import { catalogIsFresh, catalogStaleness } from "../src/catalog-freshness.js";
 import { sha256Hex } from "../src/bytes.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -92,7 +92,8 @@ async function fixture(
   const id = `catalog_${crypto.randomUUID().replaceAll("-", "")}`;
   let tokenA = TOKEN_A;
   let listings = 0;
-  let mode: "ok" | "name" | "error" | "transient" | "partial" | "header" | "paged" = "ok";
+  let mode: "ok" | "name" | "error" | "transient" | "partial" | "header" | "paged" | "stalled" | "renamed" = "ok";
+  let resolvedTokens = 0;
   const requests: string[] = [];
   const server = httpDownstream((mcp) =>
     mcp.registerTool("read", { annotations: { readOnlyHint: true } }, async () => ({ content: [] })),
@@ -108,6 +109,12 @@ async function fixture(
       listings++;
       const token = request.headers.get("authorization")!.slice(7);
       if (mode === "transient") return new Response(null, { status: 503 });
+      if (mode === "stalled")
+        await new Promise((_, reject) => {
+          const signal = init?.signal;
+          if (signal?.aborted) reject(signal.reason);
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        });
       if (mode === "error" || (mode === "partial" && body.params?.cursor))
         return new Response(`Refused ${token}`, { status: 403 });
       return Response.json({
@@ -126,11 +133,13 @@ async function fixture(
             {
               name: body.params?.cursor
                 ? "read_next"
-                : mode === "name"
-                  ? `read_${token}`
-                  : mode === "header"
-                    ? "downstream-private-name"
-                    : "read",
+                : mode === "renamed"
+                  ? "read_renamed"
+                  : mode === "name"
+                    ? `read_${token}`
+                    : mode === "header"
+                      ? "downstream-private-name"
+                      : "read",
               description: options.description ?? `Read ${token}`,
               inputSchema: {
                 type: "object",
@@ -154,8 +163,10 @@ async function fixture(
       ? { type: "headers", headers: { Authorization: `Bearer ${TOKEN_A}` } }
       : {
           type: "request",
-          token: async (ctx) =>
-            !options.sharedCredential && callerOf(ctx)?.identity.actor.id === "b" ? TOKEN_B : tokenA,
+          token: async (ctx) => {
+            resolvedTokens++;
+            return !options.sharedCredential && callerOf(ctx)?.identity.actor.id === "b" ? TOKEN_B : tokenA;
+          },
         },
   });
   const registry = () =>
@@ -166,8 +177,13 @@ async function fixture(
       catalogMinTtlSeconds: options.min ?? 0,
       catalogMaxTtlSeconds: options.max ?? 86_400,
     });
-  const read = async (root: Registry, principal = "a", pool = "one", requestScope = {}, baseUrl = BASE) => {
-    const view = root.scoped({
+  const viewFor = (
+    root: Registry,
+    principal = "a",
+    pool = "one",
+    toolAccess?: ReadonlyMap<string, ReadonlySet<string>>,
+  ) =>
+    root.scoped({
       connectorIds: [id],
       principalKey: principal,
       caller: {
@@ -175,7 +191,30 @@ async function fixture(
         authenticated: true,
         pool,
       },
+      ...(toolAccess ? { toolAccess } : {}),
     });
+  // One unscoped search as one request, with the search and the call after it sharing its service.
+  const discover = async <T>(
+    view: ReturnType<typeof viewFor>,
+    use: (service: CatalogService) => Promise<T>,
+    options: ConstructorParameters<typeof CatalogService>[2] = {},
+  ) => {
+    const requestScope = {};
+    try {
+      return await use(
+        new CatalogService(view, BASE, {
+          requestScope,
+          probeTimeoutMs: 1_000,
+          unscopedProbeTimeoutMs: 100,
+          ...options,
+        }),
+      );
+    } finally {
+      await connector.closeScope?.(view.contextFor(id, BASE, requestScope));
+    }
+  };
+  const read = async (root: Registry, principal = "a", pool = "one", requestScope = {}, baseUrl = BASE) => {
+    const view = viewFor(root, principal, pool);
     try {
       return await view.getTools(id, baseUrl, requestScope);
     } finally {
@@ -188,7 +227,10 @@ async function fixture(
     connector,
     registry,
     read,
+    viewFor,
+    discover,
     requests,
+    resolvedTokens: () => resolvedTokens,
     rotate: (token: string) => {
       tokenA = token;
     },
@@ -1314,6 +1356,274 @@ it("INV-9 INV-8: stale tool fallback preserves expiry, remains partitioned and e
   await expect(f.read(root)).rejects.toMatchObject({ code: "connector_call_failed" });
 });
 
+describe("stale catalog listing", () => {
+  const search = (service: CatalogService) => service.search({ query: "read" });
+  const clock = () => {
+    const time = { now: Date.now() };
+    vi.spyOn(Date, "now").mockImplementation(() => time.now);
+    return time;
+  };
+
+  it("INV-8: lists the last complete catalog on a timeout, marked with its age, up to the fixed limit", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    f.mode("stalled");
+    time.now += 2_000;
+    const page = await f.discover(f.viewFor(root), search);
+    expect(page.entries.map((entry) => entry.tool.name)).toEqual(["read"]);
+    expect(page.total).toBe(1);
+    expect(page.catalogErrors).toEqual([
+      {
+        connector: f.id,
+        code: "timeout",
+        message: `Connector "${f.id}" did not answer discovery (timeout), so its tools are listed from its last complete catalog. Calls still check the live catalog. Search with connector "${f.id}" to try it now.`,
+        retryable: true,
+        stale: true,
+        ageMs: 2_000,
+      },
+    ]);
+    // A scoped search asks for the live answer, so it reports the failure and lists nothing.
+    const scoped = await f.discover(f.viewFor(root), (service) => service.search({ query: "read", connector: f.id }));
+    expect(scoped.entries).toEqual([]);
+    expect(scoped.catalogErrors[0]).toMatchObject({ code: "timeout" });
+    expect(scoped.catalogErrors[0]?.stale).toBeUndefined();
+    time.now += 86_400_000;
+    const expired = await f.discover(f.viewFor(root), search);
+    expect(expired.entries).toEqual([]);
+    expect(expired.catalogErrors[0]?.stale).toBeUndefined();
+  });
+
+  it("INV-8: a skipped connector stays listed, so total holds across a browse's pages", async () => {
+    const f = await fixture({ ttl: 1_000, nextPage: { ttl: 1_000, scope: "private" } });
+    const time = clock();
+    const root = f.registry();
+    f.mode("paged");
+    await f.read(root);
+    f.mode("stalled");
+    time.now += 2_000;
+    const first = await f.discover(f.viewFor(root), (service) => service.search({ query: "", limit: 1 }));
+    const listings = f.listings();
+    const second = await f.discover(f.viewFor(root), (service) =>
+      service.search({ query: "", limit: 1, offset: first.nextOffset! }),
+    );
+    expect(first.total).toBe(2);
+    expect(second.total).toBe(2);
+    expect(second.entries.map((entry) => entry.tool.name)).not.toEqual(first.entries.map((entry) => entry.tool.name));
+    expect(second.catalogErrors[0]).toMatchObject({ code: "timeout", stale: true });
+    expect(second.catalogErrors[0]?.retryAfterMs).toBeGreaterThan(50_000);
+    // The record still spares the connector: the second page asked nothing.
+    expect(f.listings()).toBe(listings);
+  });
+
+  it("INV-1 INV-8: a listed stale tool grants nothing: a call resolves the live catalog", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    f.mode("stalled");
+    time.now += 2_000;
+    await f.discover(f.viewFor(root), async (service) => {
+      expect((await search(service)).entries).toHaveLength(1);
+      // Still hanging: the call fails on its own deadline. Nothing stale resolves it.
+      await expect(service.resolveTool(`${f.id}.read`, { signal: AbortSignal.timeout(100) })).rejects.toThrow();
+      // The downstream removed the tool: the listed address is unknown to a call.
+      f.mode("renamed");
+      const removed = await service.resolveTool(`${f.id}.read`);
+      expect(removed).toMatchObject({ ok: false, error: { code: "unknown_tool" } });
+    });
+  });
+
+  it("INV-1 INV-2: deployment classification and pool grants bind a stale listing", async () => {
+    const f = await fixture({ ttl: 1_000, nextPage: { ttl: 1_000, scope: "private" } });
+    const time = clock();
+    const root = f.registry();
+    f.mode("paged");
+    await f.read(root);
+    f.mode("stalled");
+    time.now += 2_000;
+    const granted = await f.discover(f.viewFor(root, "a", "one", new Map([[f.id, new Set(["read"])]])), search);
+    expect(granted.entries.map((entry) => entry.tool.name)).toEqual(["read"]);
+    const hidden = new Registry([f.connector], {
+      storage: f.store,
+      logger: silentLogger,
+      classification: { [f.id]: { read: "hidden", read_next: "write" } },
+    });
+    const overridden = await f.discover(f.viewFor(hidden), (service) => service.search({ query: "" }));
+    expect(overridden.entries.map((entry) => [entry.tool.name, entry.tool.classification])).toEqual([
+      ["read_next", "write"],
+    ]);
+    const readOnly = await f.discover(f.viewFor(hidden), (service) => service.search({ query: "" }), {
+      readOnly: true,
+    });
+    expect(readOnly.entries).toEqual([]);
+  });
+
+  it("INV-5 INV-8: another owner, a rotated credential or an invalidated generation finds no stale entry", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    f.mode("stalled");
+    time.now += 2_000;
+    const other = await f.discover(f.viewFor(root, "b"), search);
+    expect(other.entries).toEqual([]);
+    expect(other.catalogErrors[0]?.stale).toBeUndefined();
+    const otherPool = await f.discover(f.viewFor(root, "a", "two"), search);
+    expect(otherPool.entries).toEqual([]);
+    f.rotate("replacement-request-token");
+    const rotated = await f.discover(f.viewFor(root), search);
+    expect(rotated.entries).toEqual([]);
+    expect(rotated.catalogErrors[0]?.stale).toBeUndefined();
+    f.rotate(TOKEN_A);
+    await invalidateCatalogCache(f.store, f.id);
+    const invalidated = await f.discover(f.viewFor(root), search);
+    expect(invalidated.entries).toEqual([]);
+  });
+
+  it("INV-5: an auth or permission failure never lists a stale catalog", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    f.mode("error");
+    time.now += 2_000;
+    // A generous deadline: the downstream's refusal is what this search must see.
+    const page = await f.discover(f.viewFor(root), search, { probeTimeoutMs: 5_000, unscopedProbeTimeoutMs: 5_000 });
+    expect(page.entries).toEqual([]);
+    expect(page.catalogErrors).toEqual([expect.objectContaining({ code: "provider_permission_denied" })]);
+    expect(page.catalogErrors[0]?.stale).toBeUndefined();
+  });
+
+  it("INV-8: a transient listing failure is reported stale inside and past the five-minute call fallback", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    f.mode("transient");
+    time.now += 2_000;
+    const within = await f.discover(f.viewFor(root), async (service) => ({
+      page: await search(service),
+      resolved: await service.resolveTool(`${f.id}.read`),
+    }));
+    expect(within.page.entries).toHaveLength(1);
+    expect(within.page.catalogErrors).toEqual([
+      expect.objectContaining({ connector: f.id, code: "unavailable", stale: true, ageMs: 2_000 }),
+    ]);
+    expect(within.resolved.ok).toBe(true);
+    time.now += 300_000;
+    const past = await f.discover(f.viewFor(root), async (service) => ({
+      page: await search(service),
+      resolved: await service.resolveTool(`${f.id}.read`),
+    }));
+    expect(past.page.entries).toHaveLength(1);
+    expect(past.page.catalogErrors[0]).toMatchObject({ code: "connector_call_failed", stale: true });
+    // Past the call fallback the listing remains and the call does not.
+    expect(past.resolved.ok).toBe(false);
+  });
+
+  it("INV-10: a peek writes nothing and hands its read to the listing, so a resolver runs once", async () => {
+    const f = await fixture({ ttl: 60_000 });
+    const root = f.registry();
+    await f.read(root);
+    const before = f.resolvedTokens();
+    const requests = f.requests.length;
+    const writes = (["set", "compareAndSet", "delete"] as const).map((method) => vi.spyOn(f.store, method));
+    const page = await f.discover(f.viewFor(root), search);
+    expect(page.entries).toHaveLength(1);
+    expect(page.catalogErrors).toEqual([]);
+    expect(f.resolvedTokens() - before).toBe(1);
+    expect(f.requests.length).toBe(requests);
+    for (const write of writes) expect(write).not.toHaveBeenCalled();
+  });
+
+  it("removes a superseded revision's chunks when a newer catalog is published", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    const chunks = async () =>
+      (await f.store.list(`response-cache:`)).filter((key) => key.includes(f.id) && key.includes(":chunk:"));
+    const published = (await chunks()).length;
+    expect(published).toBeGreaterThan(0);
+    time.now += 2_000;
+    await f.read(root);
+    expect(f.listings()).toBe(2);
+    expect((await chunks()).length).toBe(published);
+  });
+
+  it("INV-7 INV-8: refreshes past the probe deadline under defer, in a scope of its own", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    time.now += 2_000;
+    f.mode("stalled");
+    const deferred: Promise<unknown>[] = [];
+    const defer = (work: Promise<unknown>) => void deferred.push(work);
+    await f.discover(
+      f.viewFor(root),
+      async (service) => {
+        const page = await search(service);
+        expect(page.catalogErrors[0]).toMatchObject({ stale: true });
+      },
+      { defer },
+    );
+    expect(deferred).toHaveLength(1);
+    // The downstream recovers after the request ended; the tail's listing owns its own signal and connection.
+    f.mode("ok");
+    await Promise.all(deferred);
+    const listings = f.listings();
+    const page = await f.discover(f.viewFor(root), search, { defer });
+    // A warmed cache with a cleared record: the next search reports nothing and asks nothing.
+    expect(page.catalogErrors).toEqual([]);
+    expect(page.entries).toHaveLength(1);
+    expect(f.listings()).toBe(listings);
+  });
+
+  it("INV-7 INV-8: a refresh that keeps hanging ends at its deadline and publishes nothing", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    time.now += 2_000;
+    f.mode("stalled");
+    const deferred: Promise<unknown>[] = [];
+    await f.discover(f.viewFor(root), search, {
+      defer: (work) => void deferred.push(work),
+      probeTimeoutMs: 200,
+      unscopedProbeTimeoutMs: 50,
+    });
+    const started = performance.now();
+    await Promise.all(deferred);
+    expect(performance.now() - started).toBeLessThan(2_000);
+    const page = await f.discover(f.viewFor(root), search);
+    expect(page.catalogErrors[0]).toMatchObject({ code: "timeout", stale: true, ageMs: 2_000 });
+    expect(page.catalogErrors[0]?.retryAfterMs).toBeGreaterThan(50_000);
+  });
+
+  it("does not refresh without a runtime tail, or when a probe already had the longest deadline", async () => {
+    const f = await fixture({ ttl: 1_000 });
+    const time = clock();
+    const root = f.registry();
+    await f.read(root);
+    time.now += 2_000;
+    f.mode("stalled");
+    const listed = f.listings();
+    await f.discover(f.viewFor(root), search);
+    expect(f.listings() - listed).toBe(1);
+    const deferred: Promise<unknown>[] = [];
+    time.now += 61_000;
+    await f.discover(f.viewFor(root), search, {
+      defer: (work) => void deferred.push(work),
+      probeTimeoutMs: 100,
+      unscopedProbeTimeoutMs: 100,
+    });
+    expect(deferred).toEqual([]);
+  });
+});
+
 it("INV-9 INV-8: an explicit zero-TTL refresh removes a previous reusable listing", async () => {
   const store = await storage();
   const ctx = connectorContext(store);
@@ -1376,7 +1686,15 @@ it.each(["zero-TTL write", "cleanup delete"] as const)(
 function legacyDownstream(name: string, hint: { ttlMs?: number } = {}) {
   const requests: string[] = [];
   const sessions = new Map<string, WebStandardStreamableHTTPServerTransport>();
+  const control = { stalled: false };
   const fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    // A connector too slow for any deadline: it ends only when its caller gives up.
+    if (control.stalled)
+      await new Promise((_, reject) => {
+        const signal = init?.signal;
+        if (signal?.aborted) reject(signal.reason);
+        signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+      });
     const request = new Request(input, init);
     const body =
       request.method === "POST"
@@ -1411,6 +1729,7 @@ function legacyDownstream(name: string, hint: { ttlMs?: number } = {}) {
   return {
     fetch,
     requests,
+    control,
     listings: () => requests.filter((method) => method === "tools/list").length,
     handshakes: () => requests.filter((method) => method === "initialize").length,
   };
@@ -1456,10 +1775,13 @@ describe("pre-connect cached catalogs", () => {
     const downstreams = [shared, keyed, pinned];
     // Each search is one request: a fresh registry over the same storage, as
     // in a new isolate, whose connector scopes close when it ends.
-    const search = async (registry = makeRegistry(connectors, { storage: store, credentialVault: vault })) => {
+    const search = async (
+      registry = makeRegistry(connectors, { storage: store, credentialVault: vault }),
+      service: ConstructorParameters<typeof CatalogService>[2] = {},
+    ) => {
       const requestScope = {};
       try {
-        return await new CatalogService(registry, BASE, { requestScope }).search({ query: "read" });
+        return await new CatalogService(registry, BASE, { requestScope, ...service }).search({ query: "read" });
       } finally {
         for (const connector of connectors)
           await connector.closeScope?.(registry.contextFor(connector.id, BASE, requestScope));
@@ -1469,6 +1791,7 @@ describe("pre-connect cached catalogs", () => {
       store,
       vault,
       ids,
+      connectors,
       downstreams,
       search,
       requests: () => downstreams.reduce((sum, downstream) => sum + downstream.requests.length, 0),
@@ -1513,6 +1836,66 @@ describe("pre-connect cached catalogs", () => {
     expect(names(expired)).toEqual(["crm_read", "notes_read", "tickets_read"]);
     expect(d.handshakes()).toBe(3);
     expect(d.listings()).toBe(3);
+  });
+
+  it("INV-8: slow connectors keep their last complete catalog in an unscoped search after its TTL expires", async () => {
+    const d = await deployment();
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const warm = await d.search();
+    expect(names(warm)).toEqual(["crm_read", "notes_read", "tickets_read"]);
+    now += 301_000;
+    for (const downstream of d.downstreams) downstream.control.stalled = true;
+    const slow = await d.search(undefined, { probeTimeoutMs: 100 });
+    expect(names(slow)).toEqual(["crm_read", "notes_read", "tickets_read"]);
+    expect(slow.total).toBe(3);
+    expect(slow.catalogErrors.map((error) => [error.connector, error.code, error.stale, error.ageMs]).sort()).toEqual(
+      [d.ids.shared, d.ids.pinned, d.ids.keyed].sort().map((id) => [id, "timeout", true, 301_000]),
+    );
+  });
+
+  it("a current catalog takes no probe slot, so it never waits behind a connector that must be asked", async () => {
+    const d = await deployment();
+    await d.search();
+    // Only the first connector has lost its catalog, and it now has to be asked.
+    await invalidateCatalogCache(d.store, d.ids.shared);
+    d.downstreams[0]!.control.stalled = true;
+    // One slot, spent whole by the first connector before the budget ends.
+    const page = await d.search(undefined, { concurrency: 1, unscopedProbeTimeoutMs: 400, discoveryBudgetMs: 150 });
+    expect(names(page)).toEqual(["notes_read", "tickets_read"]);
+    expect(page.catalogErrors.map((error) => error.connector)).toEqual([d.ids.shared]);
+    expect(page.catalogErrors[0]).toMatchObject({ code: "timeout" });
+    expect(page.catalogErrors[0]?.stale).toBeUndefined();
+  });
+
+  it("INV-8: a native listing keeps a stale catalog, but a native call's resolution never sees it", async () => {
+    const d = await deployment();
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    await d.search();
+    now += 301_000;
+    for (const downstream of d.downstreams) downstream.control.stalled = true;
+    const list = async (allowStale: boolean) => {
+      const requestScope = {};
+      const registry = makeRegistry(d.connectors, { storage: d.store, credentialVault: d.vault });
+      try {
+        return await new CatalogService(registry, BASE, {
+          requestScope,
+          probeTimeoutMs: 100,
+          concurrency: 8,
+        }).listCatalogs(true, registry.listConnectors(), allowStale);
+      } finally {
+        for (const connector of d.connectors)
+          await connector.closeScope?.(registry.contextFor(connector.id, BASE, requestScope));
+      }
+    };
+    const listed = await list(true);
+    expect(listed.flatMap((entry) => ("tools" in entry ? entry.tools.map((tool) => tool.name) : [])).sort()).toEqual(
+      expect.arrayContaining(["crm_read", "notes_read", "tickets_read"]),
+    );
+    expect(listed.filter((entry) => "tools" in entry && catalogStaleness(entry.tools))).toHaveLength(3);
+    const resolving = await list(false);
+    expect(resolving.filter((entry) => "error" in entry)).toHaveLength(3);
   });
 
   it("INV-8: an explicit zero TTL is never reused, so every listing connects", async () => {

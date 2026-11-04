@@ -18,7 +18,15 @@ import { Deferred, Effect, Exit, Scope } from "effect";
 import { KvOAuthProvider, refreshCoordinatorsByPartition } from "../../auth/downstream-oauth.js";
 import { trackOAuthStartReset } from "../../auth/oauth-start-reset.js";
 import { sentSecretsFor } from "../../sent-secrets.js";
-import { catalogClientOptions, prefetchCatalog, observeCatalogChange } from "../../catalog-cache.js";
+import {
+  catalogClientOptions,
+  observeCatalogChange,
+  observeCatalogExpiry,
+  observeCatalogFetch,
+  prefetchCatalog,
+  retainedCatalogIdentity,
+  type CatalogPeekEntry,
+} from "../../catalog-cache.js";
 import { ConnectorCallError, resendAdvice } from "../../errors.js";
 import { carryFailureFacts, failureRecord, logFailure } from "../../operator-record.js";
 import { CONNECTA_VERSION } from "../../version.js";
@@ -146,6 +154,7 @@ export function remoteMcpConnection(
   | "ensureConnected"
   | "requestOptions"
   | "cachedCatalog"
+  | "peekCatalog"
   | "cacheOwner"
   | "reset"
   | "states"
@@ -454,8 +463,8 @@ export function remoteMcpConnection(
    * same cache through the SDK, so it skips this read. What was already read
    * is handed to that connect, so a resolver runs once per listing.
    */
-  const cachedCatalog = authMethod((ctx: ConnectorContext) =>
-    authFlow<Preread & { tools?: Tool[] }>(function* () {
+  const readCatalog = authMethod((ctx: ConnectorContext, peek: boolean) =>
+    authFlow<Preread & { tools?: Tool[]; peek?: CatalogPeekEntry }>(function* () {
       const principal = principalPolicy
         ? requestPrincipalFor(
             principalPolicy,
@@ -511,7 +520,7 @@ export function remoteMcpConnection(
           ]);
           const prior = (yield authCall(readNegotiation, [ctx, digest])) as PriorDiscovery | undefined;
           preread.negotiation = { digest, prior };
-          if (prior?.kind === "modern") return preread;
+          if (prior?.kind === "modern" && !peek) return preread;
         }
         const cache = (yield authCall(catalogClientOptions, [
           ctx,
@@ -524,6 +533,10 @@ export function remoteMcpConnection(
           identity,
           true,
         ])) as Awaited<ReturnType<typeof catalogClientOptions>>;
+        if (peek) {
+          const entry = (yield authInvoke(cache, "peekTools", [ctx])) as CatalogPeekEntry | undefined;
+          return entry ? { ...preread, peek: entry } : preread;
+        }
         const result = (yield authInvoke(cache, "cachedTools", [ctx])) as ListToolsResult | undefined;
         if (result) return { tools: result.tools };
       } catch (error) {
@@ -531,6 +544,42 @@ export function remoteMcpConnection(
         logFailure(ctx.logger, "catalog read failed", failureRecord({ connector: id }, error));
       }
       return preread;
+    }),
+  );
+
+  // A peek is the first half of the listing that may follow it: that listing
+  // takes what the peek read, once, so a discovery that peeks first still reads
+  // its stored entry and runs a credential resolver once. Nothing is taken if
+  // the catalog was invalidated or the credential changed in between, and the
+  // whole hand-off lives and dies with the request scope.
+  const peeks = new WeakMap<object, { identity: string; read: Preread & { peek?: CatalogPeekEntry } }>();
+  const peekCatalog = authMethod((ctx: ConnectorContext) =>
+    authFlow<CatalogPeekEntry | undefined>(function* () {
+      // A connector known to need authorization is never listed from a cache.
+      if (stateFor(ctx).authRequired) return undefined;
+      const read = (yield authCall(readCatalog, [ctx, true])) as Preread & { peek?: CatalogPeekEntry };
+      peeks.set(ctx.requestScope ?? ctx, { identity: retainedCatalogIdentity(ctx), read });
+      return read.peek;
+    }),
+  );
+  const cachedCatalog = authMethod((ctx: ConnectorContext) =>
+    authFlow<Preread & { tools?: Tool[] }>(function* () {
+      const scope = ctx.requestScope ?? ctx;
+      const handed = peeks.get(scope);
+      peeks.delete(scope);
+      if (!handed || handed.identity !== retainedCatalogIdentity(ctx))
+        return (yield authCall(readCatalog, [ctx, false])) as Preread & { tools?: Tool[] };
+      const { peek, ...preread } = handed.read;
+      if (!peek || peek.expiresAt <= Date.now()) return preread;
+      // The listing's own view keeps the provenance a direct read would record.
+      observeCatalogFetch(ctx, peek.fetchedAt);
+      observeCatalogExpiry(
+        ctx,
+        "tools/list",
+        typeof peek.result.ttlMs === "number" ? peek.result.ttlMs : peek.expiresAt - peek.fetchedAt,
+        peek.expiresAt,
+      );
+      return { tools: peek.result.tools };
     }),
   );
 
@@ -980,6 +1029,7 @@ export function remoteMcpConnection(
     ensureConnected,
     requestOptions,
     cachedCatalog,
+    peekCatalog,
     cacheOwner,
     reset,
     states,

@@ -105,6 +105,10 @@ interface CatalogSearchFailure extends CatalogFailureDetail {
     }
   >;
   retry?: string;
+  /** This connector's tools are listed from its last complete catalog; a call still checks the live one. */
+  stale?: true;
+  /** With `stale`: milliseconds since the downstream last confirmed that catalog. */
+  ageMs?: number;
 }
 interface CatalogSearchPage {
   catalogErrors: CatalogSearchFailure[];

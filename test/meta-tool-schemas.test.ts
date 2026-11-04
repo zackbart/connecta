@@ -205,7 +205,8 @@ const BUDGETS = {
   },
   // search_tools grew for readyCalls, the complete reads that save the
   // details and operation-search host calls; its reasons enum is now shared.
-  outputSchema: { skills: 660, search_tools: 4_150, authorize_connector: 420, execute_code: 1_070 },
+  // It grew again for catalogErrors' stale and ageMs, which report a stale listing.
+  outputSchema: { skills: 660, search_tools: 4_190, authorize_connector: 420, execute_code: 1_070 },
   usage: 5_700,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },

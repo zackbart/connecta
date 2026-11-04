@@ -26,6 +26,7 @@ import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { classifyCallError, type CallErrorDetails } from "./errors.js";
 import { nativeRecovery } from "./native-recovery.js";
 import { CatalogService } from "./catalog-service.js";
+import { catalogStaleness, type CatalogStaleness } from "./catalog-freshness.js";
 import { jsonResult } from "./meta-tools.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type { RegistryView } from "./registry.js";
@@ -44,6 +45,9 @@ const MAX_NATIVE_TOOLS = 1_000;
 
 /** Native `tools/list` cache hint. Shorter than the meta surface's hour: the list follows downstream catalogs. */
 export const NATIVE_TOOLS_LIST_TTL_MS = 300_000;
+
+/** The hint when a listing omits a connector or lists one stale: about when that connector is next asked. */
+export const NATIVE_DEGRADED_TOOLS_LIST_TTL_MS = 60_000;
 
 const HASH_CHARS = 6;
 const SEPARATOR = "__";
@@ -104,11 +108,17 @@ export interface NativeTool {
   name: string;
   connector: Connector;
   tool: ToolDef;
+  /** Listed from an older complete catalog because its connector did not answer in time. */
+  stale?: CatalogStaleness;
 }
 
-/** Read or write, from the served classification only. */
-function annotationsFor(tool: ToolDef) {
-  return tool.classification === "read"
+/**
+ * Read or write, from the served classification only. A stale listing cannot
+ * vouch for a read: the connector may have reclassified the tool since, so it
+ * fails closed (INV-1). The call's own route is chosen from a live catalog.
+ */
+function annotationsFor(tool: ToolDef, stale: boolean) {
+  return tool.classification === "read" && !stale
     ? { readOnlyHint: true, destructiveHint: false, openWorldHint: true }
     : { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
 }
@@ -189,6 +199,10 @@ export interface NativeSurfaceOptions {
   route: NativeCallRoute;
   bind: (request: ServerContext) => void;
   catalogErrors: string[];
+  /** Connectors this listing served from an older complete catalog. */
+  staleCatalogs: string[];
+  /** This listing is incomplete or stale, so a client should not keep it for the usual time. */
+  onDegradedListing?: (() => void) | undefined;
   logger: Logger;
   requestScope: object;
   requestSignal?: AbortSignal | undefined;
@@ -226,12 +240,12 @@ export class NativeSurface {
    * whole, never partially, with an operator warning; two tools claiming one
    * name are both omitted and stay reachable by address in execute_code.
    */
-  private claims(connectors = this.registry.listConnectors()) {
+  private claims(connectors = this.registry.listConnectors(), allowStale = false) {
     return runEdge(
       authOwnMethod<{
         loaded: ({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[];
         byName: Map<string, NativeTool | null>;
-      }>(NativeSurface.prototype, this, "claims", [connectors]),
+      }>(NativeSurface.prototype, this, "claims", [connectors, allowStale]),
     );
   }
 
@@ -272,8 +286,15 @@ export class NativeSurface {
         ...(entry?.tool.title ? { title: entry.tool.title } : {}),
         ...(entry ? { description: describe(entry, this.options.executeCode, guideName) } : {}),
         inputSchema: passThroughSchema(entry?.tool.inputSchema),
-        ...(entry ? { annotations: annotationsFor(entry.tool) } : {}),
-        ...(entry ? { _meta: { "dev.connecta/address": `${entry.connector.id}.${entry.tool.name}` } } : {}),
+        ...(entry ? { annotations: annotationsFor(entry.tool, entry.stale !== undefined) } : {}),
+        ...(entry
+          ? {
+              _meta: {
+                "dev.connecta/address": `${entry.connector.id}.${entry.tool.name}`,
+                ...(entry.stale ? { "dev.connecta/stale": { code: entry.stale.code, ageMs: entry.stale.ageMs } } : {}),
+              },
+            }
+          : {}),
       },
       authMethod((args: Record<string, unknown>, request: ServerContext) =>
         Effect.gen({ self: this }, function* () {
@@ -468,9 +489,11 @@ export class NativeSurface {
                 authInvoke<{
                   loaded: ({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[];
                   byName: Map<string, NativeTool | null>;
-                }>(self, "claims", []),
+                }>(self, "claims", [undefined, true]),
               );
               for (const entry of loaded) {
+                if ("tools" in entry && catalogStaleness(entry.tools))
+                  self.options.staleCatalogs.push(entry.connector.id);
                 // Validate the whole connector before registering any of its tools.
                 const tool =
                   "tools" in entry
@@ -487,6 +510,8 @@ export class NativeSurface {
                   ),
                 );
               }
+              if (self.options.catalogErrors.length || self.options.staleCatalogs.length)
+                self.options.onDegradedListing?.();
               return [...byName.values()].filter(
                 (entry): entry is NativeTool =>
                   entry !== null &&
@@ -501,7 +526,7 @@ export class NativeSurface {
     registerAuthMethod(
       NativeSurface.prototype,
       "claims",
-      function (this: NativeSurface, connectors?: Connector[]) {
+      function (this: NativeSurface, connectors?: Connector[], allowStale = false) {
         const self = this as NativeSurface;
         return duringViewEffect(
           {
@@ -517,7 +542,7 @@ export class NativeSurface {
                 authInvoke<({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[]>(
                   self.catalog,
                   "listCatalogs",
-                  [true, connectors ?? self.registry.listConnectors()],
+                  [true, connectors ?? self.registry.listConnectors(), allowStale],
                 ),
               );
               const byName = new Map<string, NativeTool | null>();
@@ -532,7 +557,10 @@ export class NativeSurface {
                       "native name collision",
                       failureRecord({ connector: entry.connector.id, tool }),
                     );
-                  } else byName.set(name, { name, connector: entry.connector, tool });
+                  } else {
+                    const stale = catalogStaleness(entry.tools);
+                    byName.set(name, { name, connector: entry.connector, tool, ...(stale ? { stale } : {}) });
+                  }
                 }
               }
               return { loaded, byName };

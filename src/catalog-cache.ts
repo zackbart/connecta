@@ -42,7 +42,7 @@ import { failureRecord, logFailure } from "./operator-record.js";
 import { secretDigest } from "./storage-digest.js";
 import { responseCacheKeys } from "./storage/keys.js";
 import { CatalogPolicy, type CatalogCacheSettings } from "./catalog-policy.js";
-import type { ConnectorContext, ConnectorCredentialValues, KVStorage, ToolDef } from "./types.js";
+import type { ConnectorCatalogPeek, ConnectorContext, ConnectorCredentialValues, KVStorage, ToolDef } from "./types.js";
 
 export interface CompletedCatalogRefresh {
   connectorId: string;
@@ -378,6 +378,12 @@ const observeUncachedCatalogRefreshNative = /* @__PURE__ */ registerAuth(
       if (refresh) (yield authCall(observeCompletedCatalogRefresh, [ctx, refresh])) as void;
     }),
 );
+/** One complete cached tools/list entry and the times its manifest recorded. */
+export interface CatalogPeekEntry {
+  result: ListToolsResult;
+  fetchedAt: number;
+  expiresAt: number;
+}
 export type CatalogMethod = "tools/list" | "resources/list" | "resources/templates/list";
 export type CatalogResult = ListToolsResult | ListResourcesResult | ListResourceTemplatesResult;
 export function catalogItems(method: CatalogMethod, result: CatalogResult) {
@@ -437,6 +443,13 @@ export function observeCatalogExpiry(
 // failure for five minutes. Resources never use stale inventories. A fallback
 // carries its original expired deadline and cannot authorize auth recovery.
 const STALE_FALLBACK_MS = 300_000;
+/**
+ * How long past its expiry a complete tool catalog stays listable when its
+ * connector does not answer discovery in time. The listing only: a call always
+ * resolves through STALE_FALLBACK_MS at most. One day matches the longest TTL a
+ * deployment can configure, so this retains nothing it could not already hold.
+ */
+const STALE_DISCOVERY_MS = 86_400_000;
 /** Catalog chunks one storage read fetches together. */
 const CHUNKS_PER_READ = 8;
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void {
@@ -807,6 +820,7 @@ export function catalogClientOptions(
     currentContext: () => ConnectorContext;
     fallbackTools: () => Promise<ListToolsResult | undefined>;
     cachedTools: (ctx: ConnectorContext) => Promise<ListToolsResult | undefined>;
+    peekTools: (ctx: ConnectorContext, serverIdentity?: string) => Promise<CatalogPeekEntry | undefined>;
   }
 > {
   return runEdge(
@@ -1132,7 +1146,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               stopped() ||
               !m ||
               (m.expiresAt <= Date.now() &&
-                (key.method !== "tools/list" || m.expiresAt + STALE_FALLBACK_MS <= Date.now()))
+                (key.method !== "tools/list" || m.expiresAt + STALE_DISCOVERY_MS <= Date.now()))
             )
               return undefined;
             // Up to CHUNKS_PER_READ chunks per round trip, so one answer stays a
@@ -1262,7 +1276,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               let offset = 0;
               let chunkCount = 0;
               const ttlSeconds = () =>
-                Math.max(0.001, (expiresAt + (method === "tools/list" ? STALE_FALLBACK_MS : 0) - Date.now()) / 1000);
+                Math.max(0.001, (expiresAt + (method === "tools/list" ? STALE_DISCOVERY_MS : 0) - Date.now()) / 1000);
               while (offset < bytes.length) {
                 if (stopped() || expiresAt <= Date.now()) return 0;
                 let end = Math.min(offset + MAX_CATALOG_CHUNK_BYTES, bytes.length);
@@ -1317,6 +1331,31 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                 if (stopped()) return 0;
                 if (published) {
                   lastStamp = stamp;
+                  // Tool chunks outlive their manifest by the stale limit, so a
+                  // superseded revision is removed now rather than retained for
+                  // a day. A reader holding it misses and lists again; a failed
+                  // removal leaves the chunks to their TTL.
+                  const superseded = manifest(previous);
+                  if (superseded && superseded.revision !== revision) {
+                    try {
+                      for (let index = 0; index < superseded.chunkCount && !stopped(); index++)
+                        (yield authCall(io, [
+                          cacheMethod(
+                            () =>
+                              authStorage(storage, "delete", [
+                                responseCacheKeys.chunk(root, superseded.revision, index),
+                              ]) as Effect.Effect<void, unknown>,
+                          ),
+                        ])) as void;
+                    } catch (error) {
+                      if (!stopped())
+                        logFailure(
+                          ctx.logger,
+                          "catalog chunk cleanup failed",
+                          failureRecord({ connector: connectorId }, error),
+                        );
+                    }
+                  }
                   return stamp;
                 }
               }
@@ -1457,6 +1496,58 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
           ),
         ]),
       );
+      // The newest complete tools/list entry this caller could be served, fresh
+      // or within STALE_DISCOVERY_MS of expiry, with its original times. Reads
+      // only, through the same address, fingerprint, generation and credential
+      // fences as a listing, so another owner's entry, an invalidated generation
+      // or a rotated credential is a miss. Never a source for call resolution.
+      const peekTools = cacheMethod((listingCtx: ConnectorContext, serverIdentity = "") =>
+        authCall<CatalogPeekEntry | undefined>(withListing, [
+          listingCtx,
+          cacheMethod(() =>
+            authFlow<CatalogPeekEntry | undefined>(function* () {
+              if (!active?.generationStored) return undefined;
+              const read = (slot: string) =>
+                authInvoke<CacheEntry | undefined>(store, "get", [
+                  { method: "tools/list", params: "", partition: JSON.stringify([serverIdentity, slot]) },
+                ]);
+              let entry = (yield read(partition)) as CacheEntry | undefined;
+              let stale = staleTools;
+              if (entry === undefined && sharing === "shared") {
+                staleTools = undefined;
+                const shared = (yield read("")) as CacheEntry | undefined;
+                entry = shared?.scope === "public" ? shared : undefined;
+                // Set by the read above, which control flow analysis cannot see.
+                const sharedStale = staleTools as { result: ListToolsResult; manifest: Manifest } | undefined;
+                if (
+                  sharedStale?.manifest.scope === "public" &&
+                  (!stale || stale.manifest.fetchedAt < sharedStale.manifest.fetchedAt)
+                )
+                  stale = sharedStale;
+              }
+              if (entry?.expiresAt !== undefined && entry.expiresAt > Date.now()) {
+                const result = JSON.parse(entry.value) as ListToolsResult;
+                if (!Array.isArray(result.tools)) return undefined;
+                return {
+                  result,
+                  fetchedAt: catalogFetchedAt(listingCtx) ?? Date.now(),
+                  expiresAt: entry.expiresAt,
+                };
+              }
+              const operation = capture();
+              if (
+                !stale ||
+                operation.stopped() ||
+                !((yield authCall(namespace, [operation])) as string | undefined) ||
+                operation.stopped() ||
+                stale.manifest.expiresAt + STALE_DISCOVERY_MS <= Date.now()
+              )
+                return undefined;
+              return { result: stale.result, fetchedAt: stale.manifest.fetchedAt, expiresAt: stale.manifest.expiresAt };
+            }),
+          ),
+        ]),
+      );
       const fallbackTools = cacheMethod(() =>
         authFlow<ListToolsResult | undefined>(function* () {
           const operation = capture();
@@ -1485,6 +1576,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         completeCatalogRefresh,
         fallbackTools,
         cachedTools,
+        peekTools,
         responseCacheStore: store,
         cachePartition: partition,
         defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000,
@@ -1578,6 +1670,27 @@ const storeCustomCatalogFallbackNative = /* @__PURE__ */ registerAuth(
           }),
         ),
       ])) as void;
+    }),
+);
+/** A custom connector's retained catalog, for discovery only. Same owner rule as its fallback. */
+export function customCatalogPeek(
+  ctx: ConnectorContext,
+  connectorId: string,
+): Promise<ConnectorCatalogPeek | undefined> {
+  return runEdge(authProgram<ConnectorCatalogPeek | undefined>(customCatalogPeekNative, [ctx, connectorId]));
+}
+const customCatalogPeekNative = /* @__PURE__ */ registerAuth(
+  customCatalogPeek,
+  (ctx: ConnectorContext, connectorId: string) =>
+    authFlow<ConnectorCatalogPeek | undefined>(function* () {
+      if (!callerOf(ctx)?.authenticated) return;
+      const { cache } = (yield authCall(customCatalogCache, [ctx, connectorId])) as {
+        cache: Awaited<ReturnType<typeof catalogClientOptions>>;
+      };
+      const entry = (yield authInvoke(cache, "peekTools", [ctx, "custom-connector"])) as CatalogPeekEntry | undefined;
+      return entry
+        ? { tools: entry.result.tools as ToolDef[], fetchedAt: entry.fetchedAt, expiresAt: entry.expiresAt }
+        : undefined;
     }),
 );
 export function customCatalogFallback(ctx: ConnectorContext, connectorId: string): Promise<ToolDef[] | undefined> {

@@ -5,9 +5,10 @@
 // the connector-health family's `discovery` key, a typed code, when it was
 // seen, and when to try again (INV-6: never downstream text, tools or
 // credentials). Unscoped search skips a connector whose record is current and
-// reports it as unavailable in `catalogErrors` with `retryAfterMs`; it never
-// serves tools from the failed or interrupted walk (INV-8). Scoped search,
-// describe and calls still reach the connector.
+// reports it as unavailable in `catalogErrors` with `retryAfterMs`, listing its
+// last complete catalog, marked stale, when one exists; it never serves tools
+// from the failed or interrupted walk (INV-8). Scoped search, describe and calls
+// still reach the connector.
 //
 // Records sit beside the catalog cache, in its store and owner partition:
 // principal, subject, caller identity and pool, origin, the admitted endpoint,
