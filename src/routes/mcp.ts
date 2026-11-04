@@ -36,7 +36,13 @@ import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import type { ConnectorCaller } from "../connector-caller.js";
 import { endpointInstructions } from "../skills.js";
-import { NATIVE_TOOLS_LIST_TTL_MS, NativeSurface, nativeRequestHint, type NativeRequestHint } from "../native-tools.js";
+import {
+  NATIVE_DEGRADED_TOOLS_LIST_TTL_MS,
+  NATIVE_TOOLS_LIST_TTL_MS,
+  NativeSurface,
+  nativeRequestHint,
+  type NativeRequestHint,
+} from "../native-tools.js";
 import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
@@ -394,6 +400,7 @@ function toolkitRetired(logger: Logger, sentSecrets: SentSecrets): Response {
 function serveMcp(
   request: Request,
   requestSignal: AbortSignal,
+  requestStartedAt: number,
   requestScope: object,
   opts: ServerOptions,
   baseUrl: string,
@@ -448,6 +455,8 @@ function serveMcp(
         requestScope,
         defer: runtimeContext?.waitUntil?.bind(runtimeContext),
       });
+      // Read as this request's response is built, so a degraded native listing can shorten it.
+      const toolsListHint = { ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000, cacheScope: "private" as const };
       const server = new McpServer(opts.config.serverInfo, {
         // A request-local server cannot publish catalog changes. Set this before
         // tool registration, whose SDK default otherwise advertises listChanged.
@@ -465,10 +474,7 @@ function serveMcp(
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },
         cacheHints: {
           "server/discover": { ttlMs: 3_600_000, cacheScope: "private" },
-          "tools/list": {
-            ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000,
-            cacheScope: "private",
-          },
+          "tools/list": toolsListHint,
         },
       });
       servers.push(server);
@@ -495,7 +501,9 @@ function serveMcp(
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
       });
-      const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
+      const diagnostics = native
+        ? { ...native, catalogErrors: [] as string[], staleCatalogs: [] as string[] }
+        : undefined;
       // A native pool's text uses the native contract's wording.
       const routes = native ? routeNames(native.executeCode ? "native-code" : "native") : opts.routes;
       const nativeRoute = registerMetaTools(server, registry, {
@@ -514,6 +522,8 @@ function serveMcp(
         credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
         ...(activity ? { activity } : {}),
         defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
+        responseCeilingMs: opts.config.execute.watchdogMs,
+        requestStartedAt,
         maxProgramResultChars: opts.config.execute.maxResultChars,
         maxProgramHostCalls: opts.config.execute.maxHostCalls,
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
@@ -528,6 +538,7 @@ function serveMcp(
           baseUrl,
           requestScope,
           executor: opts.executor,
+          requestStartedAt,
           defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
           logger: opts.config.logger,
           ...(activity ? { activity } : {}),
@@ -548,6 +559,10 @@ function serveMcp(
               route: nativeRoute,
               bind: (context) => authElicitation.bind(context),
               catalogErrors: diagnostics!.catalogErrors,
+              staleCatalogs: diagnostics!.staleCatalogs,
+              onDegradedListing: () => {
+                toolsListHint.ttlMs = NATIVE_DEGRADED_TOOLS_LIST_TTL_MS;
+              },
               logger: opts.config.logger,
               requestScope,
               requestSignal,
@@ -810,6 +825,8 @@ export function createMcpRoute(opts: ServerOptions): {
         // The Node adapter has already buffered up to its own pre-auth cap
         // (`listen`'s `maxBodyBytes`) before a request reaches core.
         const startedAt = Date.now();
+        // The response ceiling counts from here; a future stamp could only extend it.
+        const arrivedAt = Math.min(context.runtimeContext?.requestArrivedAt ?? startedAt, startedAt);
         const maxDurationMs = opts.requestAdmission.maxDurationMs;
         const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";
         const refuseAdmission = (error: unknown): Effect.Effect<Response, unknown> => {
@@ -1140,6 +1157,7 @@ export function createMcpRoute(opts: ServerOptions): {
             yield* serveMcp(
               localRequest,
               localAbort.signal,
+              arrivedAt,
               requestScope,
               opts,
               baseUrl,

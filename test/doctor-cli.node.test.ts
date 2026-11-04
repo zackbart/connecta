@@ -427,6 +427,50 @@ describe("connecta doctor --config", () => {
     },
   );
 
+  it("INV-8: reports degraded discovery when a native pool lists a connector from a stale catalog", async () => {
+    const storage = memoryStorage();
+    let hung = false;
+    const app = createConnecta({
+      readOnly: false,
+      connectors: [
+        {
+          id: "slow",
+          kind: "mcp",
+          listTools: (ctx) =>
+            hung
+              ? new Promise((_, reject) =>
+                  ctx.signal!.addEventListener("abort", () => reject(ctx.signal!.reason), { once: true }),
+                )
+              : Promise.resolve([
+                  { name: "get", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+                ]),
+          callTool: async () => ({}),
+        },
+      ],
+      executor: customExecutor({ execute: async () => ({ result: 42 }) }, { lifecycle: "self-managed" }),
+      agents: ["bot"],
+      accessTokens: accessTokens(storage),
+      pools: { native: { tools: ["slow"], members: ["agent:bot"], surface: "native" } },
+      discovery: { probeTimeoutMs: 200 },
+      storage,
+      logger: "silent",
+    });
+    const token = await issueAgentToken(storage, "bot");
+    const url = await deploymentUrl(app);
+    const env = { ...process.env, CONNECTA_TOKEN: token, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" };
+    const healthy = await run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "native"], { env });
+    expect(healthy.stdout).toContain("Connecta doctor passed");
+    hung = true;
+    const failed = (await run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "native"], { env }).then(
+      () => {
+        throw new Error("Expected failure");
+      },
+      (error: unknown) => error,
+    )) as { stdout: string; stderr: string };
+    expect(failed.stdout).not.toContain("passed");
+    expect(failed.stderr).toContain("Native discovery degraded: slow");
+  }, 30_000);
+
   it("INV-5 INV-6: refuses config redirects and withholds an authentication failure body", async () => {
     for (const status of [302, 403]) {
       const server = createServer((_request, response) => {

@@ -2,6 +2,7 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -17,6 +18,11 @@ import {
   checkProgramReadDependencies,
   checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
+  checkReadDeadlineCancels,
+  checkReadDeadlineUtilities,
+  checkDispatchGateAfterAuth,
+  checkDispatchGateAfterCatalog,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -44,14 +50,15 @@ vi.setConfig({ testTimeout: 20_000 });
 // A generous guest-CPU budget: these programs loop and stringify, and the
 // clause under test is never the 250ms default.
 const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
-const deadlineExecutor = quickJsExecutor({
-  timeoutMs: 500,
+// Long enough that a loaded host still delivers a read's timeout inside the margin.
+const readDeadlineExecutor = quickJsExecutor({
+  timeoutMs: 2_000,
   cpuTimeMs: 5_000,
 });
 
 afterAll(async () => {
   await executor.close?.();
-  await deadlineExecutor.close?.();
+  await readDeadlineExecutor.close?.();
 });
 
 describe("guest API contract (QuickJS executor)", () => {
@@ -160,13 +167,38 @@ describe("guest API contract (QuickJS executor)", () => {
   for (const contractCase of CONTRACT_CASES.filter(({ name }) => !duplicateCases.has(name))) {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness(contractCase.maxStashEntries);
-      const base = contractCase.deadline ? deadlineExecutor : executor;
+      const base = contractCase.runDeadline ? readDeadlineExecutor : executor;
       const config = caseConfig(contractCase);
       const outcome = await harness.run(base, contractCase.code, config);
       const follow = contractCase.follows ? await harness.run(base, contractCase.follows, config) : undefined;
       contractCase.check(outcome, harness.state, follow);
     });
   }
+
+  it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
+    await checkReadDeadlineUtilities(readDeadlineExecutor);
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(readDeadlineExecutor, "for (;;) {}");
+  });
+
+  it("[L3, W9, INV-9] the final gate refuses a write its auth step ran out of time, unsent", async () => {
+    await checkDispatchGateAfterAuth(readDeadlineExecutor);
+  }, 60_000);
+
+  it("[L3, W9, INV-9] the final gate refuses a read its catalog ran out of time, unsent", async () => {
+    await checkDispatchGateAfterCatalog(readDeadlineExecutor);
+  }, 60_000);
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(executor.deadlineMs).toBe(30_000);
+    expect(executor.deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
+  });
+
+  it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {
+    await checkReadDeadlineCancels(readDeadlineExecutor);
+  }, 60_000);
 
   describe("the whole-result loop a truncated read offers", () => {
     const BASE = "https://connecta.loop";

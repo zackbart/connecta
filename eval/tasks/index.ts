@@ -7,7 +7,7 @@ import { PLANNED_TASKS } from "./planned.js";
 import type { ActiveTask, PlannedTask } from "./types.js";
 import { withCorrectness, EXISTING_CORRECTNESS } from "./correctness.js";
 import { REST_TASKS } from "./rest.js";
-import { P5_TASKS } from "./p5.js";
+import { P5_TASKS, SLOW_READ_TASK } from "./p5.js";
 import { CCB_TASKS } from "./ccb.js";
 import { PLANNING_CENTER_TASKS } from "./planning-center.js";
 import { OVERFLOW_TASKS } from "./overflow.js";
@@ -29,6 +29,7 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   QUICKBOOKS_TASK,
   QUICKBOOKS_WRITE_TASK,
   ...COMPARISON_TASKS,
+  SLOW_READ_TASK,
   ...REST_TASKS,
   ...TITHELY_TASKS,
   ...BREEZE_TASKS,

@@ -26,7 +26,9 @@ export const CONFIG_DEFAULTS = {
     maxEmittedBlocks: 32,
     maxHostCalls: 20,
     hostCallTimeoutMs: 15_000,
-    watchdogMs: 120_000,
+    // Below the 60 s MCP clients give one request, leaving time to send a typed
+    // result. See documentation/code-mode.md#cancellation-and-limits.
+    watchdogMs: 55_000,
     maxWrites: 10,
     maxResultChars: 24_000,
   },
