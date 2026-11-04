@@ -7,7 +7,7 @@ import { closeConnectorScope } from "../connector-scope.js";
 import { drainOAuthStartResets } from "../auth/oauth-start-reset.js";
 import {
   finishOAuthConnectStart,
-  consumeOAuthConnectLink,
+  claimOAuthConnectStart,
   oauthConnectUnavailable,
   verifyOAuthHandoff,
 } from "../oauth-handoff.js";
@@ -83,13 +83,16 @@ export function routeConnect(context: RouteContext): Effect.Effect<Response | nu
 async function connect(context: RouteContext): Promise<Response> {
   const { opts, request, baseUrl, runtimeContext } = context;
   const refuse = (error: string, status = 403) => privateJson({ error }, { status });
+  const invalidLink = () => refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+  // Spends nothing, so this same link works once the other visit settles.
+  const starting = () => refuse("This connection is starting in another visit. Reload this page in a moment.", 409);
   if (request.method !== "GET")
     return privateJson({ error: "method not allowed" }, { status: 405, headers: { Allow: "GET" } });
   const unavailable = oauthConnectUnavailable(opts);
   if (unavailable) return refuse(unavailable);
   const id = context.path.slice("/connect/".length);
   const handoff = await verifyOAuthHandoff(opts, baseUrl, id, context.url.searchParams.get("h"));
-  if (!handoff) return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+  if (!handoff) return invalidLink();
   const authPage = () => {
     const target = new URL(`/connectors/${id}`, baseUrl);
     target.searchParams.set("h", context.url.searchParams.get("h")!);
@@ -143,10 +146,9 @@ async function connect(context: RouteContext): Promise<Response> {
     }
     if (target.origin !== new URL(baseUrl).origin || target.username || target.password)
       return refuse("Credential management URL is unavailable", 503);
-    if (!(await consumeOAuthConnectLink(opts, handoff)))
-      return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
-    if (!(await finishOAuthConnectStart(opts, handoff, "started")))
-      return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+    const claim = await claimOAuthConnectStart(opts, handoff);
+    if (claim === "pending") return starting();
+    if (claim === "refused" || !(await finishOAuthConnectStart(opts, handoff, "started"))) return invalidLink();
     // Credential entry stays in the authenticated operator UI on this origin.
     return withSessionCookies(
       new Response(null, {
@@ -171,9 +173,11 @@ async function connect(context: RouteContext): Promise<Response> {
   const timeoutError = new ConnectorCallError("timeout", "OAuth authorization start timed out");
   let claimed = false;
   try {
-    if (!(await consumeOAuthConnectLink(opts, handoff)))
-      return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+    const claim = await claimOAuthConnectStart(opts, handoff);
+    if (claim === "pending") return starting();
+    if (claim === "refused") return invalidLink();
     claimed = true;
+    const force = claim === "reset";
     const status = await runEdge(
       withDeadlineEffect(
         (signal) =>
@@ -183,7 +187,7 @@ async function connect(context: RouteContext): Promise<Response> {
                 signal,
                 ...(context.defer ? { defer: context.defer } : {}),
               });
-              const started = await connector.startAuth!(ctx, { force: handoff.force });
+              const started = await connector.startAuth!(ctx, { force });
               if (signal.aborted) throw signal.reason;
               if (started.authorizationUrl) {
                 let target: URL | undefined;
@@ -206,10 +210,9 @@ async function connect(context: RouteContext): Promise<Response> {
       ),
     );
     await drainOAuthStartResets(scope);
-    if (handoff.force || (!status.authorizationReused && status.state !== "ok")) await registry.invalidateStored(id);
+    if (force || (!status.authorizationReused && status.state !== "ok")) await registry.invalidateStored(id);
     if (status.state === "ok") {
-      if (!(await finishOAuthConnectStart(opts, handoff, "started")))
-        return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+      if (!(await finishOAuthConnectStart(opts, handoff, "started"))) return invalidLink();
       return withSessionCookies(
         new Response("This connector is already connected.", { headers: { "Cache-Control": "no-store" } }),
         authz.sessionCookies,
@@ -224,7 +227,7 @@ async function connect(context: RouteContext): Promise<Response> {
         "OAuth start failed",
         failureRecord({
           connector: id,
-          mode: handoff.force ? "restart" : "continue",
+          mode: force ? "restart" : "continue",
           state: status.state,
         }),
       );
@@ -238,8 +241,7 @@ async function connect(context: RouteContext): Promise<Response> {
     const target = new URL(status.authorizationUrl);
     if (!["https:", "http:"].includes(target.protocol) || target.username || target.password)
       return refuse("OAuth authorization returned no safe URL", 502);
-    if (!(await finishOAuthConnectStart(opts, handoff, "started")))
-      return refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
+    if (!(await finishOAuthConnectStart(opts, handoff, "started"))) return invalidLink();
     return withSessionCookies(
       new Response(null, { status: 302, headers: { Location: target.href, "Cache-Control": "no-store" } }),
       authz.sessionCookies,

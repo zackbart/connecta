@@ -163,6 +163,25 @@ const forcedStarts = (...flows: ReturnType<typeof setup>[]) =>
     .flatMap((flow) => vi.mocked(flow.connector.startAuth!).mock.calls)
     .filter(([, options]) => options?.force === true).length;
 
+/** Hold the next browser start open until `resume`, then let it succeed or fail. */
+function holdNextStart(flow: ReturnType<typeof setup>, failure?: Error) {
+  let resume!: () => void;
+  let enter!: () => void;
+  const paused = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  const entered = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  vi.mocked(flow.connector.startAuth!).mockImplementationOnce(async () => {
+    enter();
+    await paused;
+    if (failure) throw failure;
+    return { state: "auth_required", authorizationUrl: `https://downstream.test/secret?state=${crypto.randomUUID()}` };
+  });
+  return { entered, resume };
+}
+
 describe("native auth URL elicitation", { tags: ["workers"] }, () => {
   it("INV-4: native auth binds the wire name, canonical target and arguments through accept, decline and cancel", async () => {
     for (const action of ["accept", "decline", "cancel"]) {
@@ -356,7 +375,9 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
       ok: false,
       error: {
         code: "auth_declined",
-        message: expect.stringMatching(/possibly automatically.*repeat this request once for a new link/s),
+        message: expect.stringMatching(
+          /possibly automatically.*has not refused this connection, repeat this request once for a new link.*Stop if that repeat also fails/s,
+        ),
         retryable: false,
       },
     });
@@ -369,25 +390,18 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(handed.structuredContent.error.authorizationUrl).toEqual(expect.stringContaining("/connect/service"));
   });
 
-  it("INV-4 INV-9: a retirement that commits before the refusal fails closes every old link and names the fresh one", async () => {
+  it("INV-4 INV-9: a refusal that could not issue a link leaves the prompt's link able to reset", async () => {
     const args = { connector: "service", force: true };
     const flow = setup();
     flow.connect();
     const first = (await flow.rpc("authorize_connector", args)).result;
-    const original = first.inputRequests.connecta_auth.params.url;
     const sign = vi.spyOn(flow.vault, "signOAuthHandoff").mockRejectedValueOnce(new Error("storage went away"));
     const refused = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "cancel" }))
       .result.structuredContent.error;
     sign.mockRestore();
     expect(refused.authorizationUrl).toBeUndefined();
     expect(refused.message).toMatch(/repeat this request once for a new link/);
-    expect((await flow.browser(original)).status).toBe(400);
-    expect(flow.connector.startAuth).not.toHaveBeenCalled();
-    // Safe and recoverable: the repeat asks for the same restart, and one link performs it.
-    const again = (await flow.rpc("authorize_connector", args)).result;
-    const fresh = (await flow.rpc("authorize_connector", args, { state: again.requestState, action: "cancel" })).result
-      .structuredContent.error;
-    expect((await flow.browser(fresh.authorizationUrl)).status).toBe(302);
+    expect((await flow.browser(first.inputRequests.connecta_auth.params.url)).status).toBe(302);
     expect(forcedStarts(flow)).toBe(1);
   });
 
@@ -416,279 +430,290 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
 
     const pending = setup();
     pending.connect();
-    let resume!: () => void;
-    let entered!: () => void;
-    const paused = new Promise<void>((resolve) => {
-      resume = resolve;
-    });
-    const starting = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    vi.mocked(pending.connector.startAuth!).mockImplementationOnce(async () => {
-      entered();
-      await paused;
-      return { state: "auth_required", authorizationUrl: "https://downstream.test/secret" };
-    });
+    const held = holdNextStart(pending);
     const opening = (await pending.rpc("authorize_connector", args)).result;
     const browser = pending.browser(opening.inputRequests.connecta_auth.params.url);
-    await starting;
+    await held.entered;
+    let declined;
     try {
-      const declined = (
-        await pending.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" })
-      ).result.structuredContent.error;
+      declined = (await pending.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" }))
+        .result.structuredContent.error;
       // The pending start owns the reset, so this link waits on it and cannot begin another.
-      expect((await pending.browser(declined.authorizationUrl)).status).toBe(400);
+      expect((await pending.browser(declined.authorizationUrl)).status).toBe(409);
       expect(pending.connector.startAuth).toHaveBeenCalledOnce();
     } finally {
-      resume();
+      held.resume();
     }
     await browser;
+    // Waiting spent nothing, and the same link now continues that attempt.
+    expect((await pending.browser(declined.authorizationUrl)).status).toBe(302);
+    expect(forcedStarts(pending)).toBe(1);
+    expect(pending.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
   });
 
-  it("INV-4 INV-9: a refused restart leaves one link able to reset, in either visit order", async () => {
+  it("INV-4 INV-9: a refused restart's prompt link and fallback share one reset, in either visit order, across instances", async () => {
     const args = { connector: "service", force: true };
-    const refuse = async (flow: ReturnType<typeof setup>) => {
-      flow.connect();
-      const opening = (await flow.rpc("authorize_connector", args)).result;
-      const refused = (await flow.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" }))
-        .result.structuredContent.error;
-      return { original: opening.inputRequests.connecta_auth.params.url as string, fallback: refused.authorizationUrl };
-    };
-
-    // A late visit to the declined prompt's link is refused out loud and resets nothing, so
-    // consent begun from the link the agent relayed survives it, and the restart still runs.
-    const lateOriginal = setup();
-    const first = await refuse(lateOriginal);
-    const denied = await lateOriginal.browser(first.original);
-    expect(denied.status).toBe(400);
-    expect(await denied.json()).toEqual({
-      error: "Invalid or expired connection link. Request a new link from connecta.",
-    });
-    expect(lateOriginal.connector.startAuth).not.toHaveBeenCalled();
-    expect((await lateOriginal.browser(first.fallback)).status).toBe(302);
-    expect((await lateOriginal.browser(first.original)).status).toBe(400);
-    expect(forcedStarts(lateOriginal)).toBe(1);
-
-    const lateFallback = setup();
-    const second = await refuse(lateFallback);
-    expect((await lateFallback.browser(second.fallback)).status).toBe(302);
-    expect((await lateFallback.browser(second.original)).status).toBe(400);
-    expect(forcedStarts(lateFallback)).toBe(1);
-
-    // Another isolate holds nothing but the shared storage, and its visit sees the same retirement.
-    const storage = memoryStorage();
-    const declining = setup({ storage });
-    const isolate = setup({ storage });
-    const third = await refuse(declining);
-    expect((await isolate.browser(third.original)).status).toBe(400);
-    expect(isolate.connector.startAuth).not.toHaveBeenCalled();
-    expect((await isolate.browser(third.fallback)).status).toBe(302);
-    expect(forcedStarts(isolate)).toBe(1);
-    expect(declining.connector.startAuth).not.toHaveBeenCalled();
-
-    // A visit that won before the refusal keeps its reset: the agent's link continues it.
-    const visited = setup();
-    visited.connect();
-    const opening = (await visited.rpc("authorize_connector", args)).result;
-    expect((await visited.browser(opening.inputRequests.connecta_auth.params.url)).status).toBe(302);
-    const continued = (
-      await visited.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" })
-    ).result.structuredContent.error;
-    expect((await visited.browser(continued.authorizationUrl)).status).toBe(302);
-    expect(forcedStarts(visited)).toBe(1);
-    expect(visited.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+    for (const order of ["prompt first", "fallback first"]) {
+      const storage = memoryStorage();
+      const declining = setup({ storage });
+      const isolate = setup({ storage });
+      declining.connect();
+      isolate.connect();
+      const opening = (await declining.rpc("authorize_connector", args)).result;
+      const refused = (
+        await declining.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" })
+      ).result.structuredContent.error;
+      const prompt: string = opening.inputRequests.connecta_auth.params.url;
+      const links = order === "prompt first" ? [prompt, refused.authorizationUrl] : [refused.authorizationUrl, prompt];
+      expect((await isolate.browser(links[0]!)).status).toBe(302);
+      expect(forcedStarts(declining, isolate)).toBe(1);
+      expect(isolate.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+      expect((await declining.browser(links[1]!)).status).toBe(302);
+      expect(forcedStarts(declining, isolate)).toBe(1);
+      expect(declining.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+    }
   });
 
-  describe("an accepted forced prompt", () => {
+  describe("a forced flow's links", () => {
     const args = { connector: "service", force: true };
     const LINK = (result: { inputRequests: { connecta_auth: { params: { url: string } } } }) =>
       result.inputRequests.connecta_auth.params.url;
-    const REFUSED_LINK = { error: "Invalid or expired connection link. Request a new link from connecta." };
     // Two app instances over one store, so nothing can rest on request or process memory.
     const pair = (storage: KVStorage = memoryStorage()) => {
       const asking = setup({ storage });
       const other = setup({ storage });
       asking.connect();
       other.connect();
-      return { asking, other };
+      return { asking, other, flows: [asking, other] as const };
     };
-    // Runs a visit at the instant the round retires its link: after its first progress read,
-    // either just before that write or just after it, and before anything new is issued.
-    const atRetirement = (storage: KVStorage, when: "before" | "after", visit: () => Promise<void>) => {
-      const compareAndSet = storage.compareAndSet.bind(storage);
-      let pending: (() => Promise<void>) | undefined = visit;
-      vi.spyOn(storage, "compareAndSet").mockImplementation(async (key, expected, next, options) => {
-        const hook = next === "closed" ? pending : undefined;
-        pending = hook ? undefined : pending;
-        if (when === "before") await hook?.();
-        const written = await compareAndSet(key, expected, next, options);
-        if (when === "after") await hook?.();
-        return written;
-      });
-    };
-    const accepted = async ({ asking, other }: ReturnType<typeof pair>) => {
-      const opening = (await asking.rpc("authorize_connector", args)).result;
-      const next = (await other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" }))
-        .result;
-      expect(next.resultType).toBe("input_required");
-      return { original: LINK(opening), replacement: LINK(next), next };
-    };
-
-    it("INV-4 INV-9: leaves one link able to reset when the replacement is visited first", async () => {
-      const flows = pair();
-      const { original, replacement } = await accepted(flows);
-      expect((await flows.asking.browser(replacement)).status).toBe(302);
-      const late = await flows.other.browser(original);
-      expect(late.status).toBe(400);
-      expect(await late.json()).toEqual(REFUSED_LINK);
-      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
-    });
-
-    it("INV-4 INV-9: leaves one link able to reset when the replaced link is visited first", async () => {
-      const flows = pair();
-      const { original, replacement } = await accepted(flows);
-      const stale = await flows.other.browser(original);
-      expect(stale.status).toBe(400);
-      expect(await stale.json()).toEqual(REFUSED_LINK);
-      expect(forcedStarts(flows.asking, flows.other)).toBe(0);
-      expect((await flows.asking.browser(replacement)).status).toBe(302);
-      expect((await flows.other.browser(original)).status).toBe(400);
-      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
-    });
-
-    it("INV-4 INV-9: every later round retires the prompt before it, so only the newest link resets", async () => {
-      const flows = pair();
-      const { original, replacement, next } = await accepted(flows);
-      const third = (
-        await flows.asking.rpc("authorize_connector", args, { state: next.requestState, action: "accept" })
-      ).result;
-      expect(third.resultType).toBe("input_required");
-      for (const stale of [original, replacement]) expect((await flows.other.browser(stale)).status).toBe(400);
-      expect((await flows.asking.browser(LINK(third))).status).toBe(302);
-      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
-    });
-
-    it("INV-4 INV-9: a claimant that wins just before the retirement keeps its reset and gets Continue", async () => {
-      const storage = memoryStorage();
-      const flows = pair(storage);
-      const opening = (await flows.asking.rpc("authorize_connector", args)).result;
-      let visited = 0;
-      atRetirement(storage, "before", async () => {
-        expect((await flows.asking.browser(LINK(opening))).status).toBe(302);
-        visited++;
-      });
-      const next = (
-        await flows.other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" })
-      ).result;
-      expect(next.resultType).toBe("input_required");
-      expect(visited).toBe(1);
-      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
-      expect((await flows.other.browser(LINK(next))).status).toBe(302);
-      // The second visit continues the first consent rather than resetting it.
-      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
-      expect(flows.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
-    });
-
-    it("INV-4 INV-9: a claimant still resetting when the round retires keeps ownership of the reset", async () => {
-      const storage = memoryStorage();
-      const flows = pair(storage);
-      let resume!: () => void;
-      let entered!: () => void;
-      const paused = new Promise<void>((resolve) => {
-        resume = resolve;
-      });
-      const starting = new Promise<void>((resolve) => {
-        entered = resolve;
-      });
-      vi.mocked(flows.asking.connector.startAuth!).mockImplementationOnce(async () => {
-        entered();
-        await paused;
-        return {
-          state: "auth_required",
-          authorizationUrl: `https://downstream.test/secret?state=${crypto.randomUUID()}`,
-        };
-      });
-      const opening = (await flows.asking.rpc("authorize_connector", args)).result;
-      let visit: Promise<Response> | undefined;
-      atRetirement(storage, "before", async () => {
-        visit = flows.asking.browser(LINK(opening));
-        await starting;
-      });
-      const next = (
-        await flows.other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" })
-      ).result;
-      expect(visit).toBeDefined();
-      try {
-        // Bound to the claim, so it waits on that reset rather than beginning a second.
-        expect((await flows.other.browser(LINK(next))).status).toBe(400);
-      } finally {
-        resume();
+    /** Accept every prompt at once, as the SDK does: a round returns before any browser moves. */
+    const rounds = async (pairing: ReturnType<typeof pair>, count: number) => {
+      let result = (await pairing.asking.rpc("authorize_connector", args)).result;
+      const links = [LINK(result)];
+      for (let round = 1; round < count; round++) {
+        result = (
+          await pairing.other.rpc("authorize_connector", args, { state: result.requestState, action: "accept" })
+        ).result;
+        expect(result.resultType).toBe("input_required");
+        links.push(LINK(result));
       }
-      expect((await visit!).status).toBe(302);
-      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
-    });
+      return { links, last: result };
+    };
+    const permutations = <T>(items: T[]): T[][] =>
+      items.length < 2
+        ? [items]
+        : items.flatMap((item, index) =>
+            permutations(items.filter((_, other) => other !== index)).map((rest) => [item, ...rest]),
+          );
 
-    it("INV-4 INV-9: a claimant arriving just after the retirement is refused and the replacement resets", async () => {
-      const storage = memoryStorage();
-      const flows = pair(storage);
-      const opening = (await flows.asking.rpc("authorize_connector", args)).result;
-      let visited = 0;
-      atRetirement(storage, "after", async () => {
-        expect((await flows.asking.browser(LINK(opening))).status).toBe(400);
-        visited++;
-      });
+    it.each([0, 1, 5, 20])(
+      "INV-4 INV-9: a visit landing %i ms after accept returned performs the one reset",
+      async (delay) => {
+        const pairing = pair();
+        const { links } = await rounds(pairing, 2);
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        expect((await pairing.asking.browser(links[0]!)).status).toBe(302);
+        expect(pairing.asking.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+        expect((await pairing.other.browser(links[1]!)).status).toBe(302);
+        expect(pairing.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+        expect(forcedStarts(...pairing.flows)).toBe(1);
+      },
+    );
+
+    it("INV-4 INV-9: a maintainer already on the page can press Start after the prompt was accepted", async () => {
+      const pairing = pair();
+      const opening = (await pairing.asking.rpc("authorize_connector", args)).result;
+      const opened = await pairing.asking.app.fetch(
+        new Request(LINK(opening), { headers: { Cookie: "__session=alice" } }),
+      );
+      expect(new URL(opened.headers.get("Location")!).pathname).toBe("/connectors/service");
       const next = (
-        await flows.other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" })
+        await pairing.other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" })
       ).result;
-      expect(visited).toBe(1);
-      expect(forcedStarts(flows.asking, flows.other)).toBe(0);
-      expect((await flows.other.browser(LINK(next))).status).toBe(302);
-      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
-      expect(flows.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+      expect(forcedStarts(...pairing.flows)).toBe(0);
+      expect((await pairing.asking.browser(LINK(opening))).status).toBe(302);
+      expect((await pairing.other.browser(LINK(next))).status).toBe(302);
+      expect(forcedStarts(...pairing.flows)).toBe(1);
     });
 
-    it("INV-4 INV-9: an unforced prompt's link stays open after an accepted round", async () => {
+    it("INV-4 INV-9: every round's link works once and all of them reset once, in every visit order", async () => {
+      for (const order of permutations([0, 1, 2])) {
+        const pairing = pair();
+        const { links } = await rounds(pairing, 3);
+        for (const [position, index] of order.entries()) {
+          const visitor = position % 2 ? pairing.other : pairing.asking;
+          expect((await visitor.browser(links[index]!)).status).toBe(302);
+          expect(visitor.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: position === 0 });
+        }
+        expect(forcedStarts(...pairing.flows)).toBe(1);
+        // Live is not reusable: each link is still spent by its own visit.
+        for (const link of links) expect((await pairing.other.browser(link)).status).toBe(400);
+        expect(forcedStarts(...pairing.flows)).toBe(1);
+      }
+    });
+
+    it("INV-4 INV-9: separate flows reset separately", async () => {
+      const pairing = pair();
+      const first = await rounds(pairing, 2);
+      const second = await rounds(pairing, 2);
+      expect((await pairing.asking.browser(first.links[0]!)).status).toBe(302);
+      expect((await pairing.asking.browser(second.links[1]!)).status).toBe(302);
+      expect(forcedStarts(...pairing.flows)).toBe(2);
+    });
+
+    it("INV-4 INV-9: an unforced prompt's links stay independent and never reset", async () => {
       const flow = setup();
       const plain = { connector: "service" };
       const opening = (await flow.rpc("authorize_connector", plain)).result;
       const next = (await flow.rpc("authorize_connector", plain, { state: opening.requestState, action: "accept" }))
         .result;
-      expect(next.resultType).toBe("input_required");
-      expect((await flow.browser(LINK(opening))).status).toBe(302);
-    });
-
-    it("INV-4 INV-7 INV-9: claim and retirement race on real SQLite connections with one reset per flow", async () => {
-      const { mkdtempSync, rmSync } = await import("node:fs");
-      const { tmpdir } = await import("node:os");
-      const { join } = await import("node:path");
-      const { openSqlite, sqliteStorage } = await import("../src/sqlite.js");
-      const directory = mkdtempSync(join(tmpdir(), "connecta-forced-link-"));
-      const databases = [openSqlite(join(directory, "shared.db")), openSqlite(join(directory, "shared.db"))];
-      try {
-        const [first, second] = databases.map((database) => setup({ storage: sqliteStorage(database) }));
-        first!.connect();
-        second!.connect();
-        for (let trial = 0; trial < 24; trial++) {
-          vi.mocked(first!.connector.startAuth!).mockClear();
-          vi.mocked(second!.connector.startAuth!).mockClear();
-          const opening = (await first!.rpc("authorize_connector", args)).result;
-          const [visit, reply] = await Promise.all([
-            first!.browser(LINK(opening)),
-            second!.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" }),
-          ]);
-          const next = reply.result;
-          expect(next.resultType).toBe("input_required");
-          expect([302, 400]).toContain(visit.status);
-          // Whichever way it fell, the replacement works and cannot add a second reset.
-          expect((await second!.browser(LINK(next))).status).toBe(302);
-          expect(forcedStarts(first!, second!)).toBe(1);
-        }
-      } finally {
-        await Promise.all(apps.splice(0).map((app) => app.close()));
-        for (const database of databases) database.close();
-        rmSync(directory, { recursive: true, force: true });
+      for (const link of [LINK(next), LINK(opening)]) {
+        expect((await flow.browser(link)).status).toBe(302);
+        expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
       }
     });
+
+    it("INV-4 INV-9: a later visitor waits on a pending winner, keeps its link, then continues", async () => {
+      const pairing = pair();
+      const { links, last } = await rounds(pairing, 2);
+      const held = holdNextStart(pairing.asking);
+      const winner = pairing.asking.browser(links[0]!);
+      await held.entered;
+      try {
+        const waiting = await pairing.other.browser(links[1]!);
+        expect(waiting.status).toBe(409);
+        expect(await waiting.json()).toEqual({ error: expect.stringMatching(/Reload this page/) });
+        // A second wait is as harmless as the first.
+        expect((await pairing.other.browser(links[1]!)).status).toBe(409);
+        expect(forcedStarts(...pairing.flows)).toBe(1);
+        // Completion cannot claim the old grant while the reset is still running.
+        const retried = (
+          await pairing.other.rpc("authorize_connector", args, { state: last.requestState, action: "accept" })
+        ).result;
+        expect(retried.resultType).toBe("input_required");
+      } finally {
+        held.resume();
+      }
+      expect((await winner).status).toBe(302);
+      expect((await pairing.other.browser(links[1]!)).status).toBe(302);
+      expect(pairing.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+      expect(forcedStarts(...pairing.flows)).toBe(1);
+    });
+
+    it("INV-4 INV-9: a failed winner hands the reset to the next visitor, who starts it afresh", async () => {
+      const pairing = pair();
+      const { links } = await rounds(pairing, 3);
+      vi.mocked(pairing.asking.connector.startAuth!).mockRejectedValueOnce(new Error("Reset failed"));
+      expect((await pairing.asking.browser(links[0]!)).status).toBe(400);
+      // The failed link is spent; the flow is not. Its other links can recover it.
+      expect((await pairing.asking.browser(links[0]!)).status).toBe(400);
+      expect((await pairing.other.browser(links[1]!)).status).toBe(302);
+      expect(pairing.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+      expect((await pairing.asking.browser(links[2]!)).status).toBe(302);
+      expect(pairing.asking.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+      // One failed attempt and the one reset that succeeded, never a reset over a live attempt.
+      expect(forcedStarts(...pairing.flows)).toBe(2);
+    });
+
+    it("INV-4 INV-9: visitors waiting on a winner that fails can recover it without a new link", async () => {
+      const pairing = pair();
+      const { links } = await rounds(pairing, 2);
+      const held = holdNextStart(pairing.asking, new Error("Reset failed"));
+      const winner = pairing.asking.browser(links[0]!);
+      await held.entered;
+      try {
+        expect((await pairing.other.browser(links[1]!)).status).toBe(409);
+      } finally {
+        held.resume();
+      }
+      expect((await winner).status).toBe(400);
+      expect((await pairing.other.browser(links[1]!)).status).toBe(302);
+      expect(pairing.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+    });
+
+    it("INV-4 INV-9: a reset's record outlives the link that claimed it, so a later round's link cannot repeat it", async () => {
+      const pairing = pair();
+      const { links, last } = await rounds(pairing, 1);
+      const start = Date.now();
+      const now = vi.spyOn(Date, "now");
+      // Round two arrives at the end of the retry window, just before the first link expires.
+      now.mockReturnValue(start + 9 * 60_000);
+      const next = (
+        await pairing.other.rpc("authorize_connector", args, { state: last.requestState, action: "accept" })
+      ).result;
+      now.mockReturnValue(start + 14 * 60_000);
+      expect((await pairing.asking.browser(links[0]!)).status).toBe(302);
+      now.mockReturnValue(start + 20 * 60_000);
+      expect((await pairing.other.browser(LINK(next))).status).toBe(302);
+      expect(forcedStarts(...pairing.flows)).toBe(1);
+    });
+
+    it("INV-4 INV-9: a later link during the completion status check cannot reset or strand the flow", async () => {
+      const pairing = pair();
+      const { asking, other } = pairing;
+      const { links, last } = await rounds(pairing, 2);
+      expect((await asking.browser(links[0]!)).status).toBe(302);
+      expect(forcedStarts(asking, other)).toBe(1);
+      let resume!: () => void;
+      let entered!: () => void;
+      const paused = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      const checking = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      vi.spyOn(other.connector, "status").mockImplementationOnce(async () => {
+        entered();
+        await paused;
+        return { state: "ok" };
+      });
+      const retry = other.rpc("authorize_connector", args, { state: last.requestState, action: "accept" });
+      await checking;
+      try {
+        expect((await asking.browser(links[1]!)).status).toBe(302);
+        expect(asking.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+        expect(forcedStarts(asking, other)).toBe(1);
+      } finally {
+        resume();
+      }
+      expect((await retry).result.structuredContent).toEqual({ connector: "service", status: "ok" });
+    });
+
+    it(
+      "INV-4 INV-7 INV-9: concurrent visitors race the claim on real SQLite connections with one reset per flow",
+      { timeout: 60_000 },
+      async () => {
+        const { mkdtempSync, rmSync } = await import("node:fs");
+        const { tmpdir } = await import("node:os");
+        const { join } = await import("node:path");
+        const { openSqlite, sqliteStorage } = await import("../src/sqlite.js");
+        const directory = mkdtempSync(join(tmpdir(), "connecta-forced-link-"));
+        const databases = [openSqlite(join(directory, "shared.db")), openSqlite(join(directory, "shared.db"))];
+        try {
+          const [first, second] = databases.map((database) => setup({ storage: sqliteStorage(database) }));
+          first!.connect();
+          second!.connect();
+          const pairing = { asking: first!, other: second!, flows: [first!, second!] as const };
+          for (let trial = 0; trial < 24; trial++) {
+            vi.mocked(first!.connector.startAuth!).mockClear();
+            vi.mocked(second!.connector.startAuth!).mockClear();
+            const { links } = await rounds(pairing, 3);
+            const visits = await Promise.all(links.map((link, index) => (index % 2 ? second! : first!).browser(link)));
+            const statuses = visits.map((visit) => visit.status);
+            expect(statuses).toContain(302);
+            for (const status of statuses) expect([302, 409]).toContain(status);
+            // A visitor told to wait reloads and continues the same attempt.
+            for (const [index, status] of statuses.entries())
+              if (status === 409) expect((await second!.browser(links[index]!)).status).toBe(302);
+            expect(forcedStarts(first!, second!)).toBe(1);
+          }
+        } finally {
+          await Promise.all(apps.splice(0).map((app) => app.close()));
+          for (const database of databases) database.close();
+          rmSync(directory, { recursive: true, force: true });
+        }
+      },
+    );
   });
 
   it("INV-4: bounds rounds while accept does not claim consent completed", async () => {
@@ -816,42 +841,6 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
   });
 
-  it("INV-4 INV-5 INV-9: retires unused links before the completion status check", async () => {
-    const flow = setup();
-    // Unforced, because an accepted forced round has already retired its older link.
-    const args = { connector: "service" };
-    const first = (await flow.rpc("authorize_connector", args)).result;
-    const second = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" }))
-      .result;
-    vi.mocked(flow.connector.startAuth!).mockImplementationOnce(async () => {
-      flow.connect();
-      return { state: "ok" };
-    });
-    expect((await flow.browser(first.inputRequests.connecta_auth.params.url)).status).toBe(200);
-    let resume!: () => void;
-    let entered!: () => void;
-    const paused = new Promise<void>((resolve) => {
-      resume = resolve;
-    });
-    const checking = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    vi.spyOn(flow.connector, "status").mockImplementation(async () => {
-      entered();
-      await paused;
-      return { state: "ok" };
-    });
-    const retry = flow.rpc("authorize_connector", args, { state: second.requestState, action: "accept" });
-    await checking;
-    try {
-      expect((await flow.browser(second.inputRequests.connecta_auth.params.url)).status).toBe(400);
-      expect(flow.connector.startAuth).toHaveBeenCalledOnce();
-    } finally {
-      resume();
-    }
-    expect((await retry).result.structuredContent).toEqual({ connector: "service", status: "ok" });
-  });
-
   it("INV-4 INV-9: each requestState admits one retry and concurrent forks are refused", async () => {
     const flow = setup();
     const args = { connector: "service", force: true };
@@ -873,37 +862,25 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     }
   });
 
-  it("INV-4 INV-5 INV-9: Continue cannot reuse the old grant when its forced predecessor fails", async () => {
+  it("INV-4 INV-5 INV-9: no link can reuse the old grant when the forced start fails", async () => {
     const flow = setup();
     flow.connect();
-    let resume!: () => void;
-    let entered!: () => void;
-    const paused = new Promise<void>((resolve) => {
-      resume = resolve;
-    });
-    const starting = new Promise<void>((resolve) => {
-      entered = resolve;
-    });
-    vi.mocked(flow.connector.startAuth!).mockImplementationOnce(async () => {
-      entered();
-      await paused;
-      throw new Error("Reset failed before changing the old grant");
-    });
+    const held = holdNextStart(flow, new Error("Reset failed before changing the old grant"));
     const args = { connector: "service", force: true };
     const first = (await flow.rpc("authorize_connector", args)).result;
     const browser = flow.browser(first.inputRequests.connecta_auth.params.url);
-    await starting;
+    await held.entered;
     let pending;
     try {
       pending = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" })).result;
       expect(pending.resultType).toBe("input_required");
-      expect((await flow.browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(400);
+      expect((await flow.browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(409);
     } finally {
-      resume();
+      held.resume();
     }
     expect((await browser).status).toBe(400);
-    expect((await flow.browser(pending.inputRequests.connecta_auth.params.url)).status).toBe(400);
     expect(flow.connector.startAuth).toHaveBeenCalledOnce();
+    // Nothing completes against the old grant; the next round's prompt and the waiting link both restart.
     const replacement = (await flow.rpc("authorize_connector", args, { state: pending.requestState, action: "accept" }))
       .result;
     expect(replacement.resultType).toBe("input_required");

@@ -71,9 +71,9 @@ const REFUSED = {
   },
 } as const;
 // Only a repeat can recover a refusal whose link failed, and it asks for a new
-// prompt, so a person's refusal stays final.
+// prompt, so a person's refusal stays final. Nothing on the server limits it to one.
 const REFUSED_NO_LINK =
-  " No connection link could be issued. If the user has not refused this connection, repeat this request once for a new link, then give it to them.";
+  " No connection link could be issued. If the user has not refused this connection, repeat this request once for a new link, then give it to them. Stop if that repeat also fails.";
 const refusedPurpose = (recipient: string) =>
   `Give this link to the user, unchanged, ${recipient}once, then stop. Do not prompt again, retry, or reach this service another way until they confirm. If they already refused this connection in this conversation, only mention that the link is available.`;
 
@@ -124,9 +124,8 @@ export class AuthElicitation {
       principal: string | undefined;
       registry: RegistryView;
       canManage: (id: string) => boolean;
-      connectLink: (id: string, force?: boolean, after?: string) => Promise<{ url: string; nonce: string }>;
+      connectLink: (id: string, force?: boolean, flow?: string) => Promise<{ url: string; nonce: string }>;
       linkProgress: (id: string, nonce: string) => Promise<"claimed" | "started" | "failed" | undefined>;
-      closeLinks: (id: string, nonces: string[]) => Promise<void>;
       claimRetry: (id: string, nonce: string) => Promise<boolean>;
       unavailable: string | undefined;
       credentialUi: boolean;
@@ -162,16 +161,8 @@ export class AuthElicitation {
     );
   }
 
-  private browserProgress(state: AuthRequestState): Promise<{ predecessor?: string; completed: boolean }> {
-    return runEdge(
-      authOwnMethod<{ predecessor?: string; completed: boolean }>(AuthElicitation.prototype, this, "browserProgress", [
-        state,
-      ]),
-    );
-  }
-
-  private retireForRestart(state: AuthRequestState): Promise<string | undefined> {
-    return runEdge(authOwnMethod<string | undefined>(AuthElicitation.prototype, this, "retireForRestart", [state]));
+  private browserCompleted(state: AuthRequestState): Promise<boolean> {
+    return runEdge(authOwnMethod<boolean>(AuthElicitation.prototype, this, "browserCompleted", [state]));
   }
 
   private connected(id: string, context: ServerContext): Promise<boolean> {
@@ -344,27 +335,14 @@ export class AuthElicitation {
               }
               bindReplayReads(self.options.requestScope, previous.reads);
             }
-            const browser =
-              previous && tool === "authorize_connector"
-                ? yield* upwardStep(
-                    authInvoke<{ predecessor?: string; completed: boolean }>(self, "browserProgress", [previous]),
-                  )
-                : undefined;
-            if (browser?.completed && previous) {
-              // Retire unspent links before the status read. A browser claim racing
-              // these CASes either wins and is observed as pending, or is refused.
-              yield* upwardStep(
-                authInvoke<void>(self.options, "closeLinks", [previous.connector, previous.browserNonces]),
-              );
-              if (
-                (yield* upwardStep(
-                  authInvoke<{ predecessor?: string; completed: boolean }>(self, "browserProgress", [previous]),
-                )).completed &&
-                (yield* upwardStep(authInvoke<boolean>(self, "connected", [previous.connector, context])))
-              ) {
-                const structuredContent = { connector: previous.connector, status: "ok" };
-                return { structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
-              }
+            if (
+              previous &&
+              tool === "authorize_connector" &&
+              (yield* upwardStep(authInvoke<boolean>(self, "browserCompleted", [previous]))) &&
+              (yield* upwardStep(authInvoke<boolean>(self, "connected", [previous.connector, context])))
+            ) {
+              const structuredContent = { connector: previous.connector, status: "ok" };
+              return { structuredContent, content: [{ type: "text", text: JSON.stringify(structuredContent) }] };
             }
             const envelope = context.mcpReq.envelope as Record<string, unknown> | undefined;
             const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
@@ -452,18 +430,14 @@ export class AuthElicitation {
                 "auth_round_limit",
                 "Connection is still required after three prompts. Connect explicitly, then start a new request.",
               );
-            // Once a verified browser has started this attempt, retries continue it.
-            // A pending consent must never be reset by another force=true prompt.
+            // Accept is consent to open the link, not proof it opened, so every round's
+            // link stays live and they share one reset (claimOAuthConnectStart).
             const forced = explicit && args.force === true;
-            const predecessor =
-              forced && previous
-                ? yield* upwardStep(authInvoke<string | undefined>(self, "retireForRestart", [previous]))
-                : undefined;
             const link = yield* upwardStep(
               authInvoke<{ url: string; nonce: string }>(self.options, "connectLink", [
                 id,
-                forced && !predecessor,
-                predecessor,
+                forced,
+                forced ? previous?.browserNonces[0] : undefined,
               ]),
             );
             const state: AuthRequestState = {
@@ -539,11 +513,8 @@ export class AuthElicitation {
               self.options;
             try {
               // The signed state bound these arguments, so this is the restart the
-              // caller asked for. A pending consent must not be reset by it either.
+              // caller asked for, sharing the prompt's reset if that prompt was opened.
               const forced = tool === "authorize_connector" && force === true;
-              const predecessor = forced
-                ? yield* upwardStep(authInvoke<string | undefined>(self, "retireForRestart", [state]))
-                : undefined;
               // The ordinary handoff, except that the link is the sealed form this
               // client was already shown: the agent sees no principal in it.
               const handoff = yield* upwardStep(
@@ -559,8 +530,8 @@ export class AuthElicitation {
                     oauthConnectUrl: authMethod(() =>
                       authInvoke<{ url: string; nonce: string }>(self.options, "connectLink", [
                         id,
-                        forced && !predecessor,
-                        predecessor,
+                        forced,
+                        forced ? state.browserNonces[0] : undefined,
                       ]).pipe(Effect.map((link) => link.url)),
                     ),
                   },
@@ -584,8 +555,7 @@ export class AuthElicitation {
                 { ok: false },
               );
             } catch {
-              // A signing or storage failure cannot replace the refusal itself. Its
-              // retirement may have committed, so no old link can be relied on.
+              // A signing or storage failure cannot replace the refusal itself.
               return failure(code, message + REFUSED_NO_LINK);
             }
           }),
@@ -593,26 +563,6 @@ export class AuthElicitation {
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as AuthElicitation).options.requestScope)));
       },
       AuthElicitation.prototype.refused,
-    );
-    registerAuthMethod(
-      AuthElicitation.prototype,
-      "retireForRestart",
-      function (state: AuthRequestState) {
-        const self = this as AuthElicitation;
-        return authAwait(
-          authFlow<string | undefined>(function* () {
-            // One restart per flow: unspent links retire before another is issued.
-            // A browser claim racing these CASes either wins and is observed as the
-            // predecessor, or is refused, so only one link can ever begin the reset.
-            yield* upwardStep(authInvoke<void>(self.options, "closeLinks", [state.connector, state.browserNonces]));
-            return (yield* upwardStep(
-              authInvoke<{ predecessor?: string; completed: boolean }>(self, "browserProgress", [state]),
-            )).predecessor;
-          }),
-          self.options.requestSignal,
-        ).pipe(Effect.provideService(RequestScope, requestOwner(self.options.requestScope)));
-      },
-      AuthElicitation.prototype.retireForRestart,
     );
     registerAuthMethod(
       AuthElicitation.prototype,
@@ -662,13 +612,11 @@ export class AuthElicitation {
     );
     registerAuthMethod(
       AuthElicitation.prototype,
-      "browserProgress",
+      "browserCompleted",
       function (state: AuthRequestState) {
         const self = this as AuthElicitation;
         return authAwait(
-          authFlow<{ predecessor?: string; completed: boolean }>(function* () {
-            let started: string | undefined;
-            let claimed: string | undefined;
+          authFlow<boolean>(function* () {
             let completed = false;
             let pending = false;
             for (const nonce of state.browserNonces) {
@@ -678,18 +626,15 @@ export class AuthElicitation {
                   nonce,
                 ]),
               );
-              if (progress === "started") started = nonce;
-              if (progress === "claimed") claimed = nonce;
               completed ||= progress === "started";
               pending ||= progress === "claimed";
             }
-            const predecessor = started ?? claimed;
-            return { ...(predecessor ? { predecessor } : {}), completed: completed && !pending };
+            return completed && !pending;
           }),
           (this as AuthElicitation).options.requestSignal,
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as AuthElicitation).options.requestScope)));
       },
-      AuthElicitation.prototype.browserProgress,
+      AuthElicitation.prototype.browserCompleted,
     );
     registerAuthMethod(
       AuthElicitation.prototype,

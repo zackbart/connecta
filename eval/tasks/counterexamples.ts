@@ -102,6 +102,11 @@ export function counterexamples(
         trace: retell((line) => line.replaceAll(issued, `[Connect](${issued}${mark})`)),
       });
     cases.push({
+      name: "handoff link among the label's words of a Markdown link elsewhere",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, `[${issued} click here](https://elsewhere.example/connect)`)),
+    });
+    cases.push({
       name: "handoff link only as the label of a Markdown link elsewhere",
       check: "handed-off",
       trace: retell((line) => line.replaceAll(issued, `[${issued}](https://elsewhere.example/connect)`)),

@@ -117,10 +117,13 @@ const URL_WRAPPER_CLOSERS: Record<string, string> = {
  * Every other trailing character stays, because it would be part of the link a
  * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL. So does
  * punctuation inside a destination, which a person's click sends along, so a word
- * touching a destination is never read a second time as a bare URL.
+ * touching a destination is never read a second time as a bare URL. A URL in a
+ * link's label isn't one either: the click goes to the destination.
  */
 export function urlTokens(text: string): string[] {
-  const destinations = [...text.matchAll(/\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g)];
+  const destinations = [
+    ...text.matchAll(/(?:\[[^[\]]*)?\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g),
+  ];
   const tokens = destinations.map((match) => match[1]!);
   for (const match of text.matchAll(/https?:\/\/\S+/g)) {
     const end = match.index + match[0].length;

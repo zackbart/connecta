@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AccessTokenManager } from "../src/access-tokens.js";
 import { agentAdmissionFixture } from "./helpers/agent-tokens.js";
 import { d1ActivityStore, d1Storage, type D1DatabaseBinding } from "../src/d1.js";
-import { closeOAuthConnectLinks, consumeOAuthConnectLink, oauthConnectLinkProgress } from "../src/oauth-handoff.js";
+import { claimOAuthConnectStart, finishOAuthConnectStart } from "../src/oauth-handoff.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
@@ -63,32 +63,50 @@ async function open(): Promise<SqlFixture> {
   };
 }
 
-describe.skipIf(!bindings)("connect link retirement over native Workers D1", () => {
-  it("INV-7 INV-9: a browser claim and a round's retirement have exactly one winner across store instances", async () => {
+const visitor = (storage: ReturnType<typeof d1Storage>) =>
+  ({ registry: { contextFor: () => ({ storage }) } }) as unknown as Parameters<typeof claimOAuthConnectStart>[0];
+const forcedLink = (nonce: string, flow?: string) =>
+  ({
+    connector: "service",
+    origin: "https://connecta.test",
+    expiresAt: Date.now() + 60_000,
+    force: true,
+    nonce,
+    ...(flow ? { flow } : {}),
+  }) as Parameters<typeof claimOAuthConnectStart>[1];
+
+describe.skipIf(!bindings)("a forced flow's reset over native Workers D1", () => {
+  it("INV-7 INV-9: concurrent visitors across store instances run exactly one reset", async () => {
     const db = await fresh();
-    const over = (storage: ReturnType<typeof d1Storage>) =>
-      ({ registry: { contextFor: () => ({ storage }) } }) as unknown as Parameters<typeof closeOAuthConnectLinks>[0];
-    const browser = over(d1Storage(db));
-    const round = over(d1Storage(db));
+    const visitors = [visitor(d1Storage(db)), visitor(d1Storage(db))];
     for (let trial = 0; trial < 24; trial++) {
-      const nonce = crypto.randomUUID();
-      const handoff = {
-        connector: "service",
-        origin: "https://connecta.test",
-        expiresAt: Date.now() + 60_000,
-        nonce,
-      } as Parameters<typeof consumeOAuthConnectLink>[1];
-      // Alternate who dispatches first, so neither side wins by call order alone.
-      const claim = () => consumeOAuthConnectLink(browser, handoff);
-      const retire = () => closeOAuthConnectLinks(round, "https://connecta.test", "service", [nonce]);
-      const [claimed] =
-        trial % 2 ? await Promise.all([claim(), retire()]) : (await Promise.all([retire(), claim()])).reverse();
-      // The round's fresh read and the browser's claim agree: a claimant that won is seen, one that lost starts nothing.
-      expect(await oauthConnectLinkProgress(round, "https://connecta.test", "service", nonce)).toBe(
-        claimed ? "claimed" : undefined,
-      );
-      expect(await consumeOAuthConnectLink(browser, handoff)).toBe(false);
+      const flow = crypto.randomUUID();
+      const links = [forcedLink(flow), forcedLink(crypto.randomUUID(), flow), forcedLink(crypto.randomUUID(), flow)];
+      const claim = (index: number) => claimOAuthConnectStart(visitors[index % 2]!, links[index]!);
+      // Alternate who dispatches first, so nobody wins by call order alone.
+      const order = trial % 2 ? [0, 1, 2] : [2, 1, 0];
+      const outcomes = await Promise.all(order.map(claim));
+      expect(outcomes.filter((outcome) => outcome === "reset")).toHaveLength(1);
+      for (const outcome of outcomes) expect(outcome).not.toBe("refused");
+      const winner = links[order[outcomes.indexOf("reset")]!]!;
+      // A waiter spent nothing: once the winner settles, it continues rather than resetting.
+      await finishOAuthConnectStart(visitors[0]!, winner, "started");
+      for (const [position, outcome] of outcomes.entries())
+        if (outcome === "pending") expect(await claim(order[position]!)).toBe("continue");
     }
+  });
+
+  it("INV-7 INV-9: a failed reset passes to exactly one of the visitors racing to recover it", async () => {
+    const db = await fresh();
+    const visitors = [visitor(d1Storage(db)), visitor(d1Storage(db))];
+    const flow = crypto.randomUUID();
+    const winner = forcedLink(flow);
+    expect(await claimOAuthConnectStart(visitors[0]!, winner)).toBe("reset");
+    await finishOAuthConnectStart(visitors[0]!, winner, "failed");
+    const outcomes = await Promise.all(
+      [0, 1].map((index) => claimOAuthConnectStart(visitors[index]!, forcedLink(crypto.randomUUID(), flow))),
+    );
+    expect([...outcomes].sort()).toEqual(["pending", "reset"]);
   });
 });
 
