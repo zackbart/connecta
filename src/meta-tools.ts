@@ -24,7 +24,6 @@ import { advertisedSchema } from "./advertised-schema.js";
 import {
   boundedDiscoveryText,
   CatalogService,
-  DEFAULT_SEARCH_LIMIT,
   DiscoveryPolicyError,
   flatSearchResult,
   MAX_DESCRIBE_ADDRESSES,
@@ -1667,17 +1666,17 @@ function metaToolsForRequest(
 // still routes correctly from these scopes plus execute_code's terse lead.
 // Only the meta surface lists these tools, so they use its names.
 const SEARCH_DESC = (readOnly: boolean) =>
-  `${readOnly ? "Catalog inspection; this read-only endpoint omits write tools." : `Catalog inspection, or finding a write before ${META_ROUTES.write}.`} For read work, search inside one ${META_ROUTES.program} program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement; neither grants authority. Empty query browses. Read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
+  `${readOnly ? "Inspect the catalog; this read-only endpoint omits write tools." : `Inspect the catalog, or find a write before ${META_ROUTES.write}.`} For read work, search inside one ${META_ROUTES.program} program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; set connector when known; an empty query browses. safety filters by classification and grants nothing. Read catalogErrors and absence before choosing a tool.`;
 const CALL_DESC = (readOnly: boolean) =>
-  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: ${META_ROUTES.program}. ${readOnly ? "This endpoint is read-only and refuses every write." : `Unannotated or write-capable tools fail closed to ${META_ROUTES.write}.`} A truncated result carries a connecta.result action.`;
+  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: ${META_ROUTES.program}. ${readOnly ? "This endpoint is read-only and refuses every write." : `Unannotated or write-capable tools fail closed to ${META_ROUTES.write}.`} A truncated result carries nextAction.`;
 const CALL_DESTRUCTIVE_DESC =
-  "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
+  "Call one tool not explicitly annotated readOnlyHint: true. Check its schema and consequences, then include a short reason for the human reviewer; it grants nothing and is not sent downstream. Sent once: never resend it to see output.";
 /** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */
 const CALL_DESTRUCTIVE_READ_ONLY_DESC = `This endpoint is read-only: search and describe omit write tools, and every write call here is refused. Reads still run; prefer ${META_ROUTES.read} or ${META_ROUTES.program} for them.`;
 const AUTHORIZE_DESC =
-  "Use after auth_required. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed with an authentication or operator-configuration error, give the retained handoff to the operator; otherwise proceed with the call. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
+  "Use after auth_required when the error has no authorizationUrl or operatorUrl, or for a fresh link; otherwise pass that on. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed on authentication or configuration, give the retained handoff to the operator; otherwise proceed with the call. force=true restarts OAuth when the verified user opens the /connect URL. Never accepts credentials.";
 const SKILLS_DESC =
-  "List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.";
+  "List or fetch guidance by exact name. Fetch usage only when guidance is missing or a program needs repair.";
 
 /**
  * Sentences appended to a meta-tool description only when this connection
@@ -1688,9 +1687,9 @@ const SKILLS_DESC =
  * Registration is per connection and reads the configured connector set.
  */
 const GUIDE_NOTES = {
-  skills: " Also lists this deployment's connector guides by exact name.",
-  search: " A result with guideRequired: true requires its exact named connector guide before the call.",
-  destructive: " Fetch any exact connector guide named by discovery before the call.",
+  skills: " Includes connector guides.",
+  search: " guideRequired: true means fetch its named guide before the call.",
+  destructive: " Fetch any connector guide discovery names first.",
 } as const;
 
 /** `base`, plus its guide note when any VISIBLE connector carries a guide. */
@@ -1772,7 +1771,7 @@ const CALL_DESTRUCTIVE_INPUT = advertisedSchema(
 );
 
 const READ_RESULT_DESC =
-  "Page by resultId and nextAction from the truncation notice. UTF-8 byte ranges: continue from nextOffset while hasMore. Never repeat a write for output.";
+  "Page a truncated result: run nextAction, then continue from nextOffset while hasMore. Never repeat a write for output.";
 
 const READ_RESULT_INPUT = advertisedSchema(
   z.strictObject({
