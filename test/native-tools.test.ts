@@ -624,7 +624,7 @@ describe("native tool surface", () => {
   it("INV-6: a tool's long error reaches a native write's agent whole and no activity record", async () => {
     const { connecta, token, sent, events } = await admitted();
     const called = await rpc(connecta, token, "hosted", "tools/call", {
-      name: await nativeToolName("vendor", "pay"),
+      name: await nativeToolName("vendor", "pay", "write"),
       arguments: {},
     });
     expect(called.result.isError).toBe(true);
