@@ -104,6 +104,7 @@ async function run(payload: RunPayload): Promise<void> {
     const prepared: ExecutionPayload = {
       outcome: prepareExecuteResultForTransport(raw),
       ...(raw.timedOut ? { timedOut: true } : {}),
+      ...(raw.teardownFailed ? { retire: true } : {}),
     };
     let payloadJson: string;
     try {

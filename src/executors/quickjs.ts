@@ -21,6 +21,7 @@ import { AdmissionController, ExecutorAdmissionError, ExecutorExecutionError } f
 import { msg, tokenPrefix } from "../errors.js";
 import { InvocationFailure } from "../invocation-failure.js";
 import { brandExecutor } from "../executor-contract.js";
+import { PROGRAM_RESULT_READ_BYTES } from "../program-result.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import { admit } from "../runtime/admission.js";
 import { awaitExecutorLease, executorProgram, provideExecutorProgram } from "../runtime/executor.js";
@@ -239,6 +240,7 @@ class QuickJsChildPool implements AdmittingExecutor {
   private readonly slots: ChildSlot[];
   private readonly available: ChildSlot[];
   private readonly runtimeOptions: QuickJsRuntimeOptions;
+  readonly maxReadBytes: number;
   // Scope closes still in flight, so close() can wait out every child rather
   // than only the ones it retired itself.
   private readonly retiring = new Set<Deferred.Deferred<void>>();
@@ -261,6 +263,14 @@ class QuickJsChildPool implements AdmittingExecutor {
       maxStackSizeBytes: positiveWhole(options.maxStackSizeBytes, DEFAULT_STACK_LIMIT_BYTES, "maxStackSizeBytes"),
     };
     this.deadlineMs = this.runtimeOptions.timeoutMs;
+    // Parsing and then using a value costs CPU in proportion to its size, so a
+    // tighter budget reads less. The fixed cap keeps the run well below the sizes
+    // where freeing its runtime often aborted a child in measurements.
+    this.maxReadBytes = Math.min(
+      Math.floor((PROGRAM_RESULT_READ_BYTES * this.runtimeOptions.cpuTimeMs) / DEFAULT_CPU_TIME_MS),
+      2 * 1024 * 1024,
+      Math.floor(this.runtimeOptions.memoryLimitBytes / 16),
+    );
     this.slots = Array.from({ length: concurrency }, () => ({
       crashes: [],
       notBefore: 0,
@@ -703,7 +713,7 @@ class QuickJsChildPool implements AdmittingExecutor {
       slot.backoff = undefined;
       slot.notBefore = 0;
       this.resolveActive(slot, payload.outcome);
-      if (payload.timedOut) {
+      if (payload.timedOut || payload.retire) {
         // A timed-out host call may still retain QuickJS handles. A fresh child
         // is cheaper and safer than reusing a context with unknown stragglers.
         // The runtime sets this flag itself: matching error text here would let

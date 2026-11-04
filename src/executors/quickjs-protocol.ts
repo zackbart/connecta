@@ -55,6 +55,8 @@ export interface ExecutionPayload {
    * this flag, never on error text a guest can fabricate.
    */
   timedOut?: boolean;
+  /** Set by the runtime when this child's WASM module can't run again; the outcome stands. */
+  retire?: boolean;
 }
 
 export function hostCallLabel(payload: { namespace: string; functionName: string; args: unknown[] }): string {

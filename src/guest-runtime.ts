@@ -114,6 +114,7 @@ export function guestInitializer(): string {
   const promiseCatch = Function.prototype.call.bind(NativePromise.prototype.catch);
   const promiseFinally = Function.prototype.call.bind(NativePromise.prototype.finally);
   const push = Function.prototype.call.bind(Array.prototype.push);
+  const join = Function.prototype.call.bind(Array.prototype.join);
   const apply = Function.prototype.call.bind(Function.prototype.apply);
   const NativeError = Error;
   const NativeWeakMap = WeakMap;
@@ -136,9 +137,33 @@ export function guestInitializer(): string {
         page = await hostResult(value.transfer);
         text += page.text;
       } while (page.hasMore);
-      return { data: value.handle.valueFormat === "json" ? JSON.parse(text) : text,
+      const whole = { data: value.handle.valueFormat === "json" ? JSON.parse(text) : text,
         format: value.handle.valueFormat };
+      // Nothing can name these bytes now, so the host may reclaim them.
+      try { await hostResult(value.transfer); } catch {}
+      return whole;
     } catch { return value.handle; }
+  }
+  async function result(id, options) {
+    if (!options || options.all !== true) {
+      const page = await apply(hostResult, undefined, arguments);
+      // The transfer cursor is the prelude's: a getter on all must not hand it to the program.
+      if (page && page.transfer) delete page.transfer;
+      return page;
+    }
+    let page = await hostResult(id, options);
+    const parts = [page.text];
+    const transfer = page.transfer;
+    while (page.hasMore) {
+      page = await hostResult(transfer);
+      push(parts, page.text);
+    }
+    const text = join(parts, "");
+    if (!id || id.valueFormat !== "text") {
+      // A bare id doesn't say which format it stored; JSON is the common one.
+      try { return { data: JSON.parse(text), format: "json" }; } catch {}
+    }
+    return { data: text, format: "text" };
   }
   async function call() {
     const reply = await apply(hostCall, undefined, arguments);

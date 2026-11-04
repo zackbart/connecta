@@ -33,6 +33,7 @@ import {
   guardProgramReturn,
   jsonResult,
   pageProgramResult,
+  releaseStashedResult,
   type ProgramResultDependency,
   type ResultReadStage,
   type ToolResult,
@@ -40,6 +41,7 @@ import {
 import {
   PROGRAM_RESULT_INLINE_BYTES,
   PROGRAM_RESULT_PAGE_BYTES,
+  PROGRAM_RESULT_READ_BYTES,
   PROGRAM_RESULT_WIRE_BYTES,
   type ProgramResultHandle,
 } from "./program-result.js";
@@ -559,6 +561,10 @@ interface SandboxLimits {
   maxWrites?: number | undefined;
   /** The program's writes, for close and drain. */
   programWrites?: ProgramWrites | undefined;
+  /** What `connecta.result(id, { all: true })` delivers. */
+  readBytes?: number | undefined;
+  /** Stashes of delivered write outputs, kept until the run succeeds. */
+  finishedWrites?: { id: string; totalBytes: number }[] | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
   /** Set when a program read a result field off an unawaited host call. */
@@ -663,14 +669,24 @@ function sandboxProvider(
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
   // These are transfer cursors only. All result bytes live in the existing stash.
-  const transfers = new Map<string, { id: string; offset: number }>();
+  // `owned` marks a stash only this transfer can name, because the guest never saw
+  // its handle. A guest-supplied id stays readable until it expires.
+  const readBytes = limits.readBytes ?? PROGRAM_RESULT_READ_BYTES;
+  const transfers = new Map<
+    string,
+    { id: string; offset: number; owned?: { totalBytes: number; write: boolean }; finished?: boolean }
+  >();
   const nativeResults = new Map<string, GuestNativeBlock[]>();
-  const transportResult = (value: { format: string }) => {
+  const transportResult = (value: { format: string }, write: boolean) => {
     if (value.format === "paged") {
       const handle = value as ProgramResultHandle;
       if (handle.resultId && handle.totalBytes <= PROGRAM_RESULT_INLINE_BYTES) {
         const transfer = `transfer:${crypto.randomUUID()}`;
-        transfers.set(transfer, { id: handle.resultId, offset: 0 });
+        transfers.set(transfer, {
+          id: handle.resultId,
+          offset: 0,
+          owned: { totalBytes: handle.totalBytes, write },
+        });
         return { transfer, handle };
       }
     }
@@ -712,6 +728,7 @@ function sandboxProvider(
           // Dispatch succeeded before presentation began. Cancellation of paging
           // cannot turn this completed write into an unknown or failed write.
           sending.settle?.("ok");
+          const write = resolved.definition.classification !== "read";
           const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
             authCall<Awaited<ReturnType<typeof pageProgramResult>>>(pageProgramResult, [
               registry,
@@ -724,6 +741,7 @@ function sandboxProvider(
               { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
               limits.heldResults,
+              readBytes,
             ]);
           const envelope =
             resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
@@ -749,7 +767,7 @@ function sandboxProvider(
             !Array.isArray(content) ||
             !content.some((block) => block && ["image", "audio", "resource", "resource_link"].includes(block.type))
           ) {
-            return transportResult(yield* page(value, format));
+            return transportResult(yield* page(value, format), write);
           }
           const unavailablePresentation = (): ProgramResultHandle => ({
             format: "paged",
@@ -776,7 +794,7 @@ function sandboxProvider(
             }
           } catch (error) {
             if (!(error instanceof NativePresentationLimit)) throw error;
-            const result = dataKey === undefined ? undefined : transportResult(yield* page(value, format));
+            const result = dataKey === undefined ? undefined : transportResult(yield* page(value, format), write);
             const notice = unavailablePresentation();
             return result ? { value: result, native: { value: notice } } : notice;
           }
@@ -791,7 +809,7 @@ function sandboxProvider(
           });
           let valueResult: unknown;
           if (native.format === "paged") {
-            valueResult = result ? transportResult(result) : undefined;
+            valueResult = result ? transportResult(result, write) : undefined;
             if (!native.resultId || native.totalBytes > PROGRAM_RESULT_INLINE_BYTES) {
               return valueResult ? { value: valueResult, native: { value: native } } : native;
             }
@@ -801,14 +819,14 @@ function sandboxProvider(
           // absent or connector-owned blocks.
           if (!retained) {
             const notice = native.format === "paged" ? native : unavailablePresentation();
-            const valueResult = result ? transportResult(result) : undefined;
+            const valueResult = result ? transportResult(result, write) : undefined;
             return valueResult ? { value: valueResult, native: { value: notice } } : notice;
           }
           const ref = crypto.randomUUID();
           nativeResults.set(ref, retained);
           return {
             ...(valueResult ? { value: valueResult } : {}),
-            native: { ref, value: transportResult(native), dataKey },
+            native: { ref, value: transportResult(native, write), dataKey },
           };
         }),
     ),
@@ -1035,6 +1053,16 @@ function sandboxProvider(
         try: async () => {
           const transfer = typeof id === "string" ? transfers.get(id) : undefined;
           const transferId = id;
+          if (transfer?.finished) {
+            // The prelude has the whole value. A read gives its bytes back now;
+            // a write's stay until the run succeeds, so a failure can't lose them (INV-9).
+            transfers.delete(transferId as string);
+            if (transfer.owned?.write)
+              limits.finishedWrites?.push({ id: transfer.id, totalBytes: transfer.owned.totalBytes });
+            else if (transfer.owned)
+              await releaseStashedResult(registry, limits.heldResults, transfer.id, transfer.owned.totalBytes);
+            return {};
+          }
           if (transfer) {
             id = transfer.id;
             options = { offset: transfer.offset, maxBytes: PROGRAM_RESULT_PAGE_BYTES };
@@ -1051,6 +1079,14 @@ function sandboxProvider(
             );
           }
           const args = { ...((options ?? {}) as Record<string, unknown>) };
+          const whole = args.all === true;
+          if (args.all === false) delete args.all;
+          if ((whole && Object.keys(args).length > 1) || (args.all !== undefined && !whole)) {
+            throw new InvocationFailure(
+              utilityRecovery("invalid_args", "Use connecta.result(handleOrId, { all: true }) with no other options."),
+            );
+          }
+          delete args.all;
           if (
             Object.keys(args).some((key) => !["page", "offset", "maxBytes"].includes(key)) ||
             (args.page !== undefined &&
@@ -1092,7 +1128,21 @@ function sandboxProvider(
             );
           if (transfer) {
             if (page.structuredContent?.hasMore) transfer.offset = page.structuredContent.nextOffset as number;
+            else if (transfer.owned) transfer.finished = true;
             else transfers.delete(transferId as string);
+          }
+          if (whole) {
+            const totalBytes = page.structuredContent?.totalBytes as number;
+            if (totalBytes > readBytes) {
+              throw guestFailure(
+                "result_too_large",
+                `This result is ${totalBytes} bytes and connecta.result(id, { all: true }) reads at most ${readBytes}. Page it with { offset } and keep only what you need from each page.`,
+              );
+            }
+            if (!page.structuredContent?.hasMore) return page.structuredContent;
+            const started = `transfer:${crypto.randomUUID()}`;
+            transfers.set(started, { id, offset: page.structuredContent.nextOffset as number });
+            return { ...page.structuredContent, transfer: started };
           }
           return page.structuredContent;
         },
@@ -1602,6 +1652,7 @@ export function createExecuteTool(
   };
   const hostCallTimeoutMs = resolveBudget(config.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS);
   const maxResultChars = resolveBudget(config.maxResultChars, MAX_EXECUTE_RESULT_CHARS);
+  const readBytes = resolveBudget(executor.maxReadBytes, PROGRAM_RESULT_READ_BYTES);
 
   const play = (
     program: string,
@@ -1625,6 +1676,7 @@ export function createExecuteTool(
         maxResultChars,
       );
       const resultDependencies: ProgramResultDependency[] = [];
+      const finishedWrites: { id: string; totalBytes: number }[] = [];
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
       let budgetFailure: InvocationFailure | undefined;
@@ -1694,6 +1746,8 @@ export function createExecuteTool(
                 maxWrites: config.maxWrites,
                 routes: config.routes,
                 programWrites,
+                readBytes,
+                finishedWrites,
                 resultDependencies,
                 dispatchController,
                 unawaited,
@@ -1769,19 +1823,38 @@ export function createExecuteTool(
         unawaited,
         // Emitted text shares the return cap; a follow-up page run gets all of it.
         guardResult: (value: unknown) =>
-          authCall<unknown>(guardProgramReturn, [
-            value,
-            registry,
-            baseUrl,
-            [...new Map(resultDependencies.map((dependency) => [JSON.stringify(dependency), dependency])).values()],
-            sentSecrets,
-            logger,
-            maxResultChars - emitted.textChars,
-            programWrites.hasSucceeded,
-            maxResultChars,
-            heldResults,
-            ceiling.answerBy,
-          ]),
+          // A return that may itself need stashing gets the room back first. Best effort, so
+          // slow storage spends only a part of what the answer and sealing still have.
+          Effect.forEach(
+            programWrites.hasUnknown ? [] : finishedWrites,
+            ({ id, totalBytes }) =>
+              Effect.tryPromise({
+                try: () => releaseStashedResult(registry, heldResults, id, totalBytes),
+                catch: (error) => error,
+              }).pipe(Effect.ignore),
+            { discard: true },
+          ).pipe(
+            Effect.timeoutOrElse({
+              duration: Duration.millis(Math.max(1, Math.floor((ceiling.answerBy - Date.now()) / 4))),
+              orElse: () => Effect.void,
+            }),
+            Effect.andThen(
+              authCall<unknown>(guardProgramReturn, [
+                value,
+                registry,
+                baseUrl,
+                [...new Map(resultDependencies.map((dependency) => [JSON.stringify(dependency), dependency])).values()],
+                sentSecrets,
+                logger,
+                maxResultChars - emitted.textChars,
+                programWrites.hasSucceeded,
+                maxResultChars,
+                heldResults,
+                ceiling.answerBy,
+                readBytes,
+              ]),
+            ),
+          ),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
         Effect.flatMap((exit) =>

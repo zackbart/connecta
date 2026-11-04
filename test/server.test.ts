@@ -841,7 +841,7 @@ describe("execute_code registration (code mode)", () => {
       return { content: ran.result.structuredContent, limit };
     }
     const pageBytes = (content: { result: { nextAction: { arguments: { code: string } } } }) =>
-      Number(/maxBytes: (\d+)/.exec(content.result.nextAction.arguments.code)?.[1]);
+      Number(/\.slice\(0, (\d+)\)/.exec(content.result.nextAction.arguments.code)?.[1]);
 
     // The default is unchanged: 100,000 characters are stashed behind a notice.
     const fallback = await run(undefined, 100_000);

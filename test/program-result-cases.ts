@@ -4,10 +4,12 @@ import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { createExecuteTool } from "../src/execute.js";
-import { createMetaTools } from "../src/meta-tools.js";
+import { createMetaTools, releaseStashedResult } from "../src/meta-tools.js";
 import { PROGRAM_RESULT_INLINE_BYTES } from "../src/program-result.js";
-import { sentSecretsFor } from "../src/sent-secrets.js";
-import { Registry } from "../src/registry.js";
+import { HeldResults, type HeldResult } from "../src/result-seal.js";
+import { PendingWork } from "../src/runtime/request-scope.js";
+import { sentSecretsFor, sentSecretsForRequest } from "../src/sent-secrets.js";
+import { Registry, type RegistryView } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resultKeys, scopes } from "../src/storage/keys.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -387,9 +389,11 @@ export async function checkProgramReturnPaging(executor: Executor): Promise<void
   expect(spilled).toContain("nextAction");
   expect(spilled).toContain("connecta.result");
   expect(spilled).toContain("This write already ran");
+  // nextAction reads the whole return and runs as written, fitting its own return.
+  expect(notice.nextAction.arguments.code).toContain("{ all: true }");
   const first = await execute(notice.nextAction.arguments);
-  expect(first.isError).toBeUndefined();
-  expect(first.structuredContent!.result).toMatchObject({ resultId: notice.resultId, offset: 0, hasMore: true });
+  expect(first.isError, JSON.stringify(first.structuredContent)).toBeUndefined();
+  expect(first.structuredContent!.result).toEqual(expect.stringContaining("雪"));
   // Recover the entire JSON in a new guest run and return only verification facts.
   const restored = await execute({
     code: `async () => {
@@ -1447,4 +1451,263 @@ export async function checkRetainedResultsUnreadableWhileSealing(executor: Execu
   for (const step of steps(clean)) expect(step.readable).toBe(step.published);
   expect(steps(clean).at(-1)!.readable).toBe(true);
   for (const step of observed) expectNoForms(step.text);
+}
+
+/** A finished read's stash is reclaimed; a write's waits for the run; a disclosed handle stays. */
+export async function checkTransferReclaim(executor: Executor): Promise<void> {
+  const storage = memoryStorage();
+  const bytes = 600_000;
+  const registry = new Registry(
+    [
+      {
+        id: "store",
+        kind: "api",
+        async listTools() {
+          return [
+            { name: "read", annotations: { readOnlyHint: true } },
+            { name: "write", annotations: { readOnlyHint: false, destructiveHint: true } },
+          ];
+        },
+        async callTool(_name, args) {
+          return "x".repeat((args as { bytes?: number }).bytes ?? bytes);
+        },
+      },
+    ],
+    { storage, logger: silentLogger },
+  );
+  const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false });
+  const charges = async () => {
+    const raw = await storage.get("result-stash:v1:ledger");
+    return raw === null ? 0 : (JSON.parse(raw) as { entries: unknown[] }).entries.length;
+  };
+  // Sealing runs after the program, so a released id must not get its header back then.
+  const stored = () => storage.list(RESULT_PREFIX);
+  const run = (code: string) => execute({ code });
+
+  // Read: nothing stays charged or stored once the value is whole and the run has sealed.
+  let out = await run(`async () => (await connecta.call("store.read")).data.length`);
+  expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(bytes);
+  expect(await charges()).toBe(0);
+  expect(await stored()).toEqual([]);
+
+  // Write in a successful run: released with the run.
+  out = await run(`async () => (await connecta.call("store.write")).data.length`);
+  expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(bytes);
+  expect(await charges()).toBe(0);
+  expect(await stored()).toEqual([]);
+
+  // Write in a failed run: the output's bytes stay until they expire (INV-9).
+  out = await run(`async () => { await connecta.call("store.write"); throw new Error("after the write"); }`);
+  expect(out.isError).toBe(true);
+  expect(await charges()).toBe(1);
+  expect(await stored()).not.toEqual([]);
+
+  // An oversized return's nextAction, edited at its mark, reduces the whole value.
+  out = await run(`async () => ({ rows: Array.from({ length: 400 }, (_, i) => ({ i, pad: "x".repeat(80) })) })`);
+  const notice = out.structuredContent!.result as { nextAction: { arguments: { code: string } } };
+  expect(notice.nextAction.arguments.code).toContain("/* reduce data to what you need */");
+  out = await run(notice.nextAction.arguments.code.replace(/return .*; \}$/, "return data.rows.length; }"));
+  expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(400);
+
+  // A handle the guest saw stays readable after it reads the whole thing, in this run or the next.
+  const big = 1_200_000;
+  out = await run(`async () => {
+    const handle = await connecta.call("store.read", { bytes: ${big} });
+    return { id: handle.resultId, length: (await connecta.result(handle, { all: true })).data.length };
+  }`);
+  const { id, length } = out.structuredContent!.result as { id: string; length: number };
+  expect(length).toBe(big);
+  out = await run(`async () => (await connecta.result(${JSON.stringify(id)}, { all: true })).data.length`);
+  expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(big);
+  // The failed run's write, the oversized return, and the handle.
+  expect(await charges()).toBe(3);
+}
+
+/** A whole read is paging repeated: it sees exactly what a page may, and never more. */
+export const wholeReadSealingCases: Record<string, (executor: Executor) => Promise<void>> = {
+  "reads a held entry with no chunk 0 in its own run, then whole in a later run after read-back": async (executor) => {
+    const inner = memoryStorage();
+    const { registry } = retainedRegistry(inner, { echoed: () => ({ keep: "kept", PAD }) });
+    const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false });
+    const outcome = await execute({
+      code: `async () => {
+        const handle = await connecta.call("vault.read");
+        const whole = await connecta.result(handle, { all: true });
+        await connecta.call("vault.use");
+        return { id: handle.resultId, keep: whole.data.keep, length: whole.data.PAD.length };
+      }`,
+    });
+    const { id, keep, length } = outcome.structuredContent!.result as { id: string; keep: string; length: number };
+    expect([keep, length]).toEqual(["kept", PAD.length]);
+    // Sealing grew past it, read it back, found no match and published it unchanged.
+    expect(outcome.structuredContent).not.toHaveProperty("note");
+    expect(await inner.get(RESULT_PREFIX + id)).not.toBeNull();
+    const later = await execute({
+      code: `async () => (await connecta.result(${JSON.stringify(id)}, { all: true })).data.keep`,
+    });
+    expect(later.structuredContent!.result).toBe("kept");
+  },
+  "another request gets nothing from an entry its run still holds": async (executor) => {
+    const inner = memoryStorage();
+    const seen: Array<{ code: string | undefined; stored: boolean }> = [];
+    const { registry } = retainedRegistry(inner, { echoed: () => ({ keep: "kept", PAD }) });
+    const prober: Connector = {
+      id: "probe",
+      kind: "api",
+      async listTools() {
+        return [{ name: "other_request", annotations: { readOnlyHint: true } }];
+      },
+      async callTool(_name, args) {
+        const { id } = args as { id: string };
+        const page = await laterReader(inner).readResult({ id });
+        seen.push({
+          code: (page.structuredContent?.error as { code: string } | undefined)?.code,
+          stored: (await inner.get(RESULT_PREFIX + id)) !== null,
+        });
+        return "probed";
+      },
+    };
+    const both = new Registry([...registry.listConnectors(), prober], { storage: inner, logger: silentLogger });
+    const outcome = await createExecuteTool(both, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: `async () => {
+        const handle = await connecta.call("vault.read");
+        await connecta.call("probe.other_request", { id: handle.resultId });
+        return (await connecta.result(handle, { all: true })).data.keep;
+      }`,
+    });
+    expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe("kept");
+    expect(seen).toEqual([{ code: "not_found", stored: false }]);
+  },
+  "a refused entry fails a later whole read catchably, with no bytes": async (executor) => {
+    const forms = allForms(RETAINED_SECRET);
+    for (const { tool, words } of [
+      { tool: "read", words: "Rerun the read" },
+      { tool: "write", words: "do not call it again" },
+    ]) {
+      const inner = memoryStorage();
+      const { registry } = retainedRegistry(inner, { echoed: () => ({ forms, keep: "kept", PAD }) });
+      const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false });
+      const outcome = await execute({ code: RETAINED_PROGRAM(tool) });
+      const id = outcome.structuredContent!.result as string;
+      const later = await execute({
+        code: `async () => {
+          try { return { data: (await connecta.result(${JSON.stringify(id)}, { all: true })).data }; }
+          catch (err) { return { code: err.code, retryable: err.retryable, message: err.message }; }
+        }`,
+      });
+      const refused = later.structuredContent!.result as { code: string; retryable: boolean; message: string };
+      expect(refused).toMatchObject({ code: "result_not_retained", retryable: false });
+      expect(refused.message).toContain(words);
+      expect(JSON.stringify(later.structuredContent)).not.toContain("kept");
+      expectNoForms(JSON.stringify(later.structuredContent));
+      // Its charge and missing bytes aren't handed back or reissued by asking whole.
+      expectNoForms(await storedResultText(inner));
+    }
+  },
+  "an entry sealing never published answers a later whole read with not_found": async (executor) => {
+    // Every storage step after the set grows fails, so neither header nor marker lands.
+    const built = sealingHarness(
+      {
+        set: async () => {
+          throw new Error("storage down");
+        },
+      },
+      { echoed: () => ({ keep: "kept", PAD }) },
+    );
+    const outcome = await built.run(executor);
+    const id = outcome.structuredContent!.result as string;
+    expect(await built.inner.get(RESULT_PREFIX + id)).toBeNull();
+    const later = await createExecuteTool(built.registry, BASE, executor, silentLogger, undefined, {
+      readOnly: false,
+    })({
+      code: `async () => {
+        try { return (await connecta.result(${JSON.stringify(id)}, { all: true })).data.keep; }
+        catch (err) { return { code: err.code }; }
+      }`,
+    });
+    expect(later.structuredContent!.result).toEqual({ code: "not_found" });
+  },
+  "a credential registered before the read is redacted from what the run gets and returns": async (executor) => {
+    const { registry } = retainedRegistry(memoryStorage(), {
+      echoed: () => ({ forms: [RETAINED_SECRET], keep: "kept", PAD }),
+    });
+    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: `async () => {
+        const handle = await connecta.call("vault.read");
+        await connecta.call("vault.use");
+        const whole = await connecta.result(handle, { all: true });
+        return { forms: whole.data.forms, keep: whole.data.keep };
+      }`,
+    });
+    expect(outcome.structuredContent!.result).toEqual({ forms: ["[redacted]"], keep: "kept" });
+    expect(JSON.stringify(outcome.structuredContent)).not.toContain(RETAINED_SECRET);
+  },
+  "a reclaimed transfer leaves no header, charge or refusal after the set grows": async (executor) => {
+    // Under 1 MiB, inlined with no handle shown, and given back before the set grows.
+    const inner = memoryStorage();
+    const { registry } = retainedRegistry(inner, { echoed: () => ({ keep: "kept", pad: "x".repeat(300_000) }) });
+    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: `async () => {
+        const inlined = await connecta.call("vault.read");
+        await connecta.call("vault.use");
+        return inlined.data.keep;
+      }`,
+    });
+    expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe("kept");
+    expect(outcome.structuredContent).not.toHaveProperty("note");
+    expect(await inner.list(RESULT_PREFIX)).toEqual([]);
+    expect(await inner.get("result-stash:v1:ledger")).toBeNull();
+  },
+  "a stalled reclaim costs its charge, never the answer": async (executor) => {
+    for (const tool of ["read", "write"]) {
+      const inner = memoryStorage();
+      const stalled: KVStorage = {
+        ...inner,
+        delete: (key) => (key.startsWith(RESULT_PREFIX) ? new Promise<never>(() => {}) : inner.delete(key)),
+      };
+      const { registry } = retainedRegistry(stalled, { echoed: () => ({ keep: "kept", pad: "x".repeat(300_000) }) });
+      const started = Date.now();
+      const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
+        readOnly: false,
+        hostCallTimeoutMs: 250,
+        watchdogMs: 4_000,
+      })({ code: `async () => (await connecta.call("vault.${tool}")).data.keep` });
+      expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe("kept");
+      // The ceiling is the watchdog plus a margin of at most 2 seconds.
+      expect(Date.now() - started).toBeLessThan(6_000);
+    }
+  },
+};
+
+/** Sealing owns an entry from the moment it begins: a later reclaim gives nothing back. */
+export async function checkReclaimAfterSealingBegan(): Promise<void> {
+  const secrets = sentSecretsForRequest({});
+  const entry = (id: string): HeldResult => ({
+    id,
+    binding: "e30=",
+    total: 3,
+    chunkBytes: 3,
+    cap: 3,
+    first: "YWJj",
+    chunks: 1,
+    passed: 0,
+    binary: false,
+    format: "text",
+    write: false,
+    expiresAtMs: Date.now() + 60_000,
+  });
+  const held = new HeldResults(secrets, new PendingWork());
+  const releaseResult = vi.fn(async () => {});
+  const registry = { releaseResult } as unknown as RegistryView;
+  held.add(entry("given-back"));
+  held.add(entry("kept"));
+  await releaseStashedResult(registry, held, "given-back", 3);
+  expect(releaseResult).toHaveBeenCalledTimes(1);
+  expect(held.stored("given-back")).toBeUndefined();
+  // An id this run never held is not this run's to give back.
+  await releaseStashedResult(registry, held, "someone-elses", 3);
+  expect(releaseResult).toHaveBeenCalledTimes(1);
+  expect(held.close().map(({ id }) => id)).toEqual(["kept"]);
+  await releaseStashedResult(registry, held, "kept", 3);
+  expect(releaseResult).toHaveBeenCalledTimes(1);
 }

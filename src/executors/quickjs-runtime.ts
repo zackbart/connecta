@@ -293,6 +293,8 @@ function installBridge(
  */
 export interface QuickJsExecutionResult extends ExecuteResult {
   timedOut?: boolean;
+  /** Freeing the runtime aborted the WASM module, which can't run again. */
+  teardownFailed?: boolean;
 }
 
 /**
@@ -352,8 +354,15 @@ export async function executeQuickJs(
     // stragglers are waiting on. Arming before the pending check (and
     // synchronously, before the first await) closes the settle-before-arm
     // window: any settle after this point resolves the promise we await.
-    if (bridge.pending === 0) ctx.dispose();
-    else {
+    if (bridge.pending === 0) {
+      // The answer is already in host memory, so a failed teardown costs this child, not
+      // the run: QuickJS can abort freeing a runtime whose program finished normally.
+      try {
+        ctx.dispose();
+      } catch {
+        return { ...r, ...(logs.length > 0 ? { logs } : {}), teardownFailed: true };
+      }
+    } else {
       void (async () => {
         armWake(bridge);
         while (bridge.pending > 0) {

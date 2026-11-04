@@ -67,6 +67,11 @@ export class HeldResults {
     this.entries.set(entry.id, entry);
     return true;
   }
+  /** Forget an entry whose stash is being given back, so sealing never writes its header.
+   * False once sealing began, when the entry is no longer this ledger's to give up. */
+  discard(id: string): boolean {
+    return !this.closed && this.entries.delete(id);
+  }
   /** Chunk 0 as storage will hold it, for paging inside the run that stashed it. */
   stored(id: string): string | undefined {
     const entry = this.entries.get(id);
