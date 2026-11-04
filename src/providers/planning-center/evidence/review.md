@@ -254,6 +254,8 @@ with no duplicate tool inventory. Unknown tools, unknown keys and ambiguous
 ownership fail generation. Existing unnested app when-blocks remove conditional
 paging-tool names from the actual rendered guide. Common tools remain
 unconditional. Fixtures are generation/test-only; no public option is added.
+Guides have since stopped naming paged tools, so these blocks now label only the
+installed inventory.
 
 Regression evidence covers first/middle/terminal and zero/missing/malformed
 counts, malformed resource filtering, projections, delegated credential owners,

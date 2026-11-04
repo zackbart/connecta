@@ -11,7 +11,6 @@ const error = z
     retryable: z.boolean(),
   })
   .passthrough();
-const format = z.enum(["json", "text"]);
 const counts = z.object({
   attempted: z.number().int().nonnegative(),
   admitted: z.number().int().nonnegative(),
@@ -29,18 +28,6 @@ export const EXECUTE_OUTPUT = advertisedSchema(
       emitted: z.number().int().nonnegative().optional(),
       emittedDiscarded: z.number().int().nonnegative().optional(),
       diagnostics: z.record(z.string(), z.unknown()).optional(),
-    })
-    .passthrough(),
-);
-
-export const SKILLS_OUTPUT = advertisedSchema(
-  z
-    .object({
-      name: z.string().optional(),
-      text: z.string().optional(),
-      format: format.optional(),
-      skills: z.array(z.object({ name: z.string(), uri: z.string(), description: z.string() })).optional(),
-      error: error.optional(),
     })
     .passthrough(),
 );
