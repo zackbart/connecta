@@ -2,6 +2,7 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -21,6 +22,7 @@ import {
   checkCompletedPrivacy,
   checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -187,6 +189,15 @@ describe("guest API contract (QuickJS executor)", () => {
 
   it("[R4, R9] INV-2 INV-3 INV-4: a failed run's stash rechecks identity, endpoint, pool and live authentication", async () => {
     await checkStashAuthority(executor, false, true);
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(readDeadlineExecutor, "for (;;) {}");
+  });
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(executor.deadlineMs).toBe(30_000);
+    expect(executor.deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
   });
 
   it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {

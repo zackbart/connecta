@@ -8,6 +8,8 @@ import { deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { scopes, stashLedgerKeys } from "../src/storage/keys.js";
 import { registerTestMaintainer } from "./helpers/machine-auth.js";
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
+import { customExecutor } from "../src/executor-contract.js";
 
 const BASE = "https://connecta.test";
 /** The maintainer every auth fixture here admits, so plain /mcp serves it (#837). */
@@ -242,6 +244,180 @@ describe("request admission", () => {
       }
     },
   );
+
+  describe("a 65-second downstream behind a 60-second client", () => {
+    const CLIENT_LIMIT_MS = 60_000;
+    const DOWNSTREAM_MS = 65_000;
+    /** What the client's own timer produces: the agent sees this, and nothing the run knew. */
+    const TRANSPORT_TIMEOUT = "The operation timed out.";
+    const PROGRAM = { code: "async () => null" };
+    type Fns = Parameters<Parameters<typeof scriptedExecutor>[0]>[0];
+
+    /**
+     * A deployment on the shipped ceiling whose executor publishes the Dynamic
+     * Worker's default deadline. Its timer may be wedged, so nothing here honors it.
+     */
+    function world(
+      program: (fns: Fns) => Promise<unknown> = async () => null,
+      config: { watchdogMs?: number; deadlineMs?: number } = {},
+    ) {
+      const calls = { read: 0, write: 0 };
+      const connector = connectorWith({
+        id: "slow",
+        kind: "api",
+        tools: [
+          { name: "read", annotations: { readOnlyHint: true } },
+          { name: "write", annotations: { readOnlyHint: false } },
+        ],
+        call: async (name) => {
+          calls[name as "read" | "write"]++;
+          await new Promise((resolve) => setTimeout(resolve, DOWNSTREAM_MS));
+          return { answered: true };
+        },
+      });
+      const deployment = createTestConnecta({
+        connectors: [connector],
+        logger: silentLogger,
+        ...(config.watchdogMs !== undefined ? { execute: { watchdogMs: config.watchdogMs } } : {}),
+        executor: Object.assign(scriptedExecutor(program), { deadlineMs: config.deadlineMs ?? 50_000 }),
+      });
+      return { calls, deployment };
+    }
+
+    /** One request under the client's limit: its JSON-RPC body, or the client's timeout. */
+    async function underClientLimit(
+      deployment: ReturnType<typeof createTestConnecta>,
+      name: string,
+      args: Record<string, unknown>,
+    ) {
+      const clientLimit = new Promise<typeof TRANSPORT_TIMEOUT>((resolve) => {
+        setTimeout(() => resolve(TRANSPORT_TIMEOUT), CLIENT_LIMIT_MS);
+      });
+      const answered = deployment.fetch(mcpRpc("tools/call", { name, arguments: args })).then(readJsonRpc);
+      const outcome = Promise.race([answered, clientLimit]);
+      await vi.advanceTimersByTimeAsync(DOWNSTREAM_MS + 1_000);
+      return await outcome;
+    }
+
+    function typed(outcome: Awaited<ReturnType<typeof underClientLimit>>) {
+      if (outcome === TRANSPORT_TIMEOUT) throw new Error("The client's limit won the race.");
+      expect(outcome.result.isError).toBe(true);
+      return outcome.result.structuredContent;
+    }
+
+    it("a program's read ends as a typed timeout with its host-call counts", NODE, async () => {
+      const { calls, deployment } = world((fns) => fns.call!("slow.read", {}, { timeoutMs: 600_000 }));
+      const content = typed(await underClientLimit(deployment, "execute_code", PROGRAM));
+      expect(content.error).toMatchObject({ code: "timeout", retryable: true, details: { operation: "slow.read" } });
+      expect(content.error.details.elapsedMs).toBeLessThan(CLIENT_LIMIT_MS);
+      expect(content.hostCalls).toMatchObject({ attempted: 1, failed: 1 });
+      expect(calls.read).toBe(1);
+    });
+
+    it("a program's write resolves as unknown before the client gives up, and is not replayed", NODE, async () => {
+      const { calls, deployment } = world((fns) => fns.call!("slow.write", {}, { timeoutMs: 600_000 }));
+      const content = typed(await underClientLimit(deployment, "execute_code", PROGRAM));
+      expect(content.error).toMatchObject({
+        code: "write_outcome_unknown",
+        retryable: false,
+        writes: { succeeded: 0, failed: 0, unknown: 1 },
+      });
+      expect(content.error.details.elapsedMs).toBeLessThan(CLIENT_LIMIT_MS);
+      expect(calls.write).toBe(1);
+    });
+
+    it.each([
+      { name: "call_tool", address: "slow.read", code: "timeout", tool: "read" as const },
+      { name: "call_destructive_tool", address: "slow.write", code: "write_outcome_unknown", tool: "write" as const },
+    ])("$name cuts an explicit deadline past the ceiling", NODE, async ({ name, address, code, tool }) => {
+      const { calls, deployment } = world();
+      const args = { address, args: {}, timeoutMs: 600_000 };
+      const content = typed(await underClientLimit(deployment, name, args));
+      expect(content.error).toMatchObject({ code, details: { deadlineMs: 55_000 } });
+      expect(calls[tool]).toBe(1);
+    });
+
+    it("a queue configured to outwait the client still refuses in time", NODE, async () => {
+      // A pool that never grants a slot, as one with a long queue deadline might not.
+      let waiter: AbortSignal | undefined;
+      const deployment = createTestConnecta({
+        connectors: [calcConnector],
+        logger: silentLogger,
+        executor: customExecutor(
+          {
+            execute: async () => ({ result: null }),
+            acquire: async ({ signal }: { signal?: AbortSignal } = {}) => {
+              waiter = signal;
+              return await new Promise<never>(() => {});
+            },
+          } as unknown as Executor,
+          { lifecycle: "self-managed" },
+        ),
+      });
+      const content = typed(await underClientLimit(deployment, "execute_code", PROGRAM));
+      expect(content.error).toMatchObject({ code: "executor_overloaded", retryable: true });
+      expect(content.error.message).toContain("Executor admission timed out");
+      // INV-7: the queue's wait ends with the request.
+      expect(waiter?.aborted).toBe(true);
+    });
+
+    it.each([{ deadlineMs: 50_000 }, { deadlineMs: undefined }])(
+      "time spent queued counts: a late run ends at the ceiling, retryable ($deadlineMs)",
+      NODE,
+      async ({ deadlineMs }) => {
+        let runs = 0;
+        const deployment = createTestConnecta({
+          connectors: [calcConnector],
+          logger: silentLogger,
+          admission: { code: { concurrency: 1, maxQueueSize: 1, queueTimeoutMs: 600_000 } },
+          executor: Object.assign(
+            scriptedExecutor(async () => {
+              if (++runs === 1) return await new Promise((resolve) => setTimeout(resolve, 10_000));
+              return await new Promise<never>(() => {});
+            }),
+            deadlineMs === undefined ? {} : { deadlineMs },
+          ),
+        });
+        const first = deployment.fetch(mcpRpc("tools/call", { name: "execute_code", arguments: PROGRAM }));
+        await settle();
+        const content = typed(await underClientLimit(deployment, "execute_code", PROGRAM));
+        expect(content.error).toMatchObject({
+          code: "timeout",
+          retryable: true,
+          details: { stage: "response ceiling", deadlineMs: 55_000 },
+        });
+        expect(content.error.details.elapsedMs).toBeLessThan(CLIENT_LIMIT_MS);
+        await first;
+      },
+    );
+
+    // The control: under the old defaults this harness reports the agents' symptom.
+    it.each([
+      {
+        route: "execute_code",
+        program: (fns: Fns) => fns.call!("slow.write", {}, { timeoutMs: 600_000 }),
+        args: PROGRAM,
+      },
+      {
+        route: "call_tool",
+        program: undefined,
+        args: { address: "slow.read", args: {}, timeoutMs: 600_000 },
+      },
+      {
+        route: "call_destructive_tool",
+        program: undefined,
+        args: { address: "slow.write", args: {}, timeoutMs: 600_000 },
+      },
+    ])("$route loses to the client under the old 120-second ceiling", NODE, async ({ route, program, args }) => {
+      const { deployment } = world(program, { watchdogMs: 120_000, deadlineMs: 60_000 });
+      expect(await underClientLimit(deployment, route, args)).toBe(TRANSPORT_TIMEOUT);
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+
+    it("the shipped ceiling leaves time to send a result", NODE, () => {
+      expect(CONFIG_DEFAULTS.execute.watchdogMs).toBeLessThanOrEqual(CLIENT_LIMIT_MS - 5_000);
+    });
+  });
 
   it("aborts an in-flight connector call at the total request deadline", WORKERS, async () => {
     let started = 0;

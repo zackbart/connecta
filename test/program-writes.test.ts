@@ -135,6 +135,53 @@ function value(result: { structuredContent?: Record<string, unknown> }): Record<
 }
 
 describe("writable-endpoint programs (#706, #820)", () => {
+  it.each([
+    { code: "rate_limited", extra: { retryAfterMs: 5_000 } },
+    { code: "timeout", extra: {} },
+    { code: "unavailable", extra: {} },
+  ] as const)("INV-9: a program a retryable $code ends after a successful write is not retryable", async (failure) => {
+    const w = world({
+      readOnly: false,
+      read: () => {
+        throw new ConnectorCallError(failure.code, "Read failed", failure.extra);
+      },
+    });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 });
+      await connecta.call!("reader.get", {});
+    });
+    const { error } = value(result);
+    expect(error).toMatchObject({ retryable: false, writes: { succeeded: 1, failed: 0, unknown: 0 } });
+    expect(error).not.toHaveProperty("retryAfterMs");
+    expect(error.note).toContain("would repeat them");
+    expect(w.writes()).toHaveLength(1);
+  });
+
+  it("INV-9: a write that is proven not applied leaves a program's own retry verdict standing", async () => {
+    const w = world({
+      readOnly: false,
+      provesRefusals: true,
+      write: () => {
+        throw knownProviderFailure(new ConnectorCallError("invalid_args", "Write refused"));
+      },
+      read: () => {
+        throw new ConnectorCallError("rate_limited", "Read failed", { retryAfterMs: 5_000 });
+      },
+    });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("tracker.close_issue", { id: 1 }).catch(() => {});
+      await connecta.call!("reader.get", {});
+    });
+    const { error } = value(result);
+    expect(error).toMatchObject({
+      code: "rate_limited",
+      retryable: true,
+      retryAfterMs: 5_000,
+      writes: { succeeded: 0, failed: 1, unknown: 0 },
+    });
+    expect(error.note).toContain("none applied");
+  });
+
   it.each(["succeeded", "failed", "unknown"] as const)(
     "INV-9: program failures retain %s write accounting after caught host failures",
     async (state) => {

@@ -802,6 +802,49 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
 
 /** Review regression: a write passed its gate but is still in admission. */
 /** Reads other than connecta.call end before the run does too. */
+/**
+ * A program that stalls past the response ceiling (`stall`: guest source). Nothing
+ * wrote: running it again is safe. A write landed first: running it again repeats
+ * that write, so no failure may invite it (INV-9). `stall` differs per executor:
+ * QuickJS fails an unsettleable await fast, as documented, so it spins instead.
+ */
+export async function checkStallAtCeiling(executor: Executor, stall: string): Promise<void> {
+  let writes = 0;
+  const tracker: Connector = {
+    id: "tracker",
+    kind: "api",
+    async listTools() {
+      return [readOnly("read"), { name: "write", annotations: { readOnlyHint: false } }];
+    },
+    async callTool(name) {
+      if (name === "write") writes++;
+      return { ok: true };
+    },
+  };
+  const run = async (first: string) => {
+    const out = await createExecuteTool(makeRegistry([tracker]), CONTRACT_BASE, executor, silentLogger, undefined, {
+      watchdogMs: 1_500,
+    })({ code: `async () => { await connecta.call(${JSON.stringify(first)}, {}); ${stall} }` });
+    expect(out.isError).toBe(true);
+    return required(out.structuredContent).error as Record<string, unknown>;
+  };
+  expect(await run("tracker.read")).toMatchObject({
+    code: "timeout",
+    retryable: true,
+    details: { stage: "response ceiling" },
+  });
+  expect(writes).toBe(0);
+  const wrote = await run("tracker.write");
+  expect(wrote).toMatchObject({
+    code: "timeout",
+    retryable: false,
+    details: { stage: "response ceiling" },
+    writes: { succeeded: 1, failed: 0, unknown: 0 },
+  });
+  expect(wrote["note"]).toContain("would repeat them");
+  expect(writes).toBe(1);
+}
+
 export async function checkReadDeadlineUtilities(executor: Executor): Promise<void> {
   let listing: "hang" | "ready" = "ready";
   const slow: Connector = {
@@ -1642,6 +1685,8 @@ export interface ContractCase {
   follows?: string;
   /** Set for the cases that need a read cap and a run deadline apart: a 2 s executor. */
   runDeadline?: true;
+  /** `execute.watchdogMs`, the response ceiling, for cases that reach it. */
+  watchdogMs?: number;
   /** Small output budget for utility-budget contract cases. */
   maxEmittedBytes?: number;
   /** Bounded stash capacity for native result transfer cases. */
@@ -2002,6 +2047,7 @@ function contractConnectors(state: ContractState): Connector[] {
         readOnly("read"),
         { name: "write", annotations: { readOnlyHint: false } },
         { name: "slow_write", annotations: { readOnlyHint: false } },
+        { name: "hung_write", annotations: { readOnlyHint: false } },
       ];
     },
     async callTool(name, args) {
@@ -2012,6 +2058,7 @@ function contractConnectors(state: ContractState): Connector[] {
         return { written: "slow-write-output" };
       }
       if (name === "write") return { written: "write-output" };
+      // Every other tool never answers, past any deadline a case can set.
       return new Promise<never>(() => {});
     },
   };
@@ -2059,6 +2106,7 @@ function contractConnectors(state: ContractState): Connector[] {
 interface CaseConfig {
   maxEmittedBytes?: number;
   readOnly?: boolean;
+  watchdogMs?: number;
 }
 
 /** The execute_code configuration a case asks for, the same on every arm. */
@@ -2066,6 +2114,7 @@ export function caseConfig(contractCase: ContractCase): CaseConfig {
   return {
     ...(contractCase.maxEmittedBytes !== undefined ? { maxEmittedBytes: contractCase.maxEmittedBytes } : {}),
     ...(contractCase.readOnly ? { readOnly: true } : {}),
+    ...(contractCase.watchdogMs !== undefined ? { watchdogMs: contractCase.watchdogMs } : {}),
   };
 }
 
@@ -4425,6 +4474,93 @@ return fs;
       expect(outcome.result).toMatchObject({ code: "timeout", retryable: true });
       expect(state.calls["hang.write"]).toBeUndefined();
       expect(outcome.value.writes).toBeUndefined();
+    },
+  },
+  {
+    clauses: "L3, W9, INV-9",
+    name: "a write still on the wire at the response ceiling is reported unknown, once, in the response",
+    runDeadline: true,
+    watchdogMs: 2_500,
+    code: `async () => {
+      await connecta.call("reader.read", { value: "first" });
+      await connecta.call("hang.hung_write", {}, { timeoutMs: 600000 });
+      return "never";
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "write_outcome_unknown",
+        retryable: false,
+        writes: { succeeded: 0, failed: 0, unknown: 1 },
+        details: { operation: "hang.hung_write" },
+      });
+      // A request for ten minutes buys nothing past the ceiling.
+      const { deadlineMs } = (outcome.value.error as { details: { deadlineMs: number } }).details;
+      expect(deadlineMs).toBeLessThanOrEqual(2_500);
+      expect(outcome.value.hostCalls).toMatchObject({ attempted: 2, succeeded: 1 });
+      expect(state.calls["hang.hung_write"]).toBe(1);
+    },
+  },
+  {
+    clauses: "L3, E2",
+    name: "a hanging read at the run deadline still reports the program's host calls",
+    runDeadline: true,
+    watchdogMs: 2_500,
+    code: `async () => {
+      await connecta.call("reader.read", { value: "first" });
+      await connecta.call("hang.read", {}, { timeoutMs: 600000 });
+      return "never";
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      // The read's own timeout or, on a loaded host, the sandbox's: both keep the counts.
+      expect(outcome.value.error).toMatchObject({ code: "timeout" });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 2, admitted: 2, succeeded: 1, failed: 1 });
+    },
+  },
+  {
+    clauses: "L3, INV-9",
+    name: "a read's retryable timeout ending a program after a successful write leaves it not retryable",
+    runDeadline: true,
+    watchdogMs: 1_500,
+    code: `async () => {
+      await connecta.call("hang.write", {});
+      await connecta.call("hang.read", {}, { timeoutMs: 600000 });
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "timeout",
+        retryable: false,
+        details: { operation: "hang.read" },
+        writes: { succeeded: 1, failed: 0, unknown: 0 },
+      });
+      expect(state.calls["hang.write"]).toBe(1);
+    },
+  },
+  {
+    clauses: "L3, W9, INV-9",
+    name: "the write gate's retryable refusal ending a program after a successful write leaves it not retryable",
+    runDeadline: true,
+    watchdogMs: 1_500,
+    code: `async () => {
+      await connecta.call("hang.write", {});
+      try {
+        await connecta.call("hang.read", {}, { timeoutMs: 600000 });
+      } catch {}
+      await connecta.call("hang.write", {});
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "timeout",
+        retryable: false,
+        details: { stage: "write gate" },
+        writes: { succeeded: 1, failed: 0, unknown: 0 },
+      });
+      expect((outcome.value.error as { message: string }).message).toContain("not sent");
+      // The refused write stayed home: replaying the first would be the only way to double it.
+      expect(state.calls["hang.write"]).toBe(1);
     },
   },
 ];

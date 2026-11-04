@@ -12,7 +12,7 @@ import type { DownstreamInputResult } from "./downstream-input-context.js";
 import type { AuthorizeConnectorResult } from "./authorization-handoff.js";
 import { authCall, authInvoke, authFlow, authMethod, authStorage, registerAuth } from "./auth/native.js";
 import { registryProgram } from "./runtime/registry.js";
-import { runEdge } from "./runtime/run.js";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { authorizationHandoff, authorizeConnector, bindAuthorizationHandoffs } from "./authorization-handoff.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
@@ -647,6 +647,7 @@ export function guardProgramReturn(
   maxChars: number,
   completedWrite: boolean,
   programChars?: number,
+  storeBy?: number,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -659,6 +660,7 @@ export function guardProgramReturn(
       maxChars,
       completedWrite,
       programChars,
+      storeBy,
     ),
   );
 }
@@ -674,6 +676,8 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     maxChars: number,
     completedWrite: boolean,
     programChars?: number,
+    // Stalled storage costs the paging, never the answer.
+    storeBy?: number,
   ) {
     return authFlow<unknown>(function* () {
       const serialized = serializeResultText(value);
@@ -701,7 +705,12 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         cap,
         ...(programChars !== undefined ? { programChars } : {}),
         set: authMethod((id: string, chunks: string[], ttl: number) =>
-          registryProgram(registry, "stashResult", id, chunks, ttl),
+          storeBy === undefined
+            ? registryProgram(registry, "stashResult", id, chunks, ttl)
+            : withDeadlineEffect(() => registryProgram(registry, "stashResult", id, chunks, ttl), {
+                timeoutMs: Math.max(1, storeBy - Date.now()),
+                timeoutError: new Error("Result storage did not answer."),
+              }),
         ),
         warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
       };
@@ -964,6 +973,10 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
+    /** `execute.watchdogMs`: no call's deadline runs past this, counted from `requestStartedAt`. */
+    responseCeilingMs?: number | undefined;
+    /** When the inbound request arrived. Otherwise the ceiling counts from each call. */
+    requestStartedAt?: number | undefined;
     /** The endpoint refuses every write call and write page, and search and describe omit write tools. */
     readOnly?: boolean | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
@@ -999,6 +1012,7 @@ function metaToolsForRequest(
   const globalCap = registry.maxResultBytes;
   const defaultToolTimeoutMs =
     normalizeTimeoutMs(opts.defaultToolTimeoutMs) ?? CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
+  const responseCeilingMs = normalizeTimeoutMs(opts.responseCeilingMs) ?? CONFIG_DEFAULTS.execute.watchdogMs;
   const probeTimeoutMs = normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
   const discoveryConcurrency = resolveDiscoveryConcurrency(opts.discoveryConcurrency);
   // createMetaTools() is called once per inbound MCP request. Sharing this
@@ -1068,7 +1082,10 @@ function metaToolsForRequest(
   }
   const runCallNative = /* @__PURE__ */ registerAuth(runCall, function (call: CallArgs, source: ActivityCallSource) {
     return authFlow<RunCallOutcome>(function* () {
-      const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
+      // A deadline past the client's would trade a typed result for its transport timeout.
+      const now = Date.now();
+      const remainingMs = (opts.requestStartedAt ?? now) + responseCeilingMs - now;
+      const timeoutMs = Math.min(normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs, Math.max(1, remainingMs));
       const outcome = yield* upwardStep(
         authInvoke<InvocationOutcome<ProcessedCallResult>>(invocation, "invoke", [
           call.address,
@@ -1079,7 +1096,24 @@ function metaToolsForRequest(
             sentSecrets,
             readOnly: opts.readOnly,
             routes,
-            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            timeoutMs,
+            // Auth or queueing spent the time, and a 1 ms deadline could still lose
+            // to a dispatch. A known "not sent" beats an answer the client won't hear.
+            ...(remainingMs <= 0
+              ? {
+                  refusal: {
+                    code: "timeout",
+                    message: `This request used its ${responseCeilingMs}ms response ceiling before ${boundedEchoText(call.address, 512)} started, so it was not sent. Send it again.`,
+                    retryable: true,
+                    details: {
+                      operation: boundedEchoText(call.address, 512),
+                      stage: "response ceiling",
+                      elapsedMs: responseCeilingMs - remainingMs,
+                      deadlineMs: responseCeilingMs,
+                    },
+                  },
+                }
+              : {}),
             ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
             unwrapResult: call.resultMode === "value",
             ...(opts.downstreamInput
@@ -1752,6 +1786,8 @@ export function registerMetaTools(
     baseUrl: string;
     readOnly?: boolean | undefined;
     defaultToolTimeoutMs?: number | undefined;
+    responseCeilingMs?: number | undefined;
+    requestStartedAt?: number | undefined;
     probeTimeoutMs?: number | undefined;
     discoveryConcurrency?: number | undefined;
     activity?: ActivityRequestContext | undefined;
@@ -1786,6 +1822,8 @@ export function registerMetaTools(
     requestScope: ctx.requestScope,
     readOnly: ctx.readOnly,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
+    responseCeilingMs: ctx.responseCeilingMs,
+    requestStartedAt: ctx.requestStartedAt,
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
     activity: ctx.activity,

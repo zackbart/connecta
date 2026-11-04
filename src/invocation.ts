@@ -303,6 +303,8 @@ export interface InvocationContext<T> {
   activityFriction?: (value: T) => AgentFriction | undefined;
   /** Account for an admitted write after validation and before admission. */
   beforeWrite?: (target: ResolvedCatalogTool, args: unknown) => Effect.Effect<WriteDecision>;
+  /** The caller already knows this call may not start: nothing resolves or dispatches. */
+  refusal?: CallErrorDetails | undefined;
 }
 
 export { InvocationFailure } from "./invocation-failure.js";
@@ -788,6 +790,10 @@ export class InvocationService {
       // classified like a failure, as the async body this replaced did.
       const dispatch = (callSignal?: AbortSignal): Effect.Effect<CallErrorDetails | undefined, unknown> =>
         Effect.gen({ self: this }, function* () {
+          if (context.refusal) {
+            gateRefused = true;
+            return context.refusal;
+          }
           const admissionSignal = context.dispatchSignal
             ? AbortSignal.any([context.dispatchSignal, ...(callSignal ? [callSignal] : [])])
             : callSignal;

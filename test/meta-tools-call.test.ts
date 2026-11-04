@@ -37,6 +37,61 @@ function pageOf(result: { content: { text: string }[] }): {
   };
 }
 
+describe("a direct call with no response time left", () => {
+  const world = () => {
+    const calls: string[] = [];
+    const connector = connectorWith({
+      id: "tracker",
+      kind: "api",
+      tools: [
+        { name: "get", annotations: { readOnlyHint: true } },
+        { name: "close", annotations: { readOnlyHint: false, destructiveHint: true } },
+      ],
+      call: async (name) => {
+        calls.push(name);
+        return { ok: true };
+      },
+    });
+    const { activity, events } = activitySink();
+    return { calls, events, registry: makeRegistry([connector]), activity };
+  };
+
+  it.each([
+    { route: "callDestructiveTool", address: "tracker.close" },
+    { route: "callTool", address: "tracker.get" },
+  ] as const)("L3: $route is refused unsent, and says so", async ({ route, address }) => {
+    const { calls, events, registry, activity } = world();
+    const tools = createMetaTools(registry, BASE, {
+      responseCeilingMs: 1_000,
+      requestStartedAt: Date.now() - 2_000,
+      activity,
+    });
+    const out = await tools[route]({ address, args: {} });
+    expect(out.isError).toBe(true);
+    const { error } = out.structuredContent as { error: Record<string, any> };
+    expect(error).toMatchObject({
+      code: "timeout",
+      retryable: true,
+      details: { operation: address, stage: "response ceiling", deadlineMs: 1_000 },
+    });
+    expect(error.message).toContain("not sent");
+    expect(error).not.toHaveProperty("uncertainCall");
+    expect(calls).toEqual([]);
+    expect(events).toMatchObject([{ outcome: "timeout" }]);
+  });
+
+  it("L3: one with time left still runs", async () => {
+    const { calls, registry } = world();
+    const tools = createMetaTools(registry, BASE, {
+      responseCeilingMs: 60_000,
+      requestStartedAt: Date.now() - 2_000,
+    });
+    const out = await tools.callDestructiveTool({ address: "tracker.close", args: {} });
+    expect(out.isError).toBeFalsy();
+    expect(calls).toEqual(["close"]);
+  });
+});
+
 describe("call_tool", () => {
   it.each(["invalid_args", "not_found", "unavailable"] as const)(
     "gives safe recovery for typed %s without vendor text",

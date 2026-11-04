@@ -9,6 +9,7 @@
 // neither module resolves — there the arm skips and the host-side clauses below
 // carry the file.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { describe, expect, it } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -28,6 +29,7 @@ import {
   checkCompletedPrivacy,
   checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -501,6 +503,15 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
 
   it("[R4, R9] INV-2 INV-3 INV-4: a failed run's stash rechecks identity, endpoint, pool and live authentication", async () => {
     await checkStashAuthority(required(workerExecutor), false, true);
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(required(workerReadDeadlineExecutor), "await new Promise(() => {});");
+  });
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(required(workerExecutor).deadlineMs).toBe(50_000);
+    expect(required(workerExecutor).deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
   });
 
   it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {
