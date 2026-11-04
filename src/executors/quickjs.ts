@@ -21,6 +21,7 @@ import { AdmissionController, ExecutorAdmissionError, ExecutorExecutionError } f
 import { msg } from "../errors.js";
 import { InvocationFailure } from "../invocation-failure.js";
 import { brandExecutor } from "../executor-contract.js";
+import { PROGRAM_RESULT_READ_BYTES } from "../program-result.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import { admit } from "../runtime/admission.js";
 import { awaitExecutorLease, executorProgram, provideExecutorProgram } from "../runtime/executor.js";
@@ -238,6 +239,7 @@ class QuickJsChildPool implements AdmittingExecutor {
   private readonly slots: ChildSlot[];
   private readonly available: ChildSlot[];
   private readonly runtimeOptions: QuickJsRuntimeOptions;
+  readonly maxReadBytes: number;
   // Scope closes still in flight, so close() can wait out every child rather
   // than only the ones it retired itself.
   private readonly retiring = new Set<Deferred.Deferred<void>>();
@@ -259,6 +261,14 @@ class QuickJsChildPool implements AdmittingExecutor {
       memoryLimitBytes: positiveWhole(options.memoryLimitBytes, DEFAULT_MEMORY_LIMIT_BYTES, "memoryLimitBytes"),
       maxStackSizeBytes: positiveWhole(options.maxStackSizeBytes, DEFAULT_STACK_LIMIT_BYTES, "maxStackSizeBytes"),
     };
+    // Parsing and then using a value costs CPU in proportion to its size, so a
+    // tighter budget reads less. The fixed cap is measured: a parse near 3 MB can
+    // end the child with a QuickJS assertion at any CPU budget.
+    this.maxReadBytes = Math.min(
+      Math.floor((PROGRAM_RESULT_READ_BYTES * this.runtimeOptions.cpuTimeMs) / DEFAULT_CPU_TIME_MS),
+      2 * 1024 * 1024,
+      Math.floor(this.runtimeOptions.memoryLimitBytes / 16),
+    );
     this.slots = Array.from({ length: concurrency }, () => ({
       crashes: [],
       notBefore: 0,

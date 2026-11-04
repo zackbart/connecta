@@ -628,6 +628,13 @@ export interface Executor {
    * rewrite; set this to say the same thing minification-proof.
    */
   readonly name?: string;
+  /**
+   * The largest stored result, in UTF-8 bytes, that one program may read whole
+   * with `connecta.result(id, { all: true })` and still have budget left to use
+   * it. Default 1.5 MiB. Set it lower when a tighter CPU or memory limit would
+   * end the run first.
+   */
+  readonly maxReadBytes?: number;
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
   /** Release runtime resources. Node's built-in pool implements this. */
   close?(): void | Promise<void>;

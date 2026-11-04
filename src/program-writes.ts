@@ -93,6 +93,11 @@ export class ProgramWrites {
     return this.closed;
   }
 
+  /** Whether a dispatched write may or may not have taken effect. */
+  get hasUnknown(): boolean {
+    return this.states.includes("unknown");
+  }
+
   /** Whether a dispatched write completed successfully in this run. */
   get hasSucceeded(): boolean {
     return this.states.includes("ok");

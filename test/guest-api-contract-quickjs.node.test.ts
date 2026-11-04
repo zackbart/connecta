@@ -29,6 +29,7 @@ import {
   checkProgramReturnFallback,
   checkProgramReturnPaging,
   checkProgramReturnWriteWarning,
+  checkTransferReclaim,
 } from "./program-result-cases.js";
 
 // Every case here drives a real QuickJS child process, whose startup and IPC
@@ -164,6 +165,20 @@ describe("guest API contract (QuickJS executor)", () => {
     });
   }
 
+  it("[L6] INV-9: reclaims finished reads and keeps a failed run's write output", async () => {
+    await checkTransferReclaim(executor);
+  });
+  it("[S11] scales the whole-read ceiling with the CPU budget and caps it", async () => {
+    const ceiling = (options: Parameters<typeof quickJsExecutor>[0]) => {
+      const scaled = quickJsExecutor(options);
+      void scaled.close?.();
+      return scaled.maxReadBytes;
+    };
+    expect(ceiling({})).toBe(1.5 * 1024 * 1024);
+    expect(ceiling({ cpuTimeMs: 125 })).toBe(0.75 * 1024 * 1024);
+    expect(ceiling({ cpuTimeMs: 60_000 })).toBe(2 * 1024 * 1024);
+    expect(ceiling({ cpuTimeMs: 60_000, memoryLimitBytes: 16 * 1024 * 1024 })).toBe(1024 * 1024);
+  });
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
     const outcome = await contractHarness().run(
       executor,

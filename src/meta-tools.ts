@@ -207,6 +207,11 @@ function resultChunkBytes(totalBytes: number): number {
   return Math.max(RESULT_CHUNK_BYTES, Math.ceil(totalBytes / RESULT_MAX_CHUNKS / 3) * 3);
 }
 
+/** Give back a stash nothing can name any more; its layout follows from its size. */
+export function releaseStashedResult(registry: RegistryView, id: string, totalBytes: number): Promise<void> {
+  return registry.releaseResult(id, Math.max(1, Math.ceil(totalBytes / resultChunkBytes(totalBytes))));
+}
+
 /**
  * Base64 of `bytes`, in three-byte-aligned batches so the argument list of one
  * spread never grows with the result. Alignment matters: an unaligned batch
@@ -254,6 +259,8 @@ interface ResultStash {
   pagingTool?: "read_result";
   /** `execute.maxResultChars` of the program that runs nextAction. Default 24_000. */
   programChars?: number;
+  /** A program return no larger than this is offered whole, to reduce, in nextAction. */
+  readBytes?: number;
 }
 
 /**
@@ -265,6 +272,10 @@ function programPageBytes(results: ResultStash): number {
   const fits = Math.floor(((results.programChars ?? MAX_EXECUTE_RESULT_CHARS) - 1024) / 6);
   return Math.max(4, Math.min(fits, results.cap, PROGRAM_RESULT_PAGE_BYTES));
 }
+
+/** nextAction for a whole read: runs as written, and is meant to be edited first. */
+const reduceWhole = (id: string, results: ResultStash) =>
+  `async () => { const { data } = await connecta.result(${JSON.stringify(id)}, { all: true }); return /* reduce data to what you need */ JSON.stringify(data).slice(0, ${programPageBytes(results)}); }`;
 
 /** Opens a write's notice, ahead of any paging instruction. */
 const WRITE_ALREADY_RAN = "This write already ran: do not call it again to see its result.";
@@ -303,6 +314,8 @@ const readReduceFirst = (routes: AgentRouteNames) =>
   `To find something specific, repeat this read inside ${routes.program} with connecta.call and filter or search the result there, returning only what matters`;
 
 function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewShape): string {
+  if (results.readBytes !== undefined && totalBytes <= results.readBytes)
+    return `${results.write ? WRITE_ALREADY_RAN + " " : ""}Read this completed return with connecta.result(id, { all: true }) inside ${results.routes.program} and reduce it, as nextAction does.`;
   if (results.pagingTool === "read_result") {
     const shown =
       preview.kind === "prefix"
@@ -426,7 +439,10 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
               // A byte may cost six JSON characters when escaped. Leave room for the
               // result id, page counters, and continuation metadata in the returned page.
               arguments: {
-                code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${programPageBytes(results)} })`,
+                code:
+                  results.readBytes !== undefined && totalBytes <= results.readBytes
+                    ? reduceWhole(id, results)
+                    : `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${programPageBytes(results)} })`,
               },
             },
     };
@@ -519,6 +535,7 @@ export function guardProgramReturn(
   maxChars: number,
   completedWrite: boolean,
   programChars?: number,
+  readBytes?: number,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -531,6 +548,7 @@ export function guardProgramReturn(
       maxChars,
       completedWrite,
       programChars,
+      readBytes,
     ),
   );
 }
@@ -546,6 +564,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     maxChars: number,
     completedWrite: boolean,
     programChars?: number,
+    readBytes?: number,
   ) {
     return authFlow<unknown>(function* () {
       const serialized = serializeResultText(value);
@@ -572,6 +591,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         write: completedWrite,
         cap,
         ...(programChars !== undefined ? { programChars } : {}),
+        ...(readBytes !== undefined ? { readBytes } : {}),
         set: authMethod((id: string, chunks: string[], ttl: number) =>
           registryProgram(registry, "stashResult", id, chunks, ttl),
         ),

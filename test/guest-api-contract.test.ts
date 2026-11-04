@@ -40,6 +40,7 @@ import {
   checkProgramReturnFallback,
   checkProgramReturnPaging,
   checkProgramReturnWriteWarning,
+  checkTransferReclaim,
 } from "./program-result-cases.js";
 
 async function loadWorkerExecutor(options: { timeout?: number } = {}): Promise<Executor | undefined> {
@@ -410,6 +411,11 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
+    it(`[L6] INV-9: ${custom ? "customExecutor: " : ""}reclaims finished reads and keeps a failed run's write output`, async () => {
+      await checkTransferReclaim(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 30_000);
     it(`INV-3 INV-9: ${custom ? "customExecutor: " : ""}oversized program reads arrive whole through bounded stash pages`, async () => {
       await checkLargeProgramRead(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,

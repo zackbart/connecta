@@ -113,6 +113,7 @@ export function guestInitializer(): string {
   const promiseCatch = Function.prototype.call.bind(NativePromise.prototype.catch);
   const promiseFinally = Function.prototype.call.bind(NativePromise.prototype.finally);
   const push = Function.prototype.call.bind(Array.prototype.push);
+  const join = Function.prototype.call.bind(Array.prototype.join);
   const apply = Function.prototype.call.bind(Function.prototype.apply);
   const NativeError = Error;
   const NativeWeakMap = WeakMap;
@@ -146,9 +147,28 @@ export function guestInitializer(): string {
         page = await hostResult(value.transfer);
         text += page.text;
       } while (page.hasMore);
-      return { data: value.handle.valueFormat === "json" ? JSON.parse(text) : text,
+      const whole = { data: value.handle.valueFormat === "json" ? JSON.parse(text) : text,
         format: value.handle.valueFormat };
+      // Nothing can name these bytes now, so the host may reclaim them.
+      try { await hostResult(value.transfer); } catch {}
+      return whole;
     } catch { return value.handle; }
+  }
+  async function result(id, options) {
+    if (!options || options.all !== true) return apply(hostResult, undefined, arguments);
+    let page = await hostResult(id, options);
+    const parts = [page.text];
+    const transfer = page.transfer;
+    while (page.hasMore) {
+      page = await hostResult(transfer);
+      push(parts, page.text);
+    }
+    const text = join(parts, "");
+    if (!id || id.valueFormat !== "text") {
+      // A bare id doesn't say which format it stored; JSON is the common one.
+      try { return readThrough({ data: jsonParse(text), format: "json" }); } catch {}
+    }
+    return readThrough({ data: text, format: "text" });
   }
   // Other properties read from data through the prototype chain, so the
   // envelope stays its own object: keys, JSON, spread and emit refs are unchanged.

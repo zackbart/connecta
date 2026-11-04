@@ -379,9 +379,11 @@ export async function checkProgramReturnPaging(executor: Executor): Promise<void
   expect(spilled).toContain("nextAction");
   expect(spilled).toContain("connecta.result");
   expect(spilled).toContain("This write already ran");
+  // nextAction reads the whole return and runs as written, fitting its own return.
+  expect(notice.nextAction.arguments.code).toContain("{ all: true }");
   const first = await execute(notice.nextAction.arguments);
   expect(first.isError).toBeUndefined();
-  expect(first.structuredContent!.result).toMatchObject({ resultId: notice.resultId, offset: 0, hasMore: true });
+  expect(first.structuredContent!.result).toEqual(expect.stringContaining("雪"));
   // Recover the entire JSON in a new guest run and return only verification facts.
   const restored = await execute({
     code: `async () => {
@@ -517,4 +519,72 @@ export async function checkProgramReturnWriteWarning(executor: Executor): Promis
       expect(readonly.isError).toBe(true);
     }
   }
+}
+
+/** A finished read's stash is reclaimed; a write's waits for the run; a disclosed handle stays. */
+export async function checkTransferReclaim(executor: Executor): Promise<void> {
+  const storage = memoryStorage();
+  const bytes = 600_000;
+  const registry = new Registry(
+    [
+      {
+        id: "store",
+        kind: "api",
+        async listTools() {
+          return [
+            { name: "read", annotations: { readOnlyHint: true } },
+            { name: "write", annotations: { readOnlyHint: false, destructiveHint: true } },
+          ];
+        },
+        async callTool(_name, args) {
+          return "x".repeat((args as { bytes?: number }).bytes ?? bytes);
+        },
+      },
+    ],
+    { storage, logger: silentLogger },
+  );
+  const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false });
+  const charges = async () => {
+    const raw = await storage.get("result-stash:v1:ledger");
+    return raw === null ? 0 : (JSON.parse(raw) as { entries: unknown[] }).entries.length;
+  };
+  const run = async (code: string) => {
+    const out = await execute({ code });
+    return out;
+  };
+
+  // Read: nothing stays charged once the value is whole.
+  let out = await run(`async () => (await connecta.call("store.read")).length`);
+  expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(bytes);
+  expect(await charges()).toBe(0);
+
+  // Write in a successful run: released with the run.
+  out = await run(`async () => (await connecta.call("store.write")).length`);
+  expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(bytes);
+  expect(await charges()).toBe(0);
+
+  // Write in a failed run: the output's bytes stay until they expire (INV-9).
+  out = await run(`async () => { await connecta.call("store.write"); throw new Error("after the write"); }`);
+  expect(out.isError).toBe(true);
+  expect(await charges()).toBe(1);
+
+  // An oversized return's nextAction, edited at its mark, reduces the whole value.
+  out = await run(`async () => ({ rows: Array.from({ length: 400 }, (_, i) => ({ i, pad: "x".repeat(80) })) })`);
+  const notice = out.structuredContent!.result as { nextAction: { arguments: { code: string } } };
+  expect(notice.nextAction.arguments.code).toContain("/* reduce data to what you need */");
+  out = await run(notice.nextAction.arguments.code.replace(/return .*; \}$/, "return data.rows.length; }"));
+  expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(400);
+
+  // A handle the guest saw stays readable after it reads the whole thing, in this run or the next.
+  const big = 1_200_000;
+  out = await run(`async () => {
+    const handle = await connecta.call("store.read", { bytes: ${big} });
+    return { id: handle.resultId, length: (await connecta.result(handle, { all: true })).length };
+  }`);
+  const { id, length } = out.structuredContent!.result as { id: string; length: number };
+  expect(length).toBe(big);
+  out = await run(`async () => (await connecta.result(${JSON.stringify(id)}, { all: true })).length`);
+  expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(big);
+  // The failed run's write, the oversized return, and the handle.
+  expect(await charges()).toBe(3);
 }

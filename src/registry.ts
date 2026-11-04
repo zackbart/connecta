@@ -280,6 +280,11 @@ export interface RegistryView {
   /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
   stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
   /**
+   * Give back a stashed result nobody can name any more. Best effort: a failure
+   * leaves it charged until its expiry.
+   */
+  releaseResult(id: string, chunkCount: number): Promise<void>;
+  /**
    * Local declared-vs-stored credential mismatch, with no downstream I/O. With
    * `requestScope`, the read joins that request's read memo.
    */
@@ -357,6 +362,11 @@ function completeStash(effect: Effect.Effect<unknown, unknown, Storage>): Effect
 
 /** One live stash charge: reservation id, bytes, and expiry (epoch ms). */
 type StashCharge = readonly [reservation: string, bytes: number, expiresAt: number];
+
+/** The reservation id of one result id, which is random and never reused. */
+function stashCharge(id: string): Effect.Effect<string, unknown> {
+  return Effect.tryPromise({ try: () => sha256Hex(id), catch: (error) => error });
+}
 
 /**
  * Live charges in a stored ledger. Anything malformed reads as empty: the
@@ -925,6 +935,13 @@ export class Registry implements RegistryView {
     );
   }
 
+  releaseResult(id: string, chunkCount: number, partition: string = scopes.results): Promise<void> {
+    return runOnPartition(
+      registryEdgeProgram(Registry.prototype, this, "releaseResult", id, chunkCount, partition),
+      this.opts,
+    );
+  }
+
   /**
    * Storage namespaced to the root result partition, kept separate from any
    * connector's namespace. Backs connecta.result.
@@ -1223,8 +1240,9 @@ export class Registry implements RegistryView {
           const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
           if (bytes > maxBytes || maxEntries === 0) return false;
           const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
-          // IDs belong to reservations, not reusable result IDs or subjects.
-          const charge = crypto.randomUUID();
+          // A digest finds this reservation again on release without putting
+          // the result's ID in the deployment-wide ledger.
+          const charge = yield* stashCharge(id);
           const ttlMs = ttlSeconds * 1000;
           if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) return false;
           const booking = yield* swapStashLedger((live, now) => {
@@ -1316,6 +1334,21 @@ export class Registry implements RegistryView {
           Effect.timeoutOrElse({ duration: Duration.millis(STASH_TIMEOUT_MS), orElse: () => Effect.succeed(false) }),
           Effect.provideService(Storage, self.opts.storage),
         ),
+      releaseResult: (self, id, chunkCount, partition = scopes.results) =>
+        completeStash(
+          Effect.gen(function* () {
+            const charge = yield* stashCharge(id);
+            // Bytes first: a failed delete keeps its charge, so the ledger never
+            // undercounts what storage holds.
+            for (let index = 0; index < chunkCount; index++)
+              yield* storageDelete(partition + resultKeys.chunk(id, index));
+            yield* swapStashLedger((live) =>
+              live.some((entry) => entry[0] === charge)
+                ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
+                : { result: undefined },
+            );
+          }),
+        ).pipe(Effect.ignore, Effect.provideService(Storage, self.opts.storage)),
       recheckResultAccess: () => Effect.succeed(true),
       storeOAuthHandoff: (self, connectorId, state, principalKey) =>
         Effect.gen(function* () {
@@ -1561,6 +1594,14 @@ class ScopedRegistryView implements RegistryView {
       id,
       chunks,
       ttlSeconds,
+      this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
+    );
+  }
+
+  releaseResult(id: string, chunkCount: number): Promise<void> {
+    return this.root.releaseResult(
+      id,
+      chunkCount,
       this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
     );
   }

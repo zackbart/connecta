@@ -36,10 +36,11 @@ export const GUEST_FUNCTIONS = [
     budget: "hostCall",
     declaration: "read(uri: string): Promise<{ contents: { uri: string; text?: string; blob?: string }[] }>;",
   },
-  /** Pages a retained result by page or UTF-8 byte offset. */
+  /** Reads a retained result whole, or pages it by page or UTF-8 byte offset. */
   {
     name: "result",
     budget: "hostCall",
+    wrapped: true,
     deadline: "result storage",
     declaration:
       "result(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;",

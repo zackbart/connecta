@@ -92,6 +92,7 @@ interface Executor {
   readonly name?: string;                       // what /health and doctor report
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
   close?(): void | Promise<void>;
+  readonly maxReadBytes?: number;               // whole-read ceiling, default 1.5 MiB (`S11`)
 }
 
 interface ExecutorProvider {
@@ -454,6 +455,28 @@ it can reach.
 
 ### connecta.result and connecta.skill
 
+**S11.** One rule covers size in a program: a program sees a whole value up to
+the read ceiling; what it returns is capped at `maxResultChars` (`R2`); anything
+larger carries a `resultId`.
+
+`await connecta.result(handleOrId, { all: true })` returns the whole stored value
+as `{ data, format }`, for one host call however many transfer pages it takes
+(`L6`). `data` reads through as in `S5a`. A handle's `valueFormat` decides the
+format. A bare id parses as JSON when it can, and is text otherwise, so pass the
+handle when the difference matters. `all` takes no other option; `{ all: false }`
+is ordinary paging.
+
+The read ceiling is 1.5 MiB of the stored UTF-8. `quickJsExecutor()` scales it by
+`cpuTimeMs / 250`, at most 2 MiB and at most a sixteenth of `memoryLimitBytes`:
+parsing a value and using it costs CPU in proportion to its size, and a parse near
+3 MB can end the child with a QuickJS assertion at any budget. The Dynamic Worker
+uses 1.5 MiB; Miniflare read 16 MB without failing, but that says nothing about
+production isolate limits. A custom executor may set `maxReadBytes` lower. Over it the call throws
+`result_too_large`, catchable, naming the size and the ceiling, after one host call
+and no transfer. Page with `{ offset }` and keep only what you need from each page.
+
+Reading whole leaves the stash in place: read it again, page it, or return the id.
+
 `await connecta.result(handleOrId, { page?, offset?, maxBytes? })` reads a stashed direct-call
 or program-call result bound to the admitted subject, principal, endpoint/pool, request origin,
 connector, and tool. It returns
@@ -656,7 +679,7 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 | `connector_call_failed`      | anything else the connector threw                                                                                                                                                                     | per message   |
 | `catalog_lookup_failed`      | the connector's catalog could not be loaded                                                                                                                                                           | per cause     |
 | `result_processing_failed`   | the result could not be prepared                                                                                                                                                                      | per message   |
-| `result_too_large`           | a discovery response exceeded its byte bound                                                                                                                                                          | false         |
+| `result_too_large`           | a discovery response or a whole result read exceeded its byte bound                                                                                                                                   | false         |
 | `budget_exceeded`            | the run exhausted a host-call, write, or emitted-output budget                                                                                                                                        | false         |
 | `write_outcome_unknown`      | a program write was sent and no answer came back; it is never sent again (`W9`)                                                                                                                       | false         |
 | `executor_failed`            | the executor returned a malformed result or failed outside the guest program                                                                                                                          | false         |
@@ -772,12 +795,15 @@ The cap does not change stash paging: pages still obey the stashed call's
 `maxResultBytes` and the 32 KiB bridge ceiling.
 An oversized return is stashed as compact JSON through the same
 result store as direct calls. The returned notice carries `truncated`, `resultId`,
-`totalBytes`, `hint`, `nextOffset: 0`, and an executable `nextAction` that pages
-with `connecta.result`. Its page size is `floor((maxResultChars - 1024) / 6)`
-bytes, so a page fits the next program's return even when every byte escapes to
-six characters (3,829 bytes by default), at most the stashed call's
-`maxResultBytes` and the 32 KiB bridge ceiling; direct-call notices use the same
-size. It also retains `totalChars` and a bounded `preview`.
+`totalBytes`, `hint`, `nextOffset: 0`, and an executable `nextAction`. Within the
+read ceiling (`S11`), that program reads the return whole with
+`connecta.result(id, { all: true })` and marks where to reduce it; as written it
+returns a prefix that fits, so running it unedited cannot overflow again. Past the
+ceiling it pages. Both use a size of `floor((maxResultChars - 1024) / 6)` bytes, so
+the output fits the next program's return even when every byte escapes to six
+characters (3,829 bytes by default), at most the stashed call's `maxResultBytes`
+and the 32 KiB bridge ceiling; direct-call notices page at the same size. It also
+retains `totalChars` and a bounded `preview`.
 The recovery action and hint precede the preview, so clients that spill results
 after the first 2,000 characters retain the handle and the instruction.
 Small returns pass through unchanged; Connecta does not select fields.
@@ -1038,7 +1064,7 @@ current page, then pass that cursor to the tool in the next program.
 
 Every `call`, `read`, `search`, `describe`, `result`, and `skill` spends one host
 call on entry, before resolution, validation, or dispatch; automatic transfer
-pages of a paged result do not. Catching a local refusal refunds nothing.
+pages of a paged result and of `result(id, { all: true })` do not. Catching a local refusal refunds nothing.
 The first call beyond the budget ends the host run with one non-retryable
 `budget_exceeded` (`E2`). Its bridge stays pending until lease disposal so guest
 `try/catch` cannot swallow it. Later host access, including `emit`, stops; pending
@@ -1075,9 +1101,9 @@ bridge. The trusted guest initializer reconstructs values up to 1 MiB from
 bounded pages, retaining JSON versus text format and every payload code point,
 including U+FEFF at page starts. Larger values return a
 `{ format: "paged", valueFormat, resultId, totalBytes, truncated: true, hint }`
-handle. Pass the handle or its `resultId` to `connecta.result` and reduce the
-pages before returning them. Automatic transfers spend no additional host-call
-budget; explicit paging does. This policy is shared by QuickJS, Worker and custom
+handle. Pass the handle to `connecta.result(handle, { all: true })` (`S11`), or page it and
+reduce the pages, before returning. Automatic transfers spend no additional
+host-call budget; explicit paging does. This policy is shared by QuickJS, Worker and custom
 executors that run provider preludes.
 Oversized raw text containing unpaired UTF-16 surrogates returns a handle without
 `resultId`, with a notice that it cannot be paged as text. This preserves the
@@ -1087,7 +1113,13 @@ round-trip losslessly.
 
 Stashes retain their existing bindings, 15-minute expiry, per-connector page
 caps and aggregate capacity charges on memory, SQLite and D1. Capacity exhaustion
-or a storage failure returns a successful notice without a `resultId`. A failed
+or a storage failure returns a successful notice without a `resultId`. A value
+reconstructed through transfer pages gives its stash back: the guest never saw a
+handle for it, so nothing can name those bytes. A read's goes as soon as the value
+is whole, and a write's when the run succeeds with no unknown write, so a failed
+run cannot lose a completed write's output (`W9`). A handle the guest received
+keeps its charge until it expires, including after `{ all: true }`. Release is
+best effort, and a failure leaves the charge to expire. A failed
 automatic reconstruction retains the handle. Neither result path reissues the
 call or changes a completed write into a failed or unknown write. Guest returns use the same store when they exceed the presentation cap (`R2`–`R4`).
 
@@ -1422,6 +1454,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `S1`, `S1a`, `S2`      | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling)                                                                                                                                         |
 | `S3`                   | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `S4`                   | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds)                                                                                                                                                                                                                                                                                                                                     |
+| `S11`                  | both guest-contract executors (whole reads, ceiling refusal, stash reclaim), `test/guest-api-contract-quickjs.node.test.ts` (ceiling scaling), `test/program-result-cases.ts`                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `S5`, `S5a`, `S6`      | both guest-contract executors (read-through by shape, unchanged envelope), `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `S7`                   | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `S8`, `E1`, `X11`      | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged outcomes)                                                                                                                                                                                                                                                                                                                                                                 |
@@ -1475,7 +1508,7 @@ declaration and names the functions that spend no host call.
 | `describe`  | `hostCall` | Describes exact addresses, one entry per address in order.                 |
 | `call`      | `hostCall` | Calls one tool and inlines transfer pages and native content.              |
 | `read`      | `hostCall` | Reads one advertised resource URI.                                         |
-| `result`    | `hostCall` | Pages a retained result by page or UTF-8 byte offset.                      |
+| `result`    | `hostCall` | Reads a retained result whole, or pages it by page or UTF-8 byte offset.   |
 | `skill`     | `hostCall` | Fetches a skill's text by exact name.                                      |
 | `emit`      | `emission` | Forwards a content block to the client; needs no await.                    |
 | `unawaited` | `once`     | Tells the host a failed program read a result field off an unawaited call. |

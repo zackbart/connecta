@@ -1093,13 +1093,20 @@ function contractConnectors(state: ContractState): Connector[] {
     id: "shapes",
     kind: "api",
     async listTools() {
-      return ["rows", "list", "colliding", "scalar", "nothing", "empty"].map((name) => readOnly(name));
+      return ["rows", "list", "colliding", "scalar", "nothing", "empty", "rowsOfBytes", "textOfBytes"].map((name) =>
+        readOnly(name),
+      );
     },
-    async callTool(name) {
+    async callTool(name, args) {
       count(`shapes.${name}`);
       if (name === "rows") return [{ id: "b" }, { id: "a" }];
       if (name === "list") return { object: "list", data: [{ id: 1 }], has_more: false };
       if (name === "colliding") return { content: "body", contentResult: "other", format: "shadow", error: null };
+      if (name === "rowsOfBytes") {
+        const bytes = (args as { bytes: number }).bytes;
+        return { rows: Array.from({ length: Math.ceil(bytes / 100) }, (_, i) => ({ i, pad: "x".repeat(80) })) };
+      }
+      if (name === "textOfBytes") return "t".repeat((args as { bytes: number }).bytes);
       if (name === "scalar") return 7;
       if (name === "empty") return "";
       return null;
@@ -3710,6 +3717,123 @@ return fs;
       expect(outcome.isError, outcome.text).toBe(false);
       expect(outcome.result).toEqual({ ok: true });
       expect(outcome.value.emitted).toBe(1);
+    },
+  },
+  {
+    clauses: "S11, L4, L6",
+    name: "result { all: true } reads a paged handle whole for one host call",
+    code: `async () => {
+      const handle = await connecta.call("shapes.rowsOfBytes", { bytes: 1200000 });
+      const byHandle = await connecta.result(handle, { all: true });
+      const byId = await connecta.result(handle.resultId, { all: true });
+      const again = await connecta.result(handle, { offset: 0, maxBytes: 10 });
+      return {
+        handle: handle.format, keys: Object.keys(byHandle), format: byHandle.format, rows: byHandle.data.rows.length,
+        through: byHandle.rows.filter(row => row.i % 2).length, idRows: byId.data.rows.length, stillReadable: again.bytes,
+      };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        handle: "paged",
+        keys: ["data", "format"],
+        format: "json",
+        rows: 12_000,
+        through: 6_000,
+        idRows: 12_000,
+        stillReadable: 10,
+      });
+      // The call, then two whole reads and one explicit page, whatever the page count.
+      expect(outcome.value.hostCalls).toMatchObject({ attempted: 4, succeeded: 4, failed: 0 });
+    },
+  },
+  {
+    clauses: "S11, L6",
+    name: "result { all: true } keeps text as text and sniffs a bare id",
+    code: `async () => {
+      const handle = await connecta.call("shapes.textOfBytes", { bytes: 1100000 });
+      const whole = await connecta.result(handle, { all: true });
+      const byId = await connecta.result(handle.resultId, { all: true });
+      return { format: whole.format, length: whole.length, ends: whole.data.endsWith("t"), bareId: byId.format, bareLength: byId.data.length };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        format: "text",
+        length: 1_100_000,
+        ends: true,
+        bareId: "text",
+        bareLength: 1_100_000,
+      });
+    },
+  },
+  {
+    clauses: "S11, E2, L6",
+    name: "result { all: true } refuses a value over the ceiling catchably, and paging still works",
+    code: `async () => {
+      const handle = await connecta.call("shapes.textOfBytes", { bytes: 5000000 });
+      let refused;
+      try { await connecta.result(handle, { all: true }); } catch (err) {
+        refused = { code: err.code, retryable: err.retryable, message: err.message };
+      }
+      const page = await connecta.result(handle, { offset: 0, maxBytes: 100 });
+      return { refused, page: page.text.length, more: page.hasMore };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      const { refused, page, more } = outcome.result as {
+        refused: { code: string; retryable: boolean; message: string };
+        page: number;
+        more: boolean;
+      };
+      expect(refused).toMatchObject({ code: "result_too_large", retryable: false });
+      expect(refused.message).toContain("5000000 bytes");
+      expect([page, more]).toEqual([100, true]);
+      expect(outcome.value.hostCalls).toMatchObject({ attempted: 3 });
+    },
+  },
+  {
+    clauses: "S11, S5",
+    name: "result { all: true } takes no other options and rejects an unknown id as before",
+    code: `async () => {
+      const capture = async (run) => { try { await run(); return "none"; } catch (err) { return err.code; } };
+      const handle = await connecta.call("shapes.textOfBytes", { bytes: 300000 });
+      return {
+        withOffset: await capture(() => connecta.result("missing", { all: true, offset: 1 })),
+        wrongType: await capture(() => connecta.result("missing", { all: 1 })),
+        unknown: await capture(() => connecta.result("00000000-0000-4000-8000-000000000000", { all: true })),
+        off: await capture(() => connecta.result("00000000-0000-4000-8000-000000000000", { all: false })),
+        inline: handle.length,
+      };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        withOffset: "invalid_args",
+        wrongType: "invalid_args",
+        unknown: "not_found",
+        off: "not_found",
+        inline: 300_000,
+      });
+    },
+  },
+  {
+    clauses: "L6",
+    name: "finished read transfers give their stash back, so the eighth large read stays inline",
+    code: `async () => {
+      const formats = [];
+      for (let i = 0; i < 8; i++) {
+        const r = await connecta.call("shapes.rowsOfBytes", { bytes: 950000 });
+        formats.push(r.format);
+      }
+      const small = await connecta.call("shapes.textOfBytes", { bytes: 300000 });
+      return { formats, small: small.format };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ formats: Array(8).fill("json"), small: "text" });
+      // Reclaiming spends no host call beyond the reads themselves.
+      expect(outcome.value.hostCalls).toMatchObject({ attempted: 9 });
     },
   },
   {

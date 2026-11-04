@@ -8,6 +8,8 @@ export interface GuestApi {
   call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<GuestResult>;
   call(request: { address: string; args?: unknown; timeoutMs?: number }): Promise<GuestResult>;
   read(uri: string): Promise<GuestResourceResult>;
+  /** Reads a retained result whole, for one host call; a larger one throws `result_too_large`. */
+  result(id: string | GuestResultHandle, options: { all: true }): Promise<Exclude<GuestResult, GuestResultHandle>>;
   result(
     id: string | GuestResultHandle,
     options?: { page?: number; offset?: number; maxBytes?: number },

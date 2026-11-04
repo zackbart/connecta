@@ -87,14 +87,14 @@ Otherwise fetch for units, pagination, aliases, or sequences.
 
 ## Large results and recovery
 
-Large direct results and program returns carry resultId when paging is available. Follow
+Follow
 nextOffset in UTF-8 bytes, reassemble and reduce inside one program. Use the
 returned id in place of result-id below; this example assumes documented JSON.
 
-Calls reconstruct up to 1 MiB through stash pages. Larger values return
-\`{ format: "paged", valueFormat, resultId?, totalBytes, hint }\`. Pass the handle
-to \`connecta.result\`. No resultId means no paging. IDs expire after
-15 minutes; only explicit paging spends extra host calls.
+A program sees a whole value up to the read ceiling; its return is capped; larger
+carries resultId. Calls inline up to 1 MiB; larger: \`{ format: "paged", resultId?, totalBytes }\`.
+\`connecta.result(handle, { all: true })\` gives \`{ data, format }\` for one call, else
+result_too_large; then page. No resultId, no paging. IDs last 15 minutes.
 Use zero-based \`{ page: 0 }\` or UTF-8 \`{ offset }\`, never both. Keep maxBytes
 fixed across pages; connector caps and the 32 KiB bridge ceiling apply.
 
