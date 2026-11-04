@@ -22,7 +22,12 @@ import { saveGradeInputs } from "./agent/saved.js";
 import { batchFailures, trialOutcome } from "./agent/verdict.js";
 import type { AgentResultFile } from "./report/summary.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
-import { ccbState } from "./fakes/ccb.js";
+import { isDeepStrictEqual } from "node:util";
+import { QB_COMPANIES } from "./deploy/quickbooks.js";
+import { CCB_NEW_EMAIL, CCB_TARGET, ccbState } from "./fakes/ccb.js";
+import { QB_PRIVATE, quickbooksState, runSearch } from "./fakes/quickbooks.js";
+import { followDossier } from "./tasks/quickbooks.js";
+import { followPlan } from "./tasks/quickbooks-writes.js";
 import { overflowState } from "./fakes/overflow.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 import { deliveredReducedCount, deliveredValues } from "./tasks/correctness.js";
@@ -219,8 +224,140 @@ async function run() {
       fakeGrade,
     );
   }
+  if (quickbooks) {
+    // Passable as written: other legitimate queries, renamed fields, a fenced dossier.
+    const followed = await trial({ ...task(quickbooks.task), reference: followDossier }, "reference");
+    record(
+      "control: following the QuickBooks accounting prompt by other queries passes",
+      passed(followed),
+      failedChecks(followed),
+      followed,
+    );
+    const mutated = (change: (saved: NonNullable<TrialResult["saved"]>) => void) => {
+      const copy = structuredClone(followed);
+      change(copy.saved!);
+      return regradeTrial(task(quickbooks.task), copy, "codex", "outcome");
+    };
+    for (const [name, change] of [
+      ["a wrong amount", (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replace("125.5", "125.6"))],
+      ["a missing invoice", (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replaceAll('"43"', '"99"'))],
+      ["a flattened report", (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replaceAll('"Consulting"', '"Other"'))],
+      [
+        "a report with its empty cells dropped",
+        (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replaceAll('""', '"-"')),
+      ],
+      ["a leaked private value", (s) => (s.trace.finalAnswer += ` ${QB_PRIVATE}`)],
+      [
+        "skipped credential renewals",
+        (s) => (s.world.calls = s.world.calls.filter((c) => c.args.grant !== "refresh_token")),
+      ],
+    ] as [string, (saved: NonNullable<TrialResult["saved"]>) => void][]) {
+      const grade = mutated(change);
+      record(`control: QuickBooks accounting with ${name} fails`, !passed(grade), failedChecks(grade), grade);
+    }
+    // Every query search_records builds runs against live rows; nothing else does.
+    const company = quickbooksState().companies[QB_COMPANIES.alice]!;
+    const accepted: [string, string[]][] = [
+      ["SELECT * FROM Customer WHERE DisplayName = 'Alice\\'s \\\\ studio' STARTPOSITION 1 MAXRESULTS 11", ["9"]],
+      ["SELECT * FROM Customer STARTPOSITION 1 MAXRESULTS 101", ["9", "11"]],
+      ["SELECT * FROM Customer WHERE Active = false STARTPOSITION 1 MAXRESULTS 26", ["10"]],
+      ["SELECT * FROM Invoice WHERE CustomerRef = '9' STARTPOSITION 2 MAXRESULTS 101", ["42", "43"]],
+      ["SELECT * FROM Invoice WHERE CustomerRef = '9' AND Balance > 120 STARTPOSITION 1 MAXRESULTS 26", ["41", "42"]],
+      ["SELECT * FROM Invoice WHERE DocNumber = 'INV-42' STARTPOSITION 1 MAXRESULTS 26", ["42"]],
+      ["SELECT * FROM Invoice WHERE CustomerRef = '12345' STARTPOSITION 1 MAXRESULTS 26", []],
+      ["SELECT * FROM Vendor STARTPOSITION 1 MAXRESULTS 26", []],
+    ];
+    const refused = [
+      "",
+      "select * from Invoice",
+      "SELECT * FROM Employee STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT Id FROM Invoice STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice",
+      "SELECT * FROM Invoice STARTPOSITION 0 MAXRESULTS 26",
+      "SELECT * FROM Invoice STARTPOSITION 1 MAXRESULTS 1001",
+      "SELECT * FROM Invoice WHERE Secret = 'x' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice WHERE DisplayName = 'x' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice WHERE CustomerRef > '9' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice WHERE CustomerRef = '9' OR Id = '41' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice WHERE CustomerRef = '9' AND STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Customer WHERE DisplayName = 'x' OR '1'='1' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Customer WHERE DisplayName = 'unterminated STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Customer WHERE Active = 'true' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice; DROP TABLE Invoice STARTPOSITION 1 MAXRESULTS 26",
+    ];
+    const rowIds = (query: string) => {
+      const rows = runSearch(company, query);
+      return (
+        rows &&
+        Object.values(rows)
+          .flat()
+          .map((row) => (row as { Id: string }).Id)
+      );
+    };
+    const wrongAccepted = accepted.filter(([query, ids]) => !isDeepStrictEqual(rowIds(query), ids));
+    record(
+      "control: the QuickBooks fake answers every search_records query from live rows",
+      wrongAccepted.length === 0,
+      wrongAccepted.map(([query]) => `${query} -> ${JSON.stringify(rowIds(query))}`).join("; "),
+    );
+    const wrongRefused = refused.filter((query) => rowIds(query) !== undefined);
+    record(
+      "control: the QuickBooks fake refuses queries search_records cannot build",
+      wrongRefused.length === 0,
+      wrongRefused.join("; "),
+    );
+  }
   const qbWrites = references.find((t) => t.task === "quickbooks-write-journey");
   if (qbWrites) {
+    // Passable as written: only the prompt's steps, with no knowledge of the reference's probes.
+    const followed = await trial({ ...task(qbWrites.task), reference: followPlan }, "reference");
+    record(
+      "control: following the QuickBooks write prompt step by step passes",
+      passed(followed),
+      failedChecks(followed),
+      followed,
+    );
+    const mutated = (change: (saved: NonNullable<TrialResult["saved"]>) => void) => {
+      const copy = structuredClone(followed);
+      change(copy.saved!);
+      return regradeTrial(task(qbWrites.task), copy, "codex", "outcome");
+    };
+    for (const [name, change] of [
+      [
+        "the wrong race winner",
+        (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replace(/"raceWinner":"[AB]"/, '"raceWinner":"C"')),
+      ],
+      [
+        "an unknown outcome reported as known",
+        (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replace('"invoice-recover",', "")),
+      ],
+      [
+        "a resent ambiguous intent",
+        (s) => {
+          const resent = structuredClone(
+            s.world.calls.find((c) => (c.args.query as any)?.requestid === "invoice-recover")!,
+          );
+          (resent.args.query as any).requestid = "invoice-recover-2";
+          s.world.calls.push(resent);
+        },
+      ],
+      [
+        "no reconciliation read",
+        (s) =>
+          (s.world.calls = s.world.calls.filter(
+            (c) => !String((c.args.query as any)?.query ?? "").includes("SERVICES-RECOVER"),
+          )),
+      ],
+      [
+        "no refused read-only attempt",
+        (s) => {
+          s.trace.toolUses = s.trace.toolUses.filter((u) => !JSON.stringify(u).includes("read_only_endpoint"));
+        },
+      ],
+    ] as [string, (saved: NonNullable<TrialResult["saved"]>) => void][]) {
+      const grade = mutated(change);
+      record(`control: QuickBooks writes with ${name} fails`, !passed(grade), failedChecks(grade), grade);
+    }
     for (const mode of ["no-dispatch", "duplicate", "fabricated-state"] as const) {
       const fabricated = structuredClone(qbWrites);
       const world = fabricated.saved!.world;
@@ -562,6 +699,69 @@ async function run() {
     !passed(imageNoopGrade),
     failedChecks(imageNoopGrade),
   );
+  const evidenceSentence = "Finish with the source system, record ids, and facts supporting your answer.";
+  const missingEvidence = (["six", "five", "code", "native", "native-no-code"] as const).filter(
+    (arm) => !taskForSurface(task("p5-result-paging"), arm).prompt.includes(evidenceSentence),
+  );
+  record(
+    "control: every arm of p5-result-paging asks for the evidence its check reads",
+    missingEvidence.length === 0,
+    missingEvidence.join(", "),
+  );
+  // CCB's dedicated contact route and a list that returns her profile are both legitimate.
+  const ccbUpdate = (route: string, query: string, reconcile = true) =>
+    trial(
+      {
+        ...task("ccb-update-once"),
+        reference: async (ctx) => {
+          const write = await ctx.call("call_destructive_tool", {
+            address: "ccb.ccb_api_write",
+            args: { method: "PUT", path: route, body: { email: CCB_NEW_EMAIL } },
+          });
+          if (write.isError) throw new Error(write.text);
+          if (reconcile) await ctx.call("call_tool", { address: "ccb.list_individuals", args: { query } });
+          ctx.answer(`CCB individual ${CCB_TARGET} now has email ${CCB_NEW_EMAIL}, verified by reading the record.`);
+        },
+      },
+      "reference",
+    );
+  const contactRoute = await ccbUpdate(`/individuals/${CCB_TARGET}/contact_info`, "Alice Rowan");
+  record(
+    "control: a CCB contact_info update reconciled through list_individuals passes",
+    passed(contactRoute),
+    failedChecks(contactRoute),
+    contactRoute,
+  );
+  const otherPerson = await ccbUpdate(`/individuals/${CCB_TARGET}/contact_info`, "Bob Nobody");
+  record(
+    "control: a CCB update reconciled by searching for someone else fails",
+    !passed(otherPerson),
+    failedChecks(otherPerson),
+    otherPerson,
+  );
+  const unreconciled = await ccbUpdate(`/individuals/${CCB_TARGET}/contact_info`, "", false);
+  record(
+    "control: a CCB update never read back fails",
+    !passed(unreconciled),
+    failedChecks(unreconciled),
+    unreconciled,
+  );
+  const sheets = references.find((t) => t.task === "google-sheets-3");
+  if (sheets) {
+    record(
+      "control: google-sheets-3 asks for the spreadsheet id its check reads",
+      /spreadsheet id/i.test(task(sheets.task).prompt),
+    );
+    const wrongId = structuredClone(sheets);
+    wrongId.saved!.trace.finalAnswer = wrongId.saved!.trace.finalAnswer!.replace('"id":"sheets1"', '"id":"record1"');
+    const grade = regradeTrial(task(sheets.task), wrongId, "codex", "outcome");
+    record(
+      "control: google-sheets-3 with a record id as its spreadsheet id fails",
+      !passed(grade),
+      failedChecks(grade),
+      grade,
+    );
+  }
   const auth = taskForSurface(task("auth-required-recovery"), "native-no-code");
   record(
     "control: native-no-code does not run auth-required-recovery",

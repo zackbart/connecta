@@ -20,6 +20,11 @@ const seed = ccbState();
 const filtered = seed.people.filter((p) => p.active && p.campus_id === 1).length;
 const inactive = seed.people.filter((p) => !p.active).length;
 const standard = () => REST_TOOL_KINDS.has("ccb.ccb_api_read");
+const target = seed.people.find((p) => p.id === CCB_TARGET)!;
+const listCanReturnTarget = (query: Record<string, string>) => {
+  const name = (query.name ?? "").toLowerCase();
+  return `${target.name} ${target.email} ${CCB_NEW_EMAIL}`.toLowerCase().includes(name);
+};
 function grade(i: number, world: World, trace: AgentTrace): Check[] {
   const calls = world.ledger.calls.filter((c) => c.service === "ccb");
   const writes = calls.filter((c) => c.kind === "write");
@@ -58,7 +63,11 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
     evidence &&= /North/i.test(answer) && /America\/Chicago/.test(answer) && /Thank you, North\./i.test(answer);
   }
   if (i >= 5) {
-    const write = writes.find((c) => c.args.method === "PUT" && c.args.path === `/individuals/${CCB_TARGET}`);
+    const write = writes.find(
+      (c) =>
+        c.args.method === "PUT" &&
+        [`/individuals/${CCB_TARGET}`, `/individuals/${CCB_TARGET}/contact_info`].includes(String(c.args.path)),
+    );
     destination = Boolean(write);
     add(
       "state",
@@ -74,8 +83,10 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
         (c) =>
           c.seq > (write?.seq ?? Infinity) &&
           c.args.method === "GET" &&
-          c.args.path === `/individuals/${CCB_TARGET}` &&
-          c.outcome === "ok",
+          c.outcome === "ok" &&
+          (c.args.path === `/individuals/${CCB_TARGET}` ||
+            // A list that can return her profile reads it too; another person's search cannot.
+            (c.args.path === "/individuals" && listCanReturnTarget((c.args.query ?? {}) as Record<string, string>))),
       ),
     );
     evidence &&= answer.includes(String(CCB_TARGET)) && answer.includes(CCB_NEW_EMAIL);

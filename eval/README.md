@@ -112,13 +112,20 @@ company/owner isolation, and coordinates consecutive vendor-hour renewals with
 identical refresh bytes,
 then rotates and persists new bytes across application reconstruction.
 Disconnecting Alice must revoke the fake Intuit grant and invalidate its old
-access token while Bob keeps working. Accounting evidence
-includes exact lookahead pages, customer joins, nested report rows and empty
-cells, plus named/hatch/fields secrecy while retaining public SyncToken.
+access token while Bob keeps working. The fake answers every query `search_records`
+can build from its live rows, with filters, paging and hidden inactive master
+records, and refuses anything else as Intuit refuses an unknown column. The grader
+reads physical reads, delivered facts and the facts in a JSON dossier, however the
+agent named them. The reference also asserts exact lookahead pages and named, hatch
+and fields secrecy that retains the public SyncToken. A second no-model route follows
+the prompt with other queries and a reduced dossier, and must pass.
 Hostile paths, raw SQL and unreviewed writes must send no vendor request.
 The separate `quickbooks-write-journey` opts into the three named writes while
 preserving the original read-only task. Both QuickBooks smoke targets also run
-this compact journey. A stateful vendor commits customer names, arbitrates two
+this compact journey. Its prompt gives the exact intents and their requestIds,
+which also select each vendor failure, so an agent meets the same failures as the
+reference. A no-model route following only those steps must pass; the probes an
+agent has no reason to send stay asserted in the reference. A stateful vendor commits customer names, arbitrates two
 concurrent sparse updates against a caller-read SyncToken (one winner, one
 5010 conflict), and computes invoice tax and rounding from fixture settings.
 The grader checks exact requestid/body/company, committed state, preserved

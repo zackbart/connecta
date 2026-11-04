@@ -91,7 +91,8 @@ const trialSchema = z
     claude: z.unknown().optional(),
     saved: z.unknown().optional(),
     regrade: z.unknown().optional(),
-    checks: z.array(z.object({ id: knownString, pass: z.boolean() }).passthrough()),
+    // A check id names a check, so "unknown-no-replay" is not an unknown runner field.
+    checks: z.array(z.object({ id: z.string().trim().min(1), pass: z.boolean() }).passthrough()),
     metrics: z.unknown(),
     approvals: z.unknown(),
     transcript: z.array(z.unknown()),

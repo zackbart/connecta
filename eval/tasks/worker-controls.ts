@@ -31,7 +31,15 @@ import { withD1Latency } from "../deploy/d1-latency.js";
 import { isInjected, NO_INJECTION, parseInjection, type Injection } from "../fakes/injection.js";
 import { World, type WorldOptions } from "../fakes/world.js";
 import { servedDelayStats, serveFetch, retryBind } from "../support/serve.js";
-import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
+import {
+  claimPort,
+  groupMembers,
+  killAllProcesses,
+  releasePortClaim,
+  stopAllProcesses,
+  WRANGLER_ENV,
+  wranglerDev,
+} from "../support/workerd.js";
 import { ACTIVE_TASKS } from "./index.js";
 import { PROVIDER_EVALS } from "./providers.generated.js";
 
@@ -487,6 +495,16 @@ export async function comparatorTargetControls() {
   }
   if (!compare(await fresh("worker", "six"), await fresh("worker", "code")).includes("target worker"))
     throw new Error("Two worker arms did not compare as worker");
+  // A check's name may contain "unknown"; an unknown model or runner field still may not.
+  const named = async (surface: "six" | "code") => {
+    const file = await fresh("worker", surface);
+    file.trials[0]!.checks.push({ id: "unknown-no-replay", description: "", pass: true, kind: "outcome" });
+    return file;
+  };
+  compare(await named("six"), await named("code"));
+  const unknownModel = await named("six");
+  unknownModel.trials[0]!.codex = { ...unknownModel.trials[0]!.codex!, servedModel: "unknown" };
+  refused(() => compare(unknownModel, unknownModel), "Comparison accepted an unknown served model");
   const mutations: [string, (file: AgentResultFile) => void][] = [
     ["a node trial in a worker batch", (f) => (f.trials[0]!.target = "node")],
     ["a missing protocol", (f) => delete f.protocol],
@@ -826,6 +844,55 @@ export async function portCollisionControls() {
       "Repeated collisions must fail boundedly",
     );
     if (failures !== 3) throw new Error("Collision retries were not bounded");
+    // A claimed port stays unavailable to other evals until its owner dies or releases it.
+    const claimed = 9_999;
+    await releasePortClaim(claimed);
+    if (!(await claimPort(claimed, process.ppid))) throw new Error("A free port claim was refused");
+    if (await claimPort(claimed)) throw new Error("A live process's port claim was overridden");
+    await releasePortClaim(claimed);
+    const dead = spawnSync(process.execPath, ["-p", "process.pid"], { encoding: "utf8" }).stdout.trim();
+    if (!(await claimPort(claimed, Number(dead)))) throw new Error("A free port claim was refused");
+    if (!(await claimPort(claimed))) throw new Error("A dead process's stale port claim blocked its port");
+    await releasePortClaim(claimed);
+    // A restart keeps its public port: a brief holder delays it instead of failing it.
+    const restartDir = await mkdtemp(join(tmpdir(), "connecta-restart-collision-"));
+    let restarting: Awaited<ReturnType<typeof wranglerDev>> | undefined;
+    const holder = createNetServer();
+    try {
+      const entry = join(restartDir, "worker.js");
+      await writeFile(entry, 'export default { fetch: () => new Response("ok") };\n');
+      restarting = await wranglerDev({ name: "connecta-restart-collision", main: entry });
+      const live = restarting;
+      const { origin } = live;
+      await live.stop();
+      const booted = live.transcripts().length;
+      await new Promise<void>((resolve) => holder.listen(Number(new URL(origin).port), "127.0.0.1", () => resolve()));
+      let released = false;
+      const release = (async () => {
+        const deadline = Date.now() + 90_000;
+        while (
+          !live
+            .transcripts()
+            .slice(booted)
+            .some((text) => /EADDRINUSE|address already in use/i.test(text))
+        ) {
+          if (Date.now() > deadline) break;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        released = true;
+        await new Promise<void>((resolve) => holder.close(() => resolve()));
+      })();
+      await live.restart();
+      await release;
+      if (!released || live.transcripts().length < booted + 2) throw new Error("A restart collision did not retry");
+      if (live.origin !== origin || !(await fetch(`${origin}/health`)).ok)
+        throw new Error("A retried restart lost its public origin");
+      console.log("ok   a restart waits out a brief holder of its public port and keeps its origin");
+    } finally {
+      await restarting?.close();
+      if (holder.listening) await new Promise<void>((resolve) => holder.close(() => resolve()));
+      await rm(restartDir, { recursive: true, force: true });
+    }
     // Steal the inspector after its availability probe. Landlock requires an
     // explicit port, so this remaining reservation race must recover natively.
     const netClose = NetServer.prototype.close;

@@ -18,6 +18,8 @@ export const NO_CODE_CAPABILITY_MISMATCHES: Record<string, string> = {
     "billing__* tools appear only after the credential is saved, but the host's tool list is fixed for the session: Connecta advertises no list_changed, Claude's allowlist is set at spawn, and Codex CLI 0.166.0's config/mcpServer/reload did not expose them on the next turn. Not run on this arm.",
 };
 const NO_CODE_NOT_RUN = "auth-required-recovery";
+/** The answer-evidence check reads this sentence, so every arm of a task must ask for it. */
+const EVIDENCE_SENTENCE = "Finish with the source system, record ids, and facts supporting your answer.";
 
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   if (surface === "six") return task;
@@ -38,8 +40,8 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
     if (task.id === "p5-result-paging")
       prompt =
         surface === "native"
-          ? "Read ci.get_run_log for runId 4812 with ci__get_run_log. Page its retained result using connecta.result inside programs, and identify the actual failing test and HTTP status."
-          : "Read ci.get_run_log for runId 4812 with ci__get_run_log. Page its retained result using read_result, and identify the actual failing test and HTTP status.";
+          ? `Read ci.get_run_log for runId 4812 with ci__get_run_log. Page its retained result using connecta.result inside programs, and identify the actual failing test and HTTP status. ${EVIDENCE_SENTENCE}`
+          : `Read ci.get_run_log for runId 4812 with ci__get_run_log. Page its retained result using read_result, and identify the actual failing test and HTTP status. ${EVIDENCE_SENTENCE}`;
     if (surface === "native-no-code") {
       if (task.id === "p5-trusted-program-write")
         prompt =
@@ -96,8 +98,7 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   }
   let prompt = task.prompt;
   if (task.id === "p5-result-paging")
-    prompt =
-      "Read ci.get_run_log for runId 4812 in a program, reduce its full log, and identify the actual failing test and HTTP status. Finish with the source system, record ids, and facts supporting your answer.";
+    prompt = `Read ci.get_run_log for runId 4812 in a program, reduce its full log, and identify the actual failing test and HTTP status. ${EVIDENCE_SENTENCE}`;
   const reference = task.reference;
   return {
     ...task,

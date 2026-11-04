@@ -108,24 +108,38 @@ const URL_WRAPPER_CLOSERS: Record<string, string> = {
   "`": "`",
   "*": "*",
   _: "_",
+  "\u201C": "\u201D",
+  "\u2018": "\u2019",
+  "\u00AB": "\u00BB",
 };
+
+/** A complete Markdown inline link; only its destination can be opened. */
+const MARKDOWN_LINK = /\[[^\]]*\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/g;
+/** A complete HTML anchor, which a renderer opens at its href whatever its label says. */
+const HTML_LINK =
+  /<a\b[^>]*?\shref\s*=\s*(?:"(https?:\/\/[^"]*)"|'(https?:\/\/[^']*)'|(https?:\/\/[^\s>]*))[^>]*>[\s\S]*?<\/a\s*>/gi;
+const decodeHtml = (value: string) => value.replace(/&(amp|#38|#x26);/gi, "&");
 
 /**
  * Every complete URL in the agent's words, in its original bytes: a Markdown
  * destination, or a whitespace-delimited word without the sentence punctuation
  * a linkifier also leaves out and without a closer matching what opened it.
+ * A Markdown or HTML link's destination stands alone: scanning it as prose would
+ * strip punctuation that is really part of where the link goes.
  * Every other trailing character stays, because it would be part of the link a
  * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL.
  */
 function urlTokens(text: string): string[] {
-  const tokens = [...text.matchAll(/\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g)].map(
-    (match) => match[1]!,
-  );
-  for (const match of text.matchAll(/https?:\/\/\S+/g)) {
-    const before = text.slice(0, match.index);
+  const tokens = [
+    ...[...text.matchAll(MARKDOWN_LINK)].map((match) => match[1]!),
+    ...[...text.matchAll(HTML_LINK)].map((match) => decodeHtml(match[1] ?? match[2] ?? match[3]!)),
+  ];
+  const prose = text.replace(MARKDOWN_LINK, " ").replace(HTML_LINK, " ");
+  for (const match of prose.matchAll(/https?:\/\/\S+/g)) {
+    const before = prose.slice(0, match.index);
     // Glued to a preceding word, this is a part of another URL, like a proxy's `?u=`.
-    if (before && !/[\s([<"'`*_:]$/.test(before)) continue;
-    const opened = /[([<"'`*_]*$/.exec(before)![0];
+    if (before && !/[\s([<"'`*_:\u201C\u2018\u00AB]$/.test(before)) continue;
+    const opened = /[([<"'`*_\u201C\u2018\u00AB]*$/.exec(before)![0];
     const closing = [...opened]
       .reverse()
       .map((opener) => URL_WRAPPER_CLOSERS[opener]!)
