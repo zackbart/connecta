@@ -220,7 +220,8 @@ from Eve usage events; no dollar cost is inferred for subscription usage.
 Both deployment targets and the six, five, code, native and native-no-code arms
 use the same runner, except where the target refuses an arm. Eve searches count as
 host searches, and Eve's first usage event supplies the first request's input
-tokens. A native tool is called as `<connection>__<connector>__<tool>`. Eve emits
+tokens. A native read is called as `<connection>__<connector>__<tool>` and a native write as
+`<connection>__<connector>__WRITE__<tool>`. Eve emits
 no event for a deferred name it cannot resolve, so the model wrapper records those
 calls and the trace shows each as one failed `eve__tool` in `metrics.otherTools`.
 On native-no-code, `auth-required-recovery` is N/A: Eve relists tools each step,
