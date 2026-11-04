@@ -103,7 +103,7 @@ function setup(
     } = {},
   ) => {
     if (options.native && (name === "call_tool" || name === "call_destructive_tool")) {
-      name = String(args.address).replace(".", "__");
+      name = String(args.address).replace(".", name === "call_tool" ? "__" : "__WRITE__");
       args = args.args as Record<string, unknown>;
     }
     const params = {
@@ -162,7 +162,7 @@ describe("native auth URL elicitation", { tags: ["workers"] }, () => {
       const first = (await flow.rpc()).result;
       expect(first.resultType).toBe("input_required");
       for (const [name, args] of [
-        ["service__write", { id: 1 }],
+        ["service__WRITE__write", { id: 1 }],
         ["service__read", { id: 2 }],
       ] as const) {
         const changed = await flow.rpc(name, args, { state: first.requestState, action });
