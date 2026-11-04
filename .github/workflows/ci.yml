@@ -181,7 +181,8 @@ jobs:
     needs: [build, node, workers, behavior, browser, audit, eve]
     if: always()
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Seven minutes covers the matrix-leg step's rereads, which stop at about five.
+    timeout-minutes: 7
     steps:
       - name: Require every check
         env:
