@@ -4,7 +4,7 @@ import type { World } from "../fakes/world.js";
 import type { AgentTrace } from "../agent/trace.js";
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import { check } from "./baseline.js";
-import { deliveredNumbers, deliveredValues } from "./correctness.js";
+import { deliveredReducedCount, deliveredValues } from "./correctness.js";
 import {
   CAMP,
   LOC,
@@ -71,11 +71,11 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     destination = pages.some((c) => Number((c.args.query as Args).page) >= 3);
     evidence &&= /ANSWER:\s*70\b/i.test(answer);
     const delivered = deliveredValues(trace);
+    const care = seed.donors.filter((d) => d.email.endsWith("@care.example"));
     add(
       "delivered-data",
-      seed.donors.every((donor) => delivered.some((row) => row?.id === donor.id && row.email === donor.email)) ||
-        // A program's reduced count is delivered however it names the field.
-        deliveredNumbers(trace).includes(seed.donors.filter((d) => d.email.endsWith("@care.example")).length),
+      // A program may reduce the matching rows to their ids; the task forbids returning contact details.
+      care.every((donor) => delivered.some((row) => row?.id === donor.id)) || deliveredReducedCount(trace, care.length),
     );
   } else if (id === ids[3]) {
     destination = reached(`/deposits/${DEPOSIT}`) && reached(`/deposits/${DEPOSIT}/summary`) && reached("/deposits");

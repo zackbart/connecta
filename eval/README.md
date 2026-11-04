@@ -1216,11 +1216,32 @@ Result files and individual trials retain the explicit surface arm.
 `worker-comparison-plan.ts` freezes the task roster, categories, large-catalog
 labels and decision rule before trials. Use outcome grading. Keep every
 Worker-eligible comparison task, plus the seven Planning Center workflows.
-The OAuth-host tasks remain refused by the Worker target. The no-code arm
-cannot test a guest host-call budget or `connecta.read` resource access; retain
-those rows and identify their capability mismatch when interpreting scores.
-Do not count their mechanically code-dependent outcomes as evidence for code's
-benefit on ordinary tool work.
+The OAuth-host tasks remain refused by the Worker target.
+
+The decision rule compares `native` with `native-no-code` only on tasks both
+arms can do. `NO_CODE_CAPABILITY_MISMATCHES` in
+[tasks/surface.ts](tasks/surface.ts) is the list, with a reason for each:
+
+| Task                           | Why it cannot count for or against code                                                                     |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `p5-fanout-over-budget`        | Measures the guest host-call budget, which only a program spends.                                           |
+| `p5-connecta-read`             | Requires `connecta.read`, which needs a program.                                                            |
+| `p5-program-image`             | Needs `connecta.emit`; without code it repeats `p5-direct-rich-output`.                                     |
+| `p5-read-only-program-refusal` | A read-only native pool lists no write tool, so the refused attempt cannot happen.                          |
+| `auth-required-recovery`       | `billing__*` appears after the credential is saved, but hosts fix their tool list for the session. Not run. |
+
+Their rows stay in result files. `auth-required-recovery` records status
+`skipped` with code `capability-mismatch` on `native-no-code`, spends no model
+and keeps the batch's pairs intact. Connecta advertises no `list_changed`, Claude's
+allowlist is set at spawn, and on Codex CLI 0.166.0 `config/mcpServer/reload`
+succeeds while the next turn's `ALL_TOOLS` still lacks the new tools. `native`
+still runs it, because a program can call `connecta.call("billing.…")` once the
+credential exists.
+
+`eval:compare` applies the rule's first sentence to a `native` and
+`native-no-code` pair: pass counts and reduction/join/paging medians over the
+comparable roster, each exclusion with its reason, and an explicit "not
+applicable" when the batch omits a comparable roster task.
 
 `pnpm run eval:selftest --native-only` checks real Worker arm inventories,
 wrong-arm rejection, an observed known read and its grader, paging, physical
@@ -1237,9 +1258,18 @@ from the read-only inventory.
 
 Prompt adaptations: `p5-result-paging` names `ci__get_run_log` and the arm's
 pager. In native without code, `p5-trusted-program-write` names the native write,
-`p5-read-only-program-refusal` names the guessed native write, and
-`p5-program-image` asks for direct image/caption delivery. Other prompts remain
-identical. The fake billing credential uses opaque characters to avoid sharing
+`p5-read-only-program-refusal` names the guessed native write and asks the agent
+to say so if the pool does not list it, and `p5-program-image` asks for direct
+image/caption delivery through `assets.get_badge_image`, which its destination
+then requires on that arm. Other prompts remain identical.
+
+Three outcomes differ on these arms because the capability does not exist, each
+with controls that keep fabrication failing. In `native-no-code`,
+`p5-read-only-program-refusal` accepts no write attempt, an unchanged issue,
+`ANSWER: not closed` and a stated absent tool; a claimed closure, a changed issue
+or silence about the tool fail. On both native arms, `p5-absent-github` needs no
+search result, because no top-level search exists: no downstream calls, a stated
+absence and `ANSWER: unavailable` pass, and a count or a substitute read fails. The fake billing credential uses opaque characters to avoid sharing
 an eight-character secret fragment with public native tool names.
 
 `codex-fidelity.ts` is an unpaid diagnostic. It connects the real pinned CLI to
@@ -1274,23 +1304,41 @@ Each trial also records `firstTurnInputTokens`, `hostSearchCalls` and
 `toolErrorsBeforeFirstSuccess` in metrics. The first is first-request input
 including cache reads/writes: Claude's first assistant usage, or Codex's first
 token-usage update (whose input already includes cached input). Host search
-counts Claude `ToolSearch` calls and observable Codex host `exec` calls; this is
-an exec-call upper bound, not a claim every exec only reads `ALL_TOOLS`.
-Unobservable host events report N/A. Errors before success count failed Connecta
-top-level calls preceding the first successful Connecta call, or all failed
-calls if none succeeds. These fields appear in the report efficiency data and
-end-of-batch passing medians. Historical absent telemetry remains N/A.
+counts Claude `ToolSearch` calls and Codex host `exec` calls, which the runner
+observes by starting its thread with `experimentalRawEvents: true`. Every `exec`
+counts, including one that only calls a tool, so the Codex figure is an upper
+bound on searches. Errors before success count failed Connecta top-level calls
+before the first call that reached a downstream tool successfully, or all failed
+calls if none did. Discovery, guides and authorization do not stop the count, so
+it compares across arms with different discovery routes; a program stops it once
+one of its `connecta.call`s succeeded. These fields appear in the report
+efficiency data and end-of-batch passing medians. Historical absent telemetry
+remains N/A.
+
+Padded tools stay out of task ledgers, but choosing one is what padding measures.
+Every trial that called one records `metrics.distractors` (reads, writes and calls
+by tool), and the end-of-batch summary and report list it by trial. A read is
+only reported. A write fails `no-distractor-writes`, an outcome check added only
+when the trial touched padding, and regrading keeps it through saved inputs.
+
+A trial whose deployment rejects the agent's token at conversation end (HTTP 401
+or 403), or is unreachable, reports `error` rather than `fail`, because the agent
+lost its tools mid-conversation. A slow answer to that check is not a loss.
 Claude ToolSearch is retained in `otherTools` and is permitted by the isolation
 guard; shell, filesystem and unrelated MCP services remain disabled.
 
 `pnpm run eval:selftest --native-only` covers native inventories and graders,
-five-arm refusal and served text, and padded discovery/calls on both targets.
-These deterministic controls use no model allowance.
+five-arm refusal and served text, padded discovery/calls and distractor grading on
+both targets, `read_result` reassembly, and token rejection at trial end. These
+deterministic controls use no model allowance. CI's `behavior` job runs them after
+`eval:smoke`, whose build they reuse. Grader controls for capability mismatches
+and reduced counts run in `eval:outcomes`.
 
-Worker trials freeze their serving module graph into a temporary bundle before
-booting Wrangler. Later source edits or generated-file writes cannot reload a
-running trial and rotate its fixture agent token. Each trial still owns its
-own ports, D1 directory, gateway and cleanup.
+Worker agent trials freeze their serving module graph into a temporary bundle
+before booting Wrangler (`wranglerDev`'s `freeze` option). Later source edits or
+generated-file writes cannot reload a running trial and rotate its fixture agent
+token. Smoke targets leave it off, so they keep exercising Wrangler's own bundler.
+Each trial still owns its own ports, D1 directory, gateway and cleanup.
 
 Codex fidelity can be checked without a paid model using
 `pnpm exec tsx eval/codex-fidelity.ts --events`: a local scripted Responses
@@ -1299,10 +1347,9 @@ model-facing definitions without confusing generic examples in tool descriptions
 with enabled shell tools. On CLI 0.166.0 the capture also exposes a host `collaboration` namespace
 despite `multi_agent=false`; the diagnostic deliberately fails that isolation
 check. The scripted exec completes without hitting the `commandExecution`
-guard. CLI 0.166.0 can execute the host call without emitting
-an app-server item for it; in that case `hostSearchCalls` remains N/A. Raw
-custom-call events, when emitted by a supporting host, count total exec calls
-and retain them in `otherTools`. Shell `commandExecution` items still fail the
-isolation guard. The eight initial paid probes were interrupted by development
+guard. CLI 0.166.0 emits no ordinary app-server item for a host `exec`, so the
+runner reads its raw custom-call events: the scripted run reports
+`hostSearchCalls: 1`, retained in `otherTools` as `host_exec`. Shell
+`commandExecution` items still fail the isolation guard. The eight initial paid probes were interrupted by development
 reloads and are diagnostics, not a valid arm comparison; no paid retries were
 run.

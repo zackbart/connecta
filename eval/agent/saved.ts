@@ -28,6 +28,8 @@ export interface SavedGradeInputs {
     oauth: { connected: boolean; starts: number; visits: number };
     programs: ProgramObservation[];
     calls: CallRecord[];
+    /** Calls to catalog padding; absent when none happened or the run predates them. */
+    distractorCalls?: CallRecord[];
   };
 }
 
@@ -53,6 +55,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
       oauth: { connected: world.oauth.connected, starts: world.oauth.starts, visits: world.oauth.visits },
       programs: world.programs,
       calls: world.ledger.calls,
+      ...(world.injected.catalogCalls.length ? { distractorCalls: world.injected.catalogCalls } : {}),
     },
   };
 }
@@ -228,5 +231,6 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
   Object.assign(world.oauth, saved.world.oauth);
   world.programs = saved.world.programs;
   world.ledger.calls.push(...saved.world.calls);
+  world.injected.catalogCalls.push(...(saved.world.distractorCalls ?? []));
   return { world, trace: saved.trace };
 }

@@ -133,7 +133,7 @@ function efficiency(file: AgentResultFile): string {
       <td>${fmtMs(m.wallMs.value)}<div class="sub">first input ${fmtNum(m.firstTurnInputTokens.value, 0)}; host search ${fmtNum(m.hostSearchCalls.value)}; errors before success ${fmtNum(m.toolErrorsBeforeFirstSuccess.value)}</div></td>
       <td>${stat(fmtNum(m.toolErrors.value), m.toolErrors.n, summary.passing)} · ${stat(fmtNum(m.guideFetches.value), m.guideFetches.n, summary.passing)}</td>
       <td>${m.responseBytes.value === undefined ? "–" : stat(fmtBytes(Math.round(m.responseBytes.value)), m.responseBytes.n, summary.passing)}<div class="sub">${tools}</div></td>
-      <td><ul class="checks">${expensive || `<li class="muted">none</li>`}</ul></td></tr>`;
+      <td><ul class="checks">${expensive || `<li class="muted">none</li>`}</ul>${summary.distractors.length ? `<div class="sub">distractors: ${summary.distractors.map((t) => `${esc(t.task)} #${t.repeat} ${t.reads}r/${t.writes}w`).join(", ")}</div>` : ""}</td></tr>`;
   });
   const missing = models.reduce((total, summary) => total + summary.withoutSizes, 0);
   return `<table class="compare"><thead><tr><th>model</th><th>pass@${k} / pass^${k}</th><th>calls · model turns</th><th>input incl. cache / output tokens</th><th>wall</th><th>tool errors · guide fetches</th><th>response bytes per trial; per call by tool</th><th>most expensive trials</th></tr></thead><tbody>${rows.join("")}</tbody></table>

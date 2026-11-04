@@ -251,7 +251,7 @@ function withCodeSurface(connecta: Connecta, surface: Surface): Connecta {
             reply.result.resources.map(async (file: { uri: string }) => ({
               ...file,
               ...(await fileMetadata(file.uri)),
-              ...(isUsage(file.uri) ? { description: CODE_USAGE_FRONTMATTER.description } : {}),
+              ...(usage && isUsage(file.uri) ? { description: CODE_USAGE_FRONTMATTER.description } : {}),
             })),
           );
         return codeValue(reply, surface);

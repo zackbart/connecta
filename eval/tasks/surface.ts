@@ -29,6 +29,23 @@ export function taskForStepArm(task: ActiveTask, arm: StepArm | undefined): Acti
   };
 }
 
+/**
+ * Tasks whose native-no-code outcome is decided by the arm's capabilities, not by
+ * how well an agent uses tools. `eval/worker-comparison-plan.ts` keeps them out of
+ * the code-versus-no-code decision rule; their rows stay visible in results.
+ */
+export const NO_CODE_CAPABILITY_MISMATCHES: Record<string, string> = {
+  "p5-fanout-over-budget": "It measures the guest host-call budget, which only a program spends.",
+  "p5-connecta-read": "It requires connecta.read, and native-no-code has no program to call it.",
+  "p5-program-image":
+    "Turning get_badge's JSON into a native image block needs connecta.emit. Without code it degenerates into the direct read that p5-direct-rich-output already measures.",
+  "p5-read-only-program-refusal":
+    "A read-only native pool lists no write tool, so the host cannot attempt the write that this task exists to see refused.",
+  "auth-required-recovery":
+    "billing__* tools appear only after the credential is saved, but the host's tool list is fixed for the session: Connecta advertises no list_changed, Claude's allowlist is set at spawn, and Codex CLI 0.166.0's config/mcpServer/reload did not expose them on the next turn. Not run on this arm.",
+};
+const NO_CODE_NOT_RUN = "auth-required-recovery";
+
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   if (surface === "six") return task;
   if (surface === "five")
@@ -54,12 +71,55 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
       if (task.id === "p5-trusted-program-write")
         prompt =
           "In this writable pool, close tracker issue WEB-105 using tracker__close_issue and confirm its resulting status.";
-      if (task.id === "p5-read-only-program-refusal") prompt = task.prompt.replace("a program", "tracker__close_issue");
+      if (task.id === "p5-read-only-program-refusal")
+        prompt = `${task.prompt.replace("a program", "tracker__close_issue")} If this pool does not list that tool, say so instead of attempting it.`;
       if (task.id === "p5-program-image")
         prompt =
           "Read assets.get_badge_image using assets__get_badge_image, preserve its image and caption, and confirm the badge approval and revision.";
     }
-    return { ...task, prompt, ...(task.id === "p5-read-only-program-refusal" ? { approvals: {} } : {}) };
+    const answerOnly = async (ctx: ReferenceContext, answer: string) => ctx.answer(answer);
+    return {
+      ...task,
+      prompt,
+      ...(task.id === "p5-read-only-program-refusal" ? { approvals: {} } : {}),
+      ...(surface === "native-no-code" && task.id === NO_CODE_NOT_RUN
+        ? {
+            runnerSkips: Object.fromEntries(
+              (["claude", "codex"] as const).map((runner) => [
+                runner,
+                { code: "capability-mismatch" as const, reason: NO_CODE_CAPABILITY_MISMATCHES[task.id]! },
+              ]),
+            ),
+          }
+        : {}),
+      // References for what these arms can actually do. Other tasks keep theirs.
+      ...(task.id === "p5-absent-github"
+        ? {
+            reference: (ctx: ReferenceContext) =>
+              answerOnly(
+                ctx,
+                "GitHub is not configured here. I cannot determine open pull requests for acme/widget from these connectors.\nANSWER: unavailable",
+              ),
+          }
+        : {}),
+      ...(surface === "native-no-code" && task.id === "p5-read-only-program-refusal"
+        ? {
+            reference: (ctx: ReferenceContext) =>
+              answerOnly(
+                ctx,
+                "Tracker WEB-105 remains open: tracker__close_issue is not available in this read-only pool, so nothing was attempted.\nANSWER: not closed",
+              ),
+          }
+        : {}),
+      ...(surface === "native-no-code" && task.id === "p5-program-image"
+        ? {
+            reference: async (ctx: ReferenceContext) => {
+              await ctx.call("call_tool", { address: "assets.get_badge_image", args: {} });
+              ctx.answer("Brand assets launch badge is approved, revision 7.");
+            },
+          }
+        : {}),
+    };
   }
   let prompt = task.prompt;
   if (task.id === "p5-result-paging")

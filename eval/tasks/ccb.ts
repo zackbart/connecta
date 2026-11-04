@@ -5,7 +5,7 @@ import type { AgentTrace } from "../agent/trace.js";
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import { ccbState, CCB_TARGET, CCB_NEW_EMAIL } from "../fakes/ccb.js";
 import { check } from "./baseline.js";
-import { deliveredNumbers, deliveredValues } from "./correctness.js";
+import { deliveredReducedCount, deliveredValues } from "./correctness.js";
 
 const ids = [
   "ccb-filtered-individuals",
@@ -50,8 +50,7 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
     add(
       "delivered-data",
       seed.people.filter((p) => !p.active).every((p) => delivered.some((row) => row?.id === p.id)) ||
-        // A program's reduced count is delivered however it names the field.
-        deliveredNumbers(trace).includes(inactive),
+        deliveredReducedCount(trace, inactive),
     );
   }
   if (i === 4) {

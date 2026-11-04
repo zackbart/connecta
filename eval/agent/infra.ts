@@ -37,6 +37,33 @@ export function infraError(events: StreamEvent[], exitCode: number | null, loade
   return undefined;
 }
 
+/**
+ * A rejected or unreachable connection at trial end means the host lost its
+ * deployment mid-conversation, so the transcript does not measure the agent.
+ * A slow answer proves nothing and is not treated as a loss.
+ */
+export async function connectionLost(mcpUrl: string, token: string): Promise<string | undefined> {
+  try {
+    const response = await fetch(mcpUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    await response.body?.cancel();
+    return response.status === 401 || response.status === 403
+      ? `the deployment rejected the agent's token at trial end (HTTP ${response.status})`
+      : undefined;
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") return undefined;
+    return `the deployment was unreachable at trial end: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
 export function stopsBatch(error: string | undefined): boolean {
   return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified/i.test(
     error ?? "",
