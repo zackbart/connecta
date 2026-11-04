@@ -896,9 +896,16 @@ function sandboxProvider(
       const cancelled = () => guestFailure("cancelled", `connecta.${operation} was cancelled because the run ended.`);
       // In the race itself, not behind a Promise: losing interrupts the catalog
       // work and aborts its listing before the program hears the outcome (L3).
+      // The catalog hears the run's end as well, so its failure may arrive first.
       const reading = Effect.suspend(read).pipe(
         Effect.catchDefect((err) => Effect.fail(err)),
-        Effect.mapError((err) => (err instanceof DiscoveryPolicyError ? guestFailure(err.code, err.message) : err)),
+        Effect.mapError((err) =>
+          hostAccessSignal?.aborted
+            ? cancelled()
+            : err instanceof DiscoveryPolicyError
+              ? guestFailure(err.code, err.message)
+              : err,
+        ),
       );
       const contenders: Array<Effect.Effect<unknown, unknown>> = [reading];
       // A catalog probe may outlast the run; end it as a catchable timeout first.
