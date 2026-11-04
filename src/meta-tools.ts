@@ -705,7 +705,11 @@ const previewRead = function (
     // A write's result is its only copy and repeating it is forbidden (INV-9).
     if (!results.programRoute || results.write) return undefined;
     // The program this offers has to reach every byte within the run's host calls.
-    if (!wholeResultLoopFits(results, bytes.length) || !isWellFormedText(text)) return undefined;
+    if (
+      !loopFits(cap, bytes.length, results.programHostCalls ?? CONFIG_DEFAULTS.execute.maxHostCalls) ||
+      !isWellFormedText(text)
+    )
+      return undefined;
     const preview = previewResult(text, format, cap);
     if (!preview) return undefined;
     const overCap = bytes.length > cap;
