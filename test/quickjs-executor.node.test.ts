@@ -1,5 +1,6 @@
 // Node-only: runs the Node QuickJS child-process executor.
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
@@ -128,6 +129,108 @@ describe("quickJsExecutor", () => {
       [],
     );
     expect(out).toMatchObject({ error: "TypeError: native data", failure: { name: "TypeError", line: 2 } });
+  });
+
+  describe("INV-5: a clip never leaves the opening of a credential a later call registers", () => {
+    const LATE = "Zqx79UVW_LATE_SECRET";
+    const lateRegistry = (text: string) =>
+      makeRegistry([
+        {
+          id: "source",
+          kind: "mcp",
+          description: "Answers with a tool error",
+          listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+          callTool: async () => ({ isError: true, content: [{ type: "text", text }] }),
+        },
+        {
+          id: "vault",
+          kind: "api",
+          description: "Sends a credential",
+          listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+          callTool: async (_name, _args, context) => {
+            sentSecretsFor(context).secret(LATE);
+            return { ok: true };
+          },
+        },
+      ]);
+    const caughtThenRegistered = `async () => {
+      let held;
+      try { await connecta.call("source.read", {}); } catch (error) { held = error.message; }
+      await connecta.call("vault.read", {});
+      return held;
+    }`;
+
+    it("in a tool error the bridge clips, crossing its 2,000 serialized characters", async () => {
+      const text = `${"a ".repeat(996)}x${LATE}${" trailing ".repeat(10)}`;
+      const execute = createExecuteTool(lateRegistry(text), "https://connecta.test", executor, silentLogger);
+      const result = await execute({ code: caughtThenRegistered });
+      const held = result.structuredContent?.result as string;
+      expect(held).toMatch(/^a a .* a … \[truncated\]$/);
+      expect(JSON.stringify(held).length).toBeLessThanOrEqual(2_000);
+      expect(JSON.stringify(result)).not.toContain("Zqx7");
+      expect(JSON.stringify(result)).not.toMatch(/ x… | x /);
+    });
+
+    it("in a bridge clip counting JSON escapes, not characters", async () => {
+      const text = `${'"'.repeat(990)}x${LATE} tail`;
+      const execute = createExecuteTool(lateRegistry(text), "https://connecta.test", executor, silentLogger);
+      const result = await execute({ code: caughtThenRegistered });
+      expect(JSON.stringify(result.structuredContent?.result).length).toBeLessThanOrEqual(2_000);
+      expect(JSON.stringify(result)).not.toContain("Zqx");
+    });
+
+    it.each([
+      ["an Error", (text: string) => `throw new Error(${JSON.stringify(text)})`],
+      ["a string", (text: string) => `throw ${JSON.stringify(text)}`],
+    ])("in %s the program throws, clipped at 4,000 characters", async (_label, thrown) => {
+      const text = `${"a ".repeat(1_998)}x${LATE} tail`;
+      const execute = createExecuteTool(lateRegistry("unused"), "https://connecta.test", executor, silentLogger);
+      const result = await execute({
+        code: `async () => { await connecta.call("vault.read", {}); ${thrown(text)}; }`,
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("a a a");
+      expect(JSON.stringify(result)).not.toContain("Zqx");
+    });
+
+    it("in a log line kept when a cancelled run ends without its final reply", async () => {
+      const cancel = new AbortController();
+      let calls = 0;
+      const registry = makeRegistry([
+        {
+          id: "vault",
+          kind: "api",
+          description: "Sends a credential",
+          listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+          callTool: async (_name, _args, context) => {
+            sentSecretsFor(context).secret(LATE);
+            // The log line reached the host before this second call.
+            if (++calls === 2) cancel.abort();
+            return { ok: true };
+          },
+        },
+      ]);
+      const text = `${"a ".repeat(1_998)}x${LATE} tail`;
+      const result = await createExecuteTool(
+        registry,
+        "https://connecta.test",
+        executor,
+        silentLogger,
+      )(
+        {
+          code: `async () => {
+            await connecta.call("vault.read", {});
+            console.log(${JSON.stringify(text)});
+            await connecta.call("vault.read", {});
+            await new Promise(() => {});
+          }`,
+        },
+        { signal: cancel.signal },
+      );
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent?.logs).toContain("a a a");
+      expect(JSON.stringify(result)).not.toContain("Zqx");
+    });
   });
 
   it("INV-3 INV-6: accessor edits do not replace a retained typed host rejection", async () => {
@@ -285,5 +388,96 @@ describe("credential echoes reach the QuickJS guest only checked", () => {
     )({ code: 'async () => (await connecta.call("wire.read")).data.echo.slice(0, 7)' });
     expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
     expect(result.structuredContent).toMatchObject({ result: REDACTED.slice(0, 7) });
+  });
+});
+
+describe("INV-5: a remote connection's credential under any header or query name", () => {
+  const BASE = "https://connecta.test";
+  const SECRET = "q7Zx4Lm9Tp2Vb8Nc5Rk3Wd6H";
+  const INTERIOR = SECRET.slice(5, 17);
+  let executor: AdmittingExecutor;
+
+  beforeAll(() => {
+    executor = quickJsExecutor({ cpuTimeMs: 5_000 });
+  });
+  afterAll(async () => {
+    await executor.close?.();
+    vi.unstubAllGlobals();
+  });
+
+  const run = async (answer: string, connection: { url?: string; headers?: Record<string, string> }) => {
+    const written: string[] = [];
+    const downstream = httpDownstream(
+      (server) => {
+        server.registerTool(
+          "read",
+          { description: "Read a record", annotations: { readOnlyHint: true } },
+          async () => ({ content: [{ type: "text", text: answer }] }),
+        );
+        server.registerTool(
+          "write",
+          { description: "Write a record", inputSchema: z.object({ note: z.string() }) },
+          async ({ note }) => {
+            written.push(note);
+            return { content: [{ type: "text", text: "saved" }] };
+          },
+        );
+      },
+      connection.url ? { url: connection.url } : {},
+    );
+    vi.stubGlobal("fetch", downstream.fetch);
+    const execute = createExecuteTool(
+      makeRegistry([
+        remoteMcp("remote", {
+          url: downstream.url,
+          ...(connection.headers ? { auth: { type: "headers", headers: connection.headers } } : {}),
+        }),
+      ]),
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      { readOnly: false },
+    );
+    const result = await execute({
+      code: `async () => {
+        const read = (await connecta.call("remote.read")).data;
+        const write = await connecta.call("remote.write", { note: ${JSON.stringify(`ref ${INTERIOR}`)} }).then(
+          () => "sent",
+          (error) => error.code,
+        );
+        return { read, write };
+      }`,
+    });
+    expect(result.isError, JSON.stringify(result.structuredContent)).toBeFalsy();
+    return { out: result.structuredContent?.result as { read: string; write: string }, written };
+  };
+
+  it.each([["x-user"], ["x-api-id"], ["x-client-id"], ["x-auth-email"], ["x-account-login"], ["public-key"]])(
+    "withholds a downstream answer holding interior characters of a %s header and refuses a write holding them",
+    async (name) => {
+      const { out, written } = await run(`row ${INTERIOR} end`, { headers: { [name]: SECRET } });
+      expect(out.read).not.toContain(INTERIOR);
+      expect(out.write).toBe("invalid_args");
+      expect(written).toEqual([]);
+    },
+  );
+
+  it("takes no public identifier declaration from a deployment", () => {
+    expect(() =>
+      remoteMcp("remote", {
+        url: "https://downstream.test/mcp",
+        publicIdentifierHeaders: ["x-user"],
+      } as Parameters<typeof remoteMcp>[1]),
+    ).toThrow(/publicIdentifierHeaders/);
+  });
+
+  it("withholds the unframed secret of a remote URL's scheme-framed query credential and refuses a write holding it", async () => {
+    const { out, written } = await run(`row ${SECRET} end`, {
+      url: `https://downstream.test/mcp?auth_user=Bearer%20${SECRET}`,
+    });
+    expect(out.read).not.toContain(SECRET);
+    expect(out.write).toBe("invalid_args");
+    expect(written).toEqual([]);
   });
 });

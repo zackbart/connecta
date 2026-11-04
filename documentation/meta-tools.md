@@ -48,8 +48,8 @@ Approval belongs to the client. A read-only endpoint keeps all six tools, omits
 write tools from `search_tools` results and describe, and refuses every write
 call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
-`resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
-advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
+`resources/read`) are documentation and may name tools the endpoint refuses. The three tools with structured-only success results
+(`execute_code`, `search_tools`, `authorize_connector`) advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
 including every authorization-handoff field, once under `$defs.failure`;
 `catalogErrors[]` references it through `allOf` with `connector` required, and
 `queryAnalysis.catalogError` references it directly. The schema declares no
@@ -348,6 +348,17 @@ guide's first meaningful body paragraph. `required: true` is reserved for
 generic API wrappers and cross-operation conventions a complete downstream
 schema cannot express.
 
+A maintained provider's guide states only what no schema, description or typed
+refusal already tells the agent where it acts. Generic rules live at the point of
+use: `cursor` and hatch `page` schemas for continuation, `fields` for narrowing,
+withheld values and cuts, hatch descriptions and `withheld` hints for operation
+discovery, and the `write_outcome_unknown` error for write-once. A hatch `page`
+with `hasMore: true` and no `nextCursor` also adds a `warnings` notice that the
+result is incomplete. Money units, account or environment selection, sensitive
+data reduction and "absence does not prove" rules stay in the guide, as does any
+disqualifier that no refusal enforces. A read-only connection is not served its
+guide's `writes` blocks.
+
 Describe results carry a `guide: "connector:<id>"` pointer and a
 `guideSummary`; a search page carries both once per connector in
 `connectors[<id>]`. A matching tool row or description also carries
@@ -525,7 +536,9 @@ dropping the text copy waits on host-forwarding measurements showing supported
 clients do not need it. Direct-call failures set `isError: true` and carry the
 same `{ ok: false, error, durationMs, attempts }` envelope in both forms, whether
 `resultMode` is omitted, `"mcp"`, or `"value"`. Plain-text guidance stays
-text-only. Successful direct calls with `resultMode` omitted or `"mcp"` return
+text-only: a `skills` fetch returns the guide once, in `content`, and the tool
+advertises no `outputSchema`, while its listing and errors keep `structuredContent`.
+A program's `connecta.skill` returns its own `{ name, format, text }` value. Successful direct calls with `resultMode` omitted or `"mcp"` return
 their data only in `content`, with the downstream format in
 `_meta["dev.connecta/format"]`. They omit `structuredContent`, including on
 truncated results, so clients that prefer it cannot replace data or a preview
@@ -1671,7 +1684,16 @@ in `writes.unknown` even when the program caught the failure. When that write
 met an authorization verdict, the program's error is that verdict, as a direct
 call reports it: its code, `connector`, `recovery`, and `nextAction`, with
 `writeOutcome: "unknown"` and `reconciliationRequired: true`. Any other unknown
-write makes it `write_outcome_unknown`.
+write makes it `write_outcome_unknown`. Either error's `unknownWrites` lists at
+most ten such writes with their `address`, `code` and redacted `message`, and
+`unknownWritesTruncated` marks a write left out or a message dropped. A write whose
+tool answered `isError` carries `toolAnswered: true`, on a direct call too: its
+message is the tool's own words, up to 4,096 UTF-8 bytes, cut only between tokens
+and marked `… [truncated]`. Its outcome stays unknown because its handler ran before
+it answered, and `retry` says to check the target and to give the user any approval
+link or request id. A program's `write_outcome_unknown` leads its `message` with
+those words instead of repeating them in the entry. A later call the tool's words
+ask for, such as one carrying a provider's approval token, is a new deliberate call.
 
 The classification served for the call decides this advice, including deployment
 `classification` overrides. For example, `classification: { crm: { get_person:

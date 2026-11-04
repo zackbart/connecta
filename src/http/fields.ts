@@ -30,8 +30,12 @@ const ANCHORS: Readonly<Record<FieldsAnchor, string>> = {
   data: "the response body in data, each item when the body is a list",
 };
 
+/** What a result can carry that its schema cannot name: the withheld marker and cuts for size. */
+const RESULT_NOTE =
+  'It only narrows the result. A withheld value reads "[redacted]"; truncated lists paths cut for size, and the ids to fetch them stay.';
+
 /** The description of a `fields` argument: its anchor, one valid example, then any tool note. */
-export function fieldsDescription(anchor: FieldsAnchor, example: string, note = "It only narrows the result."): string {
+export function fieldsDescription(anchor: FieldsAnchor, example: string, note = RESULT_NOTE): string {
   return `Dot paths to keep. Paths start at ${ANCHORS[anchor]}, e.g. ${JSON.stringify([example])}. ${note}`;
 }
 

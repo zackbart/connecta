@@ -16,9 +16,7 @@ PATCH changes supplied fields; PUT replaces the record, so preserve its type,
 name and content. Read state before replacing, rolling back or purging. Prefer
 a targeted cache purge by files, tags, hosts or prefixes over purging everything.
 
-Hatch data keeps Cloudflare's vendor envelope. For example, select DNS record
-identities with `fields: ["result.id", "result.name"]`; a list stays under
-`data.result`. Named account and zone lists keep projected rows with camelCase
+A hatch list stays under `data.result`. Named account and zone lists use camelCase
 account and name-server fields.
 
 ## Workers, storage and analytics

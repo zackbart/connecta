@@ -59,6 +59,7 @@ also cause it. Report the gap and continue; other repositories may still work. D
 reset the credential or switch tools on this alone. `auth_required` is the failure
 that points at the credential itself.
 
+<!-- when: writes -->
 ## Release and merge semantics
 
 Publishing a draft release updates that release's `draft` to false. Deleting a
@@ -70,3 +71,4 @@ same-repository head and base, plus explicit workflow-write access. GitHub's
 atomic SHA guard binds the head rather than the base: a concurrent base retarget
 can introduce workflow changes after the preflight. A response with `merged:false`
 is a failed merge, not a completed one. Inspect current PR state before a new attempt.
+<!-- end -->
