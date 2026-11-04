@@ -679,6 +679,8 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
    * words. They do not prove the write unapplied: its handler ran before it answered.
    */
   toolAnswered?: true;
+  /** On `unknown_tool`: nearby canonical addresses on the same connector. */
+  suggestions?: string[];
   /** The single model-facing entry point for every credential class. */
   nextAction?:
     | { tool: "skills"; arguments: Record<string, never>; purpose: string }
@@ -690,6 +692,11 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
         tool: "authorize_connector";
         arguments: { connector: string };
         operatorHandoff: string;
+      }
+    | {
+        /** An error that carries its handoff: pass this link on; no tool call is needed. */
+        url: string;
+        purpose: string;
       }
     | {
         tool: "search_tools";

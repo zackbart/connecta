@@ -57,6 +57,66 @@ export function counterexamples(
         world: changedCalls(world.ledger.calls.filter((c) => c.seq <= write.seq)),
       });
   }
+  if (task.id === "auth-required-recovery") {
+    const said = trace.transcript.flatMap((entry) => (entry.kind === "assistant" ? [entry.text] : []));
+    const issued = said.map((text) => /https?:\/\/\S+/.exec(text)?.[0]).find(Boolean) ?? "";
+    const retell = (text: (line: string) => string): AgentTrace => ({
+      ...trace,
+      finalAnswer: text(trace.finalAnswer ?? ""),
+      transcript: trace.transcript.map((entry) =>
+        entry.kind === "assistant" ? { ...entry, text: text(entry.text) } : entry,
+      ),
+    });
+    cases.push({
+      name: "handoff paraphrased, no link",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, "the connection page")),
+    });
+    cases.push({
+      name: "handoff link altered",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, decodeURIComponent(issued).replace("://", "://copy."))),
+    });
+    for (const [name, appended] of [
+      ["path", "/extra"],
+      ["query", "&extra=1"],
+      ["token characters", "BROKEN"],
+      ["token character, one that a linkifier would drop", "_"],
+    ] as const)
+      cases.push({
+        name: `handoff link with appended ${name}`,
+        check: "handed-off",
+        trace: retell((line) => line.replaceAll(issued, `${issued}${appended}`)),
+      });
+    cases.push({
+      name: "handoff link appended to inside a Markdown destination",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, `[Connect](${issued}BROKEN)`)),
+    });
+    cases.push({
+      name: "handoff link only inside another URL",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, `https://proxy.example/?u=${issued}`)),
+    });
+    cases.push({
+      name: "authorize_connector called, nothing passed on",
+      check: "handed-off",
+      trace: {
+        ...retell((line) => line.replaceAll(issued, "the connection page")),
+        toolUses: [
+          ...trace.toolUses,
+          {
+            id: "authorize",
+            turn: 1,
+            tool: "authorize_connector",
+            input: { connector: "billing" },
+            isError: false,
+            resultText: JSON.stringify({ operatorUrl: issued }),
+          },
+        ],
+      },
+    });
+  }
   if (task.id.startsWith("github-")) {
     const changedCalls = (calls: World["ledger"]["calls"]): World =>
       Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
@@ -1253,6 +1313,28 @@ export function positiveVariants(
             .join("\n"),
       },
     });
+  }
+  if (task.id === "auth-required-recovery") {
+    const said = trace.transcript.flatMap((entry) => (entry.kind === "assistant" ? [entry.text] : []));
+    const issued = said.map((text) => /https?:\/\/\S+/.exec(text)?.[0]).find(Boolean) ?? "";
+    for (const [name, wrapped] of [
+      ["sentence punctuation", `${issued}.`],
+      ["a Markdown link", `[Connect billing](${issued}).`],
+      ["bold", `**${issued}**,`],
+      ["a code span", `\`${issued}\`:`],
+      ["an angle autolink", `<${issued}>`],
+      ["parentheses around it", `(${issued}).`],
+      ["parentheses opened earlier", `(open this: ${issued})`],
+    ] as const)
+      cases.push({
+        name: `handoff link intact in ${name}`,
+        trace: {
+          ...trace,
+          transcript: trace.transcript.map((entry) =>
+            entry.kind === "assistant" ? { ...entry, text: entry.text.replaceAll(issued, wrapped) } : entry,
+          ),
+        },
+      });
   }
   return cases.map((c) => {
     const checks = task.grade({ world: c.world ?? world, trace: c.trace });
