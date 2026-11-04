@@ -32,6 +32,8 @@ export function normalizeTimeoutMs(value: number | undefined): number | undefine
 
 export interface DeadlineOptions {
   timeoutMs?: number;
+  /** Asked once when `timeoutMs` expires: further milliseconds the call has earned. */
+  extendMs?: () => number;
   signal?: AbortSignal;
   timeoutError: Error;
 }

@@ -265,6 +265,12 @@ export interface InvocationContext<T> {
   /** Route names for text this call writes, the request's surface; the registry's otherwise. */
   routes?: AgentRouteNames | undefined;
   timeoutMs?: number;
+  /**
+   * A longer deadline for a call that turns out to be write-like. Classification
+   * comes from the catalog, so `timeoutMs` bounds resolution either way; a
+   * dispatched write then keeps running so its outcome can be learned (INV-9).
+   */
+  writeTimeoutMs?: number;
   requestSignal?: AbortSignal;
   /** Run ended: cancel resolution/admission, but spare a dispatched write. */
   dispatchSignal?: AbortSignal;
@@ -358,6 +364,10 @@ export class InvocationService {
       context.sentSecrets?.include(sentSecrets);
       // A write gate's refusal that is no attempt; see WriteGateDecision.
       let unrecorded = false;
+      // The gate's refusal states its own deadline facts; nothing timed out here.
+      let gateRefused = false;
+      // The deadline this call runs under, once its classification is known.
+      let timeoutMs = context.timeoutMs;
       let resolved: ResolvedCatalogTool | undefined;
       let activityTarget: Pick<ResolvedCatalogTool, "connector" | "toolName"> | undefined;
       // The address as written, used for activity when resolution never reached
@@ -705,13 +715,13 @@ export class InvocationService {
         // Read before any step below rebuilds the details: Q8's verdict is final.
         const settled = isSettledWrite(error);
         // Attach host deadline facts before write recovery changes the code.
-        if (isTimeoutFailure(error)) {
+        if (isTimeoutFailure(error) && !gateRefused) {
           const elapsedMs = Date.now() - started;
           const operation = boundedEchoText(address, 512);
           error = {
             ...error,
-            message: `Operation "${operation}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${context.timeoutMs}ms).`,
-            details: { ...error.details, operation, stage, elapsedMs, ...defined({ deadlineMs: context.timeoutMs }) },
+            message: `Operation "${operation}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${timeoutMs}ms).`,
+            details: { ...error.details, operation, stage, elapsedMs, ...defined({ deadlineMs: timeoutMs }) },
           };
         }
         // Downstream diagnostics were redacted under payload rules where they entered.
@@ -803,6 +813,7 @@ export class InvocationService {
 
           const write = target.definition.classification !== "read";
           const writeLike = isWriteLike(target.definition);
+          if (writeLike && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
           const input =
             context.source !== "execute_code"
@@ -866,6 +877,7 @@ export class InvocationService {
             const decision = yield* context.beforeWrite(target, args ?? {});
             if (decision.kind === "refuse") {
               unrecorded = decision.unrecorded === true;
+              gateRefused = true;
               return decision.error;
             }
           }
@@ -880,7 +892,7 @@ export class InvocationService {
                 this.catalog.requestScope,
                 defined({
                   signal: callSignal,
-                  timeoutMs: context.timeoutMs,
+                  timeoutMs,
                   defer: this.catalog.defer,
                   routes: context.routes,
                 }),
@@ -1064,6 +1076,7 @@ export class InvocationService {
           ? withDeadlineEffect(dispatch, {
               ...defined({
                 timeoutMs: context.timeoutMs,
+                extendMs: () => (timeoutMs ?? 0) - (context.timeoutMs ?? 0),
                 signal: context.requestSignal,
               }),
               timeoutError: new ConnectorCallError("timeout", `Tool call timed out after ${context.timeoutMs}ms`),
@@ -1110,8 +1123,7 @@ export class InvocationService {
           Effect.tap(
             withDeadlineEffect(() => processing, {
               ...defined({
-                timeoutMs:
-                  context.timeoutMs === undefined ? undefined : Math.max(1, context.timeoutMs - (Date.now() - started)),
+                timeoutMs: timeoutMs === undefined ? undefined : Math.max(1, timeoutMs - (Date.now() - started)),
                 signal: context.requestSignal,
               }),
               timeoutError: new ConnectorCallError("timeout", "Result processing exceeded the tool call deadline."),
