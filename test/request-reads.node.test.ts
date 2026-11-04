@@ -1431,7 +1431,7 @@ describe("request budgets", () => {
       recovery: "oauth",
       status: "auth_required",
       retryable: false,
-      nextAction: { tool: "authorize_connector", arguments: { connector: "oauth" } },
+      nextAction: { url: expect.stringContaining("/connect/oauth"), purpose: expect.any(String) },
     });
     if (program) {
       expect(result.structuredContent.error.writes).toEqual({ succeeded: 0, failed: 1, unknown: 0 });

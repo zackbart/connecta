@@ -13,6 +13,7 @@ import { createConnecta, customExecutor } from "../src/index.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
+import { writeStateOf } from "../src/program-writes.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
@@ -449,4 +450,38 @@ it("INV-11: requires every deployment to choose readOnly, while pools inherit it
     expect(construct).toThrow("Choose readOnly: true");
     expect(construct).toThrow("or readOnly: false");
   }
+});
+
+describe("write accounting's authorization handoff", () => {
+  it("INV-5 INV-9: the terminal result of a program write never gains the call's link", () => {
+    const link = "https://connecta.example/connect/tickets?h=signed";
+    const state = writeStateOf({
+      ok: false,
+      dispatched: true,
+      answered: false,
+      error: {
+        code: "auth_required",
+        message: "The token was refused",
+        retryable: false,
+        connector: "tickets",
+        recovery: "operator_config",
+        writeOutcome: "unknown",
+        reconciliationRequired: true,
+        operatorUrl: link,
+        nextAction: {
+          url: link,
+          purpose: "Give this link to the user, unchanged, for the operator to open, then stop.",
+        },
+      },
+    } as never);
+    expect(state).toMatchObject({
+      state: "unknown",
+      handoff: {
+        code: "auth_required",
+        connector: "tickets",
+        nextAction: { tool: "authorize_connector", arguments: { connector: "tickets" } },
+      },
+    });
+    expect(JSON.stringify(state)).not.toContain(link);
+  });
 });
