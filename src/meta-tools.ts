@@ -688,7 +688,7 @@ const presentEvalRead = function (raw: string, results: ResultStash, cap: number
       const notice = yield* upwardStep(stashResult(enc.encode(text), results, { kind: "none" }, text));
       // No retained copy, no preview: the ordinary guard still shows the data.
       if (notice.resultId) {
-        const { nextAction, nextOffset, ...rest } = notice;
+        const { nextAction: _replaced, nextOffset, ...rest } = notice;
         return {
           result: noticeFirst(
             {

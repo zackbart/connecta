@@ -15,7 +15,7 @@
  * program sees. Every path and value shown exists identically there, so code
  * written from the view runs against the data.
  */
-export const RESULT_ARMS = ["control", "lean", "preview", "lean-preview"] as const;
+const RESULT_ARMS = ["control", "lean", "preview", "lean-preview"] as const;
 export type ResultArm = (typeof RESULT_ARMS)[number];
 
 export function parseResultArm(value = "control"): ResultArm {
@@ -27,7 +27,7 @@ export function parseResultArm(value = "control"): ResultArm {
 /** Rows are previewed above this many bytes; smaller lists stay whole. */
 export const PREVIEW_ROW_THRESHOLD = 4_096;
 /** Plain text is previewed above this many bytes. */
-export const PREVIEW_TEXT_THRESHOLD = 8_192;
+const PREVIEW_TEXT_THRESHOLD = 8_192;
 /** Bytes of whole rows a preview shows. */
 export const PREVIEW_ROW_BYTES = 1_500;
 const PREVIEW_HEAD_BYTES = 1_200;
@@ -229,13 +229,13 @@ export function presentPreview(text: string): PreviewPresentation | undefined {
 }
 
 /** The eval-only seam src/meta-tools.ts reads. */
-export interface ResultPresenter {
+interface ResultPresenter {
   arm: ResultArm;
   lean?: (text: string) => LeanPresentation | undefined;
   preview?: (text: string) => PreviewPresentation | undefined;
 }
 
-export function presenterFor(arm: ResultArm): ResultPresenter | undefined {
+function presenterFor(arm: ResultArm): ResultPresenter | undefined {
   if (arm === "control") return undefined;
   return {
     arm,

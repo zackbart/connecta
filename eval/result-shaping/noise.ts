@@ -6,7 +6,7 @@
  *
  * Erasable TypeScript only, so `node` can run this directly on another machine.
  */
-export type NoiseClass =
+type NoiseClass =
   | "framing"
   | "nullsEmpties"
   | "falseZeroDefaults"
