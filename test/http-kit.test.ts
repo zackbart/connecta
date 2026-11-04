@@ -1771,6 +1771,8 @@ function acme(
     sensitive?: "drop" | "return";
     refresh?: boolean;
     authenticate?: GuardedOptions["authenticate"];
+    publicIdentifierHeaders?: GuardedOptions["publicIdentifierHeaders"];
+    headers?: GuardedOptions["headers"];
     timeoutMs?: number;
     result?: Parameters<typeof connect>[2]["result"];
     errors?: VendorErrors;
@@ -1779,6 +1781,8 @@ function acme(
   const guarded = guardedClient({
     ...OPTIONS,
     maxResponseBytes: 4096,
+    ...(options.publicIdentifierHeaders ? { publicIdentifierHeaders: options.publicIdentifierHeaders } : {}),
+    ...(options.headers ? { headers: options.headers } : {}),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options.refresh ? { authenticate: bearer } : {}),
     ...(options.authenticate ? { authenticate: options.authenticate } : {}),
@@ -2511,6 +2515,63 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect(read).toEqual({ value: { ok: true } });
     expect(sent).toHaveLength(2);
   });
+});
+
+describe("INV-5: public identifier headers", () => {
+  const ID = "client-7Qm2Xv9Lp4Zt";
+  const INTERIOR = ID.slice(7, 17);
+  const sentWith = async (
+    authenticated: Record<string, string>,
+    options: Pick<GuardedOptions, "publicIdentifierHeaders" | "headers"> = {},
+  ) => {
+    const secrets = new SentSecrets();
+    await runEdge(
+      acme({ authenticate: Effect.succeed(authenticated), ...options })
+        .sendPath({ method: "GET", path: "/keys", template: "/keys" })
+        .pipe(Effect.provideContext(services("read", secrets))),
+    );
+    expect(new Headers(sent.at(-1)!.headers).get(Object.keys(authenticated)[0]!)).toBe(Object.values(authenticated)[0]);
+    return secrets;
+  };
+  const isCredential = (secrets: SentSecrets) => secrets.filterCredentials({ note: INTERIOR }).changed;
+
+  it.each([["x-client-id"], ["x-user"], ["x-auth-email"]])("an undeclared %s header is a credential", async (name) => {
+    expect(isCredential(await sentWith({ [name]: ID }))).toBe(true);
+  });
+
+  it("a declared header is matched whole only, however its name is cased, and a sensitive name does not undo it", async () => {
+    const secrets = await sentWith({ "X-Auth-Email": ID }, { publicIdentifierHeaders: ["x-auth-email"] });
+    expect(isCredential(secrets)).toBe(false);
+    expect(secrets.text(`row ${INTERIOR}`)).toBe(`row ${INTERIOR}`);
+    expect(secrets.text(ID)).toBe("[redacted]");
+  });
+
+  it("a declaration covers no other header sent beside it", async () => {
+    const secrets = await sentWith(
+      { "x-client-id": "alice@example.com", "x-api-key": ID },
+      { publicIdentifierHeaders: ["x-client-id"] },
+    );
+    expect(isCredential(secrets)).toBe(true);
+  });
+
+  it("a declaration covers only what authentication returned, not a header the same name carries otherwise", async () => {
+    const secrets = await sentWith(
+      { Authorization: "Bearer another-credential" },
+      { publicIdentifierHeaders: ["x-auth-email"], headers: { "X-Auth-Email": ID } },
+    );
+    expect(isCredential(secrets)).toBe(true);
+  });
+
+  it.each([["Bearer"], ["token"], ["Basic"], ["ApiKey"]])(
+    "a declared header's %s value is a credential",
+    async (scheme) => {
+      const secrets = await sentWith(
+        { "x-client-id": `${scheme} ${ID}` },
+        { publicIdentifierHeaders: ["x-client-id"] },
+      );
+      expect(isCredential(secrets)).toBe(true);
+    },
+  );
 });
 
 describe("idempotency keys (decision 0010, B.4)", NODE, () => {

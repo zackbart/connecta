@@ -1,5 +1,9 @@
 {
   "notes": [
+    "2026-11-04: Merging main at 52eb543f (#1347) into the program failure reporting PR, with declared public identifier headers replacing the name rule. The official Node 22.23.4 binary measures the root at 432,528 B and examples/worker at 816,495 B. The caps move from main's 431,500 B and 815,600 B to 432,650 B and 816,650 B, pending owner approval.",
+    "2026-11-04: Combined branch: program failure reporting, token-safe clips and identifier parameters merged with #1326. The official Node 22.23.4 binary measures the root at 426,232 B and examples/worker at 811,101 B, up 1,139 B and 1,515 B from #1326's 425,093 B and 809,586 B. The caps move to 426,400 B and 811,300 B.",
+    "2026-11-04: Merging #1319 onto this PR. CI at b7b16a5a measured 424,826 B and 809,238 B without #1319, which CI measured at +958 B and +1,028 B alone, estimating 425,784 B and 810,266 B. The caps move to 426,100 B and 810,600 B. These are estimates, to check against this PR's build (package) table.",
+    "2026-11-04: Reporting a tool's own words on every surface, bounding and re-redacting a program's unknown writes, and the outbound credential view. CI at b7b16a5a, on main with #1330, measures the root at 424,826 B and examples/worker at 809,238 B. The root cap moves 423,700 to 425,000 B and the examples/worker cap 808,000 to 809,500 B; baselineGzip and every other cap are unchanged.",
     "2026-11-04: #1342 and #1344 each passed CI against the earlier root cap, and together measure 431,362 B on CI. The root cap moves from 431,000 B to 431,500 B to restore main; final caps are set from the combined release candidate.",
     "2026-11-04: Merging main at a6530531 (#1326, run-deadline read caps, up 483 B and 598 B on main) into the stale-listing PR measures the root at 429,254 B and examples/worker at 813,453 B on official Node 22.23.4, past 429,050 B and 813,200 B. Retiring catalogs on a custom refusal adds 15 B and 28 B of that. The caps move to 429,550 B and 813,750 B, and stay provisional.",
     "2026-11-04: Merging main (#1319, #1330, #1315) into the stale-listing PR and binding refusal fences to their attempt measures the root at 428,758 B and examples/worker at 812,928 B on official Node 22.23.4, past 426,250 B and 810,400 B. The caps move to 429,050 B and 813,200 B, and are provisional: a later step sets final caps from the combined branch.",
@@ -70,7 +74,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 431500
+      "maxGzip": 432650
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -153,7 +157,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 815600
+      "maxGzip": 816650
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

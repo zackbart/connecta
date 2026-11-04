@@ -1701,7 +1701,16 @@ in `writes.unknown` even when the program caught the failure. When that write
 met an authorization verdict, the program's error is that verdict, as a direct
 call reports it: its code, `connector`, `recovery`, and `nextAction`, with
 `writeOutcome: "unknown"` and `reconciliationRequired: true`. Any other unknown
-write makes it `write_outcome_unknown`.
+write makes it `write_outcome_unknown`. Either error's `unknownWrites` lists at
+most ten such writes with their `address`, `code` and redacted `message`, and
+`unknownWritesTruncated` marks a write left out or a message dropped. A write whose
+tool answered `isError` carries `toolAnswered: true`, on a direct call too: its
+message is the tool's own words, up to 4,096 UTF-8 bytes, cut only between tokens
+and marked `… [truncated]`. Its outcome stays unknown because its handler ran before
+it answered, and `retry` says to check the target and to give the user any approval
+link or request id. A program's `write_outcome_unknown` leads its `message` with
+those words instead of repeating them in the entry. A later call the tool's words
+ask for, such as one carrying a provider's approval token, is a new deliberate call.
 
 The classification served for the call decides this advice, including deployment
 `classification` overrides. For example, `classification: { crm: { get_person:
