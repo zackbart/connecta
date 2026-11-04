@@ -51,12 +51,14 @@ def main():
             continue
         try:
             fds = os.listdir(f"/proc/{pid}/fd")
-        except FileNotFoundError:
+        # A non-dumpable descendant (a sandboxed agent CLI) hides its fds. Its
+        # ports stay denied, which fails closed for this allowlist.
+        except (FileNotFoundError, PermissionError):
             continue
         for fd in fds:
             try:
                 target = os.readlink(f"/proc/{pid}/fd/{fd}")
-            except FileNotFoundError:
+            except (FileNotFoundError, PermissionError):
                 continue
             if target.startswith("socket:["):
                 inodes.add(target[8:-1])
