@@ -78,7 +78,7 @@ import {
   stashLedgerKeys,
 } from "./storage/keys.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
-import { carryToolClassification, classifyTool } from "./tool-safety.js";
+import { carryToolClassification, classifyTool, sourceDeclaresWrite } from "./tool-safety.js";
 import type {
   CatalogAccessObservation,
   Connector,
@@ -1188,15 +1188,16 @@ export class Registry implements RegistryView {
 
   private publishTool(id: string, tool: ToolDef): ToolDef {
     const override = this.classification[id]?.[tool.name];
+    const classification = classifyTool(tool, override === "hidden" ? undefined : override);
     return carryToolClassification(tool, {
       ...structuredClone(tool),
-      classification: classifyTool(tool, override === "hidden" ? undefined : override),
+      classification,
       ...(override !== undefined
         ? {
             annotations: {
               ...structuredClone(tool.annotations),
-              readOnlyHint: override === "read",
-              destructiveHint: override === "write",
+              readOnlyHint: override === "read" && classification === "read",
+              destructiveHint: override === "write" || (override === "read" && classification === "write"),
             },
           }
         : {}),
@@ -1223,10 +1224,11 @@ export class Registry implements RegistryView {
       if (this.overrideWarningCatalogs.get(partition) === catalog) return;
       this.overrideWarningCatalogs.set(partition, catalog);
     }
-    const known = new Set(tools.map((tool) => tool.name));
-    for (const name of Object.keys(overrides ?? {})) {
-      if (known.has(name)) continue;
-      if (this.connectors.get(id)?.staticTools) {
+    const known = new Map(tools.map((tool) => [tool.name, tool]));
+    const staticCatalog = this.connectors.get(id)?.staticTools !== undefined;
+    for (const [name, override] of Object.entries(overrides ?? {})) {
+      const tool = known.get(name);
+      if (!tool && staticCatalog) {
         throw new Error(`ConnectaConfig.classification: connector "${id}" has no tool "${name}"`);
       }
       // Only deployment-authored names, never downstream text. JSON quoting
@@ -1235,6 +1237,16 @@ export class Registry implements RegistryView {
         /[\u2028\u2029]/g,
         (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
       );
+      if (tool) {
+        // A static catalog cannot change, so the deployment's construction reports it once.
+        const reports = staticCatalog ? partition === undefined && this.opts.constructionChecks !== false : true;
+        if (override === "read" && reports && sourceDeclaresWrite(tool)) {
+          this.opts.logger.warn(
+            `classification override ${quoted} to "read" is not applied because the connector declares this tool a write; it stays a write`,
+          );
+        }
+        continue;
+      }
       this.opts.logger.warn(
         `classification override ${quoted} is dormant because the runtime catalog lists no such tool`,
       );
