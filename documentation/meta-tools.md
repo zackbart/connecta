@@ -1195,7 +1195,31 @@ behavior is unchanged.
 The host echoes `requestState` and its bare `inputResponses.connecta_auth`
 response on the original `tools/call`. Accept re-runs the original call; it
 does not prove browser consent completed. Decline or cancel ends without
-dispatch, with `auth_declined` or `auth_cancelled`. Three prompts are allowed
+dispatch or another prompt, with `auth_declined` or `auth_cancelled`. A client
+can answer without showing anything, so neither code means a person refused, and
+Connecta cannot tell the difference. When this caller may still connect, the
+refusal carries the handoff this connector would get on a host without URL
+support (`connector`, `recovery`, `authorizationUrl` or `operatorUrl`,
+`instructions`), plus `nextAction: { url, purpose }`:
+
+```json
+{
+  "code": "auth_declined",
+  "message": "The client declined the connection prompt, possibly automatically, so the user may not have seen it. Nothing was retried.",
+  "retryable": false,
+  "connector": "service",
+  "recovery": "oauth",
+  "authorizationUrl": "https://connecta.example/connect/service?h=...",
+  "nextAction": { "url": "https://connecta.example/connect/service?h=...", "purpose": "..." }
+}
+```
+
+Give that link to the user once, then stop. Do not prompt again, retry, or reach
+the service another way until they confirm. If they already refused this
+connection in the conversation, only mention that the link is available.
+A failed signing or storage step leaves the refusal without a link. Connecta
+keeps no record of which clients refuse, so each new prompt to such a client
+ends the same way. Three prompts are allowed
 within one ten-minute retry window, then `auth_round_limit` ends the flow.
 Each state can be consumed once; concurrent or repeated retries are refused
 before dispatch. A Continue link from a pending restart requires that restart
