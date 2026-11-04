@@ -223,6 +223,10 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
     ],
   },
   "p5-trusted-program-write": { route: ["program-write"], outcome: ["write-once"] },
+  "p5-slow-read": {
+    route: [],
+    outcome: ["fast-read-once", "slow-read-attempted", "fast-data-delivered", "no-invented-log", "no-writes"],
+  },
   "p5-read-only-program-refusal": {
     route: ["refusal-route"],
     outcome: ["refusal", "structured-outcome", "zero-writes"],

@@ -548,6 +548,7 @@ const {
   const acquireShell: AdmittingExecutor["acquire"] = (request) => runEdge(acquire(request));
   const executor: AdmittingExecutor = {
     name: "DynamicWorkerExecutor",
+    deadlineMs: options.timeout ?? 60_000,
     acquire: acquireShell,
     execute: (code, providers) => runEdge(execute(code, providers)),
     admissionSnapshot: () => admission.snapshot(),
