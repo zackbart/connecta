@@ -401,7 +401,7 @@ it("names the right call shape when a direct call uses MCP's own argument names,
       const wrongKey = await call({ address: "calc.add", arguments: { a: 1, b: 2 } });
       expect(wrongKey.isError, name).toBe(true);
       expect(wrongKey.content[0].text, name).toContain(
-        'Unrecognized key: "arguments". Send { address, args }, with the tool\'s own arguments inside args.',
+        'Unrecognized key: "arguments". Send { address, args }, with the tool\'s arguments in args.',
       );
       const mcpShape = await call({ name: "calc.add", arguments: { a: 1, b: 2 } });
       expect(mcpShape.isError, name).toBe(true);
