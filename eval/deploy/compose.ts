@@ -56,8 +56,9 @@ export interface EvalComposition {
 /**
  * `extra` is a task's untyped passthrough, spread over the config last, so a
  * later phase's task can switch on a config key the adapters have never heard
- * of without a harness change. `pool`, `pools` and `quickbooksWrites` are the
- * adapter's own keys.
+ * of without a harness change. `pool`, `pools`, `quickbooksWrites` and
+ * `executorTimeoutMs`, the run deadline of the executor each target builds,
+ * are the adapters' own keys.
  */
 export function evalConfig(
   composition: EvalComposition,
@@ -67,7 +68,13 @@ export function evalConfig(
   },
 ): Config {
   const { connectors, fixtures, everyPool = [] } = composition;
-  const { pool: _pool, pools: taskPools, quickbooksWrites, ...passthrough } = composition.extra;
+  const {
+    pool: _pool,
+    pools: taskPools,
+    quickbooksWrites,
+    executorTimeoutMs: _deadline,
+    ...passthrough
+  } = composition.extra;
   const ids = [...(slots.oauthConnector ? ["oauth"] : []), ...connectors.map((spec) => spec.id)];
   const qb = connectors.find((spec) => spec.quickbooks);
   const withEvery = (pools: Record<string, { tools: string[] }> | undefined) =>
