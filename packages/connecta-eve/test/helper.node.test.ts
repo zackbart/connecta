@@ -660,6 +660,20 @@ it("warns once per endpoint when the server is on another release line", async (
   await turn(skewed);
   expect(warn).toHaveBeenCalledOnce();
   expect(warn.mock.calls[0]![0]).toContain("different releases");
+  // Remote version text and URL credentials never reach logs.
+  warn.mockClear();
+  await turn(
+    connectaInstructions({
+      url: "https://alice:url-secret@connecta.example.com?token=query-secret",
+      getToken: () => "cta",
+      fetch: discovering(undefined, { name: "connecta", version: `${Number(major) + 1}.0.0 Bearer token-secret` }),
+    }),
+  );
+  expect(warn).toHaveBeenCalledOnce();
+  const logged = String(warn.mock.calls[0]![0]);
+  expect(logged).toContain(`${Number(major) + 1}.0.x`);
+  expect(logged).toContain("https://connecta.example.com");
+  expect(logged).not.toMatch(/Bearer|token-secret|url-secret|query-secret|alice/);
   // Legacy initialize carries serverInfo in the result instead.
   warn.mockClear();
   await turn(

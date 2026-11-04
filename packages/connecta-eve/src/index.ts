@@ -267,13 +267,24 @@ function eveGuide(connection: string, facts: EndpointFacts | undefined): string 
 const releaseLine = (version: unknown) =>
   typeof version === "string" ? /^(\d+\.\d+)\./.exec(version)?.[1] : undefined;
 
+/** An endpoint may embed credentials or a token in its URL; logs get only its origin and path. */
+function loggableEndpoint(endpoint: string): string {
+  try {
+    const { origin, pathname } = new URL(endpoint);
+    return `${origin}${pathname}`;
+  } catch {
+    return "the configured endpoint";
+  }
+}
+
 /** A deployment that renamed its server may version it independently, so only `connecta` is compared. */
 function warnOnVersionSkew(endpoint: string, server: { name?: unknown; version?: unknown } | undefined): void {
   if (server?.name !== "connecta") return;
   const line = releaseLine(server.version);
   if (line === undefined || line === releaseLine(CONNECTA_VERSION)) return;
+  // The version is remote text, so only its validated numeric line reaches logs.
   console.warn(
-    `[connecta-eve] Helper ${CONNECTA_VERSION} and Connecta ${String(server.version)} at ${endpoint} are different releases. Install the helper matching your server.`,
+    `[connecta-eve] Helper ${CONNECTA_VERSION} and Connecta ${line}.x at ${loggableEndpoint(endpoint)} are different releases. Install the helper matching your server.`,
   );
 }
 
