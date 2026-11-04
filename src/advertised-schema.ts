@@ -61,7 +61,7 @@ export function advertisedSchema<T extends z.ZodType>(schema: T): StandardSchema
 
 /**
  * An output schema that advertises less than it enforces. The SDK validates each
- * result through `~standard.validate`, so the server keeps the full contract and
+ * non-error result through `~standard.validate`, so the server keeps the full contract and
  * a client's copy states only what it can use: required keys and top-level types,
  * with every other field open.
  */

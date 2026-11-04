@@ -52,9 +52,10 @@ call. Connector `readOnly` applies the same restriction on every endpoint; effec
 (`execute_code`, `search_tools`, `authorize_connector`) advertise an open
 `outputSchema`: required keys and top-level types, with every other field open.
 The schemas declare no `$schema`, and validators for drafts 4, 7, 2019-09 and
-2020-12 accept the same results. The server checks each result against its full
-contract before sending it, so the shapes this guide states hold though
-`tools/list` omits them. `search_tools` failures are one such shape: each
+2020-12 accept the same results. The server checks each successful result against
+its full contract before sending it, so the shapes this guide states hold though
+`tools/list` omits them. Both SDK edges exempt `isError: true` responses from
+output-schema validation. Failures on a `search_tools` page are one such shape: each
 `catalogErrors[]` entry and `queryAnalysis.catalogError` requires `code`, `message`
 and `retryable`, may carry `retryAfterMs`, `retry`, `nextAction`, `stale`, `ageMs`
 and the authorization-handoff fields (`recovery`, `status`, `authorizationUrl`,

@@ -177,7 +177,7 @@
       "id": "tool-output-schema",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Downstream structured output is SDK-validated across every catalog page. The three structured-only meta-tools advertise open output schemas (required keys and top-level types) that successful structured content satisfies, and the server validates each result against the full contract before sending it. Direct-call tools omit outputSchema because default-mode successes return native content; value-mode and error envelopes still mirror complete JSON.",
+      "notes": "Downstream structured output is SDK-validated across every catalog page. The three structured-only meta-tools advertise open output schemas (required keys and top-level types) that successful structured content satisfies, and the server validates each successful result against the full contract before sending it; both SDK edges exempt isError responses. Direct-call tools omit outputSchema because default-mode successes return native content; value-mode and error envelopes still mirror complete JSON.",
       "evidence": ["test/remote-mcp-pagination.test.ts", "test/meta-tool-schemas.test.ts"]
     },
     {
