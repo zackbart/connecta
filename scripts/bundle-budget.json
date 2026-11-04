@@ -1,6 +1,6 @@
 {
   "notes": [
-    "2026-11-04: Over-cap previews of direct reads (results/schema-aware-preview): provisional caps, to be set from this PR's build (package) table.",
+    "2026-11-04: Previews of direct reads over the inline cap. CI's table for main at d2ed14a8 reads 430,336 B and 814,374 B, and official Node 22.23.4, which matched CI's table for this PR's previous head exactly, measures this PR at 432,144 B and 815,934 B: up 1,808 B and 1,560 B against 664 B and 1,226 B of headroom. New agent-facing behavior, not drift. The caps move to 432,300 B and 816,100 B, leaving 156 B and 166 B.",
     "2026-11-04: Merging main at a6530531 (#1326, run-deadline read caps, up 483 B and 598 B on main) into the stale-listing PR measures the root at 429,254 B and examples/worker at 813,453 B on official Node 22.23.4, past 429,050 B and 813,200 B. Retiring catalogs on a custom refusal adds 15 B and 28 B of that. The caps move to 429,550 B and 813,750 B, and stay provisional.",
     "2026-11-04: Merging main (#1319, #1330, #1315) into the stale-listing PR and binding refusal fences to their attempt measures the root at 428,758 B and examples/worker at 812,928 B on official Node 22.23.4, past 426,250 B and 810,400 B. The caps move to 429,050 B and 813,200 B, and are provisional: a later step sets final caps from the combined branch.",
     "2026-11-04: The stale-listing review fixes add the durable refusal fence, conditional health settlement and the bounded refresh tail. Same-toolchain comparison against the PR's earlier head e4f2070d measures the root +746 B and examples/worker +1,013 B. CI measured that head at 425,250 B and 809,093 B, predicting about 425,996 B and 810,106 B, past the caps. The caps move to 426,250 B and 810,400 B, pending owner approval.",
@@ -70,7 +70,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 433000
+      "maxGzip": 432300
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -153,7 +153,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 817800
+      "maxGzip": 816100
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
