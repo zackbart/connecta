@@ -57,12 +57,19 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
       ...(task.id === "p5-read-only-program-refusal" ? { approvals: {} } : {}),
       ...(surface === "native-no-code" && task.id === NO_CODE_NOT_RUN
         ? {
-            runnerSkips: Object.fromEntries(
-              (["claude", "codex"] as const).map((runner) => [
-                runner,
-                { code: "capability-mismatch" as const, reason: NO_CODE_CAPABILITY_MISMATCHES[task.id]! },
-              ]),
-            ),
+            runnerSkips: {
+              ...Object.fromEntries(
+                (["claude", "codex"] as const).map((runner) => [
+                  runner,
+                  { code: "capability-mismatch" as const, reason: NO_CODE_CAPABILITY_MISMATCHES[task.id]! },
+                ]),
+              ),
+              eve: {
+                code: "capability-mismatch" as const,
+                reason:
+                  "Eve relists tools each step, but the runner fixes its approvals, native address map and trace allowlist from the tools listed at session start, so billing__* tools saved later would be refused. Not run on this arm.",
+              },
+            },
           }
         : {}),
       // References for what these arms can actually do. Other tasks keep theirs.

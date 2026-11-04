@@ -1,4 +1,4 @@
-import { runEve } from "./eve.js";
+import { runEve, type EveConnection } from "./eve.js";
 import { guidanceArm } from "../deploy/guidance.js";
 /**
  * One trial = a fresh world, a fresh deployment, one Codex conversation,
@@ -121,6 +121,8 @@ interface TrialOptions {
   surface?: Surface;
   grading?: Grading;
   runner?: "codex" | "claude" | "eve";
+  /** Eve only: the helper configuration under test, and a no-model control's fixture. */
+  eve?: EveConnection & { testModelSource?: string };
   maxBudgetUsd?: number;
   timeoutMs: number;
   signal?: AbortSignal;
@@ -223,6 +225,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     const run = await runAgent({
       model,
       surface: surfaceArm,
+      ...(options.runner === "eve" ? options.eve : {}),
       ...(options.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: options.maxBudgetUsd }),
       mcpUrl: host?.mcpUrl ?? deployment.mcpUrl,
       token: deployment.token,

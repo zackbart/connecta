@@ -180,9 +180,11 @@ pnpm run eval:agent --runner codex --models gpt-6-luna --tasks p5-known-read-rou
 pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
 ```
 
-Eve requires Node 24+, the installed `eve@1.0.0-rc.1` dependency in
-`packages/connecta-eve/`, and its built helper (`pnpm --filter
-@zackbart/connecta-eve run build`). Run it with:
+Eve requires Node 24+ and the installed `eve@1.0.0-rc.1` dependency in
+`packages/connecta-eve/`. `eval:agent --runner eve` and `eval:selftest --eve-only`
+rebuild the helper first, so a batch cannot test a stale one; with `--no-build`, or
+when calling the runner directly, a missing helper build or install fails with the
+command to run. Run it with:
 
 ```sh
 pnpm run eval:agent --runner eve --models gpt-6.1-sol --target worker --grading outcome --tasks cross-connector-join,p5-result-paging,p5-trusted-program-write
@@ -206,12 +208,28 @@ the batch through `stopsBatch`, as do model authentication and rate limits.
 Eve deferred calls are recorded under their inner Connecta tool names so the
 same graders apply. `eve__search` stays in `metrics.otherTools`. Tokens come
 from Eve usage events; no dollar cost is inferred for subscription usage.
-Both deployment targets and the existing six/code surfaces use the same runner.
+Both deployment targets and the six, five, code, native and native-no-code arms
+use the same runner, except where the target refuses an arm. Eve searches count as
+host searches, and Eve's first usage event supplies the first request's input
+tokens. A native tool is called as `<connection>__<connector>__<tool>`. Eve emits
+no event for a deferred name it cannot resolve, so the model wrapper records those
+calls and the trace shows each as one failed `eve__tool` in `metrics.otherTools`.
+On native-no-code, `auth-required-recovery` is N/A: Eve relists tools each step,
+but the runner fixes its approvals and address map at session start.
+
+To test a helper change, `--eve-connection <name>` sets the connection's file name
+and tool prefix, and passes the name to `connectaInstructions`. `--eve-description
+<text>` sets the description and `--eve-default-description` omits it so the
+helper's default applies; a helper whose connection requires a description refuses
+to start. The default is `connecta` with `Connecta task tools`, and any override is
+recorded in the result file's `config.eve`.
+
 Each server and its app-server descendants occupy a tracked process group,
-with a trial deadline and TERM/KILL cleanup. `--eve-only` drives one read with
-Eve's `mockModel()` through its real HTTP server and the Node deployment;
-it also checks write denial and an invalid-token batch stop, needs no credentials,
-and makes no model calls.
+with a trial deadline and TERM/KILL cleanup. `--eve-only` drives a search, a
+mistaken name and a read with Eve's `mockModel()` through its real HTTP server, the
+batch path and the grader on every arm, on Node, on native over Worker, and under
+a custom connection and description. It also checks write denial on six and native
+and an invalid-token batch stop, needs no credentials, and makes no model calls.
 
 Codex uses the signed-in `codex` CLI, `~/.codex/auth.json`, and defaults to
 `gpt-6-luna`. Its isolated temporary `CODEX_HOME` contains only that credential
