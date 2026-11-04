@@ -2825,7 +2825,7 @@ describe("pre-connect cached catalogs", () => {
     const started = deferred<void>();
     const released = deferred<void>();
     let refuse = true;
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", async () => {
       if (!refuse) return new Response(null, { status: 503 });
       started.resolve();
       await released.promise;
