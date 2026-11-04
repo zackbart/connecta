@@ -11,6 +11,7 @@ import { META_TOOLS, type Surface } from "./agent/surface.js";
 import type { Target } from "./deploy/targets.js";
 import { World } from "./fakes/world.js";
 import { startNodeDeployment } from "./deploy/node.js";
+import { connectMcp } from "./support/mcp.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 import { gradeTask, passes } from "./tasks/grading.js";
 
@@ -129,22 +130,27 @@ export default mockModel({ modelId: "eve-read-control", respond: ({ toolResults 
   await deployment.close();
   deployment = await startNodeDeployment(world.connectorSpecs(), task.deployment, undefined, "native");
   const before = world.ledger.calls.length;
+  // The served name carries the tool's classification, so read it rather than guess.
+  const listing = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+  const writeName = (await listing.listTools()).find((tool) => tool.address === "ci.rerun_job")?.name;
+  await listing.close();
+  assert.ok(writeName, "The native surface lists no ci.rerun_job");
   const nativeRefusal = await runEve({
     model: "eve-native-write-control",
     surface: "native",
     mcpUrl: deployment.mcpUrl,
     token: deployment.token,
     allowedTools: ["skills", "execute_code", "authorize_connector"],
-    deniedTools: ["ci__rerun_job"],
+    deniedTools: [writeName],
     timeoutMs: 120_000,
     firstPrompt: task.prompt,
     nextTurn: async () => undefined,
     testModelSource: `import { mockModel } from "eve/evals";
 export default mockModel({ modelId: "eve-native-write-control", respond: ({ toolResults }) =>
-  toolResults.length === 0 ? { toolCalls: [{ name: "eve__tool", input: { name: "connecta__ci__rerun_job", input: { runId: 4812 } } }] } : "Refused." });`,
+  toolResults.length === 0 ? { toolCalls: [{ name: "eve__tool", input: { name: ${JSON.stringify(`connecta__${writeName}`)}, input: { runId: 4812 } } }] } : "Refused." });`,
   });
   const nativeTrace = parseTrace(nativeRefusal.events, nativeRefusal.turnStarts, [task.prompt]);
-  assert.equal(nativeTrace.toolUses.find((t) => t.tool === "ci__rerun_job")?.isError, true);
+  assert.equal(nativeTrace.toolUses.find((t) => t.tool === writeName)?.isError, true);
   assert.equal(nativeTrace.permissionDenials.length, 1);
   assert.equal(world.ledger.calls.length, before, "A denied native write reached the fake");
   const authFailure = await runEve({
