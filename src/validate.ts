@@ -237,8 +237,9 @@ function exampleCandidate(
   schema: unknown,
   root: JsonSchema,
   depth = 0,
-  budget = { remaining: 128, active: new Set<object>() },
+  budget = { remaining: 128, active: new Set<object>(), placeholders: false },
   secret = false,
+  key?: string,
 ): unknown {
   if (--budget.remaining < 0) throw new Error("Example synthesis budget exhausted");
   if (depth > 12 || schema === false) return undefined;
@@ -270,7 +271,7 @@ function exampleCandidate(
         required
           .filter((key): key is string => typeof key === "string")
           .slice(0, 30)
-          .map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget, secret)]),
+          .map((key) => [key, exampleCandidate(properties[key], root, depth + 1, budget, secret, key)]),
       );
       if (Array.isArray(node.allOf)) {
         for (const branch of node.allOf.slice(0, 20)) {
@@ -307,7 +308,7 @@ function exampleCandidate(
       // Branches may declare required keys while their types live on the parent.
       for (const key of Object.keys(schemaObject(candidate))) {
         if (schemaObject(candidate)[key] === undefined) {
-          schemaObject(candidate)[key] = exampleCandidate(properties[key], root, depth + 1, budget, secret);
+          schemaObject(candidate)[key] = exampleCandidate(properties[key], root, depth + 1, budget, secret, key);
         }
       }
     } else if (type === "array") {
@@ -339,15 +340,29 @@ function exampleCandidate(
         uri: "https://example.com",
         uuid: "00000000-0000-4000-8000-000000000000",
       };
+      const named = budget.placeholders && !secret && key !== undefined ? namedPlaceholder(key, node) : undefined;
       candidate =
         typeof node.format === "string" && formats[node.format]
           ? formats[node.format]
-          : "x".repeat(Math.min(typeof node.minLength === "number" ? node.minLength : 0, 128));
+          : (named ?? "x".repeat(Math.min(typeof node.minLength === "number" ? node.minLength : 0, 128)));
     }
     return candidate;
   } finally {
     budget.active.delete(node);
   }
+}
+
+/**
+ * `<id>` for a plain string argument: an empty string would satisfy local
+ * validation and reach the downstream looking like a real value. A secret
+ * position, an odd key, and a length bound it misses keep the plain sample.
+ */
+function namedPlaceholder(key: string, node: JsonSchema): string | undefined {
+  if (!/^[\w.-]{1,64}$/.test(key)) return undefined;
+  const text = `<${key}>`;
+  const min = typeof node.minLength === "number" ? node.minLength : 0;
+  const max = typeof node.maxLength === "number" ? node.maxLength : Infinity;
+  return text.length >= min && text.length <= max ? text : undefined;
 }
 
 function mergeExample(a: unknown, b: unknown): unknown {
@@ -554,11 +569,16 @@ function validationIssues(schema: JsonSchema, args: unknown, units: ValidationUn
 export function schemaExample(schema: JsonSchema): Pick<ArgumentValidationDetails, "example" | "exampleUnavailable"> {
   try {
     const validator = validators.get(schema) ?? new Validator(schema as never, "2020-12", false);
-    // Serialization makes the validation cover exactly what the agent receives.
-    const example = JSON.parse(JSON.stringify(exampleCandidate(schema, schema))) as unknown;
-    if (validator.validate(example).valid) {
-      minimizeExample(example, validator);
-      if (validator.validate(example).valid) return { example };
+    // Named placeholders first; a schema that refuses them, such as one with a
+    // pattern, falls back to the plain sample rather than losing its example.
+    for (const placeholders of [true, false]) {
+      const budget = { remaining: 128, active: new Set<object>(), placeholders };
+      // Serialization makes the validation cover exactly what the agent receives.
+      const example = JSON.parse(JSON.stringify(exampleCandidate(schema, schema, 0, budget))) as unknown;
+      if (validator.validate(example).valid) {
+        minimizeExample(example, validator);
+        if (validator.validate(example).valid) return { example };
+      }
     }
   } catch {
     // Unsatisfiable or complex schemas do not get a made-up valid example.

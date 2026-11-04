@@ -520,11 +520,12 @@ describe("native tool surface", () => {
       expect(JSON.stringify(invalid.result)).not.toMatch(
         /search_tools|call_tool|call_destructive_tool|authorize_connector/,
       );
-      expect(envelope(invalid.result).error.nextAction).toMatchObject({
-        host: "search",
-        arguments: { query: "get_person" },
+      // The findings name the fix, so nothing sends the agent off to search first.
+      expect(envelope(invalid.result).error.validation).toMatchObject({
+        issues: expect.any(Array),
+        acceptedKeys: expect.any(Array),
       });
-      expect(Object.keys(envelope(invalid.result).error.nextAction.arguments)).toEqual(["query"]);
+      expect(envelope(invalid.result).error).not.toHaveProperty("nextAction");
       expect(envelope(invalid.result).error.retry).toBe("Correct the listed arguments and retry crm__get_person.");
     }
     expect(sent).toEqual([]);
@@ -895,7 +896,7 @@ describe("route names per surface", () => {
       false,
     );
     expect(envelope(meta.result).error.message).toBe(
-      'Operator-managed credential storage is not configured. Call authorize_connector({ connector: "service" }).',
+      "Operator-managed credential storage is not configured. Give this error's nextAction to the user or operator.",
     );
     await connecta.close();
   });

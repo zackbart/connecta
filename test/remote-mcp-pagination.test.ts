@@ -533,10 +533,10 @@ describe("paginated catalogs through the discovery path", () => {
     const called = JSON.parse(
       required((await mt.callTool({ address: "paged.gamma", resultMode: "value" })).content[0]).text,
     ) as {
-      error: { code: string; nextAction?: { tool?: string } };
+      error: { code: string; nextAction?: { url?: string } };
     };
     expect(called.error.code).toBe("downstream_oauth_required");
-    expect(called.error.nextAction?.tool).toBe("authorize_connector");
+    expect(called.error.nextAction?.url).toBe(`${BASE}/connect/paged?h=test`);
     const authorized = JSON.parse(required((await mt.authorizeConnector({ connector: "paged" })).content[0]).text) as {
       authorizationUrl?: string;
     };
