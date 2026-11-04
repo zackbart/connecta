@@ -1,3 +1,7 @@
+if (process.argv.includes("--eve-only")) {
+  await import("./eve-selftest.js");
+  process.exit(0);
+}
 import { guidanceSelftest } from "./guidance-selftest.js";
 import { GUIDANCE_ARMS, guidanceValue } from "./deploy/guidance.js";
 import assert from "node:assert/strict";

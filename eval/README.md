@@ -180,6 +180,36 @@ pnpm run eval:agent --runner codex --models gpt-6-luna --tasks p5-known-read-rou
 pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
 ```
 
+Eve requires Node 24+, the installed `eve@1.0.0-rc.1` dependency in
+`packages/connecta-eve/`, and its built helper (`pnpm --filter
+@zackbart/connecta-eve run build`). Run it with:
+
+```sh
+pnpm run eval:agent --runner eve --models gpt-6.1-sol --target worker --grading outcome --tasks cross-connector-join,p5-result-paging,p5-trusted-program-write
+pnpm run eval:selftest --eve-only
+```
+
+Each Eve trial creates an app outside the checkout and symlinks those exact
+local packages, without installing or fetching dependencies. It authors
+`connectaConnection({ url, pool, getToken })` and `connectaInstructions` together,
+disables default tools and extensions, and uses `chatgpt()` through the existing
+Codex app-server sign-in. The child preserves HOME for that sign-in, omits
+CODEX_HOME and API keys, and never reads login files. No login is started by
+the runner. The observed model has an explicit 128,000-token context window.
+The provider request inventory allows only Eve search/tool and the trial's
+Connecta tools; response metadata must confirm the requested model. Unexpected
+interactions (including parked approval or sign-in) fail closed. The helper
+approval policy approves allowed tools and refuses denied or unknown tools.
+
+Eve deferred calls are recorded under their inner Connecta tool names so the
+same graders apply. `eve__search` stays in `metrics.otherTools`. Tokens come
+from Eve usage events; no dollar cost is inferred for subscription usage.
+Both deployment targets and the existing six/code surfaces use the same runner.
+Each server and its app-server descendants occupy a tracked process group,
+with a trial deadline and TERM/KILL cleanup. `--eve-only` drives one read with
+Eve's `mockModel()` through its real HTTP server and the Node deployment;
+it needs no credentials and makes no model calls.
+
 Codex uses the signed-in `codex` CLI, `~/.codex/auth.json`, and defaults to
 `gpt-6-luna`. Its isolated temporary `CODEX_HOME` contains only that credential
 file and the fake Connecta endpoint. Apps, web search, shell tools and subagents

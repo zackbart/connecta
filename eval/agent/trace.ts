@@ -126,6 +126,17 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       });
       return;
     }
+    if (event.type === "eve_usage") {
+      const usage = event.usage as Record<string, number>;
+      tokens.input += Math.max(
+        0,
+        (usage.inputTokens ?? 0) - (usage.cacheReadTokens ?? 0) - (usage.cacheWriteTokens ?? 0),
+      );
+      tokens.output += usage.outputTokens ?? 0;
+      tokens.cacheRead += usage.cacheReadTokens ?? 0;
+      tokens.cacheCreation += usage.cacheWriteTokens ?? 0;
+      return;
+    }
     if (event.type === "codex_usage") {
       const total = event.total as Record<string, number> | undefined;
       if (total)

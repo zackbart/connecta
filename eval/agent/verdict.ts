@@ -3,12 +3,12 @@ import { passes, type Grading } from "../tasks/grading.js";
 import type { AgentResultFile } from "../report/summary.js";
 import type { TrialResult } from "./run.js";
 
-export function observation(trial: TrialResult, runner: "codex" | "claude") {
-  return runner === "claude" ? trial.claude : trial.codex;
+export function observation(trial: TrialResult, runner: "codex" | "claude" | "eve") {
+  return runner === "eve" ? trial.eve : runner === "claude" ? trial.claude : trial.codex;
 }
 
 /** One outcome predicate supplies rates, paired deltas, infrastructure vetoes and batch status. */
-export function trialOutcome(trial: TrialResult, runner: "codex" | "claude", grading: Grading = "outcome") {
+export function trialOutcome(trial: TrialResult, runner: "codex" | "claude" | "eve", grading: Grading = "outcome") {
   const observed = observation(trial, runner);
   const timeout = observed?.timedOut === true;
   const interruption = observed?.aborted === true;

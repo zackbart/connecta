@@ -15,6 +15,7 @@ export interface AgentResultFile {
   /** CLI versions, present for the selected runner. */
   codexVersion?: string;
   claudeVersion?: string;
+  eveVersion?: string;
   config: {
     guidanceArm?: string;
     surface?: import("../agent/surface.js").Surface;
@@ -27,7 +28,7 @@ export interface AgentResultFile {
     effort?: string;
     maxBudgetUsd?: number;
     mcpOutputTokens?: number | "host default";
-    runner?: "codex" | "claude";
+    runner?: "codex" | "claude" | "eve";
     /** Absent in results written before the worker target existed: node. */
     target?: import("../deploy/targets.js").Target;
     /** Absent in results written before injection existed: none. */

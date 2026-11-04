@@ -1,3 +1,4 @@
+import { eveVersion } from "./agent/eve.js";
 import { guidanceArm } from "./deploy/guidance.js";
 /**
  * `pnpm run eval:agent [options]` runs fake-only tasks through Codex or Claude Code.
@@ -53,9 +54,10 @@ if (guidance && (target !== "node" || surface !== "six" || grading !== "outcome"
 const injection = parseInjection(args);
 if (injection.d1LatencyMs && target !== "worker") throw new Error("--d1-latency-ms needs --target worker");
 const runner = args.get("runner") ?? "codex";
-if (runner !== "codex" && runner !== "claude") throw new Error("--runner must be codex or claude");
+if (runner !== "codex" && runner !== "claude" && runner !== "eve")
+  throw new Error("--runner must be codex, claude or eve");
 if (
-  (runner === "codex" && args.has("max-budget-usd")) ||
+  (runner !== "claude" && args.has("max-budget-usd")) ||
   args.has("mcp-output-tokens") ||
   args.has("max-utilization")
 ) {
@@ -71,7 +73,7 @@ const repeats = Number(args.get("repeats") ?? 1);
 const concurrency = Number(args.get("concurrency") ?? 1);
 const timeoutMs = Number(args.get("timeout-min") ?? 8) * 60_000;
 const effort = args.get("effort");
-if (runner === "claude" && effort) throw new Error("--effort is Codex-only");
+if (runner !== "codex" && effort) throw new Error("--effort is Codex-only");
 const maxBudgetUsd = args.has("max-budget-usd") ? Number(args.get("max-budget-usd")) : undefined;
 if (maxBudgetUsd !== undefined && (!Number.isFinite(maxBudgetUsd) || maxBudgetUsd <= 0))
   throw new Error("--max-budget-usd must be positive");
@@ -112,14 +114,14 @@ if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("--timeout-mi
 if (!models.length) throw new Error("--models must name at least one model");
 
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `agent-${stamp()}.json`));
-const version = await (runner === "claude" ? claudeVersion() : codexVersion());
+const version = await (runner === "eve" ? eveVersion() : runner === "claude" ? claudeVersion() : codexVersion());
 if (version === "unavailable") throw new Error(`${runner} CLI is unavailable`);
 const file: AgentResultFile = {
   kind: "connecta-eval/agent",
   version: 1,
   meta: runMeta(),
   protocol: runProtocol(args.get("pair-id")),
-  [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
+  [`${runner}Version`]: version,
   config: {
     runner,
     target,

@@ -136,7 +136,7 @@ function legacyTrace(trial: TrialResult): { trace: AgentTrace; complete: boolean
 export function regradeTrial(
   task: ActiveTask,
   trial: TrialResult,
-  runner: "claude" | "codex",
+  runner: "claude" | "codex" | "eve",
   grading: Grading = "route",
   surface: Surface = trial.surface ?? "six",
 ): TrialResult {
