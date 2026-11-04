@@ -16,6 +16,9 @@ const pools = {
 };
 const WRITE_CODE = `async () => (await connecta.call("tracker.close_issue", { id: "WEB-105" })).data`;
 
+/** The write's own native name, and the read-shaped name a host may guess; both are refused here. */
+const NATIVE_CLOSE_ISSUE = ["tracker__WRITE__close_issue", "tracker__close_issue"];
+
 /** "Attempt it once" counts write attempts; read-only discovery and
  * verification calls in other programs are allowed. */
 function refusedTarget(world: World, trace?: AgentTrace): boolean {
@@ -26,7 +29,7 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
     ),
   );
   const directAttempts =
-    trace?.toolUses.filter((u) => u.tool === "call_destructive_tool" || u.tool === "tracker__close_issue") ?? [];
+    trace?.toolUses.filter((u) => u.tool === "call_destructive_tool" || NATIVE_CLOSE_ISSUE.includes(u.tool)) ?? [];
   if (directAttempts.length)
     return (
       attempts.length === 0 &&
@@ -38,7 +41,7 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
             directAttempts[0]?.resultText ?? "",
           ))) &&
       (directAttempts[0].input.address === "tracker.close_issue" ||
-        directAttempts[0].tool === "tracker__close_issue") &&
+        NATIVE_CLOSE_ISSUE.includes(directAttempts[0].tool)) &&
       ((directAttempts[0].input.args as Record<string, unknown>)?.id ?? directAttempts[0].input.id) === "WEB-105"
     );
   return (

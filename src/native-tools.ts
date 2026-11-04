@@ -47,6 +47,16 @@ export const NATIVE_TOOLS_LIST_TTL_MS = 300_000;
 
 const HASH_CHARS = 6;
 const SEPARATOR = "__";
+/**
+ * What every write's name carries and no read's name can. Connector ids have no
+ * uppercase and a plain tool has no `__`, so a plain read cannot contain it; a
+ * hashed read lowercases it. It sits before the tool, because Eve displays a
+ * name's last `__` segment and a suffix there would show every write as "write".
+ */
+const WRITE_MARKER = "WRITE";
+const WRITE_SEGMENT = `${SEPARATOR}${WRITE_MARKER}${SEPARATOR}`;
+/** A hashed write keeps this much of its connector, leaving the rest of the budget to its tool. */
+const WRITE_CONNECTOR_HEAD = 24;
 /** No `__`, no leading `_`: the last `__` of a plain name is then always its separator. */
 const PLAIN_TOOL = /^[A-Za-z0-9-](?:[A-Za-z0-9-]|_(?!_))*$/;
 const NATIVE_NAME = new RegExp(`^[A-Za-z][A-Za-z0-9_-]{0,${NATIVE_NAME_MAX - 1}}$`);
@@ -77,30 +87,52 @@ function connectorPart(connectorId: string): string {
   return /^[a-z]/.test(connectorId) ? connectorId : `C${connectorId}`;
 }
 
+/** The classification a wire name is bound to. A name never changes what it is bound to. */
+function boundClassification(name: string): "read" | "write" {
+  return name.includes(WRITE_SEGMENT) ? "write" : "read";
+}
+
 /**
- * A pure function of the connector id and downstream tool name, so it is
- * stable across catalog refreshes: `<connector>__<tool>` when that is exact,
- * legal and short, otherwise its head plus a six-hex SHA-256 suffix of the
- * original pair.
+ * A pure function of the connector id, downstream tool name and classification,
+ * so it is stable across catalog refreshes until the classification changes. A
+ * read is `<connector>__<tool>` and a write `<connector>__WRITE__<tool>` when
+ * that is exact, legal and short, otherwise its head plus a six-hex SHA-256
+ * suffix of the original pair. No read's name is ever a write's: a host's cached
+ * read name, however often it is replayed, cannot select a write.
  */
-export function nativeToolName(connectorId: string, toolName: string): Promise<string> {
-  return runEdge(nativeToolNameNative(connectorId, toolName));
+export function nativeToolName(
+  connectorId: string,
+  toolName: string,
+  classification: "read" | "write",
+): Promise<string> {
+  return runEdge(nativeToolNameNative(connectorId, toolName, classification));
 }
 const nativeToolNameNative = /* @__PURE__ */ registerAuth(
   nativeToolName,
-  function (connectorId: string, toolName: string) {
+  function (connectorId: string, toolName: string, classification: "read" | "write") {
     return authFlow<string>(function* () {
+      const connector = connectorPart(connectorId);
       const tool = toolName.replace(/[^A-Za-z0-9_-]/g, "_");
-      const plain = `${connectorPart(connectorId)}${SEPARATOR}${tool}`;
+      const separator = classification === "write" ? WRITE_SEGMENT : SEPARATOR;
+      const plain = `${connector}${separator}${tool}`;
       if (tool === toolName && PLAIN_TOOL.test(tool) && plain.length <= NATIVE_NAME_MAX) return plain;
-      const head = plain.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
-      return `${head}_${yield* upwardStep(authCall<string>(shortHash, [`${connectorId}.${toolName}`]))}`;
+      const suffix = `_${yield* upwardStep(authCall<string>(shortHash, [`${connectorId}.${toolName}`]))}`;
+      if (classification === "write") {
+        const owner = connector.slice(0, WRITE_CONNECTOR_HEAD);
+        const room = NATIVE_NAME_MAX - suffix.length - owner.length - WRITE_SEGMENT.length;
+        return `${owner}${WRITE_SEGMENT}${tool.slice(0, room).replace(/_+$/, "")}${suffix}`;
+      }
+      const head = plain.slice(0, NATIVE_NAME_MAX - suffix.length).replace(/_+$/, "");
+      // A tool whose own name holds the marker takes this hashed path, because
+      // of its `__`. Lowercasing here is what keeps reads and writes disjoint.
+      return `${head.includes(WRITE_SEGMENT) ? head.replaceAll(WRITE_MARKER, WRITE_MARKER.toLowerCase()) : head}${suffix}`;
     });
   },
 );
 
 /** A listed native tool and the downstream tool it calls. */
 export interface NativeTool {
+  /** The name its current classification binds. A call may arrive by the other classification's name. */
   name: string;
   connector: Connector;
   tool: ToolDef;
@@ -224,7 +256,10 @@ export class NativeSurface {
   /**
    * Every listable native tool. A connector whose catalog fails is omitted
    * whole, never partially, with an operator warning; two tools claiming one
-   * name are both omitted and stay reachable by address in execute_code.
+   * name are both omitted and stay reachable by address in execute_code. A tool
+   * claims its read and write names alike, whichever it is now, so a collision
+   * does not come and go with a classification and a name cached under the other
+   * classification still finds its tool.
    */
   private claims(connectors = this.registry.listConnectors()) {
     return runEdge(
@@ -260,7 +295,11 @@ export class NativeSurface {
     );
   }
 
-  /** A native call: the existing route its current verdict selects. */
+  /**
+   * A native call: the existing route the name is bound to, never one chosen from
+   * the current verdict. A read name takes the read route, which refuses a current
+   * write before dispatch, so a host's replay of a cached read cannot reach a write.
+   */
   private call(name: string, args: Record<string, unknown>, request: ServerContext): Promise<unknown> {
     return runEdge(authOwnMethod<unknown>(NativeSurface.prototype, this, "call", [name, args, request]));
   }
@@ -277,8 +316,7 @@ export class NativeSurface {
       },
       authMethod((args: Record<string, unknown>, request: ServerContext) =>
         Effect.gen({ self: this }, function* () {
-          const result = yield* authInvoke<unknown>(this, "call", [name, args ?? {}, request]);
-          return nativeRecovery(result, name);
+          return yield* authInvoke<unknown>(this, "call", [name, args ?? {}, request]);
         }),
       ) as never,
     );
@@ -390,16 +428,18 @@ export class NativeSurface {
                   ),
                 });
                 result.isError = true;
-                return result;
+                return nativeRecovery(result, name);
               }
               const address = `${target.entry.connector.id}.${target.entry.tool.name}`;
-              return yield* upwardStep(
+              const result = yield* upwardStep(
                 authInvoke<unknown>(self.options, "route", [
-                  target.entry.tool.classification === "read" ? "call_tool" : "call_destructive_tool",
+                  boundClassification(name) === "read" ? "call_tool" : "call_destructive_tool",
                   { address, args },
                   request,
                 ]),
               );
+              // Recovery names the tool as it is listed now, not the name this call used.
+              return nativeRecovery(result, target.entry.name);
             }),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
       },
@@ -429,6 +469,8 @@ export class NativeSurface {
                 // A hashed name carries a stripped head only as exactly `${head}_` + six hex digits.
                 return (
                   name.startsWith(prefix) ||
+                  // A hashed write keeps only the head of a long connector id.
+                  name.startsWith(`${connectorPart(connector.id).slice(0, WRITE_CONNECTOR_HEAD)}${WRITE_SEGMENT}`) ||
                   (name.length === head.length + 1 + HASH_CHARS &&
                     name.startsWith(`${head}_`) &&
                     /^[0-9a-f]+$/.test(name.slice(-HASH_CHARS)))
@@ -487,11 +529,13 @@ export class NativeSurface {
                   ),
                 );
               }
-              return [...byName.values()].filter(
-                (entry): entry is NativeTool =>
-                  entry !== null &&
-                  !self.options.catalogErrors.includes(entry.connector.id) &&
-                  (!(self.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read"),
+              return [...byName].flatMap(([name, entry]) =>
+                entry !== null &&
+                entry.name === name &&
+                !self.options.catalogErrors.includes(entry.connector.id) &&
+                (!(self.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read")
+                  ? [entry]
+                  : [],
               );
             }),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
@@ -520,20 +564,33 @@ export class NativeSurface {
                   [true, connectors ?? self.registry.listConnectors()],
                 ),
               );
-              const byName = new Map<string, NativeTool | null>();
+              const claimed: { names: string[]; claim: NativeTool }[] = [];
+              const claimants = new Map<string, number>();
               for (const entry of loaded) {
                 if (!("tools" in entry)) continue;
                 for (const tool of entry.tools) {
-                  const name = yield* upwardStep(authCall<string>(nativeToolName, [entry.connector.id, tool.name]));
-                  if (byName.has(name)) {
-                    byName.set(name, null);
-                    logFailure(
-                      self.options.logger,
-                      "native name collision",
-                      failureRecord({ connector: entry.connector.id, tool }),
-                    );
-                  } else byName.set(name, { name, connector: entry.connector, tool });
+                  const read = yield* upwardStep(
+                    authCall<string>(nativeToolName, [entry.connector.id, tool.name, "read"]),
+                  );
+                  const write = yield* upwardStep(
+                    authCall<string>(nativeToolName, [entry.connector.id, tool.name, "write"]),
+                  );
+                  const name = tool.classification === "read" ? read : write;
+                  claimed.push({ names: [read, write], claim: { name, connector: entry.connector, tool } });
+                  for (const held of [read, write]) claimants.set(held, (claimants.get(held) ?? 0) + 1);
                 }
+              }
+              const byName = new Map<string, NativeTool | null>();
+              for (const { names, claim } of claimed) {
+                // A tool that loses either name loses both: it is omitted, not half listed.
+                const collides = names.some((name) => claimants.get(name)! > 1);
+                if (collides)
+                  logFailure(
+                    self.options.logger,
+                    "native name collision",
+                    failureRecord({ connector: claim.connector.id, tool: claim.tool }),
+                  );
+                for (const name of names) byName.set(name, collides ? null : claim);
               }
               return { loaded, byName };
             }),

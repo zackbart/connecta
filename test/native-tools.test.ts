@@ -190,16 +190,16 @@ describe("native tool surface", () => {
     await c.close();
   });
 
-  it("lists each pool tool as <connector>__<tool> with annotations from its classification", async () => {
+  it("lists reads as <connector>__<tool> and writes as <connector>__WRITE__<tool>, annotated from their classification", async () => {
     const { connecta, token } = await admitted();
     for (const modern of [true, false]) {
       const listed = await rpc(connecta, token, "native", "tools/list", {}, modern);
       const tools = listed.result.tools as Array<Record<string, any>>;
       expect(tools.map((tool) => tool.name).sort()).toEqual(
         [
-          "crm__create_person",
+          "crm__WRITE__create_person",
           "crm__get_person",
-          await nativeToolName("crm", "export.all"),
+          await nativeToolName("crm", "export.all", "read"),
           "execute_code",
           "authorize_connector",
           "skills",
@@ -212,7 +212,7 @@ describe("native tool surface", () => {
       expect(read._meta).toEqual({ "dev.connecta/address": "crm.get_person" });
       expect(read.outputSchema).toBeUndefined();
       // A downstream that says "not destructive" is still a write here: the verdict is binary.
-      expect(tools.find((tool) => tool.name === "crm__create_person")!.annotations).toEqual({
+      expect(tools.find((tool) => tool.name === "crm__WRITE__create_person")!.annotations).toEqual({
         readOnlyHint: false,
         destructiveHint: true,
         openWorldHint: true,
@@ -286,7 +286,7 @@ describe("native tool surface", () => {
     const expected = await resolvedConnectorGuides(connectors);
     expect(expected.find((g) => g.connector.id === original.id)!.name).toBe(`${allocated}-1`);
     const awaitName = new Map(
-      await Promise.all(connectors.map(async (c) => [c.id, await nativeToolName(c.id, "read0")] as const)),
+      await Promise.all(connectors.map(async (c) => [c.id, await nativeToolName(c.id, "read0", "read")] as const)),
     );
     const storage = memoryStorage();
     const app = createTestConnecta({
@@ -391,11 +391,22 @@ describe("native tool surface", () => {
     const deployed = deployment({ classification: { crm: { get_person: "write" } } });
     const token = await issueAgentToken(deployed.storage, "assistant");
     const listed = await rpc(deployed.connecta, token, "native", "tools/list", {});
-    const tool = listed.result.tools.find((entry: { name: string }) => entry.name === "crm__get_person");
+    const tool = listed.result.tools.find((entry: { name: string }) => entry.name === "crm__WRITE__get_person");
     expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(listed.result.tools.some((entry: { name: string }) => entry.name === "crm__get_person")).toBe(false);
+    // A write the deployment names by its read name is refused, and the refusal is recorded.
+    const stale = await rpc(deployed.connecta, token, "native", "tools/call", {
+      name: "crm__get_person",
+      arguments: { id: "p1" },
+    });
+    expect(envelope(stale.result).error.code).toBe("destructive_tool_requires_approval");
+    expect(deployed.sent).toEqual([]);
+    expect(deployed.events.map((event) => [event.source, event.address, event.classification])).toEqual([
+      ["native", "crm.get_person", "write"],
+    ]);
     // And the call takes the write route: it runs once, as call_destructive_tool would.
     const called = await rpc(deployed.connecta, token, "native", "tools/call", {
-      name: "crm__get_person",
+      name: "crm__WRITE__get_person",
       arguments: { id: "p1" },
     });
     expect(called.result.isError).toBeUndefined();
@@ -421,7 +432,7 @@ describe("native tool surface", () => {
         token,
         "native",
         "tools/call",
-        { name: "crm__create_person", arguments: { name: "Bob" } },
+        { name: "crm__WRITE__create_person", arguments: { name: "Bob" } },
         modern,
       );
       expect(write.result.content).toEqual([{ type: "text", text: '{"id":"p2","name":"Bob"}' }]);
@@ -439,13 +450,13 @@ describe("native tool surface", () => {
     const { connecta, token, sent } = await admitted();
     const listed = await rpc(connecta, token, "reads", "tools/list", {});
     const names = listed.result.tools.map((tool: { name: string }) => tool.name);
-    expect(names).not.toContain("crm__create_person");
+    expect(names).not.toContain("crm__WRITE__create_person");
     expect(names).toContain("crm__get_person");
     expect(
       listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code").annotations,
     ).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     const refused = await rpc(connecta, token, "reads", "tools/call", {
-      name: "crm__create_person",
+      name: "crm__WRITE__create_person",
       arguments: { name: "Bob" },
     });
     expect(refused.result.isError).toBe(true);
@@ -453,7 +464,7 @@ describe("native tool surface", () => {
     expect(sent).toEqual([]);
   });
 
-  it("INV-1 INV-2 INV-9: routes a changed verdict as a write and never repeats an unknown outcome", async () => {
+  it("INV-1 INV-2 INV-9: refuses every replay of a cached read name once the tool is a write, and its write name runs once", async () => {
     for (const modern of [true, false]) {
       const storage = memoryStorage();
       let write = false;
@@ -487,12 +498,60 @@ describe("native tool surface", () => {
           listing.result.tools.find((tool: { name: string }) => tool.name === "crm__get").annotations.readOnlyHint,
         ).toBe(true);
         write = true;
-        const result = await rpc(app, token, "native", "tools/call", { name: "crm__get", arguments: {} }, modern);
-        expect(envelope(result.result).error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+        // A host that cached the read may resend it after its transport closes, and each
+        // replay is a fresh stateless request, so nothing can tell it from the original.
+        for (const attempt of [0, 1, 2]) {
+          const replay = await rpc(app, token, "native", "tools/call", { name: "crm__get", arguments: {} }, modern);
+          expect(replay.result.isError, `attempt ${attempt}`).toBe(true);
+          const { error } = envelope(replay.result);
+          expect(error).toMatchObject({
+            code: "destructive_tool_requires_approval",
+            nextAction: { tool: "crm__WRITE__get" },
+          });
+          expect(error.message).toContain("nothing was sent");
+          expect(error.nextAction.purpose).toContain("Refresh the host's tool list");
+          expect(JSON.stringify(error)).not.toMatch(/call_destructive_tool|add a short reason/);
+        }
+        expect(calls).toBe(0);
+        const refreshed = await rpc(app, token, "native", "tools/list", {}, modern);
+        const names = refreshed.result.tools.map((tool: { name: string }) => tool.name);
+        expect(names).toContain("crm__WRITE__get");
+        expect(names).not.toContain("crm__get");
+        expect(
+          refreshed.result.tools.find((tool: { name: string }) => tool.name === "crm__WRITE__get").annotations,
+        ).toMatchObject({ readOnlyHint: false, destructiveHint: true });
 
-        const refused = await rpc(app, token, "reads", "tools/call", { name: "crm__get", arguments: {} }, modern);
-        expect(envelope(refused.result).error.code).toBe("read_only_endpoint");
+        const result = await rpc(
+          app,
+          token,
+          "native",
+          "tools/call",
+          { name: "crm__WRITE__get", arguments: {} },
+          modern,
+        );
+        expect(envelope(result.result).error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
         expect(calls).toBe(1);
+
+        for (const name of ["crm__get", "crm__WRITE__get"]) {
+          const refused = await rpc(app, token, "reads", "tools/call", { name, arguments: {} }, modern);
+          expect(envelope(refused.result).error.code).toBe("read_only_endpoint");
+        }
+        expect(calls).toBe(1);
+
+        // The other way a name goes stale: the host approved a write, and the tool is a read now.
+        write = false;
+        const relaxed = await rpc(app, token, "native", "tools/list", {}, modern);
+        expect(relaxed.result.tools.map((tool: { name: string }) => tool.name)).toContain("crm__get");
+        const approved = await rpc(
+          app,
+          token,
+          "native",
+          "tools/call",
+          { name: "crm__WRITE__get", arguments: {} },
+          modern,
+        );
+        expect(approved.result.isError).toBe(true);
+        expect(calls).toBe(2);
       } finally {
         await app.close();
       }
@@ -549,7 +608,7 @@ describe("native tool surface", () => {
     expect(names).toContain("read_result");
     expect(names).not.toContain("execute_code");
     const big = await rpc(connecta, token, "nocode", "tools/call", {
-      name: await nativeToolName("crm", "export.all"),
+      name: await nativeToolName("crm", "export.all", "read"),
       arguments: {},
     });
     const text = big.result.content[0].text as string;
@@ -612,7 +671,7 @@ describe("native tool surface", () => {
 
   it("INV-2: resolves truncated connector prefixes, refuses collisions, and ignores unrelated failing siblings", async () => {
     const longId = `a__${"b".repeat(50)}`;
-    const name = await nativeToolName(longId, "get");
+    const name = await nativeToolName(longId, "get", "read");
     for (const write of [false, true]) {
       for (const collision of [false, true]) {
         const storage = memoryStorage();
@@ -658,6 +717,54 @@ describe("native tool surface", () => {
         } finally {
           await app.close();
         }
+      }
+    }
+    // Hashed names bind the same way, with the connector's id cut short or the tool's name unsafe.
+    for (const [connector, toolName] of [
+      ["c".repeat(30), "set"],
+      ["crm", "set.all"],
+      ["crm", "s".repeat(45)],
+    ] as const) {
+      const storage = memoryStorage();
+      const sent: string[] = [];
+      let write = false;
+      const app = createTestConnecta({
+        connectors: [
+          {
+            id: connector,
+            listTools: async () => [{ name: toolName, annotations: { readOnlyHint: !write } }],
+            callTool: async () => {
+              sent.push(connector);
+              return {};
+            },
+          },
+        ],
+        agents: ["assistant"],
+        pools: { native: { tools: [connector], members: ["agent:assistant"], surface: "native" } },
+        storage,
+        accessTokens: accessTokens(storage),
+        logger: silentLogger,
+      });
+      const [read, written] = [
+        await nativeToolName(connector, toolName, "read"),
+        await nativeToolName(connector, toolName, "write"),
+      ];
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        write = true;
+        const listing = await rpc(app, token, "native", "tools/list", {});
+        expect(listing.result.tools.map((tool: { name: string }) => tool.name)).toContain(written);
+        const refused = await rpc(app, token, "native", "tools/call", { name: read, arguments: {} });
+        expect(envelope(refused.result).error).toMatchObject({
+          code: "destructive_tool_requires_approval",
+          nextAction: { tool: written },
+        });
+        expect(sent).toEqual([]);
+        const called = await rpc(app, token, "native", "tools/call", { name: written, arguments: {} });
+        expect(called.result.isError).toBeUndefined();
+        expect(sent).toEqual([connector]);
+      } finally {
+        await app.close();
       }
     }
     for (const failure of [new Error("down"), new ConnectorCallError("auth_required", "needs auth")]) {
@@ -807,8 +914,8 @@ describe("native tool surface", () => {
 
 describe("native tool names", () => {
   it("are <connector>__<tool> when exact, and a stable hashed head otherwise", { tags: ["node"] }, async () => {
-    expect(await nativeToolName("crm", "get_person")).toBe("crm__get_person");
-    expect(await nativeToolName("crm", "get-person2")).toBe("crm__get-person2");
+    expect(await nativeToolName("crm", "get_person", "read")).toBe("crm__get_person");
+    expect(await nativeToolName("crm", "get-person2", "read")).toBe("crm__get-person2");
     // Lossy, a nested separator, a leading underscore, or overlong: head + six hex.
     for (const [connector, tool] of [
       ["crm", "export.all"],
@@ -816,18 +923,74 @@ describe("native tool names", () => {
       ["crm", "_private"],
       ["crm", "x".repeat(60)],
     ] as const) {
-      const name = await nativeToolName(connector, tool);
+      const name = await nativeToolName(connector, tool, "read");
       expect(name).toMatch(/^crm__.*_[0-9a-f]{6}$/);
       expect(name.length).toBeLessThanOrEqual(NATIVE_NAME_MAX);
-      expect(await nativeToolName(connector, tool)).toBe(name);
+      expect(await nativeToolName(connector, tool, "read")).toBe(name);
     }
-    expect(await nativeToolName("crm", "export.all")).not.toBe(await nativeToolName("crm", "export_all"));
+    expect(await nativeToolName("crm", "export.all", "read")).not.toBe(
+      await nativeToolName("crm", "export_all", "read"),
+    );
     // A connector id that does not start with a letter gets an uppercase prefix no id can contain.
-    expect(await nativeToolName("1pass", "get")).toBe("C1pass__get");
-    for (const name of [await nativeToolName("1pass", "get"), await nativeToolName("crm", "é")]) {
+    expect(await nativeToolName("1pass", "get", "read")).toBe("C1pass__get");
+    for (const name of [await nativeToolName("1pass", "get", "read"), await nativeToolName("crm", "é", "read")]) {
       expect(name).toMatch(/^[A-Za-z][A-Za-z0-9_-]*$/);
     }
   });
+
+  it(
+    "INV-1: bind each classification to its own name, and no read's name is ever a write's",
+    { tags: ["node"] },
+    async () => {
+      expect(await nativeToolName("crm", "create_person", "write")).toBe("crm__WRITE__create_person");
+      expect(await nativeToolName("1pass", "set", "write")).toBe("C1pass__WRITE__set");
+      // Eve displays the last `__` segment, so that stays the tool.
+      expect((await nativeToolName("crm", "create_person", "write")).split("__").at(-1)).toBe("create_person");
+      const pairs = [
+        ["crm", "get"],
+        // A name that reads like a write's still stays a read's.
+        ["crm", "get_write"],
+        ["crm", "write"],
+        ["crm", "WRITE"],
+        ["crm", "WRITE_"],
+        ["crm", "WRITE__get"],
+        ["crm", "WRITE__WRITE__get"],
+        ["crm", "x__WRITE__y.z"],
+        ["crm__x", "write"],
+        ["1pass", "get"],
+        ["crm", "x".repeat(41)],
+        ["crm", "x".repeat(60)],
+        ["crm", `${"x".repeat(50)}__WRITE__`],
+        ["c".repeat(60), "get"],
+        ["c".repeat(24), "get.it"],
+        ["c".repeat(25), "get.it"],
+        ["crm", "é"],
+        ["crm_", "get"],
+        ["crm", "_get"],
+      ] as const;
+      const reads = new Set<string>();
+      const writes = new Set<string>();
+      for (const [connector, tool] of pairs) {
+        const read = await nativeToolName(connector, tool, "read");
+        const write = await nativeToolName(connector, tool, "write");
+        expect(read).not.toContain("__WRITE__");
+        expect(write).toContain("__WRITE__");
+        for (const name of [read, write]) {
+          expect(name).toMatch(/^[A-Za-z][A-Za-z0-9_-]*$/);
+          expect(name.length).toBeLessThanOrEqual(NATIVE_NAME_MAX);
+        }
+        expect(await nativeToolName(connector, tool, "write")).toBe(write);
+        reads.add(read);
+        writes.add(write);
+      }
+      expect([...reads].filter((name) => writes.has(name))).toEqual([]);
+      expect(writes.size).toBe(pairs.length);
+      // Reads keep the exact names they have always had.
+      expect(await nativeToolName("crm", "get_write", "read")).toBe("crm__get_write");
+      expect(await nativeToolName("crm", "write", "read")).toBe("crm__write");
+      expect(await nativeToolName("crm__x", "write", "read")).toBe("crm__x__write");
+    },
+  );
 });
 
 describe("route names per surface", () => {

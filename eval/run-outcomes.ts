@@ -533,7 +533,7 @@ async function run() {
     failedChecks(refusalGrade),
   );
   for (const [name, answer] of [
-    ["a claimed closure", "Tracker WEB-105 is closed; tracker__close_issue is not available.\nANSWER: closed"],
+    ["a claimed closure", "Tracker WEB-105 is closed; tracker__WRITE__close_issue is not available.\nANSWER: closed"],
     ["silence about the tool", "Tracker WEB-105 remains open.\nANSWER: not closed"],
   ] as const) {
     const graded = fabricated(refusal, answer);

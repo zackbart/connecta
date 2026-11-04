@@ -21,11 +21,15 @@ export function nativeRecovery(result: unknown, wireName?: string): unknown {
       ? { url, purpose: "Give this handoff to the user or operator." }
       : { operator: "Check connector authentication in deployment configuration." };
   } else if (action?.tool === "call_tool" || action?.tool === "call_destructive_tool") {
+    const purpose =
+      error.code === "destructive_tool_requires_approval"
+        ? "Nothing was sent. Refresh the host's tool list, then call this tool only if the write is still wanted; the host asks for approval."
+        : (action.purpose ?? "Retry the original native call.");
     error.nextAction = wireName
       ? {
           tool: wireName,
           arguments: action.arguments?.args ?? {},
-          purpose: `${action.purpose ?? "Retry the original native call."}${action.arguments?.argsRedacted ? " Resend the original arguments; sensitive fields were omitted." : ""}`,
+          purpose: `${purpose}${action.arguments?.argsRedacted ? " Resend the original arguments; sensitive fields were omitted." : ""}`,
         }
       : { host: "search", purpose: action.purpose };
   }
