@@ -139,7 +139,7 @@
       "id": "tools-call",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header. The three structured-only meta-tools declare outputSchema; native-content direct-call tools omit it. A native pool binds each wire name to the tool's classification and takes the route the name selects, so a client's resent read name is refused before dispatch once the tool is a write. Maintained-provider hostile HTTP acknowledgements remain failures even after a vendor commits; a subsequent read reconciles state without replaying the physical write.",
+      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header. The three structured-only meta-tools declare an open outputSchema; native-content direct-call tools omit it. A native pool binds each wire name to the tool's classification and takes the route the name selects, so a client's resent read name is refused before dispatch once the tool is a write. Maintained-provider hostile HTTP acknowledgements remain failures even after a vendor commits; a subsequent read reconciles state without replaying the physical write.",
       "evidence": [
         "test/meta-tools-call.test.ts",
         "test/native-tools.test.ts",
@@ -177,7 +177,7 @@
       "id": "tool-output-schema",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Downstream structured output is SDK-validated across every catalog page. The three structured-only meta-tools advertise output schemas matching successful structured content. Direct-call tools omit outputSchema because default-mode successes return native content; value-mode and error envelopes still mirror complete JSON.",
+      "notes": "Downstream structured output is SDK-validated across every catalog page. The three structured-only meta-tools advertise open output schemas (required keys and top-level types) that successful structured content satisfies, and the server validates each successful result against the full contract before sending it; both SDK edges exempt isError responses. Direct-call tools omit outputSchema because default-mode successes return native content; value-mode and error envelopes still mirror complete JSON.",
       "evidence": ["test/remote-mcp-pagination.test.ts", "test/meta-tool-schemas.test.ts"]
     },
     {
