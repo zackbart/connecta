@@ -1,42 +1,41 @@
-// A program's retained results stay unreadable to any other request until they have
-// passed the run's final secret set. Chunk 0, which holds the header a reader needs,
-// stays in this memory-only ledger while the run lasts and is the last thing written,
-// so a run that ends without sealing leaves no readable entry. Sealing costs a run no
-// extra writes: chunk 0 is written once, later. It reads stored bytes back only when
-// the set grew after an entry was stashed.
+// A program's retained results are unreadable to any other request by default. Chunk 0,
+// which holds the header a reader needs, stays in this memory-only ledger while the run
+// lasts, so every way a run can end leaves nothing a reader can open unless sealing wrote
+// that chunk. Sealing waits until the run can no longer add to its secret set, and only
+// then writes the headers of entries that pass that set. Stored bytes never change, so an
+// offset issued for an entry stays valid. A run costs no extra writes, and reads stored
+// bytes back only for entries the set grew past.
 import { Duration, Effect } from "effect";
 import { authStorage } from "./auth/native.js";
+import { PendingWork } from "./runtime/request-scope.js";
 import { withDeadlineEffect } from "./runtime/run.js";
 import type { SentSecrets } from "./sent-secrets.js";
 import { resultKeys } from "./storage/keys.js";
 import type { KVStorage } from "./types.js";
 
-const enc = new TextEncoder();
 // A BOM is payload here, as it is on every page of the same bytes.
 const dec = new TextDecoder("utf-8", { ignoreBOM: true, fatal: false });
 
 export const RESULT_ENVELOPE_V4 = "connecta-result-v4:";
-/** Stored in place of a result that could not be sealed: its binding and no bytes. */
+/** Stored for an entry sealing did not publish, so its id can say why. Its binding and no bytes. */
 const RESULT_REFUSED_V4 = "connecta-result-refused-v4:";
 
-/** Times a set that keeps growing during sealing is rechecked before its entries are refused. */
-const SEAL_ROUNDS = 3;
 const SEAL_CONCURRENCY = 8;
-/** Bounds marking and cleanup after sealing failed, on top of the run's own budget. */
-const REFUSAL_TIMEOUT_MS = 1000;
+/** Kept back from sealing's time for the markers and cleanup of unpublished entries. */
+const REFUSAL_RESERVE_MS = 1000;
 
 export interface HeldResult {
   readonly id: string;
   readonly binding: string;
-  total: number;
+  readonly total: number;
   readonly chunkBytes: number;
   readonly cap: number;
   /** Base64 of the bytes chunk 0 carries; only this ledger holds them until sealing. */
-  first: string;
+  readonly first: string;
   /** How many chunks exist, chunk 0 included. */
-  chunks: number;
-  /** The set's revision taken before these bytes were last checked. */
-  passed: number;
+  readonly chunks: number;
+  /** The set's revision taken before these bytes were checked. */
+  readonly passed: number;
   readonly format: "json" | "text";
   readonly write: boolean;
   readonly expiresAtMs: number;
@@ -48,13 +47,15 @@ const envelope = (entry: HeldResult) =>
 /** One run's unsealed results. It lives and dies with the run's request (INV-7). */
 export class HeldResults {
   private readonly entries = new Map<string, HeldResult>();
+  private readonly hostCalls = new PendingWork();
   private closed = false;
-  constructor(readonly secrets: SentSecrets) {}
+  constructor(
+    readonly secrets: SentSecrets,
+    /** The request's credential reads, which outlast the host calls that started them. */
+    private readonly credentialReads: PendingWork,
+  ) {}
 
-  get size(): number {
-    return this.entries.size;
-  }
-  /** False once the run has sealed; nothing would ever make a late entry readable. */
+  /** False once sealing began: a late entry would never become readable, and a late host call never starts. */
   accepts(): boolean {
     return !this.closed;
   }
@@ -68,22 +69,24 @@ export class HeldResults {
     const entry = this.entries.get(id);
     return entry && envelope(entry);
   }
-  values(): HeldResult[] {
-    return [...this.entries.values()];
+  /** A guest host call; sealing waits for it to settle. */
+  track(work: Promise<unknown>): void {
+    const done = this.hostCalls.begin();
+    void work.then(done, done);
   }
-  close(): void {
+  /** Stop accepting work and hand over what the run retained. */
+  close(): HeldResult[] {
     this.closed = true;
+    const entries = [...this.entries.values()];
     this.entries.clear();
+    return entries;
   }
-}
-
-/** Base64 in three-byte-aligned batches: the spread stays small and the output stays continuous. */
-export function base64Of(bytes: Uint8Array): string {
-  let out = "";
-  for (let offset = 0; offset < bytes.length; offset += 12_288) {
-    out += btoa(String.fromCharCode(...bytes.subarray(offset, offset + 12_288)));
-  }
-  return out;
+  /** Succeeds once nothing the run started can add to the secret set. */
+  readonly settled = Effect.suspend(() => this.hostCalls.idle).pipe(
+    Effect.andThen(Effect.suspend(() => this.credentialReads.idle)),
+    Effect.repeat({ until: () => !this.hostCalls.pending && !this.credentialReads.pending }),
+    Effect.asVoid,
+  );
 }
 
 function bytesOf(encoded: readonly string[], total: number): Uint8Array {
@@ -112,7 +115,7 @@ function checkedAgainst(secrets: SentSecrets, text: string, format: "json" | "te
 }
 
 export interface SealOutcome {
-  /** Results refused to later runs, and whether any of them is a write's output. */
+  /** Results not published to later runs, and whether any of them is a write's output. */
   readonly refused: number;
   readonly refusedWrite: boolean;
 }
@@ -120,83 +123,53 @@ export interface SealOutcome {
 const SEALED: SealOutcome = { refused: 0, refusedWrite: false };
 
 /**
- * Make each held result readable by later runs, or refuse it. Never fails: a storage
- * failure or an exhausted budget refuses the affected entries. Cancellation starts no
- * further storage work and leaves unsealed entries unreadable.
+ * Publish what can be published. Never fails. Nothing is published until the run's work
+ * has settled, and anything still pending when the budget ends leaves every entry
+ * unpublished, which is the refusal. Markers only improve what a later page is told, so
+ * a failed marker, a timeout or a cancellation changes nothing a reader can get.
  */
 export function sealHeldResults(
   held: HeldResults,
   storage: KVStorage,
-  budgetMs: number,
+  /** The absolute time the run's response must be on its way. */
+  answerBy: number,
   signal?: AbortSignal,
 ): Effect.Effect<SealOutcome> {
   return Effect.suspend(() => {
     const secrets = held.secrets;
-    const entries = held.values();
-    if (entries.length === 0) {
-      held.close();
-      return Effect.succeed(SEALED);
-    }
-    const refused = new Set<HeldResult>();
-    const committed = new Set<HeldResult>();
+    const entries = held.close();
+    if (entries.length === 0) return Effect.succeed(SEALED);
+    const published = new Set<HeldResult>();
     const key = (entry: HeldResult, index: number) => resultKeys.chunk(entry.id, index);
-    const open = () => held.values().filter((entry) => !refused.has(entry));
 
-    const recheck = (entry: HeldResult) =>
+    const passes = (entry: HeldResult) =>
       Effect.gen(function* () {
         const parts = [entry.first];
         for (let index = 1; index < entry.chunks; index++) {
           const chunk = yield* authStorage<string | null>(storage, "get", [key(entry, index)]);
           // Expired or evicted under a held header: nothing left to check, so nothing to offer.
-          if (chunk === null) return refused.add(entry);
+          if (chunk === null) return false;
           parts.push(chunk);
         }
         const text = dec.decode(bytesOf(parts, entry.total));
-        // Scanning is synchronous, so what this revision holds is what the scan saw.
-        const revision = secrets.revision;
-        const checked = checkedAgainst(secrets, text, entry.format);
-        if (checked !== text) {
-          const bytes = enc.encode(checked);
-          // The ledger charged the original size, which a marker longer than its match can pass.
-          if (bytes.length > entry.total) return refused.add(entry);
-          const chunks = Math.max(1, Math.ceil(bytes.length / entry.chunkBytes));
-          for (let index = 1; index < chunks; index++) {
-            const part = base64Of(bytes.subarray(index * entry.chunkBytes, (index + 1) * entry.chunkBytes));
-            yield* authStorage(storage, "set", [key(entry, index), part, { expiresAtMs: entry.expiresAtMs }]);
-          }
-          for (let index = chunks; index < entry.chunks; index++) {
-            yield* authStorage(storage, "delete", [key(entry, index)]);
-          }
-          entry.first = base64Of(bytes.subarray(0, entry.chunkBytes));
-          entry.total = bytes.length;
-          entry.chunks = chunks;
-        }
-        entry.passed = revision;
-        return undefined;
-      }).pipe(Effect.catch(() => Effect.sync(() => refused.add(entry))));
+        return checkedAgainst(secrets, text, entry.format) === text;
+      });
 
     const seal = Effect.gen(function* () {
-      for (let round = 0; ; round++) {
-        const stale = open().filter((entry) => entry.passed !== secrets.revision);
-        if (stale.length === 0) break;
-        if (round === SEAL_ROUNDS) {
-          for (const entry of stale) refused.add(entry);
-          break;
-        }
-        yield* Effect.forEach(stale, recheck, { concurrency: SEAL_CONCURRENCY, discard: true });
-      }
-      const revision = secrets.revision;
+      yield* held.settled;
+      const stable = secrets.revision;
       yield* Effect.forEach(
-        open(),
+        entries,
         (entry) =>
-          authStorage(storage, "set", [key(entry, 0), envelope(entry), { expiresAtMs: entry.expiresAtMs }]).pipe(
-            Effect.tap(() => Effect.sync(() => committed.add(entry))),
-            Effect.catch(() => Effect.sync(() => refused.add(entry))),
-          ),
+          Effect.gen(function* () {
+            if (entry.passed !== stable && !(yield* passes(entry))) return;
+            // Nothing the run started is left, so this holds. If it ever fails, stop.
+            if (secrets.revision !== stable) return;
+            yield* authStorage(storage, "set", [key(entry, 0), envelope(entry), { expiresAtMs: entry.expiresAtMs }]);
+            published.add(entry);
+          }).pipe(Effect.ignore),
         { concurrency: SEAL_CONCURRENCY, discard: true },
       );
-      // A secret that arrived while headers were on their way was checked by none of them.
-      if (secrets.revision !== revision) for (const entry of committed) refused.add(entry);
     });
 
     const refuse = (entry: HeldResult) =>
@@ -211,28 +184,28 @@ export function sealHeldResults(
         }
       }).pipe(Effect.ignore);
 
+    const remainingMs = Math.max(1, answerBy - Date.now());
+    const reserveMs = Math.min(REFUSAL_RESERVE_MS, Math.floor(remainingMs / 4));
     return withDeadlineEffect(() => seal, {
-      timeoutMs: budgetMs,
+      timeoutMs: Math.max(1, remainingMs - reserveMs),
       ...(signal ? { signal } : {}),
       timeoutError: new Error("Sealing ran out of time."),
     }).pipe(
-      // Whatever had not been written by now is refused below, along with what failed.
-      Effect.catch(() =>
-        Effect.sync(() => {
-          for (const entry of held.values()) if (!committed.has(entry)) refused.add(entry);
-        }),
-      ),
+      Effect.ignore,
       Effect.flatMap(() => {
-        if (refused.size === 0 || signal?.aborted) return Effect.void;
-        return Effect.forEach([...refused], refuse, { concurrency: SEAL_CONCURRENCY, discard: true }).pipe(
-          Effect.timeoutOrElse({ duration: Duration.millis(REFUSAL_TIMEOUT_MS), orElse: () => Effect.void }),
+        const refused = entries.filter((entry) => !published.has(entry));
+        const outcome: SealOutcome = refused.length
+          ? { refused: refused.length, refusedWrite: refused.some((entry) => entry.write) }
+          : SEALED;
+        if (refused.length === 0 || signal?.aborted) return Effect.succeed(outcome);
+        return Effect.forEach(refused, refuse, { concurrency: SEAL_CONCURRENCY, discard: true }).pipe(
+          Effect.timeoutOrElse({
+            duration: Duration.millis(Math.max(1, answerBy - Date.now())),
+            orElse: () => Effect.void,
+          }),
+          Effect.as(outcome),
         );
       }),
-      Effect.map((): SealOutcome => ({
-        refused: refused.size,
-        refusedWrite: [...refused].some((entry) => entry.write),
-      })),
-      Effect.ensuring(Effect.sync(() => held.close())),
     );
   });
 }

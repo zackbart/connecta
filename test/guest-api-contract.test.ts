@@ -9,6 +9,7 @@
 // neither module resolves — there the arm skips and the host-side clauses below
 // carry the file.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { describe, expect, it } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -26,6 +27,9 @@ import {
   checkQueuedWriteAtExhaustion,
   checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
+  checkDispatchGateAfterAuth,
+  checkDispatchGateAfterCatalog,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -39,7 +43,8 @@ import {
   checkLargeProgramWrite,
   checkRetainedResultsPassFinalSet,
   checkRetainedResultsSameRunAndCost,
-  checkRetainedResultsSealingRaces,
+  checkRetainedResultsUnreadableWhileSealing,
+  retainedSealingCases,
   checkProgramResultBom,
   checkProgramResultSurrogates,
   checkProgramReturnFallback,
@@ -425,7 +430,7 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
-    it(`INV-5: ${custom ? "customExecutor: " : ""}a retained result passes its run's final secret set before later runs can page it`, async () => {
+    it(`INV-5: ${custom ? "customExecutor: " : ""}a retained result is readable from later runs only if it passes its run's final secret set`, async () => {
       await checkRetainedResultsPassFinalSet(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
@@ -435,8 +440,13 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     }, 60_000);
-    it(`INV-5 INV-7: ${custom ? "customExecutor: " : ""}a secret registered during sealing is rechecked or refused, and a failed seal is refused`, async () => {
-      await checkRetainedResultsSealingRaces(
+    for (const [title, check] of Object.entries(retainedSealingCases)) {
+      it(`INV-5 INV-7: ${custom ? "customExecutor: " : ""}${title}`, async () => {
+        await check(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+      }, 60_000);
+    }
+    it(`INV-5: ${custom ? "customExecutor: " : ""}at every step of sealing another request reads only what sealing published`, async () => {
+      await checkRetainedResultsUnreadableWhileSealing(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     }, 60_000);
@@ -505,6 +515,23 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
 
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(required(workerReadDeadlineExecutor));
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(required(workerReadDeadlineExecutor), "await new Promise(() => {});");
+  });
+
+  it("[L3, W9, INV-9] the final gate refuses a write its auth step ran out of time, unsent", async () => {
+    await checkDispatchGateAfterAuth(required(workerReadDeadlineExecutor));
+  }, 60_000);
+
+  it("[L3, W9, INV-9] the final gate refuses a read its catalog ran out of time, unsent", async () => {
+    await checkDispatchGateAfterCatalog(required(workerReadDeadlineExecutor));
+  }, 60_000);
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(required(workerExecutor).deadlineMs).toBe(50_000);
+    expect(required(workerExecutor).deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
   });
 
   it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {

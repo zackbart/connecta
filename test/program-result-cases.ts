@@ -1,4 +1,5 @@
 import { expect } from "vitest";
+import { CredentialVault } from "../src/credentials.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { PROGRAM_RESULT_INLINE_BYTES } from "../src/program-result.js";
@@ -520,23 +521,42 @@ export async function checkProgramReturnWriteWarning(executor: Executor): Promis
 }
 
 const RETAINED_SECRET = 'retained"secret/value+with space-0123456789';
+const LATE_SECRET = 'late"secret/value+with space-9876543210';
 const retainedForms = (secret: string): Record<string, string> => ({
   plain: secret,
   json: JSON.stringify(secret).slice(1, -1),
   url: encodeURIComponent(secret),
   base64: btoa(secret),
 });
+const allForms = (...secrets: string[]) => secrets.flatMap((secret) => Object.values(retainedForms(secret)));
 
-/** A connector whose reads echo a value and whose `use` registers it, as sending a credential does. */
-function retainedRegistry(storage: KVStorage, echoed: () => unknown, onUse?: () => void) {
+const PAD = "x".repeat(1_100_000);
+const CLEAN = { keep: "kept-clean", PAD };
+
+interface RetainedOptions {
+  /** What `vault.read` and `vault.write` answer. `vault.clean` always answers `CLEAN`. */
+  echoed: () => unknown;
+  onUse?: () => void;
+  /** What a slow credential read waits for before it answers `LATE_SECRET`. */
+  credentialRead?: () => Promise<void>;
+  /** Called by `vault.land`, a program's last act. */
+  onLand?: () => void;
+}
+
+/**
+ * `vault.use` registers a value, as sending a credential does. `slow` lists its tools
+ * by reading its credential, and `vault.wait` answers once that read has begun.
+ */
+function retainedRegistry(storage: KVStorage, { echoed, onUse, credentialRead, onLand }: RetainedOptions) {
   const state = { writes: 0, ctx: undefined as ConnectorContext | undefined };
-  const connector: Connector = {
+  let reading = () => {};
+  const readBegan = new Promise<void>((resolve) => (reading = resolve));
+  const vault: Connector = {
     id: "vault",
     kind: "api",
     async listTools() {
       return [
-        { name: "read", annotations: { readOnlyHint: true } },
-        { name: "use", annotations: { readOnlyHint: true } },
+        ...["read", "clean", "use", "wait", "land"].map((name) => ({ name, annotations: { readOnlyHint: true } })),
         { name: "write", annotations: { readOnlyHint: false } },
       ];
     },
@@ -547,12 +567,48 @@ function retainedRegistry(storage: KVStorage, echoed: () => unknown, onUse?: () 
         onUse?.();
         return "used";
       }
+      if (name === "wait") {
+        await readBegan;
+        return "began";
+      }
+      if (name === "land") {
+        onLand?.();
+        return "landing";
+      }
+      if (name === "clean") return CLEAN;
       if (name === "write") state.writes++;
       return echoed();
     },
   };
-  return { registry: new Registry([connector], { storage, logger: silentLogger }), state };
+  const slow: Connector = {
+    id: "slow",
+    kind: "api",
+    credential: { label: "API token" },
+    async listTools(ctx) {
+      await ctx.credential!.getAll();
+      return [{ name: "tool", annotations: { readOnlyHint: true } }];
+    },
+    async callTool() {
+      return "unused";
+    },
+  };
+  const vaultStore = new CredentialVault(memoryStorage(), btoa("k".repeat(32)));
+  vaultStore.getAll = async () => {
+    reading();
+    await credentialRead?.();
+    return { value: LATE_SECRET };
+  };
+  const registry = new Registry(credentialRead ? [vault, slow] : [vault], {
+    storage,
+    logger: silentLogger,
+    ...(credentialRead ? { credentialVault: vaultStore } : {}),
+  });
+  return { registry, state };
 }
+
+/** Another request, over the same stored bytes, knowing none of the run's secrets. */
+const laterReader = (storage: KVStorage) =>
+  createMetaTools(retainedRegistry(storage, { echoed: () => null }).registry, BASE, { readOnly: false });
 
 /** Everything a later request with an empty secret set can page out of `id`. */
 async function pageFromLaterRun(registry: Registry, id: string): Promise<string> {
@@ -566,6 +622,11 @@ async function pageFromLaterRun(registry: Registry, id: string): Promise<string>
     offset = page.structuredContent!.nextOffset as number;
   }
 }
+
+const refusalOf = async (registry: Registry, id: string) =>
+  (await createMetaTools(registry, BASE, { readOnly: false }).readResult({ id })).structuredContent?.error as
+    | { code: string; message: string; retryable: boolean }
+    | undefined;
 
 const storedResultText = async (inner: KVStorage) => {
   const keys = await inner.list(scopes.results + "result:");
@@ -582,7 +643,6 @@ const expectNoForms = (text: string, secret = RETAINED_SECRET) => {
     expect(text.includes(form), `${name} form survived`).toBe(false);
 };
 
-const PAD = "x".repeat(1_100_000);
 const RETAINED_PROGRAM = (tool: string) => `async () => {
   const handle = await connecta.call("vault.${tool}");
   await connecta.call("vault.use");
@@ -591,24 +651,28 @@ const RETAINED_PROGRAM = (tool: string) => `async () => {
 
 /** Bytes a run stored before a later call in it registered a secret, read after it ended. */
 export async function checkRetainedResultsPassFinalSet(executor: Executor): Promise<void> {
-  const forms = Object.values(retainedForms(RETAINED_SECRET));
-  const cases: Array<{ label: string; tool: string; echoed: unknown; marker: string }> = [
-    { label: "oversized JSON", tool: "read", echoed: { forms, keep: "kept-json", PAD }, marker: "kept-json" },
-    { label: "oversized text", tool: "read", echoed: `kept-text ${forms.join(" ")} ${PAD}`, marker: "kept-text" },
-    { label: "paged write", tool: "write", echoed: { forms, keep: "kept-write", PAD }, marker: "kept-write" },
+  const forms = allForms(RETAINED_SECRET);
+  const cases: Array<{ label: string; tool: string; echoed: unknown }> = [
+    { label: "oversized JSON", tool: "read", echoed: { forms, keep: "kept-json", PAD } },
+    { label: "oversized text", tool: "read", echoed: `kept-text ${forms.join(" ")} ${PAD}` },
+    { label: "paged write", tool: "write", echoed: { forms, keep: "kept-write", PAD } },
   ];
-  for (const { label, tool, echoed, marker } of cases) {
+  for (const { label, tool, echoed } of cases) {
     const inner = memoryStorage();
-    const { registry, state } = retainedRegistry(inner, () => echoed);
+    const { registry, state } = retainedRegistry(inner, { echoed: () => echoed });
     const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
       code: RETAINED_PROGRAM(tool),
     });
     expect(outcome.isError, `${label}: ${JSON.stringify(outcome.structuredContent)}`).toBeUndefined();
-    expect(outcome.structuredContent).not.toHaveProperty("note");
-    const paged = await pageFromLaterRun(registry, outcome.structuredContent!.result as string);
-    expectNoForms(paged);
-    expect(paged.includes(marker), label).toBe(true);
-    expect(paged).toContain("[redacted]");
+    const error = await refusalOf(registry, outcome.structuredContent!.result as string);
+    expect(error, label).toMatchObject({ code: "result_not_retained", retryable: false });
+    if (tool === "write") {
+      expect(error!.message).toContain("do not call it again");
+      expect(outcome.structuredContent?.note).toContain("do not repeat it");
+    } else {
+      expect(error!.message).toContain("Rerun the read");
+      expect(outcome.structuredContent?.note).toContain("Rerun the read");
+    }
     // The old bytes are gone from storage too, not only from what a page returns.
     expectNoForms(await storedResultText(inner));
     expect(state.writes).toBe(tool === "write" ? 1 : 0);
@@ -617,23 +681,23 @@ export async function checkRetainedResultsPassFinalSet(executor: Executor): Prom
   // A secret split across two text blocks is one match, as it is when the result enters.
   const split = RETAINED_SECRET.length >> 1;
   const inner = memoryStorage();
-  const { registry } = retainedRegistry(inner, () => ({
-    content: [
-      { type: "text", text: RETAINED_SECRET.slice(0, split) },
-      { type: "text", text: RETAINED_SECRET.slice(split) },
-    ],
-    keep: "kept-blocks",
-    PAD,
-  }));
+  const { registry } = retainedRegistry(inner, {
+    echoed: () => ({
+      content: [
+        { type: "text", text: RETAINED_SECRET.slice(0, split) },
+        { type: "text", text: RETAINED_SECRET.slice(split) },
+      ],
+      keep: "kept-blocks",
+      PAD,
+    }),
+  });
   const blocks = await createExecuteTool(registry, BASE, executor, silentLogger)({ code: RETAINED_PROGRAM("read") });
-  const paged = await pageFromLaterRun(registry, blocks.structuredContent!.result as string);
-  expect(paged).toContain("kept-blocks");
-  expect(paged).not.toContain(RETAINED_SECRET.slice(0, split));
-  expect(paged).not.toContain(RETAINED_SECRET.slice(split));
+  expect(await refusalOf(registry, blocks.structuredContent!.result as string)).toMatchObject({
+    code: "result_not_retained",
+  });
 
-  // An id in a program's error is delivered as surely as one in its return.
-  const thrown = memoryStorage();
-  const failing = retainedRegistry(thrown, () => ({ forms, PAD }));
+  // An id in a program's error is covered as surely as one in its return.
+  const failing = retainedRegistry(memoryStorage(), { echoed: () => ({ forms, PAD }) });
   const failed = await createExecuteTool(
     failing.registry,
     BASE,
@@ -648,7 +712,18 @@ export async function checkRetainedResultsPassFinalSet(executor: Executor): Prom
   });
   expect(failed.isError).toBe(true);
   const id = /id ([0-9a-f-]{36})/.exec(JSON.stringify(failed.structuredContent))![1]!;
-  expectNoForms(await pageFromLaterRun(failing.registry, id));
+  expect(await refusalOf(failing.registry, id)).toMatchObject({ code: "result_not_retained" });
+
+  // A result the grown set finds nothing in stays whole, with no note: only growth was seen.
+  const clean = retainedRegistry(memoryStorage(), { echoed: () => CLEAN });
+  const kept = await createExecuteTool(
+    clean.registry,
+    BASE,
+    executor,
+    silentLogger,
+  )({ code: RETAINED_PROGRAM("read") });
+  expect(kept.structuredContent).not.toHaveProperty("note");
+  expect(JSON.parse(await pageFromLaterRun(clean.registry, kept.structuredContent!.result as string))).toEqual(CLEAN);
 }
 
 /** The same run keeps paging; a run that retained nothing new pays nothing new. */
@@ -668,7 +743,7 @@ export async function checkRetainedResultsSameRunAndCost(executor: Executor): Pr
       return inner.set(key, value, options);
     },
   };
-  const { registry } = retainedRegistry(storage, () => `same-run ${PAD}`);
+  const { registry } = retainedRegistry(storage, { echoed: () => `same-run ${PAD}` });
   const execute = createExecuteTool(registry, BASE, executor, silentLogger);
   const outcome = await execute({
     code: `async () => {
@@ -683,7 +758,7 @@ export async function checkRetainedResultsSameRunAndCost(executor: Executor): Pr
   const result = outcome.structuredContent!.result as { id: string; before: string; after: string; total: number };
   expect(result).toMatchObject({ before: "same-run", after: "xxxxxxxx", total: 1_100_009 });
 
-  // One write per chunk, chunk 0 last, as a stash has always cost; the clean recheck wrote nothing.
+  // One write per chunk, chunk 0 last, as a stash has always cost; a clean read-back wrote nothing.
   const chunks = Math.ceil(result.total / 49_152);
   expect(sets).toHaveLength(chunks);
   expect(new Set(sets).size).toBe(chunks);
@@ -706,143 +781,333 @@ export async function checkRetainedResultsSameRunAndCost(executor: Executor): Pr
   expect(gets).toBe(0);
 }
 
-/** Growth during sealing is checked again or refused; a failed seal is refused, never served. */
-export async function checkRetainedResultsSealingRaces(executor: Executor): Promise<void> {
-  const LATE = 'late"secret/value+with space-9876543210';
-  const forms = Object.values(retainedForms(RETAINED_SECRET)).concat(Object.values(retainedForms(LATE)));
-  const prefix = scopes.results + "result:";
-  const isHeader = (key: string) => key.startsWith(prefix) && !key.includes("#");
-  const harness = (
-    hooks: { get?: (key: string) => unknown; set?: (key: string) => unknown },
-    tool = "read",
-    watchdogMs?: number,
+const RESULT_PREFIX = scopes.results + "result:";
+const isHeader = (key: string) => key.startsWith(RESULT_PREFIX) && !key.includes("#");
+const isMarker = (value: string) => value.startsWith("connecta-result-refused-v4:");
+type StorageHooks = {
+  get?: (key: string) => unknown;
+  set?: (key: string, value: string) => unknown;
+};
+
+/** Hooks see result keys once `armed`; a credential read, when given, answers late. */
+function sealingHarness(
+  hooks: StorageHooks,
+  options: {
+    tool?: string;
+    watchdogMs?: number;
+    armed?: boolean;
+    code?: string;
+    echoed?: () => unknown;
+    credentialRead?: () => Promise<void>;
+    onLand?: () => void;
+  } = {},
+) {
+  const inner = memoryStorage();
+  const armed = { on: options.armed ?? false };
+  const storage: KVStorage = {
+    ...inner,
+    async get(key) {
+      if (armed.on && key.startsWith(RESULT_PREFIX)) await hooks.get?.(key);
+      return inner.get(key);
+    },
+    async set(key, value, opts) {
+      if (armed.on && key.startsWith(RESULT_PREFIX)) await hooks.set?.(key, value);
+      return inner.set(key, value, opts);
+    },
+  };
+  const built = retainedRegistry(storage, {
+    echoed: options.echoed ?? (() => ({ forms: allForms(RETAINED_SECRET, LATE_SECRET), keep: "kept", PAD })),
+    onUse: () => {
+      armed.on = true;
+    },
+    ...(options.credentialRead ? { credentialRead: options.credentialRead } : {}),
+    ...(options.onLand ? { onLand: options.onLand } : {}),
+  });
+  const run = async () => {
+    const outcome = await createExecuteTool(built.registry, BASE, executor(), silentLogger, undefined, {
+      readOnly: false,
+      ...(options.watchdogMs ? { watchdogMs: options.watchdogMs } : {}),
+    })({ code: options.code ?? RETAINED_PROGRAM(options.tool ?? "read") });
+    // Later requests read from storage that has recovered: only what is stored counts.
+    armed.on = false;
+    return outcome;
+  };
+  let current: Executor;
+  const executor = () => current;
+  return {
+    ...built,
+    inner,
+    run: (using: Executor) => {
+      current = using;
+      return run();
+    },
+  };
+}
+
+const after = (ms: number) => () => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const LATE_READ_PROGRAM = `async () => {
+  connecta.describe({ address: "slow.tool" }).catch(() => {});
+  await connecta.call("vault.wait");
+  const first = await connecta.call("vault.read");
+  const second = await connecta.call("vault.read");
+  await connecta.call("vault.land");
+  return [first.resultId, second.resultId];
+}`;
+/** A credential read that answers shortly after the program's last act. */
+const landingAfterProgram = () => {
+  let open = () => {};
+  const landed = new Promise<void>((resolve) => (open = resolve));
+  return { credentialRead: () => landed, onLand: () => void setTimeout(open, 100) };
+};
+
+const expectNothingReadable = async (built: ReturnType<typeof sealingHarness>, ids: string[], code?: string) => {
+  for (const id of ids) {
+    const page = await laterReader(built.inner).readResult({ id });
+    expect(page.isError, JSON.stringify(page.structuredContent)).toBe(true);
+    if (code) expect(page.structuredContent?.error).toMatchObject({ code, retryable: false });
+  }
+};
+
+/** A run publishes nothing until its secret set is final; every other outcome leaves ids refused. */
+export const retainedSealingCases: Record<string, (executor: Executor) => Promise<void>> = {
+  "an offset issued during the run finds the same bytes, or an explicit refusal": async (executor) => {
+    const continued = `async () => {
+    const handle = await connecta.call("vault.read");
+    const first = await connecta.result(handle, { offset: 0, maxBytes: 70 });
+    const second = await connecta.result(handle, { offset: first.nextOffset, maxBytes: 70 });
+    await connecta.call("vault.use");
+    return { id: handle.resultId, nextOffset: first.nextOffset, second: second.text };
+  }`;
+    const records = (head: string) => ({ head, records: Array.from({ length: 120_000 }, (_, at) => `record-${at}`) });
+    const unchanged = retainedRegistry(memoryStorage(), { echoed: () => records("no-secret-in-this-field") });
+    const resumed = await createExecuteTool(unchanged.registry, BASE, executor, silentLogger)({ code: continued });
+    const issued = resumed.structuredContent!.result as { id: string; nextOffset: number; second: string };
+    const later = await createMetaTools(unchanged.registry, BASE, { readOnly: false }).readResult({
+      id: issued.id,
+      offset: issued.nextOffset,
+      maxBytes: 70,
+    });
+    expect(later.structuredContent!.text).toBe(issued.second);
+    const matching = retainedRegistry(memoryStorage(), { echoed: () => records(RETAINED_SECRET) });
+    const stale = await createExecuteTool(matching.registry, BASE, executor, silentLogger)({ code: continued });
+    const staleIssued = stale.structuredContent!.result as { id: string; nextOffset: number };
+    const resumedStale = await createMetaTools(matching.registry, BASE, { readOnly: false }).readResult({
+      id: staleIssued.id,
+      offset: staleIssued.nextOffset,
+      maxBytes: 70,
+    });
+    expect(resumedStale.isError).toBe(true);
+    expect(resumedStale.structuredContent?.error).toMatchObject({ code: "result_not_retained", retryable: false });
+  },
+  "a credential read still pending when the program returns is waited for, and what it registers counts": async (
+    executor,
   ) => {
-    const inner = memoryStorage();
-    const armed = { on: false };
-    const storage: KVStorage = {
-      ...inner,
-      async get(key) {
-        if (armed.on && key.startsWith(prefix)) await hooks.get?.(key);
-        return inner.get(key);
+    const read = sealingHarness({}, { code: LATE_READ_PROGRAM, ...landingAfterProgram() });
+    const outcome = await read.run(executor);
+    expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBeUndefined();
+    await expectNothingReadable(read, outcome.structuredContent!.result as string[], "result_not_retained");
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
+  },
+  "what a late credential read adds does not touch a result with no match in it": async (executor) => {
+    const read = sealingHarness({}, { code: LATE_READ_PROGRAM, ...landingAfterProgram(), echoed: () => CLEAN });
+    const outcome = await read.run(executor);
+    expect(outcome.structuredContent).not.toHaveProperty("note");
+    for (const id of outcome.structuredContent!.result as string[])
+      expect(JSON.parse(await pageFromLaterRun(read.registry, id))).toEqual(CLEAN);
+  },
+  "a credential read still pending at the deadline leaves every entry unpublished, even once it lands": async (
+    executor,
+  ) => {
+    let land = () => {};
+    const gate = new Promise<void>((resolve) => (land = resolve));
+    const headers: string[] = [];
+    const read = sealingHarness(
+      {
+        set(key, value) {
+          if (isHeader(key) && !isMarker(value)) headers.push(key);
+        },
       },
-      async set(key, value, options) {
-        if (armed.on && key.startsWith(prefix)) await hooks.set?.(key);
-        return inner.set(key, value, options);
+      { code: LATE_READ_PROGRAM, credentialRead: () => gate, watchdogMs: 3000, armed: true, echoed: () => CLEAN },
+    );
+    const started = Date.now();
+    const outcome = await read.run(executor);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(headers).toEqual([]);
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
+    const ids = outcome.structuredContent!.result as string[];
+    await expectNothingReadable(read, ids, "result_not_retained");
+    land();
+    await after(20)();
+    await expectNothingReadable(read, ids, "result_not_retained");
+  },
+  "a header write that stalls cannot leave an earlier entry readable with an unchecked secret": async (executor) => {
+    let attempts = 0;
+    const read = sealingHarness(
+      {
+        set(key) {
+          if (isHeader(key) && ++attempts === 2) return new Promise(() => {});
+          return undefined;
+        },
       },
-    };
-    const built = retainedRegistry(
-      storage,
-      () => ({ forms, keep: "kept", PAD }),
-      () => {
-        armed.on = true;
+      { code: LATE_READ_PROGRAM, ...landingAfterProgram(), watchdogMs: 3000, armed: true },
+    );
+    const outcome = await read.run(executor);
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
+    await expectNothingReadable(read, outcome.structuredContent!.result as string[]);
+  },
+  "with a final set, a stalled header write costs that entry alone": async (executor) => {
+    let attempts = 0;
+    const stalled = sealingHarness(
+      {
+        set(key) {
+          if (isHeader(key) && ++attempts === 2) return new Promise(() => {});
+          return undefined;
+        },
+      },
+      {
+        armed: true,
+        watchdogMs: 3000,
+        echoed: () => CLEAN,
+        code: `async () => [
+          (await connecta.call("vault.read")).resultId,
+          (await connecta.call("vault.clean")).resultId,
+        ]`,
       },
     );
-    const run = async () => {
-      const outcome = await createExecuteTool(built.registry, BASE, executor, silentLogger, undefined, {
-        readOnly: false,
-        ...(watchdogMs ? { watchdogMs } : {}),
-      })({
-        code: `async () => {
-          const handle = await connecta.call("vault.${tool}");
-          await connecta.call("vault.use");
-          return handle.resultId;
-        }`,
-      });
-      // The later run reads from storage that has recovered: the refusal is what is stored.
-      armed.on = false;
-      return outcome;
-    };
-    return { ...built, inner, run };
-  };
-  const refusal = async (registry: Registry, id: string) =>
-    (await createMetaTools(registry, BASE, { readOnly: false }).readResult({ id })).structuredContent?.error as
-      | { code: string; message: string; retryable: boolean }
-      | undefined;
-
-  // A credential read that finishes during the recheck is checked in another round.
-  {
+    const outcome = await stalled.run(executor);
+    expect(outcome.structuredContent?.note).toContain("may fail");
+    const pages = await Promise.all(
+      (outcome.structuredContent!.result as string[]).map((id) => laterReader(stalled.inner).readResult({ id })),
+    );
+    expect(pages.filter((page) => page.isError)).toHaveLength(1);
+  },
+  "a marker is only a better message: failing to store it serves nothing, and the note stands": async (executor) => {
+    const read = sealingHarness(
+      {
+        set(key, value) {
+          if (isHeader(key) && isMarker(value)) throw new Error("storage offline");
+        },
+      },
+      { code: LATE_READ_PROGRAM, ...landingAfterProgram(), armed: true },
+    );
+    const outcome = await read.run(executor);
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
+    await expectNothingReadable(read, outcome.structuredContent!.result as string[], "not_found");
+  },
+  "a registration that reaches the set while it is being checked stops publication": async (executor) => {
     let registered = false;
-    const late = harness({
+    const late = sealingHarness({
       get() {
         if (registered) return;
         registered = true;
-        sentSecretsFor(late.state.ctx!).add(LATE);
+        sentSecretsFor(late.state.ctx!).add(LATE_SECRET);
       },
     });
-    const outcome = await late.run();
-    expect(outcome.structuredContent).not.toHaveProperty("note");
-    expect(registered).toBe(true);
-    const paged = await pageFromLaterRun(late.registry, outcome.structuredContent!.result as string);
-    expectNoForms(paged);
-    expectNoForms(paged, LATE);
-    expect(paged).toContain("kept");
-  }
-  // One that finishes while the header is on its way was checked by nothing, so it is refused.
-  {
-    let registered = false;
-    const late = harness({
-      set(key) {
-        if (registered || !isHeader(key)) return;
-        registered = true;
-        sentSecretsFor(late.state.ctx!).add(LATE);
-      },
-    });
-    const outcome = await late.run();
+    const outcome = await late.run(executor);
     expect(registered).toBe(true);
     expect(outcome.structuredContent?.note).toContain("Rerun the read");
-    const error = await refusal(late.registry, outcome.structuredContent!.result as string);
-    expect(error).toMatchObject({ code: "result_not_retained", retryable: false });
-    expect(error!.message).toContain("Rerun the read");
-    expectNoForms(await storedResultText(late.inner), LATE);
-  }
-  // A failed recheck refuses: a read says to rerun, and a write says not to repeat itself.
-  for (const tool of ["read", "write"]) {
-    const failing = harness(
+    await expectNothingReadable(late, [outcome.structuredContent!.result as string], "result_not_retained");
+  },
+  "a failed read-back refuses: a read says to rerun, and a write says not to repeat itself": async (executor) => {
+    for (const tool of ["read", "write"]) {
+      const failing = sealingHarness(
+        {
+          get() {
+            throw new Error("storage offline");
+          },
+        },
+        { tool, echoed: () => CLEAN },
+      );
+      const outcome = await failing.run(executor);
+      expect(outcome.isError).toBeUndefined();
+      const error = await refusalOf(failing.registry, outcome.structuredContent!.result as string);
+      expect(error).toMatchObject({ code: "result_not_retained", retryable: false });
+      if (tool === "write") {
+        expect(error!.message).toContain("not retrievable");
+        expect(error!.message).toContain("do not call it again");
+        expect(outcome.structuredContent?.note).toContain("do not repeat it");
+        expect(failing.state.writes).toBe(1);
+      } else {
+        expect(error!.message).toContain("Rerun the read");
+        expect(outcome.structuredContent?.note).toContain("Rerun the read");
+      }
+    }
+  },
+  "storage that refuses every later operation cannot mark the entry, and still serves nothing": async (executor) => {
+    const failing = sealingHarness(
       {
         get() {
           throw new Error("storage offline");
         },
+        set() {
+          throw new Error("storage offline");
+        },
       },
-      tool,
+      { echoed: () => CLEAN },
     );
-    const outcome = await failing.run();
-    expect(outcome.isError).toBeUndefined();
-    const error = await refusal(failing.registry, outcome.structuredContent!.result as string);
-    expect(error).toMatchObject({ code: "result_not_retained", retryable: false });
-    if (tool === "write") {
-      expect(error!.message).toContain("not retrievable");
-      expect(error!.message).toContain("do not call it again");
-      expect(outcome.structuredContent?.note).toContain("do not repeat it");
-      expect(failing.state.writes).toBe(1);
-    } else {
-      expect(error!.message).toContain("Rerun the read");
-      expect(outcome.structuredContent?.note).toContain("Rerun the read");
-    }
-    expectNoForms(await storedResultText(failing.inner));
-  }
-  // Storage that refuses every later write cannot mark the entry, and still serves nothing.
-  {
-    const failing = harness({
-      get() {
-        throw new Error("storage offline");
-      },
-      set() {
-        throw new Error("storage offline");
-      },
-    });
-    const outcome = await failing.run();
+    const outcome = await failing.run(executor);
     expect(outcome.structuredContent?.note).toContain("Rerun the read");
-    expect(await refusal(failing.registry, outcome.structuredContent!.result as string)).toMatchObject({
-      code: "not_found",
-      retryable: false,
-    });
-  }
-  // Storage that never answers cannot hold the response past the deadline.
-  {
-    const hung = harness({ get: () => new Promise(() => {}), set: () => new Promise(() => {}) }, "read", 3000);
+    await expectNothingReadable(failing, [outcome.structuredContent!.result as string], "not_found");
+  },
+  "storage that never answers cannot hold the response past the deadline": async (executor) => {
+    const hung = sealingHarness(
+      { get: () => new Promise(() => {}), set: () => new Promise(() => {}) },
+      { watchdogMs: 3000, echoed: () => CLEAN },
+    );
     const started = Date.now();
-    const outcome = await hung.run();
+    const outcome = await hung.run(executor);
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(outcome.structuredContent?.note).toContain("Rerun the read");
-  }
+  },
+};
+
+/** At every storage step of sealing, another request reads only what sealing has published. */
+export async function checkRetainedResultsUnreadableWhileSealing(executor: Executor): Promise<void> {
+  const observed: Array<{ id: string; published: boolean; readable: boolean; text: string }> = [];
+  let probing = false;
+  const probe = async () => {
+    if (probing) return;
+    probing = true;
+    const keys = await built.inner.list(RESULT_PREFIX);
+    const ids = new Set(keys.map((key) => key.slice(RESULT_PREFIX.length).split("#")[0]!));
+    const reader = laterReader(built.inner);
+    for (const id of ids) {
+      const page = await reader.readResult({ id, maxBytes: 24_000 });
+      const stored = await built.inner.get(RESULT_PREFIX + id);
+      observed.push({
+        id,
+        published: stored !== null && !isMarker(stored),
+        readable: !page.isError,
+        text: String(page.structuredContent?.text ?? ""),
+      });
+    }
+    probing = false;
+  };
+  const built = sealingHarness(
+    {
+      get: probe,
+      set: probe,
+    },
+    {
+      echoed: () => ({ forms: allForms(RETAINED_SECRET), keep: "kept", PAD }),
+      code: `async () => {
+        const matched = await connecta.call("vault.read");
+        const clean = await connecta.call("vault.clean");
+        await connecta.call("vault.use");
+        return { matched: matched.resultId, clean: clean.resultId };
+      }`,
+    },
+  );
+  const outcome = await built.run(executor);
+  await probe();
+  const { matched, clean } = outcome.structuredContent!.result as { matched: string; clean: string };
+  const steps = (id: string) => observed.filter((step) => step.id === id);
+  expect(steps(matched).length).toBeGreaterThan(0);
+  expect(steps(clean).length).toBeGreaterThan(0);
+  expect(steps(matched).filter((step) => step.readable)).toEqual([]);
+  // Before its header is stored the clean entry reads as nothing, then it reads whole.
+  expect(steps(clean).some((step) => !step.readable)).toBe(true);
+  for (const step of steps(clean)) expect(step.readable).toBe(step.published);
+  expect(steps(clean).at(-1)!.readable).toBe(true);
+  for (const step of observed) expectNoForms(step.text);
 }

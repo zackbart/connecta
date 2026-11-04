@@ -83,17 +83,59 @@ const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
  */
 const EXECUTE_WATCHDOG_MS = CONFIG_DEFAULTS.execute.watchdogMs;
 /**
- * How long before the executor's own deadline a program's reads stop: the time
- * the guest gets to receive their `timeout` and return what it has.
+ * How long before a deadline a program's reads stop: the time the guest gets
+ * to receive their `timeout` and return what it has.
  */
 const READ_DEADLINE_MARGIN_MS = 1_000;
+const readMarginMs = (deadlineMs: number) => Math.min(READ_DEADLINE_MARGIN_MS, Math.floor(deadlineMs / 10));
 
-/** Reads stop this long into a run, leaving its guest time to finish. */
-function readWindowMs(executor: Executor, watchdogMs: number): number {
+/**
+ * When a run's reads stop: before the executor's deadline, measured from now,
+ * and before the response ceiling, which queueing may already have spent.
+ */
+function readDeadlineAt(executor: Executor, ceiling: ResponseCeiling): number {
+  const beforeCeiling = ceiling.at - readMarginMs(ceiling.ms);
   const { deadlineMs } = executor;
-  if (deadlineMs === undefined) return watchdogMs;
-  return Math.min(watchdogMs, deadlineMs - Math.min(READ_DEADLINE_MARGIN_MS, Math.floor(deadlineMs / 10)));
+  if (deadlineMs === undefined) return beforeCeiling;
+  return Math.min(beforeCeiling, Date.now() + deadlineMs - readMarginMs(deadlineMs));
 }
+
+/** The time by which a request must have its answer, counted from its arrival (`execute.watchdogMs`). */
+interface ResponseCeiling {
+  ms: number;
+  at: number;
+  startedAt: number;
+  /**
+   * The absolute deadline for work after the run that may still hold its
+   * response, such as storing what it leaves for recovery. Past `at`, because a
+   * run the ceiling ended has this to do too; still short of the client's limit.
+   */
+  answerBy: number;
+}
+
+/** Past the ceiling, room to store what a run leaves behind. Default 57 s against a 60 s client. */
+const RESPONSE_STORAGE_MARGIN_MS = 2_000;
+
+function responseCeiling(startedAt: number, ms: number): ResponseCeiling {
+  const at = startedAt + ms;
+  return { ms, at, startedAt, answerBy: at + Math.min(RESPONSE_STORAGE_MARGIN_MS, Math.floor(ms / 10)) };
+}
+
+/** Refuse a run with no time left to start. Nothing has run, so running it again is safe. */
+const startable = (ceiling: ResponseCeiling): Effect.Effect<void, InvocationFailure> =>
+  Effect.suspend(() => {
+    const elapsedMs = Date.now() - ceiling.startedAt;
+    return elapsedMs < ceiling.ms
+      ? Effect.void
+      : Effect.fail(
+          new InvocationFailure({
+            code: "timeout",
+            message: `Operation "execute_code" used its ${ceiling.ms}ms response ceiling before it started, so it did not run and sent nothing. Run it again.`,
+            retryable: true,
+            details: { operation: "execute_code", stage: "response ceiling", elapsedMs, deadlineMs: ceiling.ms },
+          }),
+        );
+  });
 /**
  * Room to name every connector of a typical deployment. Past it, complete
  * entries plus an exact omission count stay inside this byte cap.
@@ -651,6 +693,7 @@ function sandboxProvider(
     }
     return value;
   };
+  const dispatchDeadlineAt = limits.readDeadlineAt ?? limits.programDeadlineAt;
   /** Budget and account for writes a writable endpoint admits. */
   const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number, writeTimeoutMs: number) => ({
     source: "execute_code" as const,
@@ -660,6 +703,20 @@ function sandboxProvider(
     ...(limits.routes ? { routes: limits.routes } : {}),
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
+    ...(dispatchDeadlineAt !== undefined
+      ? {
+          // Past the gate's time, a call's answer could not reach the program either.
+          dispatchDeadline: {
+            at: dispatchDeadlineAt,
+            refusal: (address: string): CallErrorDetails => ({
+              code: "timeout",
+              message: `Too little of this run's deadline remains for ${address}, so it was not sent. Return what you have and send it in a new program.`,
+              retryable: true,
+              details: { operation: address, stage: "dispatch gate" },
+            }),
+          },
+        }
+      : {}),
     unwrapResult: true,
     readOnly: limits.readOnly,
     processResult: authMethod(
@@ -1236,7 +1293,8 @@ function sandboxProvider(
         return [
           name,
           (...args: unknown[]) => {
-            if (budgetFailure) return stopped;
+            // Once sealing begins the run's secret set is final, so nothing new may start.
+            if (budgetFailure || limits.heldResults?.accepts() === false) return stopped;
             // Uncounted: one per run; any further call through the bridge ends the run.
             if (budget === "once") {
               if (++notices > 1)
@@ -1286,7 +1344,7 @@ function sandboxProvider(
               activity?.recordOperation && ["search", "describe", "result", "skill"].includes(name)
                 ? operationActivity(activity, registry, name as "search" | "describe" | "result" | "skill", guarded)
                 : guarded;
-            const settled = runEdge(
+            const running = runEdge(
               operationEffect.pipe(
                 Effect.catch((error) => {
                   if (deadline && hostAccessSignal?.aborted)
@@ -1313,7 +1371,9 @@ function sandboxProvider(
                   return typedFailure(error);
                 }),
               ),
-            ).then(
+            );
+            limits.heldResults?.track(running);
+            const settled = running.then(
               (value) => {
                 if (counted) hostCalls.succeeded++;
                 return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
@@ -1366,11 +1426,10 @@ function awaitExecutor<A>(
   signal: AbortSignal,
   options: {
     late?: (value: A) => void;
-    watchdog?: { ms: number; logger: Logger };
+    watchdog?: { ceiling: ResponseCeiling; executorDeadlineAt: number | undefined; logger: Logger };
     terminal?: Effect.Effect<never, unknown>;
   } = {},
 ): Effect.Effect<A, unknown> {
-  const started = Date.now();
   const contenders: Array<Effect.Effect<A, unknown>> = [
     typeof start !== "function"
       ? start
@@ -1404,19 +1463,32 @@ function awaitExecutor<A>(
   const { watchdog } = options;
   if (watchdog) {
     contenders.push(
-      Effect.sleep(Duration.millis(watchdog.ms)).pipe(
+      untilCeiling(watchdog.ceiling).pipe(
         Effect.andThen(
           Effect.suspend(() => {
+            const { ms: deadlineMs, startedAt } = watchdog.ceiling;
+            const elapsedMs = Date.now() - startedAt;
+            // Time ran out before the executor's own deadline could: queueing
+            // spent it, or that deadline is set past the ceiling. Nothing is wedged.
+            if (watchdog.executorDeadlineAt !== undefined && Date.now() < watchdog.executorDeadlineAt) {
+              return Effect.fail(
+                new InvocationFailure({
+                  code: "timeout",
+                  message: `Operation "execute_code" timed out during response ceiling after ${elapsedMs}ms (effective deadline ${deadlineMs}ms). Return sooner, or do less in one program.`,
+                  retryable: true,
+                  details: { operation: "execute_code", stage: "response ceiling", elapsedMs, deadlineMs },
+                }),
+              );
+            }
             watchdog.logger.warn("[connecta] execute_code executor did not settle; run abandoned", {
-              watchdogMs: watchdog.ms,
+              watchdogMs: deadlineMs,
             });
-            const elapsedMs = Date.now() - started;
             return Effect.fail(
               new InvocationFailure({
                 code: "timeout",
-                message: `Operation "execute_code" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${watchdog.ms}ms); sandbox unresponsive.`,
+                message: `Operation "execute_code" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${deadlineMs}ms); sandbox unresponsive.`,
                 retryable: false,
-                details: { operation: "execute_code", stage: "sandbox watchdog", elapsedMs, deadlineMs: watchdog.ms },
+                details: { operation: "execute_code", stage: "sandbox watchdog", elapsedMs, deadlineMs },
               }),
             );
           }),
@@ -1426,6 +1498,10 @@ function awaitExecutor<A>(
   }
   return Effect.raceAllFirst(contenders);
 }
+
+/** Waits until the ceiling; already past it, one timer turn. */
+const untilCeiling = (ceiling: ResponseCeiling) =>
+  Effect.suspend(() => Effect.sleep(Duration.millis(Math.max(1, ceiling.at - Date.now()))));
 
 /**
  * The run's own signal, aborted however the run ends. It follows the
@@ -1458,10 +1534,27 @@ function runSignal(caller: AbortSignal | undefined): Effect.Effect<AbortSignal, 
  * executor, so this request's providers and program run here, never in the
  * releasing request, which workerd refuses.
  */
-function leased(executor: AdmittingExecutor, signal: AbortSignal): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
+function leased(
+  executor: AdmittingExecutor,
+  signal: AbortSignal,
+  ceiling: ResponseCeiling,
+): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
   return Effect.acquireRelease(
     awaitExecutor(() => executor.acquire({ signal, wait: true }), signal, {
       late: (lease) => lease.release(),
+      // A queue configured to outwait the client still answers it.
+      terminal: untilCeiling(ceiling).pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            Effect.fail(
+              new ExecutorAdmissionError(
+                "executor_overloaded",
+                `Executor admission timed out after ${Date.now() - ceiling.startedAt}ms.`,
+              ),
+            ),
+          ),
+        ),
+      ),
     }),
     (lease) => Effect.sync(() => lease.release()),
   );
@@ -1471,6 +1564,8 @@ function leased(executor: AdmittingExecutor, signal: AbortSignal): Effect.Effect
 interface RunnerConfig {
   /** An HTTP request shares its scope with every registered tool. */
   requestScope?: object | undefined;
+  /** When the inbound request arrived; the response ceiling counts from it. Otherwise from the call. */
+  requestStartedAt?: number | undefined;
   defaultToolTimeoutMs?: number | undefined;
   discoveryConcurrency?: number | undefined;
   probeTimeoutMs?: number | undefined;
@@ -1521,11 +1616,11 @@ export function createExecuteTool(
     programWrites: ProgramWrites,
     unawaited: { read: boolean },
     retention: { note?: string },
+    ceiling: ResponseCeiling,
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
-      const heldResults = new HeldResults(sentSecrets);
-      let runDeadlineAt = Date.now() + watchdog.ms;
+      const heldResults = new HeldResults(sentSecrets, requestOwner(requestScope).credentialReads);
       const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
       const emitted = new EmitCollector(
         resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
@@ -1555,6 +1650,7 @@ export function createExecuteTool(
           ),
         );
         const signal = yield* runSignal(callerSignal);
+        yield* startable(ceiling);
         // Admission comes before provider construction: queued calls retain
         // no catalogs or provider closures.
         let lease: ExecutorLease | undefined;
@@ -1563,7 +1659,7 @@ export function createExecuteTool(
             (elapsed) => {
               if (diagnostics) diagnostics.admissionMs = elapsed;
             },
-            leased(executor, signal),
+            leased(executor, signal, ceiling),
           );
           if ((lease.waitMs ?? 0) > 0) {
             logger.debug("[connecta] execute_code admitted after queue wait", {
@@ -1571,7 +1667,6 @@ export function createExecuteTool(
             });
           }
         }
-        runDeadlineAt = Date.now() + watchdog.ms;
         const provider = yield* timed(
           (elapsed) => {
             if (diagnostics) diagnostics.setupMs = elapsed;
@@ -1596,8 +1691,8 @@ export function createExecuteTool(
                 maxHostCalls: config.maxHostCalls,
                 hostCallTimeoutMs,
                 defaultToolTimeoutMs: config.defaultToolTimeoutMs,
-                programDeadlineAt: runDeadlineAt,
-                readDeadlineAt: Date.now() + readWindowMs(executor, watchdog.ms),
+                programDeadlineAt: ceiling.at,
+                readDeadlineAt: readDeadlineAt(executor, ceiling),
                 defer: config.defer,
                 readOnly: config.readOnly,
                 maxWrites: config.maxWrites,
@@ -1617,6 +1712,7 @@ export function createExecuteTool(
             new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled during sandbox setup."),
           );
         }
+        yield* startable(ceiling);
         const admitted = lease;
         // A program write may still be on the wire when the program settles:
         // close, so a write gated after this is not sent, then let the ones
@@ -1643,7 +1739,20 @@ export function createExecuteTool(
               Effect.mapError((error) => sentSecrets.redact(error)),
             ),
             signal,
-            { watchdog, terminal: Deferred.await(terminal) },
+            {
+              watchdog: {
+                ceiling,
+                // With no published deadline, a run that queued has not shown it is wedged.
+                executorDeadlineAt:
+                  executor.deadlineMs !== undefined
+                    ? Date.now() + executor.deadlineMs
+                    : (admitted?.waitMs ?? 0) > 0
+                      ? Infinity
+                      : undefined,
+                logger: watchdog.logger,
+              },
+              terminal: Deferred.await(terminal),
+            },
           ).pipe(
             Effect.ensuring(
               Effect.suspend(() => {
@@ -1675,6 +1784,7 @@ export function createExecuteTool(
             programWrites.hasSucceeded,
             maxResultChars,
             heldResults,
+            ceiling.answerBy,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
@@ -1685,15 +1795,10 @@ export function createExecuteTool(
           budgetFailure ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit)) : Effect.succeed(exit),
         ),
       );
-      // Every way a run answers can carry a result id, so every one of them seals. The
-      // floor lets a run that used its whole deadline still write what it retained.
+      // Every way a run answers can carry a result id, so every one of them seals, by the
+      // time the response must be on its way. A sealing cut short leaves entries unreadable.
       const sealRun = Effect.suspend(() =>
-        sealHeldResults(
-          heldResults,
-          registry.resultsStorage(),
-          Math.max(runDeadlineAt - Date.now(), RESULT_SEAL_FLOOR_MS),
-          callerSignal,
-        ),
+        sealHeldResults(heldResults, registry.resultsStorage(), ceiling.answerBy, callerSignal),
       ).pipe(
         Effect.tap(({ refused, refusedWrite }) =>
           Effect.sync(() => {
@@ -1748,6 +1853,7 @@ export function createExecuteTool(
         const programWrites = new ProgramWrites();
         const unawaited = { read: false };
         const retention: { note?: string } = {};
+        const ceiling = responseCeiling(config.requestStartedAt ?? Date.now(), watchdog.ms);
         const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
           // that first so a huge direct-call string is never encoded in full.
@@ -1769,6 +1875,7 @@ export function createExecuteTool(
             programWrites,
             unawaited,
             retention,
+            ceiling,
           );
         });
         return operationActivity(
@@ -1807,11 +1914,9 @@ export function createExecuteTool(
   );
 }
 
-/** The least sealing gets, for a run that used its whole deadline before writing what it retained. */
-const RESULT_SEAL_FLOOR_MS = 2000;
 const RESULTS_REFUSED_NOTE =
-  "A result this run retained could not be kept for later runs, so paging its id from a new program is refused. Rerun the read for a fresh result.";
-const RESULTS_REFUSED_WRITE_NOTE = `${RESULTS_REFUSED_NOTE} A write's output among them is not retrievable: that write already ran, so do not repeat it.`;
+  "A result this run retained was not kept for later runs, so paging its id from a new program may fail. Rerun the read for a fresh result.";
+const RESULTS_REFUSED_WRITE_NOTE = `${RESULTS_REFUSED_NOTE} A write's output among them may not be retrievable: that write already ran, so do not repeat it.`;
 const UNAWAITED_HINT = "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.";
 const SENT_NOTE =
   "Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.";
@@ -2097,6 +2202,7 @@ export function registerExecuteTool(
     client?: McpClientContext | undefined;
     requestSignal?: AbortSignal | undefined;
     requestScope?: object | undefined;
+    requestStartedAt?: number | undefined;
     discoveryConcurrency?: number | undefined;
     /**
      * The deployment's configured per-connector probe deadline. Programs probe
@@ -2113,7 +2219,7 @@ export function registerExecuteTool(
     maxHostCalls?: number | undefined;
     /** Deadline per host call in milliseconds. Default 15_000. */
     hostCallTimeoutMs?: number | undefined;
-    /** Hard ceiling on one execution, outside the sandbox. Default 120_000. */
+    /** The response ceiling, enforced outside the sandbox. Default 55_000. */
     watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
     /** The endpoint refuses every write. Resolved by the host route; default writable. */
@@ -2156,6 +2262,7 @@ export function registerExecuteTool(
     maxWrites,
     maxResultChars: ctx.maxResultChars,
     requestScope: ctx.requestScope,
+    requestStartedAt: ctx.requestStartedAt,
     routes: ctx.routes,
   });
   server.registerTool(

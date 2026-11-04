@@ -623,7 +623,12 @@ Completed writes remain successful and must not be repeated. JSON values still
 round-trip such strings through their escaped JSON representation.
 
 A per-call `timeoutMs` covers catalog resolution, admission, and connector
-execution under one deadline. The admission queue's own timeout may expire
+execution under one deadline, cut to the response ceiling, `execute.watchdogMs`
+(55 s by default) from the request's arrival, so the client gets a typed result
+rather than its own transport timeout. A call with no time left is refused before it
+resolves, as a retryable `timeout` at `details.stage: "response ceiling"` that says it
+was not sent. A call whose time runs out during resolution, admission or auth gets the
+same refusal from a check that is the last step before its connector. See [`L3`](./code-mode.md#cancellation-and-limits). The admission queue's own timeout may expire
 sooner but cannot extend the call deadline. Result processing happens after that
 deadline ends, because a completed downstream call must not turn into a
 retryable timeout while Connecta prepares its response.
@@ -761,10 +766,10 @@ a paging-unavailable notice, without a handle or recovery action. A write's
 notice still says it already ran. Activity records success; operator logs receive
 a fixed warning without storage error prose. Never repeat a write to recover output.
 
-A result a program retained is readable from later requests once it has passed
-that run's final secret set. A run that could not check it refuses it: paging
-answers `result_not_retained` with `retryable: false`, telling a read to rerun and a
-write not to repeat ([code mode `R4a`](./code-mode.md#results-and-projection)).
+A result a program retained is readable from later requests only once it has passed
+that run's final secret set. Otherwise it stays unreadable: paging answers
+`result_not_retained` with `retryable: false`, telling a read to rerun and a write
+not to repeat ([code mode `R4a`](./code-mode.md#results-and-projection)).
 A direct call's stash passes its own request's set when stored; a later direct call
 in another request shares no set with it.
 
@@ -816,9 +821,87 @@ to 60 seconds: its entry keeps the recorded code with `retryable: true`,
 lookup failed recently (CODE). Search with connector "X" to try it now.` A
 scoped search always probes. Records are kept per owner, admitted endpoint and
 described connector configuration. A healthy connector whose catalog always
-takes more than 5 seconds can stay out of unscoped search; search it with
-`connector`, or let any longer-deadline operation warm its complete catalog.
-See [Discovery health](./architecture.md#storage-credentials-and-connectors).
+takes more than 5 seconds and has no earlier complete catalog can stay out of
+unscoped search; search it with `connector`, or let any longer-deadline operation
+warm its complete catalog. See
+[Discovery health](./architecture.md#storage-credentials-and-connectors).
+
+**Stale listings.** When a connector does not answer an unscoped search, because
+of a timeout, a skip after a recent one, the discovery budget, `unavailable`,
+`rate_limited` or a retryable downstream failure, the search lists that
+connector's last complete catalog if the same owner, credential and catalog
+generation have one no more than 24 hours past its expiry. Its `catalogErrors`
+entry then adds `stale: true` and `ageMs`, the milliseconds since the downstream
+last confirmed that catalog, and keeps `code`, `retryable` and any
+`retryAfterMs`. A downstream's own retry delay stays as it named it, and the
+message then says to wait rather than to search again. A skipped connector's
+`retryAfterMs` is when discovery next asks it, at most 60 seconds:
+
+```json
+{
+  "connector": "tickets",
+  "code": "timeout",
+  "message": "Connector \"tickets\" did not answer discovery (timeout), so its tools are listed from its last complete catalog. Calls still check the live catalog. Search with connector \"tickets\" to try it now.",
+  "retryable": true,
+  "stale": true,
+  "ageMs": 412000
+}
+```
+
+A stale listing grants nothing. A call, `connecta.describe` and a search with
+`connector` read the live catalog, so a tool the downstream removed fails with
+`unknown_tool` and a reclassified one runs under its current verdict. Deployment
+classification, hidden tools, pool grants and read-only endpoints apply to a
+stale listing as they do to a live one. Authorization and permission failures,
+refusals and malformed catalogs never list a stale catalog, and a partial catalog
+is never stored or listed. An entry without `stale` lists no tools for that
+connector. `queryAnalysis.catalogError` holds failures only.
+
+An authorization or permission refusal also retires that credential's catalog
+for later requests, in every isolate: it is neither listed nor reused, fresh or
+stale, by discovery or by a call's five-minute fallback, until a listing
+succeeds. On a connector with a shared credential this covers everyone using
+that credential; on any other connector, only the caller refused. A credential
+change, OAuth connect or disconnect, or operator invalidation has the same effect
+at once for every owner. A stale listing is read again after its probe fails, so
+any of these during the probe also takes the tools out of that search.
+
+A refusal retires the catalog of the credential, OAuth identity and catalog
+generation its attempt was dispatched under, whichever are current when it
+answers, so another credential's catalog keeps working. A listing lifts only the
+retirement it read before it asked the downstream; a refusal that lands while it
+runs stays until a later listing succeeds. A custom connector's answer is
+retained only if its credential did not change while it was listing. Connecta
+cannot see which credential a custom connector sent, so a refusal whose
+credential changed while it was listing, or cannot be read afterwards, retires
+that connector's catalogs for every credential and owner.
+
+Three limits follow:
+
+- A custom connector's credential is compared when its listing begins and when
+  it is refused. A change back to the same credential between them goes unseen,
+  as does a connector sending a credential it kept from earlier. The credential
+  actually refused is then not retired: its catalog can be listed stale if it
+  becomes current again, until its first answer.
+- A retirement that cannot be written is logged as `catalog fence failed` and the
+  refusal is still returned. The catalog stays reusable until a later refusal is
+  recorded, a listing replaces it or its stale limit passes.
+- A connector whose `tools/list` keeps answering 401 or 403 has no catalog to
+  fall back on, so every call that must resolve a tool through its catalog fails
+  with that refusal until a listing succeeds. This includes a credential that may
+  call tools but not list them, and the five-minute fallback does not apply while
+  the catalog is retired.
+
+`total` counts this response's matches. Offsets are stateless, so it stays the
+same across a browse's pages while each catalog is unchanged, including one
+listed stale, and can change if a catalog refreshes between pages or a connector
+with no stale catalog starts answering.
+
+A cached or authored catalog does not wait for a probe slot, so
+`discovery.concurrency` bounds the connectors actually being asked. A probe that
+runs out of its own deadline also starts one refresh in the runtime's tail
+(`ctx.waitUntil`, or the Node listener's tracked equivalent) under the full probe
+deadline, at most 20 seconds, and that refresh warms the next search.
 
 Tool rows carry the address, stored classification, and tool-specific
 `guideRequired` and `guideRequiredReasons`. Facts shared by every row of one
@@ -1664,14 +1747,29 @@ resent, although the host approved what it saw as a read. To narrow that
 window, a native `tools/list` carries a 300-second private cache hint, against
 an hour on meta endpoints. This hint does not guarantee that a host refreshes
 its cached annotations; the stale-approval race is accepted on writable pools.
+A listing that omits a connector or lists one stale carries 60 seconds instead,
+about when that connector is next asked.
 
 **Listing.** `tools/list` is one page with no cursor (Eve's MCP client reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
 JSON-RPC error asking the operator to narrow the pool; nothing is silently
-dropped. A connector whose catalog cannot load is left out of that listing
-whole, never partially, with an operator warning; its tools return with the
-next listing that loads it. Listing never starts authorization. The server
-still declares `tools.listChanged: false`.
+dropped. A connector that does not answer in time, is `unavailable` or
+`rate_limited`, or hits a retryable downstream failure stays listed from its last
+complete catalog, under the same limit and partitioning as
+[stale listings](#lexical-discovery). Such a connector gets the 5-second deadline, or
+`discovery.probeTimeoutMs` when shorter, and is skipped for up to 60 seconds after
+a failure; one with nothing to fall back on keeps the full deadline. Each of its
+tools carries `_meta["dev.connecta/stale"]` with `code`, `ageMs` and any
+`retryAfterMs`, and `readOnlyHint: false, destructiveHint: true` whatever its stored
+classification, because an old catalog cannot vouch for a read (INV-1). The `skills`
+tool's `dev.connecta/surface` metadata names these connectors in `staleCatalogs`. A
+`tools/call` always resolves a live catalog, under the verdict it finds.
+
+A connector whose catalog cannot load and has no stale catalog, or that fails
+for authorization, permission or a malformed catalog, is left out of that listing
+whole, never partially, with an operator warning and a `catalogErrors` entry in the
+same metadata; its tools return with the next listing that loads it. Listing never
+starts authorization. The server still declares `tools.listChanged: false`.
 
 **Instructions** replace the meta routing text: call one known operation
 directly; with `execute_code`, use one program for several, dependent, or
@@ -1706,8 +1804,9 @@ connectors remain listed. Correct the schema or use the meta surface.
 
 **Diagnostics.** `connecta doctor --pool assistant` recognizes the configured
 surface and code setting from the local `skills` tool's
-`_meta["dev.connecta/surface"]`. It checks the required local tools, reports
-unavailable connector catalogs and listing-cap errors, and runs only a constant
+`_meta["dev.connecta/surface"]`. It checks the required local tools, fails on
+unavailable connector catalogs, listing-cap errors and connectors listed stale
+(`Native discovery degraded`), and runs only a constant
 program when code is enabled. It never dispatches a downstream tool. The
 metadata's `catalogErrors` exposes this request's failing connector ids,
 including connectors with unrepresentable schemas, to every client of the pool.

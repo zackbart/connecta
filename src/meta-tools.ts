@@ -12,7 +12,7 @@ import type { DownstreamInputResult } from "./downstream-input-context.js";
 import type { AuthorizeConnectorResult } from "./authorization-handoff.js";
 import { authCall, authInvoke, authFlow, authMethod, authStorage, registerAuth } from "./auth/native.js";
 import { registryProgram } from "./runtime/registry.js";
-import { runEdge } from "./runtime/run.js";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { authorizationHandoff, authorizeConnector, bindAuthorizationHandoffs } from "./authorization-handoff.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
@@ -35,7 +35,7 @@ import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import { base64Of, RESULT_ENVELOPE_V4, type HeldResults } from "./result-seal.js";
+import { RESULT_ENVELOPE_V4, type HeldResults } from "./result-seal.js";
 import { guardExecuteResultValue, MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import { InvocationService, type InvocationTiming } from "./invocation.js";
 import {
@@ -206,6 +206,19 @@ const RESULT_MAX_CHUNKS = 32;
 /** Chunk width for a result of `totalBytes`, always a multiple of three. */
 function resultChunkBytes(totalBytes: number): number {
   return Math.max(RESULT_CHUNK_BYTES, Math.ceil(totalBytes / RESULT_MAX_CHUNKS / 3) * 3);
+}
+
+/**
+ * Base64 of `bytes`, in three-byte-aligned batches so the argument list of one
+ * spread never grows with the result. Alignment matters: an unaligned batch
+ * would pad mid-stream and the concatenation would no longer decode.
+ */
+function base64Of(bytes: Uint8Array): string {
+  let out = "";
+  for (let offset = 0; offset < bytes.length; offset += 12_288) {
+    out += btoa(String.fromCharCode(...bytes.subarray(offset, offset + 12_288)));
+  }
+  return out;
 }
 
 // --- result-size guard + connecta.result (feature 1) ---------------------------
@@ -618,6 +631,7 @@ export function guardProgramReturn(
   completedWrite: boolean,
   programChars?: number,
   held?: HeldResults,
+  storeBy?: number,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -631,6 +645,7 @@ export function guardProgramReturn(
       completedWrite,
       programChars,
       held,
+      storeBy,
     ),
   );
 }
@@ -647,6 +662,8 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     completedWrite: boolean,
     programChars?: number,
     held?: HeldResults,
+    // Stalled storage costs the paging, never the answer.
+    storeBy?: number,
   ) {
     return authFlow<unknown>(function* () {
       const serialized = serializeResultText(value);
@@ -676,7 +693,12 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         ...(programChars !== undefined ? { programChars } : {}),
         ...(held ? { held: { results: held, passed, format: "json" as const } } : {}),
         set: authMethod((id: string, chunks: string[], ttl: number, options?: { holdFirst?: boolean }) =>
-          registryProgram(registry, "stashResult", id, chunks, ttl, options),
+          storeBy === undefined
+            ? registryProgram(registry, "stashResult", id, chunks, ttl, options)
+            : withDeadlineEffect(() => registryProgram(registry, "stashResult", id, chunks, ttl, options), {
+                timeoutMs: Math.max(1, storeBy - Date.now()),
+                timeoutError: new Error("Result storage did not answer."),
+              }),
         ),
         warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
       };
@@ -939,6 +961,10 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
+    /** `execute.watchdogMs`: no call's deadline runs past this, counted from `requestStartedAt`. */
+    responseCeilingMs?: number | undefined;
+    /** When the inbound request arrived. Otherwise the ceiling counts from each call. */
+    requestStartedAt?: number | undefined;
     /** The endpoint refuses every write call and write page, and search and describe omit write tools. */
     readOnly?: boolean | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
@@ -976,6 +1002,7 @@ function metaToolsForRequest(
   const globalCap = registry.maxResultBytes;
   const defaultToolTimeoutMs =
     normalizeTimeoutMs(opts.defaultToolTimeoutMs) ?? CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
+  const responseCeilingMs = normalizeTimeoutMs(opts.responseCeilingMs) ?? CONFIG_DEFAULTS.execute.watchdogMs;
   const probeTimeoutMs = normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
   const discoveryConcurrency = resolveDiscoveryConcurrency(opts.discoveryConcurrency);
   // createMetaTools() is called once per inbound MCP request. Sharing this
@@ -1045,7 +1072,22 @@ function metaToolsForRequest(
   }
   const runCallNative = /* @__PURE__ */ registerAuth(runCall, function (call: CallArgs, source: ActivityCallSource) {
     return authFlow<RunCallOutcome>(function* () {
-      const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
+      // A deadline past the client's would trade a typed result for its transport timeout.
+      const now = Date.now();
+      const ceilingAt = (opts.requestStartedAt ?? now) + responseCeilingMs;
+      const remainingMs = ceilingAt - now;
+      const timeoutMs = Math.min(normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs, Math.max(1, remainingMs));
+      const pastCeiling = (): CallErrorDetails => ({
+        code: "timeout",
+        message: `This request used its ${responseCeilingMs}ms response ceiling before ${boundedEchoText(call.address, 512)} started, so it was not sent. Send it again.`,
+        retryable: true,
+        details: {
+          operation: boundedEchoText(call.address, 512),
+          stage: "response ceiling",
+          elapsedMs: responseCeilingMs - (ceilingAt - Date.now()),
+          deadlineMs: responseCeilingMs,
+        },
+      });
       const outcome = yield* upwardStep(
         authInvoke<InvocationOutcome<ProcessedCallResult>>(invocation, "invoke", [
           call.address,
@@ -1056,7 +1098,11 @@ function metaToolsForRequest(
             sentSecrets,
             readOnly: opts.readOnly,
             routes,
-            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            timeoutMs,
+            // Auth or queueing spent the time, and a 1 ms deadline could still lose
+            // to a dispatch. A known "not sent" beats an answer the client won't hear.
+            ...(remainingMs <= 0 ? { refusal: pastCeiling() } : {}),
+            dispatchDeadline: { at: ceilingAt, refusal: pastCeiling },
             ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
             unwrapResult: call.resultMode === "value",
             ...(opts.downstreamInput
@@ -1733,6 +1779,8 @@ export function registerMetaTools(
     baseUrl: string;
     readOnly?: boolean | undefined;
     defaultToolTimeoutMs?: number | undefined;
+    responseCeilingMs?: number | undefined;
+    requestStartedAt?: number | undefined;
     probeTimeoutMs?: number | undefined;
     discoveryConcurrency?: number | undefined;
     activity?: ActivityRequestContext | undefined;
@@ -1752,7 +1800,7 @@ export function registerMetaTools(
      * A native pool: register `authorize_connector` and `skills`, plus `read_result` when the pool
      * has no execute_code, and return the route native tool calls take.
      */
-    native?: { executeCode: boolean; catalogErrors: string[] } | undefined;
+    native?: { executeCode: boolean; catalogErrors: string[]; staleCatalogs: string[] } | undefined;
     /** Route names this request's text uses; meta by default. */
     routes?: AgentRouteNames | undefined;
   },
@@ -1767,6 +1815,8 @@ export function registerMetaTools(
     requestScope: ctx.requestScope,
     readOnly: ctx.readOnly,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
+    responseCeilingMs: ctx.responseCeilingMs,
+    requestStartedAt: ctx.requestStartedAt,
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
     activity: ctx.activity,

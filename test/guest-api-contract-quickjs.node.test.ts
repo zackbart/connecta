@@ -2,6 +2,7 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -19,6 +20,9 @@ import {
   checkQueuedWriteAtExhaustion,
   checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
+  checkDispatchGateAfterAuth,
+  checkDispatchGateAfterCatalog,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -32,7 +36,8 @@ import {
   checkProgramPagingFailure,
   checkRetainedResultsPassFinalSet,
   checkRetainedResultsSameRunAndCost,
-  checkRetainedResultsSealingRaces,
+  checkRetainedResultsUnreadableWhileSealing,
+  retainedSealingCases,
   checkProgramResultBom,
   checkProgramResultSurrogates,
   checkProgramReturnFallback,
@@ -113,14 +118,17 @@ describe("guest API contract (QuickJS executor)", () => {
   it("INV-7 INV-9: paging failures preserve completed write accounting and never replay the write", async () => {
     await checkProgramPagingFailure(executor);
   });
-  it("INV-5: a retained result passes its run's final secret set before later runs can page it", async () => {
+  it("INV-5: a retained result is readable from later runs only if it passes its run's final secret set", async () => {
     await checkRetainedResultsPassFinalSet(executor);
   }, 60_000);
   it("INV-5: same-run paging keeps working and a run pays no extra storage to seal", async () => {
     await checkRetainedResultsSameRunAndCost(executor);
   }, 60_000);
-  it("INV-5 INV-7: a secret registered during sealing is rechecked or refused, and a failed seal is refused", async () => {
-    await checkRetainedResultsSealingRaces(executor);
+  for (const [title, check] of Object.entries(retainedSealingCases)) {
+    it(`INV-5 INV-7: ${title}`, () => check(executor), 60_000);
+  }
+  it("INV-5: at every step of sealing another request reads only what sealing published", async () => {
+    await checkRetainedResultsUnreadableWhileSealing(executor);
   }, 60_000);
   it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
     await checkQueuedWriteAtExhaustion(executor);
@@ -185,6 +193,23 @@ describe("guest API contract (QuickJS executor)", () => {
 
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(readDeadlineExecutor);
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(readDeadlineExecutor, "for (;;) {}");
+  });
+
+  it("[L3, W9, INV-9] the final gate refuses a write its auth step ran out of time, unsent", async () => {
+    await checkDispatchGateAfterAuth(readDeadlineExecutor);
+  }, 60_000);
+
+  it("[L3, W9, INV-9] the final gate refuses a read its catalog ran out of time, unsent", async () => {
+    await checkDispatchGateAfterCatalog(readDeadlineExecutor);
+  }, 60_000);
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(executor.deadlineMs).toBe(30_000);
+    expect(executor.deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
   });
 
   it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {
