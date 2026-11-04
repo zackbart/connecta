@@ -668,7 +668,7 @@ it("warns once per endpoint when the server is on another release line", async (
   warn.mockClear();
   await turn(
     connectaInstructions({
-      url: "https://alice:url-secret@connecta.example.com?token=query-secret",
+      url: "https://alice:url-secret@connecta.example.com/path-secret/agent/assistant?token=query-secret",
       getToken: () => "cta",
       fetch: discovering(undefined, { name: "connecta", version: `${Number(major) + 1}.0.0 Bearer token-secret` }),
     }),
@@ -677,7 +677,7 @@ it("warns once per endpoint when the server is on another release line", async (
   const logged = String(warn.mock.calls[0]![0]);
   expect(logged).toContain(`${Number(major) + 1}.0.x`);
   expect(logged).toContain("https://connecta.example.com");
-  expect(logged).not.toMatch(/Bearer|token-secret|url-secret|query-secret|alice/);
+  expect(logged).not.toMatch(/Bearer|token-secret|url-secret|query-secret|path-secret|alice/);
   // Legacy initialize carries serverInfo in the result instead.
   warn.mockClear();
   await turn(

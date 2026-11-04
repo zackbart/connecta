@@ -270,11 +270,10 @@ function eveGuide(connection: string, facts: EndpointFacts | undefined): string 
 const releaseLine = (version: unknown) =>
   typeof version === "string" ? /^(\d+\.\d+)\./.exec(version)?.[1] : undefined;
 
-/** An endpoint may embed credentials or a token in its URL; logs get only its origin and path. */
+/** An endpoint may embed credentials or a token in its URL, path included; logs get only its origin. */
 function loggableEndpoint(endpoint: string): string {
   try {
-    const { origin, pathname } = new URL(endpoint);
-    return `${origin}${pathname}`;
+    return new URL(endpoint).origin;
   } catch {
     return "the configured endpoint";
   }
