@@ -310,6 +310,8 @@ export interface SendOptions {
   readonly item?: string;
   /** Named facts the vendor's error rules read for this request, such as Google's `revisionGuarded`. */
   readonly flags?: Readonly<Record<string, true>>;
+  /** Provider-checked values failure wording may state; see `OperationRef.context`. */
+  readonly context?: Readonly<Record<string, string>>;
 }
 
 /** Send one operation and settle its answer. */
@@ -587,6 +589,7 @@ export function connect<R>(
         method: declared.method,
         template: declared.path,
         ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}),
+        ...(sendOptions?.context ? { context: sendOptions.context } : {}),
       };
       return Effect.flatMap(
         admitAddress({
@@ -633,7 +636,11 @@ export function connect<R>(
       return Effect.flatMap(admitAddress({ path, query: request.query }), () =>
         Effect.flatMap(options.safety.resolve(method, path), (operation) =>
           settle(
-            { ...operation, ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}) },
+            {
+              ...operation,
+              ...(sendOptions?.flags ? { flags: sendOptions.flags } : {}),
+              ...(sendOptions?.context ? { context: sendOptions.context } : {}),
+            },
             Effect.suspend(() => {
               let built = HttpClientRequest.make(method)(
                 path,

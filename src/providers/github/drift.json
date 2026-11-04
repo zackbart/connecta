@@ -1210,7 +1210,7 @@
     ],
     "evidence": {
       "openapi.json": "sha256:e7e54e7b71d97d8933afdf9561d40563d3b2c0d16de4cc627ad01e6f0b5a23fa",
-      "value-safety.json": "sha256:2a082376391170a8de7702d47afd83437c49000be20e3a588f0f938746b62073"
+      "value-safety.json": "sha256:310f77978509c30a9117f66bddffb8b416d0e6ebf19d902960d49dd260b1508c"
     }
   },
   "checks": [
@@ -7262,10 +7262,13 @@
         "apiVersion": "2022-11-28",
         "tokenContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app",
         "repositoryListContract": "https://docs.github.com/en/rest/apps/installations#list-repositories-accessible-to-the-app-installation",
-        "jwtContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app"
+        "jwtContract": "https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app",
+        "checksPermissions": "https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-checks",
+        "statusesPermissions": "https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-commit-statuses",
+        "failureHeaders": "https://docs.github.com/en/rest/using-the-rest-api/troubleshooting-the-rest-api"
       },
       "reason": "Review GitHub App ID-bound repository and installation scope, exact-scope narrowing, documented per-operation permissions, and the same-repository expected-head/workflow-write merge guard. Public contract checks never mint tokens. Raw search/merge, secrets/admin, archives/log downloads and nonreviewed operations remain unavailable.",
-      "lastVerified": "2026-10-24"
+      "lastVerified": "2026-11-04"
     }
   ]
 }

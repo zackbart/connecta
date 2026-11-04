@@ -144,6 +144,10 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "github-release-once": { route: [], outcome: ["state", "only-requested-writes"] },
   "github-merge-once": { route: [], outcome: ["state", "only-requested-writes"] },
   "github-search-recovery": { route: [], outcome: ["reads-only", "recovered"] },
+  "github-ci-scope-gap": {
+    route: [],
+    outcome: ["reads-only", "delivered-data", "typed-scope-gap", "no-credential-handoff", "vendor-text-withheld"],
+  },
   "overflow-filtered-gifts": { route: [], outcome: ["reads-only"] },
   "overflow-recurring-join": { route: [], outcome: ["reads-only"] },
   "overflow-donor-paging": { route: [], outcome: ["reads-only", "delivered-data"] },
