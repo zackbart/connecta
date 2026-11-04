@@ -108,13 +108,17 @@ async function run() {
   console.error(
     `[surface-risks] ${queue.length} batch(es), ${queue.reduce((n, b) => n + batchTrials(b), 0)} trial(s); plan total ${planned}`,
   );
+  let lastHoldLog = 0;
   const worker = async () => {
     for (;;) {
       const batch = queue.shift();
       if (!batch) return;
       while (loadavg()[0]! > maxLoad) {
-        console.error(`[surface-risks] load ${loadavg()[0]!.toFixed(0)} over ${maxLoad}; holding ${batch.id}`);
-        await sleep(180_000);
+        if (Date.now() - lastHoldLog > 300_000) {
+          lastHoldLog = Date.now();
+          console.error(`[surface-risks] load ${loadavg()[0]!.toFixed(0)} over ${maxLoad}; holding ${batch.id}`);
+        }
+        await sleep(30_000);
       }
       // eval:agent replaces its result file; keep trials an interrupted batch already paid for.
       if (savedTrials(batch).length) renameSync(resultPath(batch), `${resultPath(batch)}.partial-${Date.now()}`);
