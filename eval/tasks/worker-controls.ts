@@ -857,7 +857,8 @@ export async function portCollisionControls() {
     // A restart keeps its public port: a brief holder delays it instead of failing it.
     const restartDir = await mkdtemp(join(tmpdir(), "connecta-restart-collision-"));
     let restarting: Awaited<ReturnType<typeof wranglerDev>> | undefined;
-    const holder = createNetServer();
+    // Refuse each probe at once, so health checks see a closed port and close() can finish.
+    const holder = createNetServer((socket) => socket.destroy());
     try {
       const entry = join(restartDir, "worker.js");
       await writeFile(entry, 'export default { fetch: () => new Response("ok") };\n');
