@@ -36,6 +36,7 @@ import {
 import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
 import {
   checkLargeProgramRead,
+  checkPreviewProgram,
   checkLargeProgramWrite,
   checkProgramResultBom,
   checkProgramResultSurrogates,
@@ -414,6 +415,11 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     });
     it(`INV-3 INV-9: ${custom ? "customExecutor: " : ""}oversized program reads arrive whole through bounded stash pages`, async () => {
       await checkLargeProgramRead(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    });
+    it(`INV-5: ${custom ? "customExecutor: " : ""}a preview's program runs as offered, and values and handles stay byte-identical`, async () => {
+      await checkPreviewProgram(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });

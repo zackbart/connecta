@@ -683,6 +683,26 @@ export function stashChargeContract(open: StashFixtureFactory): void {
     30_000,
   );
 
+  it("leaves a quarter of entries and bytes to stashes that must page", async () => {
+    const { storage } = await open();
+    const optional = { keepFree: true };
+    for (const id of ["a", "b", "c"])
+      expect(await make(storage, 4, 100).stashResult(id, ["x"], 900, optional)).toBe(true);
+    expect(await make(storage, 4, 100).stashResult("d", ["x"], 900, optional)).toBe(false);
+    expect(await make(storage, 4, 100).stashResult("must", ["x"], 900)).toBe(true);
+    expect(await make(storage, 8, 8).stashResult("wide", ["1234567"], 900, optional)).toBe(false);
+    expect(await make(storage, 1, 100).stashResult("none", ["x"], 900, optional)).toBe(false);
+  });
+
+  it("INV-7: a stash with its own deadline gives up instead of holding the call", async () => {
+    const { storage } = await open();
+    const stalled: KVStorage = {
+      ...storage,
+      get: async () => new Promise<string | null>(() => {}),
+    };
+    expect(await make(stalled, 4, 100).stashResult("slow", ["x"], 900, { timeoutMs: 20 })).toBe(false);
+  });
+
   it("INV-7: admits exactly one of 16 concurrent bookings at capacity one", async () => {
     const { storage } = await open();
     const results = await Promise.all(

@@ -6,7 +6,7 @@ import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, KVStorage } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, registry, textOf } from "./fixtures/meta-tools.js";
 import { activitySink, calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
@@ -1167,5 +1167,390 @@ describe("connecta.result pages raw text, clamped to the result's cap", () => {
     const page = await mt.readResult({ id: "old", offset: 0, maxBytes: 5_000 });
     expect(page.isError).toBe(true);
     expect(JSON.stringify(page)).not.toContain(stashed);
+  });
+});
+
+describe("large read previews", () => {
+  const rows = (count: number, pad = "") =>
+    Array.from({ length: count }, (_, id) => ({ id: `row_${id}`, email: `person${id}@example.com`, pad, off: false }));
+
+  function reading(value: unknown, overrides: Partial<Connector> = {}, classification: "read" | "write" = "read") {
+    return {
+      id: "crm",
+      kind: "api",
+      async listTools() {
+        return [{ name: "list", annotations: { readOnlyHint: classification === "read" } }];
+      },
+      async callTool() {
+        return value;
+      },
+      ...overrides,
+    } as Connector;
+  }
+  const direct = (connector: Connector, options: Parameters<typeof createMetaTools>[2] = { programRoute: true }) =>
+    createMetaTools(makeRegistry([connector]), BASE, options);
+  const call = async (mt: ReturnType<typeof createMetaTools>, args: Record<string, unknown> = {}) => {
+    const result = await mt.callTool({ address: "crm.list", args, ...args });
+    const text = result.content.map((block) => (block as { text: string }).text).join("\n");
+    const newline = text.indexOf("\n");
+    const notice = newline > 0 ? JSON.parse(text.slice(0, newline)) : undefined;
+    return { result, text, notice, body: newline > 0 ? text.slice(newline + 1) : text };
+  };
+  async function paged(mt: ReturnType<typeof createMetaTools>, id: string): Promise<string> {
+    let text = "";
+    let offset: number | undefined = 0;
+    while (offset !== undefined) {
+      const page = pageOf(await mt.readResult({ id, offset }));
+      text += page.text;
+      offset = page.nextOffset;
+    }
+    return text;
+  }
+  /** Every value the view shows sits at the same path in the original. */
+  function expectSubset(view: unknown, original: unknown, path = "$"): void {
+    if (Array.isArray(view)) {
+      expect(Array.isArray(original), path).toBe(true);
+      view.forEach((item, index) => expectSubset(item, (original as unknown[])[index], `${path}[${index}]`));
+    } else if (view && typeof view === "object") {
+      for (const [key, child] of Object.entries(view)) {
+        expect(Object.hasOwn(original as object, key), `${path}.${key}`).toBe(true);
+        expectSubset(child, (original as Record<string, unknown>)[key], `${path}.${key}`);
+      }
+    } else expect(view, path).toBe(original);
+  }
+
+  it("shows rows in the result's own shape and retains the result unchanged", async () => {
+    const value = { items: rows(200), has_more: false, total: 0, warnings: [], next: null, format: "x" };
+    const mt = direct(reading(value));
+    const { result, notice, body } = await call(mt);
+    const serialized = JSON.stringify(value);
+    expect(Object.keys(notice)).toEqual([
+      "truncated",
+      "resultId",
+      "totalBytes",
+      "rows",
+      "hint",
+      "nextOffset",
+      "nextAction",
+    ]);
+    expect(notice).toMatchObject({
+      truncated: true,
+      totalBytes: new TextEncoder().encode(serialized).length,
+      rows: { path: "items", count: 200, keys: ["id", "email", "pad", "off"] },
+      nextOffset: 0,
+      nextAction: { tool: "execute_code" },
+    });
+    expect(notice.hint).toContain("execute_code");
+    expect(notice.nextAction.arguments.code).toContain(`connecta.result(${JSON.stringify(notice.resultId)}`);
+    expect(notice.nextAction.arguments.code).toContain("JSON.parse(text).items");
+    const shown = JSON.parse(body);
+    expect(shown.items).toHaveLength(notice.rows.shown);
+    expect(new TextEncoder().encode(JSON.stringify(shown.items)).length).toBeLessThanOrEqual(1_501);
+    // Continuation, totals, warnings, format, false and 0 all survive.
+    expect(shown).toEqual({ ...value, items: value.items.slice(0, notice.rows.shown) });
+    expect(shown.items[0].off).toBe(false);
+    expectSubset(shown, value);
+    expect(await paged(mt, notice.resultId)).toBe(serialized);
+    expect(result._meta).toEqual({ "dev.connecta/format": "json" });
+  });
+
+  it("previews a lone MCP text block and pages its exact text", async () => {
+    const text = JSON.stringify({ data: { rows: rows(120) } }, null, 1);
+    const mt = direct(
+      reading(undefined, {
+        kind: "mcp",
+        async callTool() {
+          return { content: [{ type: "text", text }] };
+        },
+      }),
+    );
+    const { notice, body } = await call(mt);
+    expect(notice.rows).toMatchObject({ path: "data.rows", count: 120 });
+    expect(notice.nextAction.arguments.code).toContain("JSON.parse(text).data.rows");
+    expectSubset(JSON.parse(body), JSON.parse(text));
+    expect(await paged(mt, notice.resultId)).toBe(text);
+  });
+
+  it.each([
+    ["a list deeper than three keys", { a: { b: { c: { d: rows(100) } } } }],
+    ["fewer than three rows", { items: rows(2, "x".repeat(4_000)) }],
+    ["a list under half the bytes", { items: rows(10), body: "x".repeat(4_000) }],
+    ["too much outside the list", { items: rows(200), about: "x".repeat(1_100) }],
+    ["a document", { title: "t", body: "x".repeat(5_000) }],
+    ["a list of scalars", { ids: Array.from({ length: 2_000 }, (_, index) => index) }],
+    ["rows mixed with scalars", { items: [...rows(100), 1] }],
+    ["an unsafe number", { items: rows(100), id: 2 ** 60 }],
+    ["a first row too wide to show", { items: rows(4, "x".repeat(3_000)) }],
+    ["a list just over the threshold, where a view saves little", { items: rows(3, "x".repeat(1_400)) }],
+  ])("keeps %s whole", async (_, value) => {
+    const { text, notice } = await call(direct(reading(value)));
+    expect(notice).toBeUndefined();
+    expect(text).toBe(JSON.stringify(value));
+  });
+
+  it("finds a list three keys down and reads keys a path cannot spell", async () => {
+    const value = { "a.b": { c: { d: rows(100) } } };
+    const { notice, body } = await call(direct(reading(value)));
+    expect(notice.rows.path).toBe('["a.b"].c.d');
+    expect(notice.nextAction.arguments.code).toContain('JSON.parse(text)["a.b"].c.d');
+    expectSubset(JSON.parse(body), value);
+  });
+
+  it("shows a non-empty first row or nothing, so a view never reads as an empty list", async () => {
+    const { notice, body } = await call(direct(reading({ items: rows(5, "x".repeat(2_000)) })));
+    expect(notice.rows.shown).toBe(1);
+    expect(JSON.parse(body).items).toHaveLength(1);
+    const empty = { items: [], about: "x".repeat(5_000) };
+    expect((await call(direct(reading(empty)))).text).toBe(JSON.stringify(empty));
+  });
+
+  it("keeps the result of 1e999 whole instead of rendering it as null", async () => {
+    const text = `{"items":${JSON.stringify(rows(100))},"limit":1e999}`;
+    const result = await call(
+      direct(
+        reading(undefined, {
+          kind: "mcp",
+          async callTool() {
+            return { content: [{ type: "text", text }] };
+          },
+        }),
+      ),
+    );
+    expect(result.text).toBe(text);
+  });
+
+  const textBlock = (text: string, extra: object = {}) =>
+    reading(undefined, {
+      kind: "mcp",
+      async callTool() {
+        return { content: [{ type: "text", text, ...extra }] };
+      },
+    });
+
+  it("shows the line count, head and tail of long text, whole characters only", async () => {
+    const text = `${"雪 line\n".repeat(3_000)}the end\n`;
+    const mt = direct(textBlock(text));
+    const { notice, body, result } = await call(mt);
+    expect(notice.text.lines).toBe(3_002);
+    expect(notice.text.shownBytes).toBeLessThanOrEqual(2_000);
+    expect(notice.hint).toContain("3002 lines");
+    expect(body).not.toContain("\ufffd");
+    const [head, tail] = body.split(/\n…\[\d+ bytes omitted\]…\n/) as [string, string];
+    expect(text.startsWith(head)).toBe(true);
+    expect(text.endsWith(tail)).toBe(true);
+    expect(await paged(mt, notice.resultId)).toBe(text);
+    expect(result._meta).toEqual({ "dev.connecta/format": "text" });
+  });
+
+  it("previews an API connector's text and reads the JSON string it stores", async () => {
+    const text = "error: boom\n".repeat(1_000);
+    const mt = direct(reading(text));
+    const { notice, body } = await call(mt);
+    expect(notice.text.lines).toBe(1_001);
+    expect(text.startsWith(body.split("\n…[")[0]!)).toBe(true);
+    expect(notice.nextAction.arguments.code).toContain("JSON.parse(text).split");
+    expect(await paged(mt, notice.resultId)).toBe(JSON.stringify(text));
+  });
+
+  it("does not shape text at or under its threshold, or text that cannot page", async () => {
+    const short = "x".repeat(8_192);
+    expect((await call(direct(textBlock(short)))).text).toBe(short);
+    const surrogate = `${"x".repeat(9_000)}\ud800`;
+    expect((await call(direct(textBlock(surrogate)))).text).toBe(surrogate);
+  });
+
+  it("INV-9: leaves a write's result on today's path", async () => {
+    const value = { items: rows(100) };
+    const written = async (connector: Connector) => {
+      const result = await direct(connector).callDestructiveTool({ address: "crm.list" });
+      const text = (result.content[0] as { text: string }).text;
+      const newline = text.indexOf("\n");
+      return {
+        text,
+        notice: newline > 0 ? JSON.parse(text.slice(0, newline)) : undefined,
+        body: text.slice(newline + 1),
+      };
+    };
+    const small = await written(reading(value, {}, "write"));
+    expect(small.text).toBe(JSON.stringify(value));
+    const large = { items: rows(1_000) };
+    const big = await written(reading(large, {}, "write"));
+    expect(big.notice.hint).toContain("This write already ran");
+    expect(big.notice).not.toHaveProperty("rows");
+    expect(big.notice.nextOffset).toBe(24_000);
+    expect(JSON.stringify(large).startsWith(big.body)).toBe(true);
+  });
+
+  it("leaves value mode, several blocks and annotated blocks on today's path", async () => {
+    const value = { items: rows(100) };
+    const serialized = JSON.stringify(value);
+    const mode = await direct(reading(value)).callTool({ address: "crm.list", resultMode: "value" });
+    expect(JSON.parse((mode.content[0] as { text: string }).text).data).toEqual(value);
+    const several = reading(undefined, {
+      kind: "mcp",
+      async callTool() {
+        return {
+          content: [
+            { type: "text", text: serialized },
+            { type: "text", text: "second" },
+          ],
+        };
+      },
+    });
+    expect((await direct(several).callTool({ address: "crm.list" })).content).toHaveLength(2);
+    const annotations = { audience: ["user"] };
+    const annotated = await direct(textBlock(serialized, { annotations })).callTool({ address: "crm.list" });
+    expect(annotated.content).toEqual([{ type: "text", text: serialized, annotations }]);
+  });
+
+  it("needs a program route, not only a paging tool", async () => {
+    const value = { items: rows(100) };
+    for (const options of [{}, { pagingTool: "read_result" as const }]) {
+      expect((await call(direct(reading(value), options))).text).toBe(JSON.stringify(value));
+    }
+    const large = { items: rows(1_000) };
+    const paging = await call(direct(reading(large), { pagingTool: "read_result" }));
+    expect(paging.notice.nextAction.tool).toBe("read_result");
+    expect(paging.notice).not.toHaveProperty("rows");
+  });
+
+  it("keeps a result one program cannot walk on today's path", async () => {
+    const large = { items: rows(1_000) };
+    const bytes = JSON.stringify(large).length;
+    const pages = Math.ceil(bytes / (24_000 - 3));
+    const fits = await call(direct(reading(large), { programRoute: true, maxProgramHostCalls: pages + 2 }));
+    expect(fits.notice.rows.count).toBe(1_000);
+    const over = await call(direct(reading(large), { programRoute: true, maxProgramHostCalls: pages + 1 }));
+    expect(over.notice).not.toHaveProperty("rows");
+    expect(over.notice.hint).toContain("repeat this read inside execute_code");
+  });
+
+  it("applies a connector's result limit to what a preview shows", async () => {
+    const large = { items: rows(100), about: "a".repeat(500) };
+    const small = await call(direct(reading(large, { maxResultBytes: 1_000 })));
+    expect(new TextEncoder().encode(small.body).length).toBeLessThanOrEqual(1_000);
+    expect(small.notice.rows.shown).toBeGreaterThan(0);
+    const tiny = await call(direct(reading(large, { maxResultBytes: 400 })));
+    expect(tiny.notice).not.toHaveProperty("rows");
+    expect(new TextEncoder().encode(tiny.body).length).toBeLessThanOrEqual(400);
+    const log = await call(direct(textBlock("x".repeat(9_000)) as Connector));
+    expect(log.notice.text).toBeDefined();
+    const narrow = await call(direct({ ...textBlock("x".repeat(9_000)), maxResultBytes: 1_000 } as Connector));
+    expect(narrow.notice).not.toHaveProperty("text");
+    expect(narrow.body).toBe("x".repeat(1_000));
+  });
+
+  it("counts only a result past its cap as friction", async () => {
+    for (const [count, friction] of [
+      [100, undefined],
+      [1_000, "result_too_large"],
+    ] as const) {
+      const sink = activitySink();
+      await direct(reading({ items: rows(count) }), { programRoute: true, activity: sink.activity }).callTool({
+        address: "crm.list",
+      });
+      expect(sink.events[0]?.friction).toBe(friction);
+    }
+  });
+
+  it("INV-5: redacts what it shows and retains, and INV-6: records none of it", async () => {
+    const secret = "submitted-private-value-1234";
+    const value = { items: rows(100).map((row) => ({ ...row, echo: secret })) };
+    const sink = activitySink();
+    const logged: unknown[] = [];
+    const log = (...args: unknown[]) => logged.push(args);
+    const registry = makeRegistry(
+      [
+        reading(value, {
+          async listTools() {
+            return [
+              {
+                name: "list",
+                annotations: { readOnlyHint: true },
+                inputSchema: {
+                  type: "object",
+                  properties: { token: { type: "string", writeOnly: true } },
+                },
+              },
+            ];
+          },
+        }),
+      ],
+      { logger: { info: log, warn: log, error: log, debug: log } as never },
+    );
+    const mt = createMetaTools(registry, BASE, { programRoute: true, activity: sink.activity });
+    const result = await mt.callTool({ address: "crm.list", args: { token: secret } });
+    const text = (result.content[0] as { text: string }).text;
+    expect(text).not.toContain(secret);
+    const notice = JSON.parse(text.slice(0, text.indexOf("\n")));
+    expect(notice.rows.count).toBe(100);
+    expect(await paged(mt, notice.resultId)).not.toContain(secret);
+    for (const record of [sink.events, logged]) {
+      expect(JSON.stringify(record)).not.toContain("person0@example.com");
+      expect(JSON.stringify(record)).not.toContain(secret);
+    }
+  });
+
+  describe("when the stash refuses", () => {
+    const refusingStorage = (): KVStorage => ({
+      ...memoryStorage(),
+      async set() {
+        throw new Error("private storage prose");
+      },
+    });
+    const refusing = (logged: string[]) =>
+      makeRegistry([reading({ items: rows(100) })], {
+        logger: { ...silentLogger, warn: (message: string) => logged.push(message) },
+        storage: refusingStorage(),
+      });
+
+    it("returns a read under its cap whole and quietly", async () => {
+      const logged: string[] = [];
+      const value = { items: rows(100) };
+      const mt = createMetaTools(refusing(logged), BASE, { programRoute: true });
+      const { text, notice } = await call(mt);
+      expect(notice).toBeUndefined();
+      expect(text).toBe(JSON.stringify(value));
+      expect(logged).not.toContain("[connecta] result paging unavailable");
+    });
+
+    it("gives a read past its cap today's notice and warning", async () => {
+      const logged: string[] = [];
+      const value = { items: rows(100) };
+      const mt = createMetaTools(
+        makeRegistry([reading(value, { maxResultBytes: 2_000 })], {
+          logger: { ...silentLogger, warn: (message: string) => logged.push(message) },
+          storage: refusingStorage(),
+        }),
+        BASE,
+        { programRoute: true },
+      );
+      const { notice, body } = await call(mt);
+      expect(notice).toMatchObject({ truncated: true, hint: expect.stringContaining("Paging is unavailable") });
+      expect(notice).not.toHaveProperty("resultId");
+      expect(notice).not.toHaveProperty("rows");
+      expect(JSON.stringify(value).startsWith(body)).toBe(true);
+      expect(logged).toContain("[connecta] result paging unavailable");
+    });
+
+    it("keeps room in a full ledger for results that must page", async () => {
+      const value = { items: rows(100) };
+      const large = { items: rows(1_000) };
+      const storage = memoryStorage();
+      const registry = makeRegistry([reading(value)], { results: { maxStashEntries: 4 }, storage });
+      const mt = createMetaTools(registry, BASE, { programRoute: true });
+      for (let index = 0; index < 3; index++) expect((await call(mt)).notice.rows.count).toBe(100);
+      const keptWhole = await call(mt);
+      expect(keptWhole.notice).toBeUndefined();
+      expect(keptWhole.text).toBe(JSON.stringify(value));
+      const must = createMetaTools(
+        makeRegistry([reading(large)], {
+          results: { maxStashEntries: 4 },
+          storage,
+        }),
+        BASE,
+      );
+      expect((await call(must)).notice.resultId).toEqual(expect.any(String));
+    });
   });
 });

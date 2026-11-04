@@ -245,10 +245,10 @@ it("INV-5: calendar credentials stay removed across vendor response envelopes", 
       data: [fields ? { id: 0 } : { id: 0, name: "Main", color: "blue" }],
       ...(fields
         ? {
-            warnings: [1, 2].map(
-              (index) =>
-                `fields/${index} matched nothing in this response after value safety and privacy filtering, at segment 1; declared there: id, oid, name, color, created_on, address, embed_key.`,
-            ),
+            warnings: [
+              "fields/1 matched nothing after filtering, at segment 1; declared there: id, oid, name, color, created_on, address, embed_key.",
+              "fields/2 matched nothing after filtering, at segment 1; declared there: same as fields/1.",
+            ],
           }
         : {}),
     });

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AccessTokenManager } from "../src/access-tokens.js";
 import { agentAdmissionFixture } from "./helpers/agent-tokens.js";
 import { d1ActivityStore, d1Storage, type D1DatabaseBinding } from "../src/d1.js";
+import { Registry } from "../src/registry.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
@@ -18,6 +19,7 @@ import {
   type SqlFixture,
 } from "./sql-storage-contract.js";
 import { stashClockSkewContract } from "./stash-charge-contract.js";
+import { silentLogger } from "./helpers.js";
 
 const bindings = await (async () => {
   try {
@@ -215,6 +217,20 @@ describe.skipIf(!bindings)("review r1: D1 binding error identity", () => {
 describe.skipIf(!bindings)("stash capacity over native Workers D1", () => {
   stashClockSkewContract(async () => {
     return sqlStashFixture(await open());
+  });
+});
+
+describe.skipIf(!bindings)("result stash write load over native Workers D1", () => {
+  it("commits three times to stash one chunk, the cost a large read's preview adds", async () => {
+    const db = await fresh();
+    const hooks = { calls: [] as string[] };
+    const registry = new Registry([], { storage: d1Storage(structural(db, hooks)), logger: silentLogger });
+    await registry.stashResult("warm", ["x"], 900);
+    hooks.calls.length = 0;
+    expect(await registry.stashResult("preview", ["x".repeat(8_000)], 900, { keepFree: true })).toBe(true);
+    // Book the ledger, write the chunk, settle the ledger; each batch deletes a key's expired row.
+    expect(hooks.calls.filter((call) => call.startsWith("batch"))).toEqual(["batch:2", "batch:2", "batch:2"]);
+    expect(hooks.calls.filter((call) => call === "all")).toHaveLength(2);
   });
 });
 

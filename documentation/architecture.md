@@ -913,8 +913,12 @@ capacity may be over-held until the booked deadline, at most 15 minutes and
 its latest live reservation deadline. There are no completion receipts or
 separate recovery rows; expiry probes carry no completion state. Expired data reads as absent and normal storage sweeps
 reclaim the physical rows. A full stash returns the successful call's preview
-and a paging-unavailable notice rather than a result id. Shared failure cases
-live in `test/stash-charge-contract.ts`, exercised by the memory and SQL suites.
+and a paging-unavailable notice rather than a result id. A
+[preview](./meta-tools.md#previews-of-large-reads) of a read under its cap books
+with `keepFree`, leaving a quarter of entries and bytes to results that must page,
+and its own 5-second budget, since that call needs no storage without it. Shared
+failure cases live in `test/stash-charge-contract.ts`, exercised by the memory and
+SQL suites.
 
 `src/credentials.ts` is the AES-GCM vault behind the root-exported
 `CredentialVault` contract, selected through the `vault` slot. It binds connector

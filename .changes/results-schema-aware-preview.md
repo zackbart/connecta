@@ -1,0 +1,5 @@
+---
+type: changed
+---
+
+A large direct read on a surface with `execute_code` can now answer with a preview instead of the whole result or its first 24,000 bytes: for rows, the row count, keys and whole first rows in the result's own shape; for text, the line count, head and tail. Its notice carries `resultId`, the original `totalBytes`, and a `nextAction` program over the retained result. A program's value and the paged handle are unchanged. Migration: a client that parses direct results should read the first line whenever it is a `truncated` notice, including for results under `maxResultBytes`, and should not assume a body after that notice is a prefix of the result: `nextOffset` is 0 and the body is a separate view. Writes, value mode, several or annotated blocks, native pools with `executeCode: false`, and any result the rule does not cover are unchanged. A `fields` miss warning is shorter: `fields/0 matched nothing after filtering, at segment 1; declared there: id, name.`, with at most 160 characters of names, and a later miss at the same place says `same as fields/0`.

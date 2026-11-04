@@ -211,6 +211,100 @@ export async function checkLargeProgramRead(executor: Executor, storage: KVStora
   expect(calls).toBe(2);
 }
 
+/**
+ * A preview is presentation: its program runs as offered, and a program's value
+ * and the paged handle stay byte-identical to the read a view replaced.
+ */
+export async function checkPreviewProgram(executor: Executor, storage: KVStorage = memoryStorage()): Promise<void> {
+  const rows = Array.from({ length: 2_000 }, (_, id) => ({
+    id: `row_${id}`,
+    name: `雪"${id}`,
+    off: id % 2 === 0,
+    nothing: null,
+  }));
+  const value = { "a.b": { rows }, has_more: false };
+  const log = Array.from({ length: 2_000 }, (_, line) => (line === 1_000 ? "FAIL: the real one" : `ok ${line}`)).join(
+    "\n",
+  );
+  const connector: Connector = {
+    id: "large",
+    kind: "api",
+    async listTools() {
+      return ["rows", "text"].map((name) => ({ name, annotations: { readOnlyHint: true } }));
+    },
+    async callTool(name) {
+      return name === "rows" ? value : log;
+    },
+  };
+  const mcp: Connector = {
+    id: "remote",
+    kind: "mcp",
+    async listTools() {
+      return ["rows", "text"].map((name) => ({ name, annotations: { readOnlyHint: true } }));
+    },
+    async callTool(name) {
+      return { content: [{ type: "text", text: name === "rows" ? JSON.stringify(value) : log }] };
+    },
+  };
+  const registry = new Registry([connector, mcp], { storage, logger: silentLogger });
+  const meta = createMetaTools(registry, BASE, { programRoute: true });
+  const run = createExecuteTool(registry, BASE, executor, silentLogger);
+  for (const [address, expected] of [
+    ["large.rows", JSON.stringify(value)],
+    ["large.text", JSON.stringify(log)],
+    ["remote.rows", JSON.stringify(value)],
+    ["remote.text", log],
+  ] as const) {
+    const direct = await meta.callTool({ address });
+    const text = (direct.content[0] as { text: string }).text;
+    const notice = JSON.parse(text.slice(0, text.indexOf("\n")));
+    expect(notice.truncated, address).toBe(true);
+    const offered = await run({ code: notice.nextAction.arguments.code });
+    expect(offered.isError, JSON.stringify(offered.structuredContent)).toBeUndefined();
+    const offeredResult = offered.structuredContent!.result as Record<string, unknown>;
+    if (address.endsWith("rows")) {
+      expect(notice.rows.count).toBe(2_000);
+      expect(offeredResult.count).toBe(2_000);
+      expect(offeredResult.rows).toEqual(rows.slice(0, 5));
+      // Whatever the view shows, a program sees at the same path.
+      expect(JSON.parse(text.slice(text.indexOf("\n") + 1))).toEqual({
+        ...value,
+        "a.b": { rows: rows.slice(0, notice.rows.shown) },
+      });
+    } else {
+      expect(notice.text.lines).toBe(2_000);
+      expect(offeredResult).toEqual({ lines: 2_000, matches: ["FAIL: the real one"] });
+    }
+    let retained = "";
+    for (let offset: number | undefined = 0; offset !== undefined;) {
+      const page = (await meta.readResult({ id: notice.resultId, offset })).content[0] as { text: string };
+      const header = JSON.parse(page.text.slice(0, page.text.indexOf("\n"))) as { nextOffset?: number };
+      retained += page.text.slice(page.text.indexOf("\n") + 1);
+      offset = header.nextOffset;
+    }
+    expect(retained === expected, address).toBe(true);
+    const compared = await run({
+      code: `async () => {
+        let text = "", offset = 0, page;
+        do {
+          page = await connecta.result(${JSON.stringify(notice.resultId)}, { offset });
+          text += page.text;
+          offset = page.nextOffset;
+        } while (page.hasMore);
+        const read = await connecta.call(${JSON.stringify(address)});
+        const value = ${JSON.stringify(address)} === "large.text" ? JSON.parse(text) : text;
+        const data = typeof read.data === "string" ? read.data : JSON.stringify(read.data);
+        return { format: read.format, same: value === data };
+      }`,
+    });
+    expect(compared.isError, JSON.stringify(compared.structuredContent)).toBeUndefined();
+    expect(compared.structuredContent!.result, address).toEqual({
+      format: address.endsWith("rows") ? "json" : "text",
+      same: true,
+    });
+  }
+}
+
 export async function checkLargeProgramWrite(executor: Executor, storage: KVStorage = memoryStorage()): Promise<void> {
   const text = '雪"\\\n'.repeat(Math.ceil(PROGRAM_RESULT_INLINE_BYTES / 4));
   const serialized = JSON.stringify({ text });

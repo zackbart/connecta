@@ -498,8 +498,11 @@ function serveMcp(
       const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
       // A native pool's text uses the native contract's wording.
       const routes = native ? routeNames(native.executeCode ? "native-code" : "native") : opts.routes;
+      // One answer for what this request lists and what its text may offer.
+      const programRoute = !native || native.executeCode;
       const nativeRoute = registerMetaTools(server, registry, {
         native: diagnostics,
+        programRoute,
         routes,
         authElicitation,
         client,
@@ -521,7 +524,7 @@ function serveMcp(
         requestSignal,
         ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
       });
-      if (!native || native.executeCode) {
+      if (programRoute) {
         registerExecuteTool(server, registry, {
           authElicitation,
           client,
