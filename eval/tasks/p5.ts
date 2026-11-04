@@ -2,7 +2,7 @@ import ts from "typescript";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
 import { uses } from "./types.js";
-import { check } from "./baseline.js";
+import { check, urlTokens } from "./baseline.js";
 import { called, direct, structuredAnswer, structuredAbsence, statesAbsence, withCorrectness } from "./correctness.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "../fakes/prerequisites.js";
 import type { AgentTrace } from "../agent/trace.js";
@@ -417,16 +417,14 @@ function connectUrl(trace: AgentTrace, requireHandoff = false): string | undefin
     const resultIndex = trace.transcript.findIndex((entry) => entry.kind === "tool_result" && entry.id === use.id);
     if (
       resultIndex >= 0 &&
-      trace.transcript
-        .slice(resultIndex + 1)
-        .some(
-          (entry) =>
-            entry.kind === "assistant" &&
-            entry.turn === use.turn &&
-            [
-              ...entry.text.matchAll(/http:\/\/127\.0\.0\.1:\d+\/connect\/oauth\?h=[A-Za-z0-9_.%-]*[A-Za-z0-9_%-]/g),
-            ].some((url) => url[0] === match[0]),
-        )
+      trace.transcript.slice(resultIndex + 1).some(
+        (entry) =>
+          entry.kind === "assistant" &&
+          entry.turn === use.turn &&
+          // A complete URL only: the operator opens what reached them, so a link with
+          // characters run onto its end is no handoff, however valid its prefix.
+          urlTokens(entry.text).includes(match[0]),
+      )
     )
       return match[0];
   }

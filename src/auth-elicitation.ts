@@ -529,6 +529,10 @@ export class AuthElicitation {
               // The signed state bound these arguments, so this is the restart the
               // caller asked for. A pending consent must not be reset by it either.
               const forced = tool === "authorize_connector" && force === true;
+              // One restart per flow: unspent links retire before this one is issued.
+              // A browser claim racing these CASes either wins and is observed as the
+              // predecessor, or is refused, so only one link can ever begin the reset.
+              if (forced) yield* upwardStep(authInvoke<void>(self.options, "closeLinks", [id, state.browserNonces]));
               const predecessor = forced
                 ? (yield* upwardStep(
                     authInvoke<{ predecessor?: string; completed: boolean }>(self, "browserProgress", [state]),

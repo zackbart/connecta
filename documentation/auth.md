@@ -2614,6 +2614,11 @@ A decline or cancel returns one fresh link, issued only after that state verifie
 and the same management check as the prompt passes, so a refusal offers nothing
 this caller could not already request. The link is sealed like the prompt's, keeps
 the prompt's force, and stays bound to a pending forced start.
+A refused `force: true` flow retires its unspent links through the same CAS before
+issuing that link, so one link can begin the reset however late a browser arrives.
+Opening a retired prompt link starts nothing and returns the invalid-link refusal;
+the link in the refusal performs the restart. A link already claimed in a browser
+keeps its reset, and the refusal's link continues it. An unforced prompt link stays open.
 The host records each entered call's classification, catalog freshness and
 classification digest in private invocation state, along with auth failure origins. Writes may elicit only
 when Connecta's own credential resolution fails before invoking the connector:

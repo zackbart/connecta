@@ -349,6 +349,14 @@ async function run() {
       },
     ],
     [
+      "the agent's reply runs characters onto the link",
+      "agent-handoff",
+      (saved) => {
+        for (const entry of saved.trace.transcript)
+          if (entry.kind === "assistant") entry.text = entry.text.replace(CONNECT_LINK, "$&/extra");
+      },
+    ],
+    [
       "the agent prompts again after the refusal",
       "host-mode",
       (saved) => {

@@ -393,6 +393,62 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     await browser;
   });
 
+  it("INV-4 INV-9: a refused restart leaves one link able to reset, in either visit order", async () => {
+    const args = { connector: "service", force: true };
+    const forcedStarts = (flow: ReturnType<typeof setup>) =>
+      vi.mocked(flow.connector.startAuth!).mock.calls.filter(([, options]) => options?.force === true).length;
+    const refuse = async (flow: ReturnType<typeof setup>) => {
+      flow.connect();
+      const opening = (await flow.rpc("authorize_connector", args)).result;
+      const refused = (await flow.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" }))
+        .result.structuredContent.error;
+      return { original: opening.inputRequests.connecta_auth.params.url as string, fallback: refused.authorizationUrl };
+    };
+
+    // A late visit to the declined prompt's link is refused out loud and resets nothing, so
+    // consent begun from the link the agent relayed survives it, and the restart still runs.
+    const lateOriginal = setup();
+    const first = await refuse(lateOriginal);
+    const denied = await lateOriginal.browser(first.original);
+    expect(denied.status).toBe(400);
+    expect(await denied.json()).toEqual({
+      error: "Invalid or expired connection link. Request a new link from connecta.",
+    });
+    expect(lateOriginal.connector.startAuth).not.toHaveBeenCalled();
+    expect((await lateOriginal.browser(first.fallback)).status).toBe(302);
+    expect((await lateOriginal.browser(first.original)).status).toBe(400);
+    expect(forcedStarts(lateOriginal)).toBe(1);
+
+    const lateFallback = setup();
+    const second = await refuse(lateFallback);
+    expect((await lateFallback.browser(second.fallback)).status).toBe(302);
+    expect((await lateFallback.browser(second.original)).status).toBe(400);
+    expect(forcedStarts(lateFallback)).toBe(1);
+
+    // Another isolate holds nothing but the shared storage, and its visit sees the same retirement.
+    const storage = memoryStorage();
+    const declining = setup({ storage });
+    const isolate = setup({ storage });
+    const third = await refuse(declining);
+    expect((await isolate.browser(third.original)).status).toBe(400);
+    expect(isolate.connector.startAuth).not.toHaveBeenCalled();
+    expect((await isolate.browser(third.fallback)).status).toBe(302);
+    expect(forcedStarts(isolate)).toBe(1);
+    expect(declining.connector.startAuth).not.toHaveBeenCalled();
+
+    // A visit that won before the refusal keeps its reset: the agent's link continues it.
+    const visited = setup();
+    visited.connect();
+    const opening = (await visited.rpc("authorize_connector", args)).result;
+    expect((await visited.browser(opening.inputRequests.connecta_auth.params.url)).status).toBe(302);
+    const continued = (
+      await visited.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" })
+    ).result.structuredContent.error;
+    expect((await visited.browser(continued.authorizationUrl)).status).toBe(302);
+    expect(forcedStarts(visited)).toBe(1);
+    expect(visited.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+  });
+
   it("INV-4: bounds rounds while accept does not claim consent completed", async () => {
     const flow = setup();
     let result = (await flow.rpc()).result;

@@ -767,6 +767,17 @@ export function counterexamples(
   }
   if (task.id === "p5-auth-connect-incapable" || task.id === "p5-auth-url-auto-decline") {
     cases.push({
+      name: "the agent's link had characters run onto its end",
+      trace: {
+        ...trace,
+        transcript: trace.transcript.map((entry) =>
+          entry.kind === "assistant"
+            ? { ...entry, text: entry.text.replace(/https?:[^"\s]*\/connect\/oauth[^"\s]*/g, "$&/extra") }
+            : entry,
+        ),
+      },
+    });
+    cases.push({
       name: "operator connected without agent handoff",
       trace: {
         ...trace,
