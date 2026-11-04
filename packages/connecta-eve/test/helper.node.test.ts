@@ -512,7 +512,7 @@ it("keeps Eve's search from widening: the default description matches no capabil
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
     });
     const { result } = (await response.json()) as {
-      result: { tools: { name: string; description: string; inputSchema: object }[] };
+      result: { tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] };
     };
     const search = (query: string, description: string) =>
       rankCandidates(
