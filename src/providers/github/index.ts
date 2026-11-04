@@ -1,5 +1,6 @@
 import { array, keys, optionsOf } from "../../config-schema.js";
 import { ConnectorCallError } from "../../errors.js";
+import { carryConnectorVocabulary } from "../../operation-vocabulary.js";
 import { delegatesEachCall, knownProviderFailure } from "../../provider-call.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
 import { kit } from "./api.js";
@@ -62,7 +63,7 @@ export const github = defineProvider<GitHubOptions>({
           }
         : undefined;
     // Each call goes to its REST boundary, whose write-outcome verdict stands.
-    return delegatesEachCall({
+    const connector = delegatesEachCall({
       id,
       title: options.title ?? "GitHub",
       // Preserve the REST tools' existing MCP result envelope.
@@ -93,5 +94,8 @@ export const github = defineProvider<GitHubOptions>({
         return { state: "ok", message: "GitHub App configured; installation access is resolved lazily on use." };
       },
     });
+    // Search reads hatch operations through this outer object, not the REST one.
+    carryConnectorVocabulary(rest, connector);
+    return connector;
   },
 });
