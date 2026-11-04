@@ -89,8 +89,14 @@ is main with the reproduction from PR #1339; after adds this change.
 | `execute_code` with a flipped tool | 4                  | 4                | none               | 4                 | 4               | none              |
 
 The host still resends, and the refusal is what changed. The always-a-write case
-ran under `crm__set_status` before and `crm__WRITE__set_status` after. Eve and Codex
-were not run through this reproduction; Eve's name handling was read from its source.
+ran under `crm__set_status` before and `crm__WRITE__set_status` after. The after
+columns held on the final name rule, again in three of three runs.
+
+Codex 0.166.0 ran with a scripted model in its reset drop mode only, once per case.
+It called `crm__WRITE__set_status` by name, one physical write, and sent a flipped
+`crm__set_status` once, no physical write. Neither run shows whether Codex would
+resend under parallel drops. No host has called a hashed `_w` write. No real Eve agent
+has called a `__WRITE__` name; Eve's name handling was read from its source.
 
 ## Consequences
 
