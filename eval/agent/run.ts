@@ -11,7 +11,7 @@ import type { Deployment } from "../deploy/node.js";
 import { observedPrograms, startDeployment, type Target } from "../deploy/targets.js";
 import { connectMcp, type ListedTool } from "../support/mcp.js";
 import type { ActiveTask, Check, TrialSkip } from "../tasks/types.js";
-import { runCodex } from "./codex.js";
+import { runCodex, type ApprovalMode } from "./codex.js";
 import { runClaude } from "./claude.js";
 import { gradeTask, classifyChecks, passes, type Grading } from "../tasks/grading.js";
 import { taskForSurface } from "../tasks/surface.js";
@@ -42,6 +42,8 @@ interface ApprovalUse {
 }
 
 interface TrialMetrics {
+  /** Prompts a real host would show: answered by the runner and counted per tool. */
+  approvalPrompts?: { total: number; allowed: number; denied: number; byTool: Record<string, number> };
   firstTurnInputTokens?: number | undefined;
   hostSearchCalls?: number | undefined;
   toolErrorsBeforeFirstSuccess?: number;
@@ -71,6 +73,8 @@ export interface TrialResult {
   /** Absent in results written before the worker target existed: node. */
   target?: Target;
   surface?: Surface;
+  approval?: ApprovalMode;
+  toolSearch?: boolean;
   grading?: Grading;
   model: string;
   repeat: number;
@@ -113,6 +117,8 @@ export interface TrialResult {
 }
 
 interface TrialOptions {
+  approval?: ApprovalMode;
+  toolSearch?: boolean;
   target?: Target;
   /** Opt-in latency and fault injection; none by default. */
   injection?: Injection;
@@ -211,8 +217,12 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       surfaceArm,
     );
     const deny = task.approvals?.deny ?? [];
-    const allow = (task.approvals?.allow ?? surface.map((tool) => tool.name)).filter((tool) => !deny.includes(tool));
     const gated = surface.filter((tool) => !tool.readOnly).map((tool) => tool.name);
+    const approval = options.approval ?? "auto";
+    const prompted = approval === "auto" ? [] : gated.filter((tool) => !deny.includes(tool));
+    const allow = (task.approvals?.allow ?? surface.map((tool) => tool.name)).filter(
+      (tool) => !deny.includes(tool) && !prompted.includes(tool),
+    );
     const prompts = [task.prompt];
     const notes: { beforeTurn: number; text: string }[] = [];
     let followUpsSent = 0;
@@ -220,6 +230,9 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     const runAgent = options.runner === "claude" ? runClaude : runCodex;
     const run = await runAgent({
       model,
+      approval,
+      promptedTools: prompted,
+      ...(options.toolSearch === false ? { toolSearch: false } : {}),
       surface: surfaceArm,
       ...(options.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: options.maxBudgetUsd }),
       mcpUrl: host?.mcpUrl ?? deployment.mcpUrl,
@@ -278,7 +291,18 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       else trace.transcript.push(entry);
     }
     const surfaceNames = new Set(surface.map((tool) => tool.name));
+    const promptEvents = run.events.filter((event) => event.type === "approval_prompt");
     const metrics: TrialMetrics = {
+      ...(approval === "auto"
+        ? {}
+        : {
+            approvalPrompts: {
+              total: promptEvents.length,
+              allowed: promptEvents.filter((event) => event.decision === "allow").length,
+              denied: promptEvents.filter((event) => event.decision === "deny").length,
+              byTool: countBy(promptEvents, (event) => String(event.tool)),
+            },
+          }),
       ...(guidanceArm()
         ? {
             guidanceArm: guidanceArm()!,
@@ -348,6 +372,8 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       runner: options.runner ?? "codex",
       target,
       surface: surfaceArm,
+      ...(approval === "auto" ? {} : { approval }),
+      ...(options.toolSearch === false ? { toolSearch: false } : {}),
       grading,
       model,
       repeat,

@@ -17,6 +17,9 @@ import { guidanceArm } from "./deploy/guidance.js";
  *   --timeout-min  per-trial wall budget in minutes (default 8)
  *   --effort       Codex reasoning effort (default model setting)
  *   --out          result JSON path (default eval/results/agent-<time>.json)
+ *   --approval     auto (default), prompt-allow or prompt-deny: leave host approval
+ *                  on, then answer every prompt that way and count it
+ *   --no-tool-search  Claude only: disable deferred tool search
  *   --report       also write an HTML report
  *   --baseline     previous result file for that report
  *
@@ -34,7 +37,7 @@ import { parseGrading } from "./tasks/grading.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { claudeVersion, CLAUDE_MODELS } from "./agent/claude.js";
-import { codexVersion } from "./agent/codex.js";
+import { codexVersion, parseApproval } from "./agent/codex.js";
 import { runBatch } from "./agent/run.js";
 import { batchFailures } from "./agent/verdict.js";
 import { renderReport } from "./report/html.js";
@@ -67,6 +70,9 @@ const models = (args.get("models") ?? (runner === "claude" ? CLAUDE_MODELS.join(
   .split(",")
   .map((model) => model.trim())
   .filter(Boolean);
+const approval = parseApproval(args.get("approval"));
+const toolSearch = !args.has("no-tool-search");
+if (!toolSearch && runner !== "claude") throw new Error("--no-tool-search is Claude-only");
 const repeats = Number(args.get("repeats") ?? 1);
 const concurrency = Number(args.get("concurrency") ?? 1);
 const timeoutMs = Number(args.get("timeout-min") ?? 8) * 60_000;
@@ -126,6 +132,8 @@ const file: AgentResultFile = {
     // Always recorded, zeros included, so a comparison can prove it matched.
     injection,
     surface,
+    ...(approval === "auto" ? {} : { approval }),
+    ...(toolSearch ? {} : { toolSearch: false }),
     ...(guidance ? { guidanceArm: guidance } : {}),
     grading,
     models,
@@ -173,6 +181,8 @@ const { trials, stopped } = await runBatch(tasks, models, repeats, {
   target,
   injection,
   surface,
+  approval,
+  ...(toolSearch ? {} : { toolSearch: false }),
   grading,
   concurrency,
   timeoutMs,
