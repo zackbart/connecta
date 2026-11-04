@@ -966,7 +966,7 @@ describe("search_tools", () => {
         representedTerms: [],
         otherResultTerms: [],
         unmatchedTerms: ["calendar", "availability"],
-        guidance: expect.stringContaining("No matching capability is configured in this deployment"),
+        guidance: expect.stringContaining("No tool matched these terms. Try other terms"),
       },
     });
 
@@ -981,7 +981,7 @@ describe("search_tools", () => {
       unmatchedTerms: ["calendar", "availability"],
       guidance: expect.stringContaining('No matching capability was found on connector "projects"'),
     });
-    expect(required(scopedAbsent.queryAnalysis).guidance).not.toContain("configured in this deployment");
+    expect(required(scopedAbsent.queryAnalysis).guidance).not.toContain("No tool matched these terms");
 
     const unknownConnector = textOf(
       await mt.searchTools({

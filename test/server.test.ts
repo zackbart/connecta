@@ -632,10 +632,7 @@ describe("server /mcp end-to-end", () => {
         connector: "static",
         operation: "static.whoami",
         recovery: "operator_config",
-        nextAction: {
-          tool: "authorize_connector",
-          arguments: { connector: "static" },
-        },
+        nextAction: { url: expect.any(String), purpose: expect.stringContaining("for the operator to open") },
       },
     });
 

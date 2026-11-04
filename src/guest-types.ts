@@ -100,9 +100,7 @@ interface CatalogSearchFailure extends CatalogFailureDetail {
   connector: string;
   nextAction?: Extract<
     NonNullable<CallErrorDetails["nextAction"]>,
-    {
-      tool: "authorize_connector";
-    }
+    { tool: "authorize_connector" } | { url: string } | { action: string }
   >;
   retry?: string;
 }
