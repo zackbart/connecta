@@ -162,6 +162,19 @@ for (const target of ["node", "worker"] as const) {
       }
       const ids = new Set(world.injected.ids());
       if (arm.startsWith("native")) {
+        const beforeRefusal = world.ledger.calls.length;
+        const refused = async (name: string, args: Record<string, unknown>) => {
+          const outcome = await mcp!.call(name, args).then(
+            (result: { isError: boolean; text: string }) => ({ refused: result.isError, text: result.text }),
+            (error: unknown) => ({ refused: true, text: String(error) }),
+          );
+          assert.equal(outcome.refused, true);
+          assert.match(outcome.text, /not found|unknown_tool|unavailable/);
+        };
+        await refused("search_tools", { query: "issues" });
+        await refused("call_tool", { address: "ci.get_run", args: { runId: 4812 } });
+        if (arm === "native-no-code") await refused("execute_code", { code: "async () => 1" });
+        assert.equal(world.ledger.calls.length, beforeRefusal);
         const padding = tools.filter((tool) => ids.has(tool.address?.split(".")[0] ?? ""));
         assert.equal(padding.length, 132);
         const before = world.ledger.calls.length;
