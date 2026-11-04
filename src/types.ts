@@ -628,6 +628,14 @@ export interface Executor {
    * rewrite; set this to say the same thing minification-proof.
    */
   readonly name?: string;
+  /**
+   * The run's wall-clock deadline, in whole milliseconds, when this sandbox has
+   * one: time from `execute()` to its own timeout result. Connecta ends a
+   * program's reads just before it, so a slow read becomes a catchable
+   * `timeout` rather than the whole run's failure. Omit it if the sandbox
+   * has no fixed deadline. See documentation/code-mode.md#cancellation-and-limits.
+   */
+  readonly deadlineMs?: number;
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
   /** Release runtime resources. Node's built-in pool implements this. */
   close?(): void | Promise<void>;
