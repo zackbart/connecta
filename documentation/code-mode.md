@@ -248,7 +248,9 @@ unchanged as `connecta.call(entry.address, entry.args)`
 ([fully determined operations](./meta-tools.md#discovery-context) only).
 
 Each entry carries `address`, `name`, and — when requested — `description`,
-the rendered schemas, and `annotations`. The page's `connectors` map holds each
+the rendered schemas, and `annotations`. `description` is the one-sentence
+[summary](./meta-tools.md#lexical-discovery), with `descriptionTruncated: true`
+when text was left out; `fullDescriptions: true` returns the original text. The page's `connectors` map holds each
 row's connector facts once, keyed by the id before the address's first dot: the
 configured `title` when present (normalized whitespace, at most 120 UTF-8
 bytes), and `guide` (the skill name) with a bounded `guideSummary` when the
@@ -354,7 +356,11 @@ and catalog failures add only `retryAfterMs` when known. Each failed entry
 clamps its caller-authored `address` to 512 UTF-8 bytes with an `…` marker, and
 entry order correlates a clipped address with its request; successes keep
 canonical addresses. More than 100 addresses is `invalid_args`, and the same
-256,000-byte ceiling applies. Compact describe keeps property prose within a
+256,000-byte ceiling applies. `description` is the tool's full text. One call
+returns at most 32 KiB of UTF-8 description text in address order; an entry that
+does not fit in what remains gets the search summary and
+`descriptionTruncated: true`, and a later, shorter entry may still fit.
+`fullDescriptions: true` lifts that budget, leaving the ceiling. Compact describe keeps property prose within a
 separate 8,192-byte UTF-8 shape cap and shares search's 2,000-visit budget; a
 capped shape sets `inputSchemaTruncated` or `outputSchemaTruncated`, and
 `format: "json"` gives the exact schema. `format: "typescript"` returns a

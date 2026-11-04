@@ -155,6 +155,7 @@ interface CatalogDescription {
   schemaFormat?: "json" | "text";
   name?: string;
   description?: string;
+  descriptionTruncated?: true;
   guide?: string;
   guideSummary?: string;
   guideRequired?: true;
@@ -173,6 +174,7 @@ type CatalogSearchTool = {
   name: string;
   address: string;
   description?: string;
+  descriptionTruncated?: true;
   inputSchema?: unknown;
   outputSchema?: unknown;
   signature?: string;

@@ -1,7 +1,7 @@
 import type { JsonSchema, ToolDef } from "./types.js";
 
-const DEFAULT_DESCRIPTION_LENGTH = 240;
 const DISCOVERY_DESCRIPTION_LENGTH = 160;
+const DISCOVERY_DESCRIPTION_MINIMUM = 40;
 export const MAX_COMPACT_DISCOVERY_SCHEMA_BYTES = 1_024;
 const MAX_COMPACT_DISCOVERY_ENUM_BYTES = MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
 const MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES = MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
@@ -77,20 +77,40 @@ class SchemaWork {
   }
 }
 
-export function summarizeDescription(text: string | undefined, full: boolean): string | undefined {
-  return summarizeToLength(text, full, DEFAULT_DESCRIPTION_LENGTH);
-}
+/** A sentence's end, or the paragraph break `discoverySummary` marks with a newline. */
+const SENTENCE_END = /[.!?]["'`)\]]*(?= |\n|$)|\n/g;
+/** A period that follows an initial or a common abbreviation ends no sentence. */
+const ABBREVIATED = /(?:^|[\s(.])(?:e\.g|i\.e|etc|vs|cf|approx|[a-z])\.$/i;
 
-export function summarizeDiscoveryDescription(text: string | undefined, full: boolean): string | undefined {
-  return summarizeToLength(text, full, DISCOVERY_DESCRIPTION_LENGTH);
-}
-
-function summarizeToLength(text: string | undefined, full: boolean, maxLength: number): string | undefined {
-  if (!text) return undefined;
-  if (full) return text;
-  const compact = text.replace(/\s+/g, " ").trim();
-  if (compact.length <= maxLength) return compact;
-  return `${compact.slice(0, maxLength - 1).trimEnd()}…`;
+/**
+ * What search shows of a description: the first complete sentence, joined to
+ * the next ones until it reaches 40 characters, within 160. Text with no such
+ * boundary is cut at a word. `truncated` says text was left out.
+ */
+export function discoverySummary(text: string): { text: string; truncated: boolean } {
+  const marked = text
+    .trim()
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n");
+  const whole = marked.replaceAll("\n", " ");
+  let end: number | undefined;
+  for (const match of marked.matchAll(SENTENCE_END)) {
+    const candidate = match[0] === "\n" ? match.index : match.index + match[0].length;
+    if (candidate < DISCOVERY_DESCRIPTION_MINIMUM) continue;
+    if (candidate > DISCOVERY_DESCRIPTION_LENGTH) break;
+    if (ABBREVIATED.test(marked.slice(Math.max(0, candidate - 8), candidate))) continue;
+    end = candidate;
+    break;
+  }
+  if (end !== undefined) return { text: whole.slice(0, end), truncated: end < whole.length };
+  if (whole.length <= DISCOVERY_DESCRIPTION_LENGTH) return { text: whole, truncated: false };
+  let cut = DISCOVERY_DESCRIPTION_LENGTH - 1;
+  const space = whole.lastIndexOf(" ", cut);
+  if (space >= DISCOVERY_DESCRIPTION_MINIMUM) cut = space;
+  else if (/[\uD800-\uDBFF]/.test(whole.charAt(cut - 1))) cut -= 1;
+  return { text: `${whole.slice(0, cut).trimEnd()}…`, truncated: true };
 }
 
 function lexicalTokens(text: string): string[] {
@@ -174,13 +194,19 @@ export function lexicalSearchContent(query: string): string {
 interface SearchDocument {
   name: string;
   nameTokens: readonly string[];
-  descriptionTokens: readonly string[];
+  titleTokens: readonly string[];
+  /** Tokens of what search shows of the description. */
+  summaryTokens: readonly string[];
+  /** The description's remaining tokens: searchable, but weak evidence. */
+  tailTokens: readonly string[];
 }
+
+const ZONES = ["nameTokens", "titleTokens", "summaryTokens", "tailTokens"] as const;
 
 interface SearchIndex {
   documents: readonly SearchDocument[];
-  nameTokenDocuments: ReadonlyMap<string, readonly number[]>;
-  descriptionTokenDocuments: ReadonlyMap<string, readonly number[]>;
+  /** Token postings for each of `ZONES`, in order. */
+  postings: readonly ReadonlyMap<string, readonly number[]>[];
 }
 
 export type LexicalMatchMode = "all" | "partial";
@@ -190,6 +216,12 @@ export interface RankedTool {
   order: number;
   exactName: boolean;
   matchedTermCount: number;
+  /** Terms met in the name, title or summary, not only the description's tail. */
+  headTerms: readonly string[];
+  /** Terms the name itself states. */
+  nameTerms: readonly string[];
+  /** The name states a query term at least as rare as the query's average. */
+  namesDistinctiveTerm: boolean;
 }
 
 interface SearchView {
@@ -204,35 +236,38 @@ const retainedIndexes = new Map<string, { index: SearchIndex; bytes: number }>()
 const INDEX_BYTES = 8 * 1024 * 1024;
 let retainedBytes = 0;
 
+/** A tool's display title; MCP carries it on the tool or on its annotations. */
+function toolTitle(tool: ToolDef): string {
+  const title = tool.title ?? tool.annotations?.title;
+  return typeof title === "string" ? title : "";
+}
+
 function buildIndex(tools: ToolDef[]): SearchIndex {
-  const nameTokenDocuments = new Map<string, number[]>();
-  const descriptionTokenDocuments = new Map<string, number[]>();
-  const addTokens = (target: Map<string, number[]>, tokens: string[], position: number) => {
-    for (const token of new Set(tokens)) {
-      const documents = target.get(token) ?? [];
-      documents.push(position);
-      target.set(token, documents);
-    }
-  };
+  const postings = ZONES.map(() => new Map<string, number[]>());
   const documents = tools.map((tool, position) => {
+    const description = tool.description ?? "";
     const nameTokens = lexicalTokens(tool.name);
-    const descriptionTokens = [...new Set(lexicalTokens(tool.description ?? ""))];
-    addTokens(nameTokenDocuments, nameTokens, position);
-    addTokens(descriptionTokenDocuments, descriptionTokens, position);
-    return Object.freeze({
+    const summary = new Set(lexicalTokens(discoverySummary(description).text));
+    const doc: SearchDocument = {
       name: nameTokens.join(" "),
-      nameTokens: Object.freeze(nameTokens),
-      descriptionTokens: Object.freeze(descriptionTokens),
+      nameTokens,
+      titleTokens: [...new Set(lexicalTokens(toolTitle(tool)))],
+      summaryTokens: [...summary],
+      tailTokens: [...new Set(lexicalTokens(description))].filter((token) => !summary.has(token)),
+    };
+    ZONES.forEach((zone, index) => {
+      Object.freeze(doc[zone]);
+      for (const token of new Set(doc[zone])) {
+        const positions = postings[index]!.get(token) ?? [];
+        positions.push(position);
+        postings[index]!.set(token, positions);
+      }
     });
+    return Object.freeze(doc);
   });
-  for (const map of [nameTokenDocuments, descriptionTokenDocuments])
-    for (const positions of map.values()) Object.freeze(positions);
+  for (const map of postings) for (const positions of map.values()) Object.freeze(positions);
   // Maps remain private to this module and are never mutated after construction.
-  return Object.freeze({
-    documents: Object.freeze(documents),
-    nameTokenDocuments,
-    descriptionTokenDocuments,
-  });
+  return Object.freeze({ documents: Object.freeze(documents), postings: Object.freeze(postings) });
 }
 
 function bindIndex(tools: ToolDef[], index: SearchIndex): SearchView {
@@ -244,7 +279,7 @@ function bindIndex(tools: ToolDef[], index: SearchIndex): SearchView {
 /** Only call after complete catalog acceptance, redaction and classification. */
 export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void {
   if (searchIndexes.has(tools)) return;
-  const key = JSON.stringify([partition, tools.map((tool) => [tool.name, tool.description ?? ""])]);
+  const key = JSON.stringify([partition, tools.map((tool) => [tool.name, tool.description ?? "", toolTitle(tool)])]);
   const retained = retainedIndexes.get(key);
   if (retained) {
     bindIndex(tools, retained.index);
@@ -255,10 +290,9 @@ export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void
   let bytes = key.length * 2 + 128;
   for (const doc of index.documents) {
     bytes += 128 + doc.name.length * 2;
-    for (const tokens of [doc.nameTokens, doc.descriptionTokens])
-      for (const token of tokens) bytes += 32 + token.length * 2;
+    for (const zone of ZONES) for (const token of doc[zone]) bytes += 32 + token.length * 2;
   }
-  for (const map of [index.nameTokenDocuments, index.descriptionTokenDocuments])
+  for (const map of index.postings)
     for (const [token, positions] of map) bytes += 96 + token.length * 2 + positions.length * 8;
   if (bytes > INDEX_BYTES) return;
   while (retainedIndexes.size >= 4 || retainedBytes + bytes > INDEX_BYTES) {
@@ -301,6 +335,27 @@ function inflectionVariants(base: string): string[] {
   ];
 }
 
+/**
+ * Shortenings API names use for words people write out. Only unambiguous
+ * pairs: `auth` could mean either authentication or authorization.
+ */
+const ABBREVIATIONS = new Map(
+  [
+    "config configuration",
+    "db database",
+    "doc document",
+    "env environment",
+    "org organization",
+    "repo repository",
+    "var variable",
+  ]
+    .map((pair) => pair.split(" ") as [string, string])
+    .flatMap(([short, long]) => [
+      [short, long],
+      [long, short],
+    ]) as [string, string][],
+);
+
 function matchingTokenCandidates(term: string): Set<string> {
   const candidates = new Set([term, ...inflectionVariants(term)]);
   const possibleBases = [
@@ -315,6 +370,10 @@ function matchingTokenCandidates(term: string): Set<string> {
     if (base && inflectionVariants(base).includes(term)) {
       candidates.add(base);
     }
+  }
+  for (const candidate of candidates) {
+    const other = ABBREVIATIONS.get(candidate);
+    if (other) for (const variant of [other, ...inflectionVariants(other)]) candidates.add(variant);
   }
   return candidates;
 }
@@ -342,7 +401,10 @@ export interface LexicalCorpusStatistics {
   documentCount: number;
   documentFrequency: ReadonlyMap<string, number>;
   nameMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
+  /** Every zone other than the name: title, summary and tail. */
   descriptionMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
+  /** The zones a tool can be complete on: name, title and summary. */
+  headMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
 }
 
 /**
@@ -378,28 +440,36 @@ export function lexicalCorpusStatistics(
       documentFrequency: new Map(),
       nameMatches: new Map(),
       descriptionMatches: new Map(),
+      headMatches: new Map(),
     };
   }
   const nameMatches = new Map<string, Set<ToolDef>>();
   const descriptionMatches = new Map<string, Set<ToolDef>>();
+  const headMatches = new Map<string, Set<ToolDef>>();
   for (const term of terms) {
     const termNameMatches = new Set<ToolDef>();
     const termDescriptionMatches = new Set<ToolDef>();
+    const termHeadMatches = new Set<ToolDef>();
     for (const tools of toolSets) {
       const index = indexFor(tools);
       for (const candidate of synonymCandidates(term, synonymsFor?.(tools))) {
-        for (const position of index.index.nameTokenDocuments.get(candidate) ?? []) {
-          const tool = index.tools.get(position);
-          if (tool) termNameMatches.add(tool);
-        }
-        for (const position of index.index.descriptionTokenDocuments.get(candidate) ?? []) {
-          const tool = index.tools.get(position);
-          if (tool) termDescriptionMatches.add(tool);
-        }
+        // Name and title, summary and tail: only the tail is outside the head.
+        [
+          [termNameMatches, termHeadMatches],
+          [termDescriptionMatches, termHeadMatches],
+          [termDescriptionMatches, termHeadMatches],
+          [termDescriptionMatches],
+        ].forEach((targets, zone) => {
+          for (const position of index.index.postings[zone]!.get(candidate) ?? []) {
+            const tool = index.tools.get(position);
+            if (tool) for (const target of targets) target.add(tool);
+          }
+        });
       }
     }
     nameMatches.set(term, termNameMatches);
     descriptionMatches.set(term, termDescriptionMatches);
+    headMatches.set(term, termHeadMatches);
   }
   const documentFrequency = new Map(
     terms.map((term) => [
@@ -412,7 +482,13 @@ export function lexicalCorpusStatistics(
     documentFrequency,
     nameMatches,
     descriptionMatches,
+    headMatches,
   };
+}
+
+/** A hatch's standing when one operation states every term: coverage, without a named tool's name evidence. */
+export function vocabularyScore(terms: readonly string[], statistics: LexicalCorpusStatistics): number {
+  return terms.reduce((total, term) => total + 5 * inverseDocumentFrequency(term, statistics), 0);
 }
 
 function inverseDocumentFrequency(term: string, statistics: LexicalCorpusStatistics): number {
@@ -426,8 +502,8 @@ function scoreDocument(
   terms: string[],
   mode: LexicalMatchMode,
   statistics: LexicalCorpusStatistics,
-): { score: number; matchedTermCount: number } | null {
-  if (!phrase) return { score: 0, matchedTermCount: 0 };
+): Pick<RankedTool, "score" | "matchedTermCount" | "headTerms" | "nameTerms" | "namesDistinctiveTerm"> | null {
+  if (!phrase) return { score: 0, matchedTermCount: 0, headTerms: [], nameTerms: [], namesDistinctiveTerm: false };
   const matchedTerms = terms.filter(
     (term) => statistics.nameMatches.get(term)?.has(doc.tool) || statistics.descriptionMatches.get(term)?.has(doc.tool),
   );
@@ -436,8 +512,13 @@ function scoreDocument(
 
   // Coverage remains meaningful in partial mode, but is IDF-weighted rather
   // than a raw term count: one rare domain term can beat several ubiquitous
-  // catalog verbs.
-  let score = matchedTerms.reduce((total, term) => total + 4 * inverseDocumentFrequency(term, statistics), 0);
+  // catalog verbs. A term met only in the description's tail is weak coverage,
+  // so a long description cannot outrank a tool that names what was asked.
+  const inHead = (term: string) => statistics.headMatches.get(term)?.has(doc.tool) === true;
+  let score = matchedTerms.reduce(
+    (total, term) => total + (inHead(term) ? 4 : 1) * inverseDocumentFrequency(term, statistics),
+    0,
+  );
   const phraseWeight = terms.reduce((total, term) => total + inverseDocumentFrequency(term, statistics), 0);
   if (doc.name === phrase) score += 40 * phraseWeight;
   else if (doc.name.startsWith(`${phrase} `)) score += 24 * phraseWeight;
@@ -451,12 +532,22 @@ function scoreDocument(
     else if (statistics.nameMatches.get(term)?.has(doc.tool)) {
       score += 8 * weight;
     }
-    if (doc.descriptionTokens.includes(term)) score += 3 * weight;
-    else if (statistics.descriptionMatches.get(term)?.has(doc.tool)) {
-      score += 1.5 * weight;
-    }
+    // A term reaching a zone only through an inflection or synonym earns half.
+    if (doc.summaryTokens.includes(term)) score += 3 * weight;
+    else if (doc.titleTokens.includes(term)) score += 2 * weight;
+    else if (doc.tailTokens.includes(term)) score += 0.5 * weight;
+    else if (inHead(term)) score += 1.5 * weight;
+    else if (statistics.descriptionMatches.get(term)?.has(doc.tool)) score += 0.25 * weight;
   }
-  return { score, matchedTermCount: matchedTerms.length };
+  const averageWeight = phraseWeight / terms.length;
+  const nameTerms = matchedTerms.filter((term) => statistics.nameMatches.get(term)?.has(doc.tool));
+  return {
+    score,
+    matchedTermCount: matchedTerms.length,
+    headTerms: matchedTerms.filter(inHead),
+    nameTerms,
+    namesDistinctiveTerm: nameTerms.some((term) => inverseDocumentFrequency(term, statistics) >= averageWeight),
+  };
 }
 
 function queryContainsExactName(doc: SearchDocument, phrase: string): boolean {
@@ -494,6 +585,9 @@ export function rankTools(
         order: visibleOrder,
         exactName: queryContainsExactName(doc, exactNamePhrase),
         matchedTermCount: scored.matchedTermCount,
+        headTerms: scored.headTerms,
+        nameTerms: scored.nameTerms,
+        namesDistinctiveTerm: scored.namesDistinctiveTerm,
       });
     }
   });
