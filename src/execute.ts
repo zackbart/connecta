@@ -61,7 +61,13 @@ import { fromSignal, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
 import { executorProgram } from "./runtime/executor.js";
-import { connectorGuide, connectorGuideRequired, hasConnectorGuides, SkillsRegistry } from "./skills.js";
+import {
+  connectorGuide,
+  connectorGuideRequired,
+  connectorInventoryTitle,
+  hasConnectorGuides,
+  SkillsRegistry,
+} from "./skills.js";
 import type { AdmittingExecutor, ExecuteResult, Executor, ExecutorLease, ExecutorProvider, Logger } from "./types.js";
 
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
@@ -2109,19 +2115,6 @@ function discardedEmits(emitted: EmitCollector): {
   return emitted.blocks.length > 0 ? { emittedDiscarded: emitted.blocks.length } : {};
 }
 
-const inventoryWords = (text: string) =>
-  text
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
-
-/** A title that only respells the id ("Google Calendar" for google_calendar) adds nothing. */
-function titleAddsInformation(id: string, title: string): boolean {
-  const words = inventoryWords(title);
-  const idWords = inventoryWords(id);
-  return words.join("") !== idWords.join("") && words.some((word) => !idWords.includes(word));
-}
-
 /** Follows the inventory only when an entry shown carries the mark; `*` cannot appear in an id. */
 const REQUIRED_GUIDE_LEGEND = ' *Read connecta.skill("connector:<id>") before its first call.';
 
@@ -2139,10 +2132,8 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
   const legend = (shown: typeof connectors) => (shown.some(guideFirst) ? REQUIRED_GUIDE_LEGEND : "");
   const entry = (connector: (typeof connectors)[number], titled: boolean): string => {
     const name = guideFirst(connector) ? `${connector.id}*` : connector.id;
-    const title = connector.title?.replace(/\s+/g, " ").trim();
-    return titled && title && titleAddsInformation(connector.id, title)
-      ? `${name} (${boundedEchoText(title, 45)})`
-      : name;
+    const title = titled ? connectorInventoryTitle(connector) : undefined;
+    return title ? `${name} (${title})` : name;
   };
   for (const titled of [true, false]) {
     const line = `${prefix}${connectors.map((connector) => entry(connector, titled)).join(", ")}.${legend(connectors)}`;

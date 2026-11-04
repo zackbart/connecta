@@ -1803,13 +1803,10 @@ describe("api() oauth replay is for reads only", () => {
     expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
 
     provider.expireAccess();
-    const replayed = JSON.parse((await mt.callTool({ address: "ccb.trigger" })).content[0]!.text) as unknown;
-    expect(replayed).toMatchObject({ owner: "alice" });
-    expect(provider.apiAuthorizations).toEqual([
-      "Bearer access-alice-1",
-      "Bearer access-alice-2",
-      "Bearer access-alice-3",
-    ]);
+    // api() always declares its class, so a read override cannot make this write a read.
+    const declared = await mt.callTool({ address: "ccb.trigger" });
+    expect(declared.structuredContent).toMatchObject({ error: { code: "destructive_tool_requires_approval" } });
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
   });
 });
 

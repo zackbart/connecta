@@ -26,6 +26,7 @@ owns the top-level MCP contract; it does not require reading the core internals.
 | Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)               |
 | Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)      |
 | List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface), [Eve agents](#eve-agents)                                                                      |
+| Read an endpoint's surface and connector roster    | [Endpoint facts](#endpoint-facts)                                                                                                           |
 | Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                             |
 
 ## Tool presentation
@@ -1751,7 +1752,8 @@ at the downstream boundary, even when the agent may see the error's message.
 A pool set to `surface: "native"` lists each downstream tool as its own MCP
 tool instead of the six meta-tools, for clients that already defer tools behind
 their own search (Eve, Claude Code with tool search). The meta surface stays
-the default everywhere, and plain `/mcp` is always meta.
+the default everywhere. Plain `/mcp` is always meta for a maintainer; a person
+routed there by their one pool membership gets that pool's surface.
 
 ```ts
 pools: {
@@ -1813,7 +1815,9 @@ address, which never changes.
 **Annotations** come from the served classification only: a read is
 `{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
 write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
-whatever hints the downstream declared. A read-only endpoint or connector
+whatever hints the downstream declared. A deployment `"read"` override never
+produces read annotations for a tool whose source explicitly declares a write; see
+[deployment overrides](./integrating.md#another-remote-mcp-server). A read-only endpoint or connector
 leaves write tools out of the list, by the same rule search and describe use.
 
 **Calls take the existing paths.** A name selects its route: a read's name is the
@@ -1853,6 +1857,14 @@ Connecta's catalog next loads it. A tool whose source declares a write and whose
 deployment classification overrides it to read has a read's name and takes the
 `call_tool` route, and a host may resend it; do not override a write to read unless
 repeating it is harmless. This also applies to `call_tool` on the meta surface.
+
+**Known limit: a change Connecta has not seen.** Connecta enforces the catalog it
+holds. A vendor can change a tool from read to write before Connecta's catalog
+refreshes, and until then every read-annotated route treats that tool as a read:
+`call_tool`, a read-annotated native tool and programs on a read-only endpoint. A
+host may also resend such a call after a connection failure, so the vendor can
+receive it more than once. The catalog refresh closes this window, and nothing
+closes it sooner.
 
 **Listing.** `tools/list` is one page with no cursor (Eve's MCP client reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
@@ -1930,7 +1942,47 @@ production catalogs near the cap remain unmeasured.
 
 Starting with 0.35.0, the Eve helper ships separately as `@zackbart/connecta-eve`.
 Connecta core supplies the native pool surface and has no Eve dependency.
-Consult that package's documentation for its compatibility and setup.
+Consult that package's documentation for its compatibility and setup. The helper
+composes its Eve-specific guidance from [endpoint facts](#endpoint-facts) and
+places it before the server's own instructions; Connecta's text stays host-neutral.
+
+## Endpoint facts
+
+`server/discover` and `initialize` both advertise the endpoint in
+`capabilities.extensions["dev.connecta/endpoint"]`, so a client composing its
+own guidance can read what this request reached:
+
+```json
+{
+  "surface": "meta",
+  "executeCode": true,
+  "readOnly": false,
+  "connectors": [
+    { "id": "crm", "title": "Customer records", "readFirst": "connector:crm" },
+    { "id": "tickets" }
+  ]
+}
+```
+
+| Field                    | Meaning                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `surface`                | `"meta"` or `"native"`: the surface this request is served                                                         |
+| `executeCode`            | Whether `execute_code` is listed. Always `true` on meta                                                            |
+| `readOnly`               | The effective policy: the endpoint is read-only, or every connector it reaches is                                  |
+| `connectors[].id`        | Each canonical connector id the caller's scope reaches, in registry order                                          |
+| `connectors[].title`     | Present only when the title says more than the id; normalized and capped as in the [inventory](#discovery-context) |
+| `connectors[].readFirst` | Present only for a required guide: the name to pass to `skills`                                                    |
+
+The facts come from the admitted scope and deployment code, never from request
+arguments or `_meta`: a person on plain `/mcp` sees their one pool's connectors,
+a maintainer sees the whole catalog, and a refused caller gets the usual 404
+with no facts. The roster is the one `execute_code`'s inventory describes for
+the same caller, without its byte cap. Reading it loads no catalog, probes no
+credential, and records no activity. It says nothing about connector health or
+authorization, and grants nothing.
+
+A client that does not recognize the extension ignores it. An older server omits
+it; treat the surface as unknown rather than assuming one.
 
 ## Contributor reference
 

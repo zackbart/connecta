@@ -87,6 +87,9 @@ function eveSession(definitions: {
 }
 
 const url = "https://connecta.example.com";
+// What the helper prepends when a server advertises no endpoint facts.
+const guided = (text: string) =>
+  `Connecta guidance:\nConnecta tools are deferred: call eve__tool({ name: "connecta__<tool>", input }). Names in this guidance and in nextAction omit the "connecta__" prefix.\n${text}`;
 
 it("evaluates the pool every model call and fences a parked call when its connection changes", async () => {
   let pool = "notes_alice";
@@ -150,13 +153,46 @@ it("follows a pool change within a turn without reusing another endpoint's memo"
       },
     }),
   });
-  expect(await session.evaluate()).toBe(`Connecta guidance:\n${url}/agent/notes_alice`);
+  expect(await session.evaluate()).toBe(guided(`${url}/agent/notes_alice`));
   pool = "assistant";
-  expect(await session.evaluate()).toBe(`Connecta guidance:\n${url}/agent/assistant`);
+  expect(await session.evaluate()).toBe(guided(`${url}/agent/assistant`));
   expect(session.connection().url).toBe(`${url}/agent/assistant`);
   pool = "notes_alice";
-  expect(await session.evaluate()).toBe(`Connecta guidance:\n${url}/agent/notes_alice`);
+  expect(await session.evaluate()).toBe(guided(`${url}/agent/notes_alice`));
   expect(fetched).toEqual([`${url}/agent/notes_alice`, `${url}/agent/assistant`]);
+});
+
+it("gives each selected pool its own surface and roster under one named connection", async () => {
+  let pool = "notes_alice";
+  const session = eveSession({
+    instructions: connectaInstructions({
+      url,
+      connection: "assistant_tools",
+      pool: () => pool,
+      getToken: () => "cta_agent",
+      fetch: async (endpoint) =>
+        Response.json({
+          result: {
+            instructions: "Server text.",
+            capabilities: {
+              extensions: {
+                "dev.connecta/endpoint": String(endpoint).endsWith("/notes_alice")
+                  ? { surface: "native", executeCode: false, connectors: [{ id: "notes" }] }
+                  : { surface: "meta", executeCode: true, connectors: [{ id: "crm" }] },
+              },
+            },
+          },
+        }),
+    }),
+  });
+  const alice = await session.evaluate();
+  expect(alice).toContain('name: "assistant_tools__<connector>__<tool>"');
+  expect(alice).toContain("Connectors: notes.");
+  pool = "assistant";
+  const shared = await session.evaluate();
+  expect(shared).toContain("assistant_tools__execute_code");
+  expect(shared).toContain("Reachable: crm.");
+  expect(shared).not.toContain("notes");
 });
 
 it("keeps TTL and the 30-second failure backoff per endpoint", async () => {
@@ -354,14 +390,14 @@ it("gates guidance on every evaluation before token, pool and cached guidance ac
   expect(getToken).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
   allowed = true;
-  expect(await session.evaluate()).toBe("Connecta guidance:\nAllowed guidance");
+  expect(await session.evaluate()).toBe(guided("Allowed guidance"));
   allowed = false;
   expect(await session.evaluate()).toBe("");
   allowed = true;
   fail = true;
   expect(await session.evaluate()).toBe("");
   fail = false;
-  expect(await session.evaluate()).toBe("Connecta guidance:\nAllowed guidance");
+  expect(await session.evaluate()).toBe(guided("Allowed guidance"));
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(when).toHaveBeenCalledTimes(5);
 });
