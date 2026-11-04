@@ -1,5 +1,5 @@
 import { ownedByThisRequest, requestToken } from "./request-bound-async-resource.js";
-import { createConnecta, type Connector } from "../../src/index.js";
+import { createConnecta, remoteMcp, type Connector } from "../../src/index.js";
 import { workerExecutor } from "../../src/worker.js";
 import type { AdmittingExecutor } from "../../src/types.js";
 
@@ -13,6 +13,9 @@ interface Env {
 // uses the Worker executor's default admission; `/tight/mcp` a one-slot pool
 // with a short queue, for refusals.
 let apps: { standard: ReturnType<typeof createConnecta>; tight: ReturnType<typeof createConnecta> } | undefined;
+// A writable endpoint with remote MCP connectors over TCP, and what it logged.
+let writer: ReturnType<typeof createConnecta> | undefined;
+const callFailures: unknown[] = [];
 let executors: { standard: AdmittingExecutor; tight: AdmittingExecutor } | undefined;
 // A host call that ran outside the request owning its program, or failed.
 const failures: string[] = [];
@@ -112,6 +115,27 @@ function serve(request: Request, url: URL, env: Env, ctx: ExecutionContext): Res
       tight: executors.tight.admissionSnapshot?.(),
       failures,
     });
+  }
+  if (url.pathname === "/call-failures") return Response.json(callFailures);
+  if (url.pathname === "/origin") return Response.json({ origin: env.ORIGIN });
+  if (url.pathname === "/writer/mcp") {
+    writer ??= createConnecta({
+      readOnly: false,
+      publicUrl: "http://localhost",
+      logger: {
+        debug() {},
+        info() {},
+        error() {},
+        warn(message, record) {
+          if (String(message).includes("call failed")) callFailures.push(record);
+        },
+      },
+      executor: executors.standard,
+      connectors: ["sequential", "iserror"].map((mode) =>
+        remoteMcp(mode, { url: `${env.ORIGIN}/executor/mcp/${mode}`, description: "Program write fixture" }),
+      ),
+    });
+    return writer.fetch(new Request(new URL("/mcp", url), request), env, ctx);
   }
   const program = request.headers.get("X-Program");
   if (program) owned.set(program, new AbortController().signal);

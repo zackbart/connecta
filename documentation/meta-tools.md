@@ -1476,7 +1476,11 @@ in `writes.unknown` even when the program caught the failure. When that write
 met an authorization verdict, the program's error is that verdict, as a direct
 call reports it: its code, `connector`, `recovery`, and `nextAction`, with
 `writeOutcome: "unknown"` and `reconciliationRequired: true`. Any other unknown
-write makes it `write_outcome_unknown`.
+write makes it `write_outcome_unknown`. Either error's `unknownWrites` lists at
+most ten such writes with their `address`, `code` and redacted `message`, and
+`unknownWritesTruncated` marks more. A write whose tool answered `isError` carries
+`toolAnswered: true`, on a direct call too: its message is the tool's own words,
+and its outcome stays unknown because its handler ran before it answered.
 
 The classification served for the call decides this advice, including deployment
 `classification` overrides. For example, `classification: { crm: { get_person:

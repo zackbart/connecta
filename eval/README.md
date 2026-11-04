@@ -81,7 +81,11 @@ the original two Worker entries use a local Access stand-in. The original four t
 `/health`, MCP initialize, the six-tool list, an `execute_code` read and the
 operator page in headless Chromium. Targets with a write-capable fake make
 one `call_destructive_tool` write and verify exactly one downstream write and
-the resulting fake state; targets without one claim no write. Steps are bounded
+the resulting fake state; targets without one claim no write. `node-fakes` and
+`worker-fakes` also run sequential writes through one `execute_code` program on
+one connection: two land, the tool refuses the third with its own error, and the
+fourth never leaves. The check reads the fake's state, its count of physical writes,
+and the `write_outcome_unknown` result, which must report the tool's words. Steps are bounded
 to two minutes, child process groups stop on exit or signal, and any failed
 check exits nonzero with the results JSON. Install Chromium once with
 `pnpm run test:browser:install`.

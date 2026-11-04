@@ -7,6 +7,7 @@ declare module "vitest" {
 }
 
 export default async function setup(project: TestProject) {
+  const mcpWrites = new Map<string, string[]>();
   const bindingHeld = new Map<string, ServerResponse>();
   let bindingCalls = 0;
   let bindingPeak = 0;
@@ -20,6 +21,72 @@ export default async function setup(project: TestProject) {
   const server = createServer(async (req, res) => {
     const attributed = req.url?.startsWith(`${prefix}/`) === true;
     if (attributed) req.url = req.url!.slice(prefix.length);
+    // A stateful MCP downstream for program writes, answering over SSE. Each
+    // tools/call is logged as it arrives; `iserror` answers id "refused" with
+    // the tool's own error, as a hosted server does, without applying it.
+    if (req.url?.startsWith("/executor/mcp/")) {
+      const mode = req.url.split("/")[3]!;
+      if (req.url.endsWith("/writes")) {
+        res.end(JSON.stringify(mcpWrites.get(mode) ?? []));
+        return;
+      }
+      if (req.method === "GET") {
+        res.writeHead(405).end();
+        return;
+      }
+      if (req.method === "DELETE") {
+        res.end();
+        return;
+      }
+      let body = "";
+      for await (const chunk of req) body += String(chunk);
+      const rpc = JSON.parse(body) as {
+        id?: number;
+        method: string;
+        params?: { protocolVersion?: string; arguments?: { id?: string } };
+      };
+      if (rpc.id === undefined) {
+        res.writeHead(202).end();
+        return;
+      }
+      if (rpc.method === "initialize") res.setHeader("Mcp-Session-Id", randomUUID());
+      else if (!req.headers["mcp-session-id"]) {
+        res.writeHead(400).end("{}");
+        return;
+      }
+      const written = rpc.params?.arguments?.id;
+      if (rpc.method === "tools/call") mcpWrites.set(mode, [...(mcpWrites.get(mode) ?? []), String(written)]);
+      const result =
+        rpc.method === "initialize"
+          ? {
+              protocolVersion: rpc.params?.protocolVersion ?? "2025-11-25",
+              capabilities: { tools: {} },
+              serverInfo: { name: "fixture", version: "1" },
+            }
+          : rpc.method === "tools/list"
+            ? {
+                tools: [
+                  {
+                    name: "create",
+                    inputSchema: { type: "object" },
+                    annotations: { readOnlyHint: false, destructiveHint: true },
+                  },
+                ],
+              }
+            : rpc.method === "tools/call" && written === "refused"
+              ? { isError: true, content: [{ type: "text", text: "Vendor refused this request" }] }
+              : rpc.method === "tools/call"
+                ? { content: [{ type: "text", text: JSON.stringify({ created: written }) }] }
+                : undefined;
+      if (!result) {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "Method not found" } }));
+        return;
+      }
+      res.writeHead(200, { "Content-Type": "text/event-stream" });
+      res.end(`event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result })}\n\n`);
+      return;
+    }
     // A slow downstream for overlapping Worker programs: each host call is a
     // real TCP request answered only after its own delay.
     if (req.url?.startsWith("/executor/slow")) {

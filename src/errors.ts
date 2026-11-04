@@ -674,6 +674,11 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
    * {@link ConnectorCallError.writeOutcome}). Check its target before repeating it.
    */
   writeOutcome?: "unknown";
+  /**
+   * A write's downstream tool answered `isError` itself, so `message` holds its
+   * words. They do not prove the write unapplied: its handler ran before it answered.
+   */
+  toolAnswered?: true;
   /** The single model-facing entry point for every credential class. */
   nextAction?:
     | { tool: "skills"; arguments: Record<string, never>; purpose: string }

@@ -618,7 +618,7 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 | `result_processing_failed`   | the result could not be prepared                                                                                                                                                                      | per message   |
 | `result_too_large`           | a discovery response exceeded its byte bound                                                                                                                                                          | false         |
 | `budget_exceeded`            | the run exhausted a host-call, write, or emitted-output budget                                                                                                                                        | false         |
-| `write_outcome_unknown`      | a program write was sent and no answer came back; it is never sent again (`W9`)                                                                                                                       | false         |
+| `write_outcome_unknown`      | a program write was sent and no answer proves whether it applied; `unknownWrites` says how each failed, and none is sent again (`W9`)                                                                 | false         |
 | `executor_failed`            | the executor returned a malformed result or failed outside the guest program                                                                                                                          | false         |
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
@@ -1193,7 +1193,18 @@ They are never inferred from descriptions or arguments.
 if the program does not await it, bounded by its host-call deadline. A write
 that reaches accounting after the program settles is not sent. An unanswered
 write makes the run fail `write_outcome_unknown` with
-`writes: { succeeded, failed, unknown }`, regardless of its return value.
+`writes: { succeeded, failed, unknown }`, regardless of its return value. Its
+`unknownWrites` lists at most ten such writes, each with `address` when resolved,
+`code`, the redacted `message` the program saw, and `toolAnswered: true` when the
+downstream tool itself answered `isError`; `unknownWritesTruncated` marks more.
+The tool's words say why it answered as it did, not that nothing applied, so read
+them and reconcile before repeating anything.
+Program arguments pass through the credentials this request has already sent. A
+read that matches one is sent with the match replaced. A write that matches one
+is refused before dispatch with `invalid_args`, because it is never sent altered:
+nothing leaves, and a value that is genuine can go as its own direct call. A
+program's first call has no such credentials yet, so this can first appear on a
+later call.
 A failed program that already wrote carries those counts on its error. No
 write is automatically retried, including an ambiguous timeout. A downstream
 refusal can establish failure only when it covers the whole call: a request

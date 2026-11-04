@@ -631,7 +631,7 @@ function sandboxProvider(
     return value;
   };
   /** Budget and account for writes a writable endpoint admits. */
-  const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number) => ({
+  const invocationContext = (sending: { settle?: SettleWrite; rewritten: boolean }, timeoutMs: number) => ({
     source: "execute_code" as const,
     sentSecrets,
     timeoutMs,
@@ -757,6 +757,18 @@ function sandboxProvider(
             unrecorded: true,
           };
         }
+        // A write is exactly what its program asked for, or it stays here. Reads
+        // keep the filtered value: sending one changes nothing it could not repeat.
+        if (sending.rewritten) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "invalid_args",
+              message: `${target.connector.id}.${target.toolName} was not sent: its arguments match a credential this request sent, and a write is never sent altered. If the value is genuine, send it as its own direct call.`,
+              retryable: false,
+            },
+          };
+        }
         const budgeted = target.definition.classification !== "read";
         if (budgeted && writes >= maxWrites) {
           return {
@@ -816,9 +828,10 @@ function sandboxProvider(
       const timeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A program write settles here — unknown if the call never returned an
       // outcome. Credentials are filtered from arguments; submitted private values are not.
-      const sending: { settle?: SettleWrite } = {};
+      const filtered = sentSecrets.filterCredentials(args ?? {});
+      const sending: { settle?: SettleWrite; rewritten: boolean } = { rewritten: filtered.changed };
       const outcome = yield* invocation
-        .pipeline(address, sentSecrets.redactCredentials(args ?? {}), invocationContext(sending, timeoutMs))
+        .pipeline(address, filtered.value, invocationContext(sending, timeoutMs))
         .pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),

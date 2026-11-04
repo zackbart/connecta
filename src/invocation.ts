@@ -33,6 +33,7 @@ import {
   failureRecord,
   logFailure,
   recordedToolName,
+  labelErrorClass,
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { causeError, runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -167,6 +168,8 @@ function isCallerCancellation(error: unknown, signal: AbortSignal | undefined): 
  * write it is a 2xx reply after which the handler may have applied it.
  */
 class DownstreamToolError extends Error {}
+// Records tell the tool's own answer from a transport or runtime failure.
+labelErrorClass(DownstreamToolError, "DownstreamToolError");
 
 function isTimeoutFailure(error: CallErrorDetails): boolean {
   const code = error.details?.code;
@@ -1028,6 +1031,9 @@ export class InvocationService {
             const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
             // An inner call's verdict that does not hold for this one is withdrawn.
             if (failureWrite && !answered) forgetProviderFailure(details);
+            // The tool's own words, which a program's write accounting keeps.
+            if (failureWrite && attemptError === thrown && thrown instanceof DownstreamToolError)
+              details.toolAnswered = true;
             return details;
           }
           if ("inputRequired" in attempt.value) {

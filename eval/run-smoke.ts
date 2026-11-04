@@ -170,6 +170,50 @@ interface Battery {
   expectRead(result: unknown): string;
   /** Absent when the target ships no write-capable tool; nothing is claimed then. */
   write?: { address: string; args: Record<string, unknown>; verify(): string };
+  /** Sequential writes on one connection, the last answered by the tool's own error. */
+  programWrites?: { code: string; verify(error: unknown): string };
+}
+
+/**
+ * Two tracker issues closed and a third its tool refuses, through one program.
+ * Each write leaves once, the program stops at the refusal, and its result says
+ * what the tool answered without calling the outcome known.
+ */
+function trackerProgramWrites(world: World): NonNullable<Battery["programWrites"]> {
+  const ids = ["WEB-101", "WEB-102", "WEB-404", "WEB-106"];
+  const closes = () =>
+    world.ledger.calls.filter(
+      (call) => call.tool === "close_issue" && ids.includes(String((call.args as { id?: unknown }).id)),
+    ).length;
+  return {
+    code: `async () => { const out = []; for (const id of ${JSON.stringify(ids)}) out.push(await connecta.call("tracker.close_issue", { id })); return out; }`,
+    verify: (error) => {
+      assert.deepEqual(
+        error,
+        {
+          code: "write_outcome_unknown",
+          message: (error as { message?: unknown } | undefined)?.message,
+          retryable: false,
+          unknownWrites: [
+            {
+              address: "tracker.close_issue",
+              code: "connector_call_failed",
+              message: "issue WEB-404 not found",
+              toolAnswered: true,
+            },
+          ],
+          writes: { succeeded: 2, failed: 0, unknown: 1 },
+        },
+        "program error",
+      );
+      const sent = closes();
+      if (sent !== 3) throw new Error(`${sent} downstream writes, expected 3`);
+      const status = (id: string) => world.tracker.issues.find((issue) => issue.id === id)?.status;
+      if (status("WEB-101") !== "closed" || status("WEB-102") !== "closed" || status("WEB-106") !== "open")
+        throw new Error(`WEB-101 ${status("WEB-101")}, WEB-102 ${status("WEB-102")}, WEB-106 ${status("WEB-106")}`);
+      return "two writes landed, the tool's refusal of the third is reported, and the fourth never left";
+    },
+  };
 }
 
 async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void> {
@@ -211,6 +255,13 @@ async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void>
         });
         if (result.isError) throw new Error(result.text.slice(0, 400));
         return write.verify();
+      });
+    const program = battery.programWrites;
+    if (program)
+      await step(checks, "sequential writes through one execute_code program", async () => {
+        const result = await live.call("execute_code", { code: program.code });
+        if (!result.isError) throw new Error(`expected the refusal to fail the run: ${result.text.slice(0, 400)}`);
+        return program.verify((parseJson(result.text) as { error?: unknown } | undefined)?.error);
       });
   } finally {
     await live.close();
@@ -438,6 +489,7 @@ async function nodeFakes(): Promise<SmokeTarget> {
           return "WEB-105 closed in the fake; exactly one downstream write";
         },
       },
+      programWrites: trackerProgramWrites(world),
     });
     target.screenshot = await uiCheck(checks, deployment.origin);
     return target;
@@ -523,6 +575,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
                 return "one message landed in the fake #eng; exactly one downstream write";
               },
             },
+            ...(world ? { programWrites: trackerProgramWrites(world) } : {}),
           },
     );
     target.screenshot = await uiCheck(checks, origin);

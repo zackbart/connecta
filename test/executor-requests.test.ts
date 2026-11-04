@@ -15,9 +15,13 @@ const worker = await (async () => {
   }
 })();
 
+async function fixtureOrigin(): Promise<string> {
+  return ((await (await worker!.fetch("http://localhost/origin")).json()) as { origin: string }).origin;
+}
+
 interface ToolResult {
   isError?: boolean;
-  structuredContent: { result?: { data: { id: string } }[]; error?: Record<string, unknown> };
+  structuredContent: { result?: { data: Record<string, unknown> }[]; error?: Record<string, unknown> };
 }
 
 async function run(program: string, code: string, path = "/mcp"): Promise<ToolResult> {
@@ -54,7 +58,52 @@ async function status(): Promise<{ standard: Snapshot; tight: Snapshot; failures
   return (await worker!.fetch("http://localhost/status")).json();
 }
 
+const sequentialWrites = (connector: string, ids: string[]) =>
+  `async () => { const out = []; for (const id of ${JSON.stringify(ids)}) out.push(await connecta.call("${connector}.create", { id })); return out; }`;
+
 describe.skipIf(!worker)("execute_code across separate Worker requests", () => {
+  it("INV-9: sequential program writes each reach a stateful remote MCP downstream once over one connection", async () => {
+    const result = await run("writes", sequentialWrites("sequential", ["a", "b", "c"]), "/writer/mcp");
+    expect(result.structuredContent.error).toBeUndefined();
+    expect(result.structuredContent.result?.map((entry) => entry.data.created)).toEqual(["a", "b", "c"]);
+    expect(await (await fetch(`${await fixtureOrigin()}/executor/mcp/sequential/writes`)).json()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  }, 30_000);
+
+  it("INV-9: a later program write its tool refuses reports the tool's words, stays unknown and stops the program", async () => {
+    const result = await run("refused", sequentialWrites("iserror", ["first", "refused", "never"]), "/writer/mcp");
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toMatchObject({
+      code: "write_outcome_unknown",
+      retryable: false,
+      writes: { succeeded: 1, failed: 0, unknown: 1 },
+      unknownWrites: [
+        {
+          address: "iserror.create",
+          code: "connector_call_failed",
+          message: expect.stringContaining("Vendor refused this request"),
+          toolAnswered: true,
+        },
+      ],
+    });
+    expect(await (await fetch(`${await fixtureOrigin()}/executor/mcp/iserror/writes`)).json()).toEqual([
+      "first",
+      "refused",
+    ]);
+    // The operator's record tells this from any transport failure, which names a step.
+    const failures = (await (await worker!.fetch("http://localhost/call-failures")).json()) as Record<
+      string,
+      unknown
+    >[];
+    const logged = failures.find((record) => record.connector === "iserror");
+    expect(logged).toMatchObject({ code: "connector_call_failed", errorClass: "DownstreamToolError" });
+    expect(logged).not.toHaveProperty("step");
+    expect(logged).not.toHaveProperty("httpStatus");
+  }, 30_000);
+
   it("INV-7: the fixture's request binding refuses another request's entry with or without its token, as workerd does", async () => {
     const outcome = async (path: string) =>
       ((await (await worker!.fetch(`http://localhost${path}`)).json()) as { outcome: string }).outcome;

@@ -58,7 +58,8 @@ type Answer =
   | "reset"
   | "refused"
   | "timeout"
-  | "deadline";
+  | "deadline"
+  | "isError";
 
 function setup(
   options: {
@@ -81,7 +82,7 @@ function setup(
   const downstream = httpDownstream((server) => {
     server.registerTool(
       "create_item",
-      { inputSchema: z.object({ id: z.number() }), annotations: { readOnlyHint: false } },
+      { inputSchema: z.object({ id: z.number(), note: z.string().optional() }), annotations: { readOnlyHint: false } },
       async ({ id }) => {
         applied.push(`create_item ${id}`);
         return { content: [{ type: "text", text: JSON.stringify({ created: id }) }] };
@@ -165,6 +166,19 @@ function setup(
     // gateway, the connection, or the server's own answer fails the call.
     const reply = await downstream.fetch(downstream.url, init);
     if (answer === "pass" || answer === 401) return reply;
+    // The handler ran, then the tool answers for call 2: "isError" names calls by `id`.
+    if (answer === "isError") {
+      if ((rpc.params as { arguments?: { id?: number } }).arguments?.id !== 2) return reply;
+      await reply.body?.cancel();
+      return Response.json({
+        jsonrpc: "2.0",
+        id: (rpc as { id?: unknown }).id,
+        result: {
+          isError: true,
+          content: [{ type: "text", text: "Vendor refused: HEADER_CREDENTIAL is not allowed" }],
+        },
+      });
+    }
     if ((answer === 307 || answer === 308) && url.endsWith("?moved")) return reply;
     await reply.body?.cancel();
     if (answer === 307 || answer === 308)
@@ -273,14 +287,19 @@ function setup(
     };
   };
   /** Run a program that calls one tool, catching its failure or not. */
-  const program = async (caught: boolean, count = 1, tool = "create_item") => {
+  const program = async (
+    caught: boolean,
+    count = 1,
+    tool = "create_item",
+    extra: (id: number) => Record<string, unknown> = () => ({}),
+  ) => {
     const execute = createExecuteTool(
       registry,
       BASE,
       scriptedExecutor(async (fns) => {
         for (let id = 1; id <= count; id++) {
           try {
-            await required(fns.call)(`svc.${tool}`, tool === "create_item" ? { id } : {});
+            await required(fns.call)(`svc.${tool}`, { ...(tool === "create_item" ? { id } : {}), ...extra(id) });
           } catch (error) {
             if (!caught) throw error;
           }
@@ -1022,6 +1041,72 @@ describe("remote MCP writes and SDK recoveries under a new JSON-RPC id", () => {
     flow.answers.set("list_items", 502);
     await flow.outcome("list_items");
     expect(flow.sent("list_items")).toHaveLength(2);
+  });
+});
+
+describe("program arguments matching a credential this request sent", () => {
+  it("INV-9: a later write is refused before dispatch, never sent altered, and its failure is known", async () => {
+    const flow = setup();
+    const result = await flow.program(false, 2, "create_item", (id) =>
+      id === 2 ? { note: "copied HEADER_CREDENTIAL" } : {},
+    );
+    expect(result.error).toMatchObject({
+      code: "invalid_args",
+      retryable: false,
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(result.error.message).toContain("svc.create_item was not sent");
+    expect(result.error.message).not.toContain("HEADER_CREDENTIAL");
+    expect(flow.sent("create_item")).toHaveLength(1);
+    expect(flow.applied).toEqual(["create_item 1"]);
+  });
+
+  it("INV-9: a program's later writes with ordinary arguments are sent as written", async () => {
+    const flow = setup();
+    const result = await flow.program(false, 3, "create_item", (id) => ({ note: `ordinary note ${id}` }));
+    expect(result.error).toBeUndefined();
+    expect(flow.sent("create_item")).toHaveLength(3);
+    expect(flow.applied).toEqual(["create_item 1", "create_item 2", "create_item 3"]);
+  });
+
+  it("a later read keeps the filtered value and is still sent", async () => {
+    const flow = setup();
+    const result = await flow.program(false, 2, "list_items", (id) =>
+      id === 2 ? { note: "copied HEADER_CREDENTIAL" } : {},
+    );
+    expect(result.error).toBeUndefined();
+    expect(flow.sent("list_items")).toHaveLength(2);
+  });
+});
+
+describe("remote MCP writes whose tool answers isError", () => {
+  it("INV-9: a program's later write reports the tool's redacted words, stays unknown and is never sent again", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isError");
+    const result = await flow.program(true, 3);
+    expect(result.error).toMatchObject({
+      code: "write_outcome_unknown",
+      retryable: false,
+      writes: { succeeded: 2, failed: 0, unknown: 1 },
+    });
+    const [failure, ...others] = result.error.unknownWrites;
+    expect(others).toEqual([]);
+    expect(failure).toMatchObject({ address: "svc.create_item", code: "connector_call_failed", toolAnswered: true });
+    expect(failure.message).toContain("Vendor refused");
+    expect(JSON.stringify(result)).not.toContain("HEADER_CREDENTIAL");
+    // Each write left once, and this tool's handler ran even for the one it refused.
+    expect(flow.sent("create_item")).toHaveLength(3);
+    expect(flow.applied).toEqual(["create_item 1", "create_item 2", "create_item 3"]);
+    expect(result).not.toHaveProperty("result");
+  });
+
+  it("INV-9: a direct write says its tool answered, with its outcome still unknown", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isError");
+    const failed = await flow.outcome("create_item", { id: 2 });
+    expect(failed.error).toMatchObject({ retryable: false, writeOutcome: "unknown", toolAnswered: true });
+    expect(failed.error!.message).toContain("Vendor refused");
+    expect(flow.sent("create_item")).toHaveLength(1);
   });
 });
 

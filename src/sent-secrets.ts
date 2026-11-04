@@ -1451,6 +1451,15 @@ export class SentSecrets {
     return this.credentials().redact(value, "envelope");
   }
 
+  /** {@link redactCredentials} and whether it changed anything, for a write that must be
+   * refused rather than sent altered. */
+  filterCredentials<T>(value: T): { value: T; changed: boolean } {
+    const credentials = this.credentials();
+    if (credentials.idle()) return { value, changed: false };
+    const filtered = credentials.project(value, credentials.scan(false));
+    return { value: filtered.value as T, changed: filtered.changed };
+  }
+
   private idle(): boolean {
     return !this.forms.size && this.unmatched === Infinity;
   }

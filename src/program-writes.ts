@@ -15,14 +15,20 @@ export const DEFAULT_MAX_WRITES = CONFIG_DEFAULTS.execute.maxWrites;
 type WriteDeadline = Pick<NonNullable<CallErrorDetails["details"]>, "operation" | "stage" | "elapsedMs" | "deadlineMs">;
 /** An authorization verdict a write met after it left: the grant still needs recovery. */
 type WriteHandoff = Pick<CallErrorDetails, "code" | "connector" | "recovery" | "nextAction" | "retry">;
+/** What one write's failure said; its outcome stays unknown whatever that was. */
+type UnknownWrite = Pick<CallErrorDetails, "code" | "message" | "toolAnswered"> & { address?: string };
 type WriteCompletion =
   | WriteState
   | {
       state: "unknown";
+      failure: UnknownWrite;
       uncertainCall?: NonNullable<CallErrorDetails["uncertainCall"]>;
       deadline?: WriteDeadline;
       handoff?: WriteHandoff;
     };
+
+/** Unknown writes one result reports in full; each message is already bounded. */
+const MAX_REPORTED_WRITES = 10;
 
 /** What a dispatched write's outcome says about whether it landed. */
 export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompletion {
@@ -51,9 +57,14 @@ export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompleti
           ...(error.retry !== undefined ? { retry: error.retry } : {}),
         }
       : undefined;
-  if (!error.uncertainCall && !handoff) return state;
   return {
     state,
+    failure: {
+      ...(outcome.resolved ? { address: `${outcome.resolved.connector.id}.${outcome.resolved.toolName}` } : {}),
+      code: error.code,
+      message: error.message,
+      ...(error.toolAnswered ? { toolAnswered: true as const } : {}),
+    },
     ...(error.uncertainCall ? { uncertainCall: error.uncertainCall } : {}),
     ...(error.uncertainCall && error.details?.stage !== undefined
       ? {
@@ -83,6 +94,8 @@ export class ProgramWrites {
   private closed = false;
   private readonly inFlight = new Set<Promise<void>>();
   private readonly states: WriteState[] = [];
+  private readonly unknownWrites: UnknownWrite[] = [];
+  private unknownWritesTruncated = false;
   private readonly uncertainCalls: NonNullable<CallErrorDetails["uncertainCall"]>[] = [];
   private uncertainCallsTruncated = false;
   private readonly deadlines: WriteDeadline[] = [];
@@ -115,6 +128,8 @@ export class ProgramWrites {
       recorded = true;
       const state = typeof completion === "string" ? completion : completion.state;
       if (typeof completion !== "string") {
+        if (this.unknownWrites.length < MAX_REPORTED_WRITES) this.unknownWrites.push(completion.failure);
+        else this.unknownWritesTruncated = true;
         if (completion.uncertainCall) {
           if (this.uncertainCalls.length < 10) this.uncertainCalls.push(completion.uncertainCall);
           else this.uncertainCallsTruncated = true;
@@ -151,9 +166,11 @@ export class ProgramWrites {
         code: handoff?.code ?? "write_outcome_unknown",
         message: handoff
           ? "A write this program sent failed authorization after it left, so whether it took effect is unknown, and that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it, and give nextAction to the operator to recover the connector. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call."
-          : "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call.",
+          : "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it. unknownWrites says how each failed; a tool's error does not prove it unapplied. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call.",
         retryable: false,
         ...(handoff ? { ...handoff, reconciliationRequired: true, writeOutcome: "unknown" } : {}),
+        ...(this.unknownWrites.length > 0 ? { unknownWrites: this.unknownWrites } : {}),
+        ...(this.unknownWritesTruncated ? { unknownWritesTruncated: true } : {}),
         ...(this.deadlines.length > 0 ? { details: this.deadlines[0] } : {}),
         ...(this.deadlines.length > 1 ? { timeouts: this.deadlines } : {}),
         ...(this.uncertainCalls.length === 1
