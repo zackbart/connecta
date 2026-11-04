@@ -576,7 +576,8 @@ access (`L4`); Workers guest computation may continue briefly until teardown (`X
 
 Both executor bridges rebuild typed host rejections as guest Errors and retain
 their identity in executor-owned state (`X11`). `message` stays human text, capped at 2,000
-JSON-serialized characters including quotes and an `…` marker when clipped.
+JSON-serialized characters including quotes and a `… [truncated]` marker when clipped,
+and cut only between tokens.
 `code` and `retryable` are the stable branch fields; `data` and `details` carry the same host
 classification, which fits 3,700 serialized characters. Optional recovery metadata
 that would exceed that bound is omitted whole, preserving `code`, `message`,
@@ -633,7 +634,7 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 | `result_too_large`           | a discovery response exceeded its byte bound                                                                                                                                                          | false         |
 | `result_not_retained`        | paging a result its run did not publish (`R4a`): rerun a read, never repeat a write                                                                                                                   | false         |
 | `budget_exceeded`            | the run exhausted a host-call, write, or emitted-output budget                                                                                                                                        | false         |
-| `write_outcome_unknown`      | a program write was sent and no answer came back; it is never sent again (`W9`)                                                                                                                       | false         |
+| `write_outcome_unknown`      | a program write was sent and no answer proves whether it applied; `unknownWrites` says how each failed, and none is sent again (`W9`)                                                                 | false         |
 | `executor_failed`            | the executor returned a malformed result or failed outside the guest program                                                                                                                          | false         |
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
@@ -813,10 +814,11 @@ request's credential reads to finish, so its secret set is final. Only then does
 write first chunks. An entry the set has not grown past is written with no other
 storage work. After growth, its stored bytes are read back and checked, in stored
 form and structurally, so JSON-escaped, URL-encoded and base64 forms and a form split
-across text blocks are found. An entry with no match is written unchanged. Stored
-JSON that can hold a typed array's or Buffer's bytes as numbers, meaning a `"0"` key
-holding a number or a `Buffer` shape, counts as a match after growth, since those
-bytes are checked only while still binary. Stored bytes are never rewritten, so
+across text blocks are found. An entry with no match is written unchanged. An entry
+whose JSON was serialized from a typed array, `Buffer`, `DataView` or `ArrayBuffer`,
+including one a `toJSON` holds or returns, is not read back and stays unreadable
+after growth, since those bytes are checked only while still binary. Stored bytes are
+never rewritten, so
 `totalBytes` and any offset issued during the run stay valid in later runs.
 
 An entry that was not written stays unreadable: it matched the final set, a read-back
@@ -1349,7 +1351,45 @@ They are never inferred from descriptions or arguments.
 if the program does not await it, bounded by its host-call deadline. A write
 that reaches accounting after the program settles is not sent. An unanswered
 write makes the run fail `write_outcome_unknown` with
-`writes: { succeeded, failed, unknown }`, regardless of its return value.
+`writes: { succeeded, failed, unknown }`, regardless of its return value. Its
+`unknownWrites` lists at most ten such writes, each with `address` when resolved,
+`code`, the redacted `message`, and `toolAnswered: true` when the downstream tool
+itself answered `isError`. `unknownWritesTruncated` marks a write left out or a
+message dropped. When a tool answered, the error's `message` leads with
+`<address> answered: <the tool's words>`, and that entry carries no second copy.
+An authorization verdict keeps its own lead, with the words in its entry. The
+words say why the tool answered as it did, not that nothing applied, so read them
+and check the target before acting. Give the user any approval link or request id
+they hold. Never rerun the program: writes it already sent would repeat. If the
+tool's words call for a further call, such as one carrying a provider's approval
+token, send only that operation, as a new call. Connecta does not block it.
+
+A tool's words reach any agent up to 4,096 UTF-8 bytes, on direct and native calls
+too. A longer text is cut between tokens and ends `… [truncated]`, so a link
+arrives whole or not at all. A tighter result cap on a direct call cuts it further.
+A program's report is redacted against the run's final credentials before any cut,
+holds at most 4,096 serialized bytes per message and 8,192 in all, and stays inside
+`execute.maxResultChars`. Activity and logs never receive these words.
+
+Program arguments pass through the credentials this request has already sent. The
+check matches a whole credential or eight consecutive characters of what follows
+its public framing: an auth scheme, a vendor prefix such as `sk_test_`, or a JWT's
+header segment. Naming a prefix is no match, an identifier sent beside a credential
+(a confidential client's ID, a Basic username, or a maintained provider's declared
+header: Cloudflare's `X-Auth-Email`, Overflow's `x-client-id`) is no match, and a
+private `writeOnly` value is no match. A read that matches is sent with the match replaced. A write that matches
+is refused before dispatch with `invalid_args`, because it is never sent altered:
+nothing leaves, and a value that is genuine can go as its own direct call. A
+program's first call has no such credentials yet, so this can first appear on a
+later call. Otherwise a refusal needs one of these: a value that shares eight
+characters past the prefix with a credential, such as a publishable key beside its
+secret key; a non-secret value configured as a credential, such as a field not
+named as an identifier, a `remoteMcp()` or `api()` auth header under any name, or a
+query parameter with a sensitive-looking name; or text the check cannot finish (escaping
+nested past eight layers, or past its work budget). The check is a backstop: fewer
+than eight characters past a prefix pass it, and a program never receives what
+output redaction withheld.
+
 A failed program that already wrote carries those counts on its error. The
 write-budget refusal is `execute_code write budget exceeded (10 writes per run); <address> was not sent.`,
 followed by checking the run's writes count and sending only the remaining writes

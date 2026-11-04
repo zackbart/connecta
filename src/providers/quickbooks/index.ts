@@ -84,12 +84,13 @@ export const quickbooks = defineApiProvider<QuickBooksOptions>({
     }),
     describe: () => "Connected to the configured QuickBooks Online company.",
   },
+  blocks: { keys: ["writes"], select: (options) => (options.readOnly === false ? ["writes"] : []) },
   guide: (options) => ({
     context: [
       `Company ${options.realmId}, ${options.environment}: ${options.purpose}`,
       options.readOnly === false
         ? "Bounded named writes are enabled. The API hatch remains read-only."
-        : "This connection is read-only. Set readOnly: false in deployment code to enable bounded named writes.",
+        : "This connection is read-only; named writes are unavailable.",
       "Contact details, bank/card/tax identifiers, credentials and private links are withheld on every read.",
     ],
     summary: "Load for QuickBooks accounting reads and enabled customer or service-invoice writes.",
@@ -115,12 +116,5 @@ export const quickbooks = defineApiProvider<QuickBooksOptions>({
       configurable: true,
     });
   },
-  transformGuide: (guide) => ({
-    ...guide,
-    content: guide.content.replace(
-      "Writes take no idempotency key.",
-      "Every named write requires requestId, sent as Intuit's requestid query parameter; no idempotencyKey header argument is accepted.",
-    ),
-  }),
   tools: quickbooksTools,
 });

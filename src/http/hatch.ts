@@ -39,6 +39,9 @@ import type { Connection, SendOptions } from "./vendor.js";
 import type { Parameters, WriteRequest } from "./write-request.js";
 
 type Verdict = "read" | "write" | "destructive" | "refuse";
+
+/** A page that reports more data it cannot continue must never read as the complete answer. */
+const CONTINUATION_WITHHELD = "This result is incomplete: more data exists and continuation was withheld.";
 interface CallArgs {
   readonly method?: RestMethod;
   readonly path: string;
@@ -348,7 +351,7 @@ export function hatch(
     fieldsDescription(
       "data",
       example,
-      `Copy declared paths from ${name}_api_details response.fields. Applied after value safety and privacy filtering.`,
+      `Copy declared paths from ${name}_api_details response.fields. A withheld value reads "[redacted]".`,
     );
   const verdictOf = (op: Operation): Verdict => verdicts.get(`${op.method} ${op.path}`) ?? "refuse";
   const refusalOf = (op: Operation) =>
@@ -413,7 +416,7 @@ export function hatch(
       : {}),
     warnings: Schema.optionalKey(
       Schema.Array(Schema.String).annotate({
-        description: `${options.binding?.warnings ? "Reviewed warnings preserved after fields selection, and " : ""}fields entries that matched nothing in this nonempty response, with the properties declared where matching stopped. At most 10 warnings of 512 characters, then an omitted count.`,
+        description: `${options.binding?.warnings ? "Reviewed warnings preserved after fields selection, and " : ""}fields entries that matched nothing in this nonempty response, with the properties declared where matching stopped${pages.size ? ", and a notice when continuation was withheld" : ""}. At most 10 warnings of 512 characters, then an omitted count.`,
       }),
     ),
   });
@@ -424,12 +427,15 @@ export function hatch(
         page: Schema.optionalKey(
           Schema.Struct({
             ...StandardPage.fields,
+            hasMore: Schema.Boolean.annotate({
+              description: "True without nextCursor means this data is incomplete and continuation was withheld.",
+            }),
             ...(hasTotals ? { total: Schema.optionalKey(Integer.check(Schema.isGreaterThanOrEqualTo(0))) } : {}),
             param: Schema.String.annotate({
               description:
                 options.pageCursor === "argument"
                   ? "Vendor parameter restored from cursor; pass nextCursor as the top-level cursor."
-                  : "Put nextCursor in this vendor parameter, unchanged.",
+                  : "Put nextCursor unchanged in query[param] or body[param], as page.in says, and keep every other argument.",
             }),
             in: Schema.Literals(["query", "body"]),
           }),
@@ -1520,6 +1526,7 @@ export function hatch(
       // Roots were checked before dispatch; the pinned index cannot say whether a
       // deeper level is closed, so a nested miss is reported, never refused.
       const warnings = boundWarnings([
+        ...(page?.hasMore && page.nextCursor === undefined ? [CONTINUATION_WITHHELD] : []),
         ...(options.binding?.warnings && "warnings" in answer ? (answer.warnings ?? []) : []),
         ...fieldsMisses(
           answered,

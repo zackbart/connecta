@@ -32,6 +32,7 @@ with `get_response`. The structural hatch exposes quiz grading and correct
 answers, images, and option navigation that named projections omit. Temporary
 image access destinations remain withheld.
 
+<!-- when: writes -->
 ## Editing without losing structure
 
 Read the form's current revision before editing. A stale revision refuses the
@@ -45,3 +46,4 @@ Item locations are indexes, while response answers use question ids.
 
 Publishing, sharing, deleting forms, and watch administration are outside this
 connection. Responses are read-only; no tool submits or deletes a response.
+<!-- end -->

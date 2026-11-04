@@ -11,6 +11,7 @@ import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resultKeys, scopes } from "../src/storage/keys.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { scriptedExecutor } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { activitySink, silentLogger } from "./helpers.js";
@@ -1114,45 +1115,97 @@ export const retainedSealingCases: Record<string, (executor: Executor) => Promis
     });
     expect(outcome.structuredContent?.note).toContain("Rerun the read");
   },
-  "values JSON stores as numbers are refused after growth, and values it erases store nothing": async (executor) => {
+  "binary serialized into a result is refused after growth, however JSON stored it": async (executor) => {
     const bytes = new TextEncoder().encode(RETAINED_SECRET);
     const units = Array.from(RETAINED_SECRET, (char) => char.charCodeAt(0));
+    const numbers = (item: ArrayLike<number>) => Array.from(item);
     const refused: Record<string, unknown> = {
       Uint8Array: bytes,
       Uint16Array: Uint16Array.from(units),
       Float32Array: Float32Array.from(units),
-      toJSON: { toJSON: () => RETAINED_SECRET },
+      DataView: new DataView(bytes.slice().buffer),
+      ArrayBuffer: bytes.slice().buffer,
+      "a typed array with its own toJSON": Object.assign(bytes.slice(), {
+        toJSON(this: Uint8Array) {
+          return numbers(this);
+        },
+      }),
+      "an ArrayBuffer with its own toJSON": Object.assign(bytes.slice().buffer, {
+        toJSON(this: ArrayBuffer) {
+          return numbers(new Uint8Array(this));
+        },
+      }),
+      "a parent toJSON returning typed bytes": { toJSON: () => bytes.slice() },
+      "a nested typed array": { deep: [{ deeper: { bytes: bytes.slice() } }] },
+      "a nested typed array with its own toJSON": {
+        deep: [
+          Object.assign(bytes.slice(), {
+            toJSON(this: Uint8Array) {
+              return numbers(this);
+            },
+          }),
+        ],
+      },
+      "text a toJSON returned": { toJSON: () => RETAINED_SECRET },
       ...(typeof Buffer === "function" ? { Buffer: Buffer.from(bytes) } : {}),
     };
-    const erased: Record<string, unknown> = {
-      ArrayBuffer: bytes.slice().buffer,
-      DataView: new DataView(bytes.slice().buffer),
-      Blob: new Blob([bytes]),
-      Map: new Map([[RETAINED_SECRET, RETAINED_SECRET]]),
-      Set: new Set([RETAINED_SECRET]),
-    };
-    const run = async (value: unknown) => {
-      const { registry } = retainedRegistry(memoryStorage(), { echoed: () => ({ value, PAD }) });
-      const outcome = await createExecuteTool(
-        registry,
-        BASE,
-        executor,
-        silentLogger,
-      )({ code: RETAINED_PROGRAM("read") });
+    const run = async (value: unknown, code = RETAINED_PROGRAM("read")) => {
+      const { registry } = retainedRegistry(memoryStorage(), { echoed: () => value });
+      const outcome = await createExecuteTool(registry, BASE, executor, silentLogger)({ code });
       return { registry, id: outcome.structuredContent!.result as string };
     };
     for (const [label, value] of Object.entries(refused)) {
-      const { registry, id } = await run(value);
+      const { registry, id } = await run({ value, PAD });
       expect(await refusalOf(registry, id), label).toMatchObject({ code: "result_not_retained" });
     }
-    for (const [label, value] of Object.entries(erased)) {
-      const { registry, id } = await run(value);
-      expect(JSON.parse(await pageFromLaterRun(registry, id)), label).toEqual({ value: {}, PAD });
+    const whole = await run(new Uint8Array(200_000));
+    expect(await refusalOf(whole.registry, whole.id), "a top-level typed array").toMatchObject({
+      code: "result_not_retained",
+    });
+
+    // What JSON stores as `{}` holds nothing to check, and a plain object is not binary.
+    const published: Array<[string, unknown, unknown]> = [
+      ["Blob", new Blob([bytes]), {}],
+      ["Map", new Map([[RETAINED_SECRET, RETAINED_SECRET]]), {}],
+      ["Set", new Set([RETAINED_SECRET]), {}],
+      ["a numeric key", { "0": 1 }, { "0": 1 }],
+      ["a date", new Date(0), new Date(0).toISOString()],
+    ];
+    for (const [label, value, stored] of published) {
+      const { registry, id } = await run({ value, PAD });
+      expect(JSON.parse(await pageFromLaterRun(registry, id)), label).toEqual({ value: stored, PAD });
     }
-    // A date keeps its text, and the same set finds nothing in it to refuse.
-    const when = new Date(0);
-    const dated = await run(when);
-    expect(JSON.parse(await pageFromLaterRun(dated.registry, dated.id)).value).toBe(when.toISOString());
+
+    // With no growth past the stash, binary holding no match is published as JSON stored it.
+    const clean = new TextEncoder().encode("clean");
+    const quiet = await run(
+      { value: clean, PAD },
+      `async () => {
+        await connecta.call("vault.use");
+        return (await connecta.call("vault.read")).resultId;
+      }`,
+    );
+    expect(JSON.parse(await pageFromLaterRun(quiet.registry, quiet.id)).value).toEqual({ ...clean });
+  },
+  "binary in a program's oversized return is refused after growth": async () => {
+    const returned = sealingHarness(
+      {},
+      {
+        echoed: () => CLEAN,
+        ...landingAfterProgram(),
+      },
+    );
+    const outcome = await returned.run(
+      scriptedExecutor(async (fns) => {
+        void fns.describe!({ address: "slow.tool" }).catch(() => {});
+        await fns.call!("vault.wait", {});
+        await fns.call!("vault.land", {});
+        return { bytes: new TextEncoder().encode(LATE_SECRET), PAD };
+      }),
+    );
+    const id = (outcome.structuredContent!.result as { resultId: string }).resultId;
+    expect(await refusalOf(returned.registry, id)).toMatchObject({ code: "result_not_retained" });
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
   },
   "an offset issued during the run finds the same bytes, or an explicit refusal": async (executor) => {
     const continued = `async () => {

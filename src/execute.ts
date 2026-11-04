@@ -45,7 +45,7 @@ import {
 } from "./program-result.js";
 import { MAX_EXECUTE_LOG_CHARS, MAX_EXECUTE_RESULT_CHARS, truncateExecuteText } from "./executor-result.js";
 import { ExecutorAdmissionError, ExecutorExecutionError, isAdmittingExecutor } from "./executor-admission.js";
-import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
+import { boundedEchoText, clipSerialized, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
 import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
@@ -495,27 +495,16 @@ function guestFailure(code: string, message: string, retryable = false): Invocat
 
 /**
  * E1/X11: bound typed host failure metadata, including JSON escapes, before transport.
+ * The guest keeps this text, and may return it after a later call registers a credential it
+ * holds, so the message is cut between tokens.
  * Keep optional recovery whole: clipping an address or echoed args could turn
  * recovery into a different call. Oversized metadata is omitted instead.
  */
 function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
-  const boundText = (text: string, maxChars: number): string => {
-    if (JSON.stringify(text).length <= maxChars) return text;
-    let low = 0;
-    let high = Math.min(text.length, maxChars);
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2);
-      if (JSON.stringify(`${text.slice(0, mid)}…`).length <= maxChars) low = mid;
-      else high = mid - 1;
-    }
-    // Do not manufacture a lone surrogate when clipping a Unicode message.
-    if (low > 0 && /[\uD800-\uDBFF]/.test(text[low - 1]!)) low--;
-    return `${text.slice(0, low)}…`;
-  };
   let details: CallErrorDetails = {
     ...failure.details,
-    code: boundText(failure.details.code, 128),
-    message: boundText(failure.details.message, 2_000),
+    code: clipSerialized(failure.details.code, 128),
+    message: clipSerialized(failure.details.message, 2_000),
   };
   // Keep typed metadata below the executor bridge bound.
   if (JSON.stringify(details).length > 3_700) {
@@ -695,7 +684,11 @@ function sandboxProvider(
   };
   const dispatchDeadlineAt = limits.readDeadlineAt ?? limits.programDeadlineAt;
   /** Budget and account for writes a writable endpoint admits. */
-  const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number, writeTimeoutMs: number) => ({
+  const invocationContext = (
+    sending: { settle?: SettleWrite; rewritten: boolean },
+    timeoutMs: number,
+    writeTimeoutMs: number,
+  ) => ({
     source: "execute_code" as const,
     sentSecrets,
     timeoutMs,
@@ -838,6 +831,18 @@ function sandboxProvider(
             unrecorded: true,
           };
         }
+        // A write is exactly what its program asked for, or it stays here. Reads
+        // keep the filtered value: sending one changes nothing it could not repeat.
+        if (sending.rewritten) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "invalid_args",
+              message: `${target.connector.id}.${target.toolName} was not sent: its arguments hold a credential this request sent, and a write is never sent altered. If the value is genuine, send it as its own direct call.`,
+              retryable: false,
+            },
+          };
+        }
         // Its answer could not reach the program, so refuse now while the outcome
         // is known. Earlier writes go out and drain past the deadline (W9).
         if (limits.readDeadlineAt !== undefined && Date.now() >= limits.readDeadlineAt) {
@@ -911,13 +916,10 @@ function sandboxProvider(
       const writeTimeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A program write settles here — unknown if the call never returned an
       // outcome. Credentials are filtered from arguments; submitted private values are not.
-      const sending: { settle?: SettleWrite } = {};
+      const filtered = sentSecrets.filterCredentials(args ?? {});
+      const sending: { settle?: SettleWrite; rewritten: boolean } = { rewritten: filtered.changed };
       const outcome = yield* invocation
-        .pipeline(
-          address,
-          sentSecrets.redactCredentials(args ?? {}),
-          invocationContext(sending, timeoutMs, writeTimeoutMs),
-        )
+        .pipeline(address, filtered.value, invocationContext(sending, timeoutMs, writeTimeoutMs))
         .pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
@@ -1887,7 +1889,10 @@ export function createExecuteTool(
             Effect.map((unfinished) => {
               // Every response, including intake refusals, crosses accounting and
               // exactly one envelope check at this operation boundary.
-              const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
+              const result = redactAgentOutput(
+                sentSecrets,
+                programWrites.finish(unfinished, sentSecrets, maxResultChars),
+              );
               // Calls abandoned by the guest are failed when the run cancels them.
               // Connecta attaches its own integers after the envelope check.
               const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
@@ -2170,7 +2175,7 @@ Use async () => { ... }, no arguments. No portable ambient capabilities. API:
 \`\`\`ts
 ${GUEST_API_DECLARATION}
 \`\`\`
-search and describe return objects, not arrays. Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle; read it with connecta.result(handle, { offset }), which pages by UTF-8 byte offset. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call. Promise.allSettled keeps per-call errors, but exceeding the host-call limit ends the program. When paging is available, an oversized program return carries resultId and nextAction.
+search and describe return objects, not arrays. Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle; read it with connecta.result(handle, { offset }), which pages by UTF-8 byte offset. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call. Promise.allSettled keeps per-call errors, but exceeding the host-call limit ends the program. Near it, return page.nextCursor; resume next program. When paging is available, an oversized return carries resultId and nextAction.
 
 Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks unchanged; an authored Block's image/audio data is base64. emit needs no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}.`;
 

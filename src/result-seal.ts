@@ -36,6 +36,9 @@ export interface HeldResult {
   readonly chunks: number;
   /** The set's revision taken before these bytes were checked. */
   readonly passed: number;
+  /** Binary went into this JSON. Redaction checks such bytes only while they are binary, so a
+   * later check of the stored text cannot, and an entry the set grew past is refused unread. */
+  readonly binary: boolean;
   readonly format: "json" | "text";
   readonly write: boolean;
   readonly expiresAtMs: number;
@@ -99,20 +102,12 @@ function bytesOf(encoded: readonly string[], total: number): Uint8Array {
   return bytes;
 }
 
-/**
- * What JSON makes of a typed array or Buffer: numbers a stored page can turn back into the
- * bytes, which redaction checks only while they are still binary. A key "0" holding a number
- * counts too, since the stored form cannot tell them apart. Other binary values and
- * collections (ArrayBuffer, DataView, Blob, Map, Set) serialize to `{}` and store nothing.
- */
-const ERASED_BYTES = /"0":(?:-?\d|null)|"type":"Buffer"/;
-
 /** The checks a result takes on its way into the stash, repeated over the whole stored value.
  * Structured redaction joins text blocks, so a form split across two of them is found. */
 function passesSet(secrets: SentSecrets, text: string, format: "json" | "text"): boolean {
   if (format === "json") {
     try {
-      if (ERASED_BYTES.test(text) || secrets.changes(JSON.parse(text))) return false;
+      if (secrets.changes(JSON.parse(text))) return false;
     } catch {
       // A value JSON renders as text, such as `undefined`, takes the text check alone.
     }
@@ -168,7 +163,7 @@ export function sealHeldResults(
         entries,
         (entry) =>
           Effect.gen(function* () {
-            if (entry.passed !== stable && !(yield* passes(entry))) return;
+            if (entry.passed !== stable && (entry.binary || !(yield* passes(entry)))) return;
             // Nothing the run started is left, so this holds. If it ever fails, stop.
             if (secrets.revision !== stable) return;
             yield* authStorage(storage, "set", [key(entry, 0), envelope(entry), { expiresAtMs: entry.expiresAtMs }]);

@@ -33,7 +33,14 @@ import {
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
-import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
+import {
+  boundedEchoText,
+  clipText,
+  ConnectorCallError,
+  MAX_TOOL_ERROR_BYTES,
+  msg,
+  type CallErrorDetails,
+} from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { RESULT_ENVELOPE_V4, type HeldResults } from "./result-seal.js";
 import { guardExecuteResultValue, MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
@@ -48,7 +55,7 @@ import {
 } from "./registry.js";
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
-import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
+import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
@@ -208,6 +215,22 @@ function resultChunkBytes(totalBytes: number): number {
   return Math.max(RESULT_CHUNK_BYTES, Math.ceil(totalBytes / RESULT_MAX_CHUNKS / 3) * 3);
 }
 
+const isBinary = (item: unknown) => ArrayBuffer.isView(item) || item instanceof ArrayBuffer;
+
+/**
+ * JSON text, and whether a binary value went into it: as written (the holder's value, before
+ * any toJSON) or as a toJSON returned it. Whatever JSON makes of one, redaction checks its bytes
+ * only while they are binary. Text results have no binary values to lose.
+ */
+function serializedWithBinary(value: unknown): { text: string; binary: boolean } {
+  let binary = false;
+  const text = JSON.stringify(value, function (this: Record<string, unknown>, key: string, item: unknown) {
+    binary ||= isBinary(this[key]) || isBinary(item);
+    return item;
+  });
+  return { text: text === undefined ? String(value) : text, binary };
+}
+
 /**
  * Base64 of `bytes`, in three-byte-aligned batches so the argument list of one
  * spread never grows with the result. Alignment matters: an unaligned batch
@@ -261,7 +284,7 @@ interface ResultStash {
    * A program's result: the run seals it at its end, so its header waits in `results`.
    * `passed` is the secret set's revision from before the bytes were checked.
    */
-  held?: { results: HeldResults; passed: number; format: "json" | "text" };
+  held?: { results: HeldResults; passed: number; format: "json" | "text"; binary: boolean };
 }
 
 /** Calls a whole-result loop leaves the program, so it can also act on what it finds. */
@@ -475,6 +498,7 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
           chunks: chunks.length,
           passed: held.passed,
           format: held.format,
+          binary: held.binary,
           write: results.binding.classification === "write",
           expiresAtMs,
         })
@@ -569,7 +593,8 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
       const data = secrets.redact(value);
       const wire = JSON.stringify({ data, format });
       if (enc.encode(wire).length <= wireBytes) return { data, format };
-      const text = secrets.text(format === "text" ? String(data) : serializeResultText(data));
+      const serialized = format === "text" ? { text: String(data), binary: false } : serializedWithBinary(data);
+      const text = secrets.text(serialized.text);
       const bytes = enc.encode(text);
       const write = resolved.definition.classification !== "read";
       const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes);
@@ -588,7 +613,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
             },
             write,
             cap,
-            ...(held ? { held: { results: held, passed, format } } : {}),
+            ...(held ? { held: { results: held, passed, format, binary: serialized.binary } } : {}),
             set: authMethod((id: string, chunks: string[], ttl: number, options?: { holdFirst?: boolean }) =>
               registryProgram(registry, "stashResult", id, chunks, ttl, options),
             ),
@@ -666,10 +691,10 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     storeBy?: number,
   ) {
     return authFlow<unknown>(function* () {
-      const serialized = serializeResultText(value);
-      if (serialized.length <= maxChars) return value;
+      if (serializeResultText(value).length <= maxChars) return value;
       const passed = held?.secrets.revision ?? 0;
-      const text = secrets.text(serialized);
+      const serialized = serializedWithBinary(value);
+      const text = secrets.text(serialized.text);
       const bytes = enc.encode(text);
       const write = dependencies.some((dependency) => dependency.classification === "write");
       const cap = Math.min(
@@ -691,7 +716,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         write: completedWrite,
         cap,
         ...(programChars !== undefined ? { programChars } : {}),
-        ...(held ? { held: { results: held, passed, format: "json" as const } } : {}),
+        ...(held ? { held: { results: held, passed, format: "json" as const, binary: serialized.binary } } : {}),
         set: authMethod((id: string, chunks: string[], ttl: number, options?: { holdFirst?: boolean }) =>
           storeBy === undefined
             ? registryProgram(registry, "stashResult", id, chunks, ttl, options)
@@ -1232,10 +1257,11 @@ function metaToolsForRequest(
         // both copies and JSON escaping when the bounded provider reason is large.
         if (!recoveryRequired) {
           const cap = resolveMaxResultBytes(outcome.resolved?.connector.maxResultBytes, globalCap);
-          let budget = 512;
+          const { message } = outcome.error;
+          let budget = 2 * MAX_TOOL_ERROR_BYTES;
           while (enc.encode(JSON.stringify(failedResult)).length > cap && budget > 0) {
             budget = Math.floor(budget / 2);
-            outcome.error.message = boundedEchoText(outcome.error.message, budget);
+            outcome.error.message = clipText(message, budget);
             failedResult = makeFailedResult();
           }
         }
@@ -1290,7 +1316,8 @@ function metaToolsForRequest(
             };
           }
           const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name]));
-          return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
+          // Guidance is text-only: a structured copy would double every fetch on the wire (result-representation).
+          return { content: [{ type: "text", text }] };
         } catch (error) {
           if (error instanceof SkillLookupError) return toolError(skillLookupRecovery(error.message));
           return toolError(
@@ -1839,7 +1866,6 @@ export function registerMetaTools(
       description: describedFor(registry, SKILLS_DESC, "skills"),
       ...(ctx.native ? { _meta: { "dev.connecta/surface": { surface: "native", ...ctx.native } } } : {}),
       inputSchema: SKILLS_INPUT,
-      outputSchema: SKILLS_OUTPUT,
       annotations: READ_ONLY_LOCAL,
     },
     authMethod((args: { name?: string | undefined }, request: ServerContext) =>

@@ -6,7 +6,7 @@
 ---
 
 Use Gmail search for mail; use Drive for files and sharing.
-Gmail is a documented exception to the four-hatch default: there is no write hatch; drafts go only through `create_draft` and `update_draft`, and sending is never available.
+There is no write hatch: drafts go only through `create_draft` and `update_draft`, and sending is never available.
 
 ## Mail and joins
 
@@ -17,9 +17,7 @@ A draft has a stable draft id and a message id that changes on each update.
 Use the draft id to reconcile a save.
 
 `search_threads.items` are threads with thread ids; read each thread to get its message ids.
-`get_thread` pages long threads: while `page.hasMore` is true, repeat the same
-`threadId` and `maxBodyChars` with `cursor: page.nextCursor` until it is false.
-The page remains present when `fields` narrows the result.
+`get_thread` pages long threads.
 `list_labels` reads all labels once, without artificial paging; `truncated`
 reports any labels omitted by the result byte bound.
 On very large label sets, `list_labels` may truncate; `gmail_api_read` at `/labels` returns all labels.
@@ -54,6 +52,7 @@ result budgets never bypasses that cap. `format: "unavailable"` supplies a
 reason and no content. Large direct reads can use the documented byte budget;
 keep program results small and reduce text before returning it.
 
+<!-- when: writes -->
 ## Draft recovery
 
 A reply draft inherits the message's thread, reply headers, subject and
@@ -68,3 +67,4 @@ attachments or inline images because replacement would discard them. Edit
 such a draft in Gmail or save a separate new draft. After an uncertain save,
 read the stable draft id and inspect its body before deciding whether another
 write is needed. A saved draft remains in Gmail for the person to review.
+<!-- end -->

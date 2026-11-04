@@ -5,8 +5,11 @@ import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../../errors.js";
 import { overflow } from "./index.js";
+import { CredentialVault } from "../../credentials.js";
+import { createExecuteTool } from "../../execute.js";
 import { memoryStorage } from "../../storage/memory.js";
-import { silentLogger } from "../../../test/helpers.js";
+import { scriptedExecutor } from "../../../test/fixtures/misc.js";
+import { makeRegistry, required, silentLogger } from "../../../test/helpers.js";
 import type { Connector, ConnectorContext } from "../../types.js";
 
 interface StubResponse {
@@ -235,6 +238,89 @@ describe("overflow() standard surface", () => {
         ctx,
       ),
     ).toEqual({ status: 204, data: null });
+  });
+});
+
+describe("INV-5: a program on an Overflow connection", () => {
+  const CLIENT_ID = "c77c8d57-7e1c-4a7e-ad46-e756e5f8dabd";
+  const API_KEY = "31d1467ffa4262cf71b1a600f2d8a425";
+  const DONOR = "f47ac10b-58cc-4372-a567-0e02b2c3d479";
+
+  /** One read that registers the credentials and returns `answer`, then one write holding `phone`. */
+  const program = async (answer: string, phone: string, values: Record<string, string> = {}) => {
+    calls.length = 0;
+    queue({ body: { data: [{ name: answer }], totalCount: 1 } }, { status: 204 });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7))));
+    await vault.setAll("giving", { clientId: CLIENT_ID, apiKey: API_KEY, ...values }, "operator");
+    const execute = createExecuteTool(
+      makeRegistry([connection()], { storage, credentialVault: vault }),
+      "https://connecta.test",
+      scriptedExecutor(async (fns) => {
+        const read = await required(fns.call)("giving.list_locations", {});
+        const write = await required(fns.call)("giving.overflow_api_write", {
+          method: "PATCH",
+          path: `/donors/${DONOR}`,
+          body: { phone },
+        }).then(
+          () => "sent",
+          (error: { code?: string }) => error.code,
+        );
+        return { read, write };
+      }),
+      silentLogger,
+      undefined,
+      { readOnly: false },
+    );
+    const { result: settled } = required((await execute({ code: "async () => {}" })).structuredContent) as {
+      result: { write: string };
+    };
+    return {
+      out: JSON.stringify(settled),
+      write: settled.write,
+      sent: calls.filter((sent) => sent.method === "PATCH").map((sent) => sent.body),
+    };
+  };
+
+  it("sends the whole client id and a part of it as written, and keeps its parts in results", async () => {
+    const part = CLIENT_ID.slice(0, 13);
+    const whole = await program(`Campus ${part}`, CLIENT_ID);
+    expect(calls[0]!.headers).toMatchObject({ "x-client-id": CLIENT_ID, "x-api-key": API_KEY });
+    expect(whole.write).toBe("sent");
+    expect(whole.sent).toEqual([{ phone: CLIENT_ID }]);
+    expect(whole.out).toContain(part);
+    const partial = await program("Main Campus", part);
+    expect(partial.sent).toEqual([{ phone: part }]);
+  });
+
+  it("keeps the whole client id out of results", async () => {
+    const { out } = await program(`Campus ${CLIENT_ID}`, "555-0100");
+    expect(out).not.toContain(CLIENT_ID);
+    expect(out).toContain("[redacted]");
+  });
+
+  it.each([
+    ["whole", API_KEY],
+    ["in part", API_KEY.slice(6, 22)],
+  ])("refuses a later write holding the API key %s and withholds it from results", async (_label, held) => {
+    const { out, write, sent } = await program(`Campus ${held}`, held);
+    expect(write).toBe("invalid_args");
+    expect(sent).toEqual([]);
+    expect(out).not.toContain(held);
+  });
+
+  it("takes no public identifier declaration from a deployment", () => {
+    expect(() => connection({ publicIdentifierHeaders: ["x-api-key"] })).toThrow(/publicIdentifierHeaders/);
+  });
+
+  it("treats a value an auth scheme frames in x-client-id as a credential", async () => {
+    const framed = "aU7kP2xQ9mR4tV6n";
+    const { out, write, sent } = await program(`Campus ${framed.slice(2, 12)}`, framed.slice(2, 12), {
+      clientId: `Bearer ${framed}`,
+    });
+    expect(write).toBe("invalid_args");
+    expect(sent).toEqual([]);
+    expect(out).not.toContain(framed.slice(2, 12));
   });
 });
 
