@@ -2619,6 +2619,12 @@ issuing that link, so one link can begin the reset however late a browser arrive
 Opening a retired prompt link starts nothing and returns the invalid-link refusal;
 the link in the refusal performs the restart. A link already claimed in a browser
 keeps its reset, and the refusal's link continues it. An unforced prompt link stays open.
+An accepted round of a `force: true` flow retires those links the same way before
+issuing its replacement prompt, then rereads their progress. A browser that claimed
+one first keeps its reset and the replacement continues it. Otherwise the replacement
+performs the restart and the replaced link returns the invalid-link refusal, so a
+browser tab opened from an accepted prompt before its visit lands needs the newest
+prompt's link.
 The host records each entered call's classification, catalog freshness and
 classification digest in private invocation state, along with auth failure origins. Writes may elicit only
 when Connecta's own credential resolution fails before invoking the connector:
@@ -2657,7 +2663,7 @@ An in-progress start cannot complete against an old grant. A forced flow switche
 Continue after that visit, so another prompt cannot restart pending consent.
 Failed starts remain single-use but do not block a later successful attempt.
 Before checking completion, unspent links in the retry flow are atomically
-retired so an older forced link cannot begin a reset during the status check.
+retired so an older link cannot begin a start during the status check.
 A Continue link issued during a pending forced start is bound to that
 predecessor and cannot be consumed unless the predecessor starts successfully.
 If it fails, the next prompt requests a fresh restart instead of reusing the old grant.

@@ -70,6 +70,10 @@ const REFUSED = {
       "The client cancelled the connection prompt, possibly automatically, so the user may not have seen it. Nothing was retried.",
   },
 } as const;
+// Only a repeat can recover a refusal whose link failed, and it asks for a new
+// prompt, so a person's refusal stays final.
+const REFUSED_NO_LINK =
+  " No connection link could be issued. If the user has not refused this connection, repeat this request once for a new link, then give it to them.";
 const refusedPurpose = (recipient: string) =>
   `Give this link to the user, unchanged, ${recipient}once, then stop. Do not prompt again, retry, or reach this service another way until they confirm. If they already refused this connection in this conversation, only mention that the link is available.`;
 
@@ -164,6 +168,10 @@ export class AuthElicitation {
         state,
       ]),
     );
+  }
+
+  private retireForRestart(state: AuthRequestState): Promise<string | undefined> {
+    return runEdge(authOwnMethod<string | undefined>(AuthElicitation.prototype, this, "retireForRestart", [state]));
   }
 
   private connected(id: string, context: ServerContext): Promise<boolean> {
@@ -447,11 +455,15 @@ export class AuthElicitation {
             // Once a verified browser has started this attempt, retries continue it.
             // A pending consent must never be reset by another force=true prompt.
             const forced = explicit && args.force === true;
+            const predecessor =
+              forced && previous
+                ? yield* upwardStep(authInvoke<string | undefined>(self, "retireForRestart", [previous]))
+                : undefined;
             const link = yield* upwardStep(
               authInvoke<{ url: string; nonce: string }>(self.options, "connectLink", [
                 id,
-                forced && !browser?.predecessor,
-                forced ? browser?.predecessor : undefined,
+                forced && !predecessor,
+                predecessor,
               ]),
             );
             const state: AuthRequestState = {
@@ -529,14 +541,8 @@ export class AuthElicitation {
               // The signed state bound these arguments, so this is the restart the
               // caller asked for. A pending consent must not be reset by it either.
               const forced = tool === "authorize_connector" && force === true;
-              // One restart per flow: unspent links retire before this one is issued.
-              // A browser claim racing these CASes either wins and is observed as the
-              // predecessor, or is refused, so only one link can ever begin the reset.
-              if (forced) yield* upwardStep(authInvoke<void>(self.options, "closeLinks", [id, state.browserNonces]));
               const predecessor = forced
-                ? (yield* upwardStep(
-                    authInvoke<{ predecessor?: string; completed: boolean }>(self, "browserProgress", [state]),
-                  )).predecessor
+                ? yield* upwardStep(authInvoke<string | undefined>(self, "retireForRestart", [state]))
                 : undefined;
               // The ordinary handoff, except that the link is the sealed form this
               // client was already shown: the agent sees no principal in it.
@@ -578,14 +584,35 @@ export class AuthElicitation {
                 { ok: false },
               );
             } catch {
-              // A signing or storage failure cannot replace the refusal itself.
-              return failure(code, message);
+              // A signing or storage failure cannot replace the refusal itself. Its
+              // retirement may have committed, so no old link can be relied on.
+              return failure(code, message + REFUSED_NO_LINK);
             }
           }),
           (this as AuthElicitation).options.requestSignal,
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as AuthElicitation).options.requestScope)));
       },
       AuthElicitation.prototype.refused,
+    );
+    registerAuthMethod(
+      AuthElicitation.prototype,
+      "retireForRestart",
+      function (state: AuthRequestState) {
+        const self = this as AuthElicitation;
+        return authAwait(
+          authFlow<string | undefined>(function* () {
+            // One restart per flow: unspent links retire before another is issued.
+            // A browser claim racing these CASes either wins and is observed as the
+            // predecessor, or is refused, so only one link can ever begin the reset.
+            yield* upwardStep(authInvoke<void>(self.options, "closeLinks", [state.connector, state.browserNonces]));
+            return (yield* upwardStep(
+              authInvoke<{ predecessor?: string; completed: boolean }>(self, "browserProgress", [state]),
+            )).predecessor;
+          }),
+          self.options.requestSignal,
+        ).pipe(Effect.provideService(RequestScope, requestOwner(self.options.requestScope)));
+      },
+      AuthElicitation.prototype.retireForRestart,
     );
     registerAuthMethod(
       AuthElicitation.prototype,

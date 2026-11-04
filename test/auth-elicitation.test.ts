@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, KVStorage } from "../src/types.js";
 import { operatorUi } from "../src/ui.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { guestErrorText, guestFailureFacts } from "./fixtures/misc.js";
@@ -21,11 +21,12 @@ function setup(
     native?: boolean;
     routed?: boolean;
     poolName?: string;
-    storage?: ReturnType<typeof memoryStorage>;
+    storage?: KVStorage;
     catalogAuth?: boolean;
     credential?: boolean;
     namedCredential?: boolean;
     uiPath?: string;
+    noUi?: boolean;
   } = {},
 ) {
   const storage = options.storage ?? memoryStorage();
@@ -69,6 +70,7 @@ function setup(
     publicUrl: BASE,
     vault,
     ...(options.uiPath ? { ui: { ...operatorUi(), credentialHandoffUrl: () => options.uiPath! } } : {}),
+    ...(options.noUi ? { ui: undefined } : {}),
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
     ...(options.routed ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
     pools: {
@@ -155,6 +157,11 @@ function setup(
     },
   };
 }
+
+const forcedStarts = (...flows: ReturnType<typeof setup>[]) =>
+  flows
+    .flatMap((flow) => vi.mocked(flow.connector.startAuth!).mock.calls)
+    .filter(([, options]) => options?.force === true).length;
 
 describe("native auth URL elicitation", { tags: ["workers"] }, () => {
   it("INV-4: native auth binds the wire name, canonical target and arguments through accept, decline and cancel", async () => {
@@ -340,16 +347,61 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(error.authorizationUrl).toBeUndefined();
   });
 
-  it("INV-4 INV-5: a signing failure leaves the refusal without a link", async () => {
+  it("INV-4 INV-5: a signing failure leaves the refusal without a link and says how to get one", async () => {
     const flow = setup();
     const first = (await flow.rpc()).result;
-    vi.spyOn(flow.vault, "signOAuthHandoff").mockRejectedValue(new Error("SIGNING_KEY_PRIVATE_TEXT"));
+    const sign = vi.spyOn(flow.vault, "signOAuthHandoff").mockRejectedValueOnce(new Error("SIGNING_KEY_PRIVATE_TEXT"));
     const retry = (await flow.rpc(undefined, undefined, { state: first.requestState, action: "decline" })).result;
     expect(retry.structuredContent).toEqual({
       ok: false,
-      error: { code: "auth_declined", message: expect.stringMatching(/possibly automatically/), retryable: false },
+      error: {
+        code: "auth_declined",
+        message: expect.stringMatching(/possibly automatically.*repeat this request once for a new link/s),
+        retryable: false,
+      },
     });
     expect(JSON.stringify(retry)).not.toContain("SIGNING_KEY_PRIVATE_TEXT");
+    // The step it names works: the same request prompts again, and that refusal carries the link.
+    sign.mockRestore();
+    const again = (await flow.rpc()).result;
+    expect(again.resultType).toBe("input_required");
+    const handed = (await flow.rpc(undefined, undefined, { state: again.requestState, action: "decline" })).result;
+    expect(handed.structuredContent.error.authorizationUrl).toEqual(expect.stringContaining("/connect/service"));
+  });
+
+  it("INV-4 INV-9: a retirement that commits before the refusal fails closes every old link and names the fresh one", async () => {
+    const args = { connector: "service", force: true };
+    const flow = setup();
+    flow.connect();
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    const original = first.inputRequests.connecta_auth.params.url;
+    const sign = vi.spyOn(flow.vault, "signOAuthHandoff").mockRejectedValueOnce(new Error("storage went away"));
+    const refused = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "cancel" }))
+      .result.structuredContent.error;
+    sign.mockRestore();
+    expect(refused.authorizationUrl).toBeUndefined();
+    expect(refused.message).toMatch(/repeat this request once for a new link/);
+    expect((await flow.browser(original)).status).toBe(400);
+    expect(flow.connector.startAuth).not.toHaveBeenCalled();
+    // Safe and recoverable: the repeat asks for the same restart, and one link performs it.
+    const again = (await flow.rpc("authorize_connector", args)).result;
+    const fresh = (await flow.rpc("authorize_connector", args, { state: again.requestState, action: "cancel" })).result
+      .structuredContent.error;
+    expect((await flow.browser(fresh.authorizationUrl)).status).toBe(302);
+    expect(forcedStarts(flow)).toBe(1);
+  });
+
+  it("INV-4 INV-5: a caller who may no longer connect is not told to ask for a link", async () => {
+    const storage = memoryStorage();
+    const opened = setup({ credential: true, uiPath: "/operator", storage });
+    const args = { connector: "service" };
+    const first = (await opened.rpc("authorize_connector", args)).result;
+    const withoutUi = setup({ credential: true, noUi: true, storage });
+    const refused = (await withoutUi.rpc("authorize_connector", args, { state: first.requestState, action: "decline" }))
+      .result.structuredContent;
+    expect(refused.error.code).toBe("auth_declined");
+    expect(refused.error.authorizationUrl).toBeUndefined();
+    expect(refused.error.message).not.toMatch(/repeat this request/);
   });
 
   it("INV-4 INV-9: a refused restart keeps its force and never resets a started attempt", async () => {
@@ -395,8 +447,6 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
 
   it("INV-4 INV-9: a refused restart leaves one link able to reset, in either visit order", async () => {
     const args = { connector: "service", force: true };
-    const forcedStarts = (flow: ReturnType<typeof setup>) =>
-      vi.mocked(flow.connector.startAuth!).mock.calls.filter(([, options]) => options?.force === true).length;
     const refuse = async (flow: ReturnType<typeof setup>) => {
       flow.connect();
       const opening = (await flow.rpc("authorize_connector", args)).result;
@@ -447,6 +497,198 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect((await visited.browser(continued.authorizationUrl)).status).toBe(302);
     expect(forcedStarts(visited)).toBe(1);
     expect(visited.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+  });
+
+  describe("an accepted forced prompt", () => {
+    const args = { connector: "service", force: true };
+    const LINK = (result: { inputRequests: { connecta_auth: { params: { url: string } } } }) =>
+      result.inputRequests.connecta_auth.params.url;
+    const REFUSED_LINK = { error: "Invalid or expired connection link. Request a new link from connecta." };
+    // Two app instances over one store, so nothing can rest on request or process memory.
+    const pair = (storage: KVStorage = memoryStorage()) => {
+      const asking = setup({ storage });
+      const other = setup({ storage });
+      asking.connect();
+      other.connect();
+      return { asking, other };
+    };
+    // Runs a visit at the instant the round retires its link: after its first progress read,
+    // either just before that write or just after it, and before anything new is issued.
+    const atRetirement = (storage: KVStorage, when: "before" | "after", visit: () => Promise<void>) => {
+      const compareAndSet = storage.compareAndSet.bind(storage);
+      let pending: (() => Promise<void>) | undefined = visit;
+      vi.spyOn(storage, "compareAndSet").mockImplementation(async (key, expected, next, options) => {
+        const hook = next === "closed" ? pending : undefined;
+        pending = hook ? undefined : pending;
+        if (when === "before") await hook?.();
+        const written = await compareAndSet(key, expected, next, options);
+        if (when === "after") await hook?.();
+        return written;
+      });
+    };
+    const accepted = async ({ asking, other }: ReturnType<typeof pair>) => {
+      const opening = (await asking.rpc("authorize_connector", args)).result;
+      const next = (await other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" }))
+        .result;
+      expect(next.resultType).toBe("input_required");
+      return { original: LINK(opening), replacement: LINK(next), next };
+    };
+
+    it("INV-4 INV-9: leaves one link able to reset when the replacement is visited first", async () => {
+      const flows = pair();
+      const { original, replacement } = await accepted(flows);
+      expect((await flows.asking.browser(replacement)).status).toBe(302);
+      const late = await flows.other.browser(original);
+      expect(late.status).toBe(400);
+      expect(await late.json()).toEqual(REFUSED_LINK);
+      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
+    });
+
+    it("INV-4 INV-9: leaves one link able to reset when the replaced link is visited first", async () => {
+      const flows = pair();
+      const { original, replacement } = await accepted(flows);
+      const stale = await flows.other.browser(original);
+      expect(stale.status).toBe(400);
+      expect(await stale.json()).toEqual(REFUSED_LINK);
+      expect(forcedStarts(flows.asking, flows.other)).toBe(0);
+      expect((await flows.asking.browser(replacement)).status).toBe(302);
+      expect((await flows.other.browser(original)).status).toBe(400);
+      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
+    });
+
+    it("INV-4 INV-9: every later round retires the prompt before it, so only the newest link resets", async () => {
+      const flows = pair();
+      const { original, replacement, next } = await accepted(flows);
+      const third = (
+        await flows.asking.rpc("authorize_connector", args, { state: next.requestState, action: "accept" })
+      ).result;
+      expect(third.resultType).toBe("input_required");
+      for (const stale of [original, replacement]) expect((await flows.other.browser(stale)).status).toBe(400);
+      expect((await flows.asking.browser(LINK(third))).status).toBe(302);
+      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
+    });
+
+    it("INV-4 INV-9: a claimant that wins just before the retirement keeps its reset and gets Continue", async () => {
+      const storage = memoryStorage();
+      const flows = pair(storage);
+      const opening = (await flows.asking.rpc("authorize_connector", args)).result;
+      let visited = 0;
+      atRetirement(storage, "before", async () => {
+        expect((await flows.asking.browser(LINK(opening))).status).toBe(302);
+        visited++;
+      });
+      const next = (
+        await flows.other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" })
+      ).result;
+      expect(next.resultType).toBe("input_required");
+      expect(visited).toBe(1);
+      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
+      expect((await flows.other.browser(LINK(next))).status).toBe(302);
+      // The second visit continues the first consent rather than resetting it.
+      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
+      expect(flows.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
+    });
+
+    it("INV-4 INV-9: a claimant still resetting when the round retires keeps ownership of the reset", async () => {
+      const storage = memoryStorage();
+      const flows = pair(storage);
+      let resume!: () => void;
+      let entered!: () => void;
+      const paused = new Promise<void>((resolve) => {
+        resume = resolve;
+      });
+      const starting = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      vi.mocked(flows.asking.connector.startAuth!).mockImplementationOnce(async () => {
+        entered();
+        await paused;
+        return {
+          state: "auth_required",
+          authorizationUrl: `https://downstream.test/secret?state=${crypto.randomUUID()}`,
+        };
+      });
+      const opening = (await flows.asking.rpc("authorize_connector", args)).result;
+      let visit: Promise<Response> | undefined;
+      atRetirement(storage, "before", async () => {
+        visit = flows.asking.browser(LINK(opening));
+        await starting;
+      });
+      const next = (
+        await flows.other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" })
+      ).result;
+      expect(visit).toBeDefined();
+      try {
+        // Bound to the claim, so it waits on that reset rather than beginning a second.
+        expect((await flows.other.browser(LINK(next))).status).toBe(400);
+      } finally {
+        resume();
+      }
+      expect((await visit!).status).toBe(302);
+      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
+    });
+
+    it("INV-4 INV-9: a claimant arriving just after the retirement is refused and the replacement resets", async () => {
+      const storage = memoryStorage();
+      const flows = pair(storage);
+      const opening = (await flows.asking.rpc("authorize_connector", args)).result;
+      let visited = 0;
+      atRetirement(storage, "after", async () => {
+        expect((await flows.asking.browser(LINK(opening))).status).toBe(400);
+        visited++;
+      });
+      const next = (
+        await flows.other.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" })
+      ).result;
+      expect(visited).toBe(1);
+      expect(forcedStarts(flows.asking, flows.other)).toBe(0);
+      expect((await flows.other.browser(LINK(next))).status).toBe(302);
+      expect(forcedStarts(flows.asking, flows.other)).toBe(1);
+      expect(flows.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+    });
+
+    it("INV-4 INV-9: an unforced prompt's link stays open after an accepted round", async () => {
+      const flow = setup();
+      const plain = { connector: "service" };
+      const opening = (await flow.rpc("authorize_connector", plain)).result;
+      const next = (await flow.rpc("authorize_connector", plain, { state: opening.requestState, action: "accept" }))
+        .result;
+      expect(next.resultType).toBe("input_required");
+      expect((await flow.browser(LINK(opening))).status).toBe(302);
+    });
+
+    it("INV-4 INV-7 INV-9: claim and retirement race on real SQLite connections with one reset per flow", async () => {
+      const { mkdtempSync, rmSync } = await import("node:fs");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const { openSqlite, sqliteStorage } = await import("../src/sqlite.js");
+      const directory = mkdtempSync(join(tmpdir(), "connecta-forced-link-"));
+      const databases = [openSqlite(join(directory, "shared.db")), openSqlite(join(directory, "shared.db"))];
+      try {
+        const [first, second] = databases.map((database) => setup({ storage: sqliteStorage(database) }));
+        first!.connect();
+        second!.connect();
+        for (let trial = 0; trial < 24; trial++) {
+          vi.mocked(first!.connector.startAuth!).mockClear();
+          vi.mocked(second!.connector.startAuth!).mockClear();
+          const opening = (await first!.rpc("authorize_connector", args)).result;
+          const [visit, reply] = await Promise.all([
+            first!.browser(LINK(opening)),
+            second!.rpc("authorize_connector", args, { state: opening.requestState, action: "accept" }),
+          ]);
+          const next = reply.result;
+          expect(next.resultType).toBe("input_required");
+          expect([302, 400]).toContain(visit.status);
+          // Whichever way it fell, the replacement works and cannot add a second reset.
+          expect((await second!.browser(LINK(next))).status).toBe(302);
+          expect(forcedStarts(first!, second!)).toBe(1);
+        }
+      } finally {
+        await Promise.all(apps.splice(0).map((app) => app.close()));
+        for (const database of databases) database.close();
+        rmSync(directory, { recursive: true, force: true });
+      }
+    });
   });
 
   it("INV-4: bounds rounds while accept does not claim consent completed", async () => {
@@ -574,9 +816,10 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(completed.structuredContent).toEqual({ connector: "service", status: "ok" });
   });
 
-  it("INV-4 INV-5 INV-9: retires unused forced links before the completion status check", async () => {
+  it("INV-4 INV-5 INV-9: retires unused links before the completion status check", async () => {
     const flow = setup();
-    const args = { connector: "service", force: true };
+    // Unforced, because an accepted forced round has already retired its older link.
+    const args = { connector: "service" };
     const first = (await flow.rpc("authorize_connector", args)).result;
     const second = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" }))
       .result;

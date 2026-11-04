@@ -1136,7 +1136,10 @@ support (`connector`, `recovery`, `authorizationUrl` or `operatorUrl`,
 Give that link to the user once, then stop. Do not prompt again, retry, or reach
 the service another way until they confirm. If they already refused this
 connection in the conversation, only mention that the link is available.
-A failed signing or storage step leaves the refusal without a link. Connecta
+A failed signing or storage step leaves the refusal without a link. Its message
+says so: unless the user refused this connection, repeat the request once for a
+new link, then give that link to them. Links from the refused flow may already be
+retired, so that repeat is the way back. Connecta
 keeps no record of which clients refuse, so each new prompt to such a client
 ends the same way. Three prompts are allowed
 within one ten-minute retry window, then `auth_round_limit` ends the flow.

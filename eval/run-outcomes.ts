@@ -357,6 +357,22 @@ async function run() {
       },
     ],
     [
+      "the agent's Markdown link carries a period inside its destination",
+      "agent-handoff",
+      (saved) => {
+        for (const entry of saved.trace.transcript)
+          if (entry.kind === "assistant") entry.text = entry.text.replace(CONNECT_LINK, "[Connect]($&.)");
+      },
+    ],
+    [
+      "the agent's Markdown link carries a question mark inside its destination",
+      "agent-handoff",
+      (saved) => {
+        for (const entry of saved.trace.transcript)
+          if (entry.kind === "assistant") entry.text = entry.text.replace(CONNECT_LINK, "[Connect]($&?)");
+      },
+    ],
+    [
       "the agent prompts again after the refusal",
       "host-mode",
       (saved) => {

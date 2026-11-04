@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { AccessTokenManager } from "../src/access-tokens.js";
 import { agentAdmissionFixture } from "./helpers/agent-tokens.js";
 import { d1ActivityStore, d1Storage, type D1DatabaseBinding } from "../src/d1.js";
+import { closeOAuthConnectLinks, consumeOAuthConnectLink, oauthConnectLinkProgress } from "../src/oauth-handoff.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
 import { sqlEffectContract } from "./sql-effect-contract.js";
@@ -61,6 +62,35 @@ async function open(): Promise<SqlFixture> {
     },
   };
 }
+
+describe.skipIf(!bindings)("connect link retirement over native Workers D1", () => {
+  it("INV-7 INV-9: a browser claim and a round's retirement have exactly one winner across store instances", async () => {
+    const db = await fresh();
+    const over = (storage: ReturnType<typeof d1Storage>) =>
+      ({ registry: { contextFor: () => ({ storage }) } }) as unknown as Parameters<typeof closeOAuthConnectLinks>[0];
+    const browser = over(d1Storage(db));
+    const round = over(d1Storage(db));
+    for (let trial = 0; trial < 24; trial++) {
+      const nonce = crypto.randomUUID();
+      const handoff = {
+        connector: "service",
+        origin: "https://connecta.test",
+        expiresAt: Date.now() + 60_000,
+        nonce,
+      } as Parameters<typeof consumeOAuthConnectLink>[1];
+      // Alternate who dispatches first, so neither side wins by call order alone.
+      const claim = () => consumeOAuthConnectLink(browser, handoff);
+      const retire = () => closeOAuthConnectLinks(round, "https://connecta.test", "service", [nonce]);
+      const [claimed] =
+        trial % 2 ? await Promise.all([claim(), retire()]) : (await Promise.all([retire(), claim()])).reverse();
+      // The round's fresh read and the browser's claim agree: a claimant that won is seen, one that lost starts nothing.
+      expect(await oauthConnectLinkProgress(round, "https://connecta.test", "service", nonce)).toBe(
+        claimed ? "claimed" : undefined,
+      );
+      expect(await consumeOAuthConnectLink(browser, handoff)).toBe(false);
+    }
+  });
+});
 
 describe.skipIf(!bindings)("CAS expiry reclamation over native Workers D1", () => {
   sqlCasExpiryContract(open);
