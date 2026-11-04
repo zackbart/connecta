@@ -81,7 +81,11 @@ function setup(
   const downstream = httpDownstream((server) => {
     server.registerTool(
       "create_item",
-      { inputSchema: z.object({ id: z.number() }), annotations: { readOnlyHint: false } },
+      // A read override applies only where the server is silent about the tool.
+      {
+        inputSchema: z.object({ id: z.number() }),
+        ...(options.overrideRead ? {} : { annotations: { readOnlyHint: false } }),
+      },
       async ({ id }) => {
         applied.push(`create_item ${id}`);
         return { content: [{ type: "text", text: JSON.stringify({ created: id }) }] };

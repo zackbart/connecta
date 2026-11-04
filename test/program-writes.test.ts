@@ -369,6 +369,86 @@ describe("classification and pool endpoints (#706)", () => {
     }
   });
 
+  it("INV-1 INV-2: a read override cannot make a declared write a read, and warns once per catalog change", async () => {
+    const logger = { ...silentLogger, warn: vi.fn() };
+    let sent = 0;
+    let raw: ToolDef[] = [
+      { name: "no_read", annotations: { readOnlyHint: false } },
+      { name: "no_read_additive", annotations: { readOnlyHint: false, destructiveHint: false } },
+      { name: "destructive", annotations: { destructiveHint: true } },
+      { name: "contradictory", annotations: { readOnlyHint: true, destructiveHint: true } },
+      { name: "malformed", annotations: { readOnlyHint: null as never } },
+      { name: "silent" },
+      { name: "silent_not_destructive", annotations: { destructiveHint: false } },
+      { name: "source_read", annotations: { readOnlyHint: true } },
+    ];
+    const connector: Connector = {
+      id: "crm",
+      listTools: async () => raw,
+      callTool: async () => {
+        sent++;
+        return { ok: true };
+      },
+    };
+    const classification = {
+      crm: Object.fromEntries(raw.map((tool) => [tool.name, "read" as const])),
+    };
+    const registry = makeRegistry([connector], { classification, logger });
+    const verdicts = async () =>
+      Object.fromEntries(
+        (await registry.getTools("crm", BASE, {})).map((tool) => [
+          tool.name,
+          [tool.classification, tool.annotations?.readOnlyHint, tool.annotations?.destructiveHint],
+        ]),
+      );
+    expect(await verdicts()).toEqual({
+      no_read: ["write", false, true],
+      no_read_additive: ["write", false, true],
+      destructive: ["write", false, true],
+      contradictory: ["write", false, true],
+      malformed: ["write", false, true],
+      silent: ["read", true, false],
+      silent_not_destructive: ["read", true, false],
+      source_read: ["read", true, false],
+    });
+    const warned = () => logger.warn.mock.calls.map(([message]) => String(message)).filter((m) => m.includes('"read"'));
+    expect(warned()).toHaveLength(5);
+    expect(warned().join("\n")).toContain('"crm.no_read"');
+    expect(warned().join("\n")).not.toContain('"crm.silent"');
+    await verdicts();
+    expect(warned()).toHaveLength(5);
+    raw = raw.slice(0, 2);
+    await verdicts();
+    expect(warned()).toHaveLength(7);
+
+    raw = [{ name: "no_read", annotations: { readOnlyHint: false } }];
+    const readOnly = createMetaTools(registry, BASE, { readOnly: true });
+    const refused = await readOnly.callTool({ address: "crm.no_read" });
+    expect(refused.structuredContent).toMatchObject({ error: { code: "read_only_endpoint" } });
+    const programs = new Map<string, Program>();
+    const code = "async () => program";
+    programs.set(code, (connecta) => connecta.call!("crm.no_read", {}));
+    const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
+      readOnly: true,
+    });
+    expect(value(await execute({ code })).error).toMatchObject({ code: "read_only_endpoint" });
+    expect(sent).toBe(0);
+  });
+
+  it("INV-1: a static connector reports a refused read override once, at construction", async () => {
+    const logger = { ...silentLogger, warn: vi.fn() };
+    const connector = api("notes", {
+      tools: [{ name: "update", description: "Update", annotations: { readOnlyHint: false }, handler: () => ({}) }],
+    });
+    const registry = makeRegistry([connector], { classification: { notes: { update: "read" } }, logger });
+    const warned = () =>
+      logger.warn.mock.calls.filter(([message]) => String(message).includes('"notes.update" to "read"'));
+    expect(warned()).toHaveLength(1);
+    await registry.getTools("notes", BASE, {});
+    await registry.getTools("notes", BASE, {});
+    expect(warned()).toHaveLength(1);
+  });
+
   it("INV-1 INV-11: absent runtime overrides stay dormant and apply on return; static typos fail construction", async () => {
     for (const verdict of ["read", "write", "hidden"] as const) {
       let present = false;
@@ -410,7 +490,7 @@ describe("classification and pool endpoints (#706)", () => {
     ];
     const raw: ToolDef[] = [
       { name: "mislabeled", annotations: { readOnlyHint: true } },
-      { name: "mixed", annotations: { readOnlyHint: false } },
+      { name: "mixed" },
       { name: "constructor", classification: "read" },
       ...hintCases.map(([annotations], index) => ({ name: `hint_${index}`, ...(annotations ? { annotations } : {}) })),
     ];

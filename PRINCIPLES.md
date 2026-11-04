@@ -45,8 +45,13 @@ links the executable checks.
   Deployment code may override a tool to read, write, or hidden. Hidden tools
   cannot be discovered or called. For remote MCP, source classification uses
   only server annotations; deployment overrides never relax replay safety.
-  Effective or source write forbids replay and makes an ambiguous dispatched
-  failure non-retryable. Missing or contradictory hints fail closed.
+  A tool whose source explicitly declares a write (`readOnlyHint: false`,
+  `destructiveHint: true`, or contradictory hints) stays a write under a read
+  override and is never served read-annotated, because a host may resend a
+  read-annotated call. Where the source is silent, the override is the only
+  evidence, so it serves as a read and asserts that the call is safe to repeat.
+  Effective or source write forbids Connecta's own replay and makes an ambiguous
+  dispatched failure non-retryable. Missing or contradictory hints fail closed.
 - **INV-2: Writes respect the endpoint.** Each endpoint scope (plain `/mcp`,
   which serves a maintainer the whole catalog and another person their single
   pool, and a pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint omits write

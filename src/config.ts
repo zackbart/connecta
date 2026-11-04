@@ -449,6 +449,8 @@ const connectaConfig = {
   /** Named tool pools, each served at `/mcp/<name>` to its members only. */
   pools: record(object(pool)),
   /** Exact connector id -> tool name -> verdict. Hidden tools cannot be discovered or called.
+   * `"read"` applies only where the source is silent, and asserts the call is safe to repeat; a
+   * source's declared write stays a write and is reported.
    * Unknown static names fail construction; absent runtime names stay dormant and are reported. */
   classification: record(
     record(
