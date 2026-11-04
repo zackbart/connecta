@@ -8,12 +8,13 @@ beside these notes.
 
 The 183 scored trials had no invalid results: no timeouts and no host errors, with
 a 51 s maximum. Batches started only at a 1-minute load of 30 or lower, though
-other work raised load to 77 while some ran. With 14 retired trials the total is
+other work raised load to at least 77 while some ran. With 14 retired trials the total is
 197 paid trials against a budget of 200. The scored batches ran on source before
 the rebase onto main. The flip matrix and unpaid controls were rerun after it.
 
-`eval/hard-discovery-tasks` landed after the task list froze, and no task
-paraphrase set existed, so `eval/tasks/paraphrase.ts` was written for this run.
+`eval/hard-discovery-tasks` landed after the task list froze and is unused. No
+paraphrase tasks existed, so `eval/tasks/paraphrase.ts` was written for this run,
+after the hints.
 
 ## Limits
 
@@ -45,13 +46,13 @@ read-only.
 | Read program with a flipped tool      | 6               | 0              | none              |
 | Name-bound native prototype, flipped  | 6               | 0              | none              |
 
-Native-flip duplicates appeared in all 2 clean runs. The always-read control also
+Native-flip duplicates appeared in all 3 runs. The always-read control also
 replays, showing the replay is the host's and needs no write classification.
 
 The trigger is narrower than "a connection closes". On Claude Code 2.1.318 a
 single socket reset, a 200 event stream that ends or resets, and intermediary 404
 or 503 replies each caused no replay. On Codex 0.166.0 a reset and a 503 caused no
-replay, and the parallel mode is not scripted there. Eve was not tested.
+replay, measured before the rebase, and the parallel mode is not scripted there. Eve was not tested.
 
 Replayed calls carry restarted JSON-RPC ids (2, 3, 4, 5 then 0, 1) and no session
 id, because the protocol is stateless. Connecta cannot dedupe by request identity.
@@ -161,4 +162,5 @@ this range. One trial per task and arm:
 On Claude, native is cheaper at 50, about equal at 150 and about double at 500, so
 300 sits above the crossover and was representative of larger catalogs. Native's
 first turn grows from 3k to 13k, while meta stays at 2k. Codex's first turn stays
-at 6k, and no clear crossover appears; native costs the same or more at every size.
+at 6k, and no clear crossover appears: native costs more on discovery at every
+size and is mixed on the join.

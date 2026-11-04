@@ -1366,7 +1366,8 @@ write tools, as any read-only endpoint does. Result handles bind to their pool, 
 `call_tool` also runs on the sibling, and a handle minted there does not page from
 `execute_code`.
 
-`pnpm exec tsx eval/surface-controls.ts` needs no paid model. It proves on a real
+`pnpm exec tsx eval/surface-controls.ts` needs no paid model, and its deployment
+half also runs in `pnpm run eval:selftest --native-only`. It proves on a real
 Worker that a read program cannot write through read-then-write, a swallowed
 refusal, `Promise.allSettled` or repeated attempts, with a positive control that
 the same write lands once through `execute_code`. It also checks the other arms'

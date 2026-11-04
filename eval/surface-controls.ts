@@ -1,6 +1,7 @@
 /**
  * No paid model: the prototype arms against a real Worker deployment, and the
- * approval modes against real host processes with a scripted model.
+ * approval modes against real host processes with a scripted model. CI runs the
+ * deployment half; the approval half needs both CLIs installed.
  *
  *   pnpm run build && pnpm exec tsx eval/surface-controls.ts [--only read,bound,hints,pinned,approval]
  */
@@ -257,14 +258,21 @@ async function boundNameControls() {
   console.log("ok native-bound: stale plain name refused, write reachable by its bound name, reads unchanged");
 }
 
-const only = flags(process.argv.slice(2)).get("only")?.split(",");
-const wanted = (name: string) => !only || only.includes(name);
-if (wanted("read")) {
-  await readRouteControls("read-six");
-  await readRouteControls("read-five");
+/** Real deployment, no host and no model: these run in CI through `eval:selftest --native-only`. */
+export async function deploymentControls(wanted: (name: string) => boolean = () => true) {
+  if (wanted("read")) {
+    await readRouteControls("read-six");
+    await readRouteControls("read-five");
+  }
+  if (wanted("bound")) await boundNameControls();
+  if (wanted("hints")) await hintControls();
+  if (wanted("pinned")) await pinnedControls();
 }
-if (wanted("bound")) await boundNameControls();
-if (wanted("hints")) await hintControls();
-if (wanted("pinned")) await pinnedControls();
-if (wanted("approval")) await approvalControls();
-process.exit(0);
+
+if (process.argv[1]?.endsWith("surface-controls.ts")) {
+  const only = flags(process.argv.slice(2)).get("only")?.split(",");
+  const wanted = (name: string) => !only || only.includes(name);
+  await deploymentControls(wanted);
+  if (wanted("approval")) await approvalControls();
+  process.exit(0);
+}
