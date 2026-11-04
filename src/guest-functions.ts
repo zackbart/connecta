@@ -14,7 +14,7 @@ export const GUEST_FUNCTIONS = [
     name: "search",
     budget: "hostCall",
     declaration:
-      "search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas; fullDescriptions?: boolean }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string; stale?: true; ageMs?: number }[]; hasMore: boolean; nextOffset?: number }>;",
+      "search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas; fullDescriptions?: boolean }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string; stale?: true }[]; hasMore: boolean; nextOffset?: number }>;",
   },
   /** Describes exact addresses, one entry per address in order. */
   {
