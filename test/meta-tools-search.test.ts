@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { CatalogService } from "../src/catalog-service.js";
-import { compactDiscoverySchema, compactSchema, MAX_COMPACT_DISCOVERY_SCHEMA_BYTES } from "../src/catalog.js";
+import { CatalogService, MAX_DESCRIBE_DESCRIPTION_BYTES } from "../src/catalog-service.js";
+import {
+  compactDiscoverySchema,
+  compactSchema,
+  discoverySummary,
+  MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+} from "../src/catalog.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, connectorIds, textOf, toolsByConnector, type SearchResult } from "./fixtures/meta-tools.js";
 import { calcConnector, makeRegistry, remoteConnector, required } from "./helpers.js";
@@ -13,6 +18,15 @@ import { fixture as ccbFixture } from "../src/providers/ccb/fixtures.js";
 import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
 import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
 import { fixture as vercelFixture } from "../src/providers/vercel/fixtures.js";
+import { fixture as cloudflareFixture } from "../src/providers/cloudflare/fixtures.js";
+import {
+  HATCH_QUERIES,
+  LABELLED_QUERIES,
+  lookalikeConnectors,
+  queryHalf,
+  rankingScore,
+} from "./fixtures/search-quality.js";
+import { providerFixtures } from "./providers.generated.js";
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -43,6 +57,164 @@ function expectStructurallyCompleteTypeShape(text: string): void {
   expect(stack).toEqual([]);
   expect(text).not.toContain("\uFFFD");
 }
+
+/** Just below the measured 0.879, 28 and 0.845, 38, and above main's 0.797, 24 and 0.766, 37. */
+const FLOOR = { tune: { mrr: 0.87, top3: 28 }, heldOut: { mrr: 0.84, top3: 38 } };
+
+describe("description summaries", () => {
+  it("takes the first complete sentence, extends it to 40 characters and caps it at 160", () => {
+    const long = "word ".repeat(60).trim();
+    expect(discoverySummary("List invoices.")).toEqual({ text: "List invoices.", truncated: false });
+    expect(discoverySummary("List invoices for one customer, newest first. Pages by cursor.")).toEqual({
+      text: "List invoices for one customer, newest first.",
+      truncated: true,
+    });
+    expect(discoverySummary("List invoices. Pages by cursor, newest first. Never drafts.")).toEqual({
+      text: "List invoices. Pages by cursor, newest first.",
+      truncated: true,
+    });
+    expect(discoverySummary("Short. Also short.")).toEqual({ text: "Short. Also short.", truncated: false });
+    // A short whole text with one boundary past the minimum loses nothing.
+    expect(discoverySummary("List invoices for one customer, newest first.").truncated).toBe(false);
+    // Abbreviations, initials and file names end no sentence.
+    expect(discoverySummary("Filter by field, e.g. status or owner in the U.S. region only. Then page.").text).toBe(
+      "Filter by field, e.g. status or owner in the U.S. region only.",
+    );
+    // A blank line ends a sentence that has no punctuation.
+    expect(discoverySummary("List invoices for one customer newest first\n\nArgs: customer").text).toBe(
+      "List invoices for one customer newest first",
+    );
+    // Whitespace collapses; single line breaks are wrapping.
+    expect(discoverySummary("  List  invoices\n for one customer, newest first.  ").text).toBe(
+      "List invoices for one customer, newest first.",
+    );
+    const cut = discoverySummary(long);
+    expect(cut.truncated).toBe(true);
+    expect(cut.text.length).toBeLessThanOrEqual(160);
+    expect(cut.text.endsWith("word…")).toBe(true);
+    // No space to cut at: never split a surrogate pair.
+    const emoji = discoverySummary("😀".repeat(200));
+    expect(emoji.truncated).toBe(true);
+    expect(emoji.text.length).toBeLessThanOrEqual(160);
+    expect(emoji.text).not.toMatch(/[\uD800-\uDBFF]…$/);
+  });
+
+  it("fits every maintained description, flags each cut and keeps the index on the full text", async () => {
+    let cuts = 0;
+    for (const fixture of Object.values(providerFixtures)) {
+      const connector = fixture.create(fixture.name);
+      const mt = createMetaTools(makeRegistry([connector]), BASE);
+      const summaries = textOf(
+        await mt.searchTools({ connector: fixture.name, query: "", limit: 100 }),
+      ) as SearchResult;
+      const full = textOf(
+        await mt.searchTools({ connector: fixture.name, query: "", limit: 100, fullDescriptions: true }),
+      ) as SearchResult;
+      expect(full.tools.every((tool) => tool.descriptionTruncated === undefined)).toBe(true);
+      summaries.tools.forEach((tool, index) => {
+        const description = tool.description ?? "";
+        expect(description.length, tool.address).toBeLessThanOrEqual(160);
+        expect(description.length, tool.address).toBeGreaterThan(0);
+        if (!tool.descriptionTruncated) return;
+        cuts += 1;
+        expect(full.tools[index]!.description!.length, tool.address).toBeGreaterThan(description.length);
+      });
+    }
+    expect(cuts).toBeGreaterThanOrEqual(58);
+    // A word past the summary still finds the tool.
+    const conn = connectorWith({
+      id: "desk",
+      kind: "api",
+      tools: [
+        {
+          name: "list_tickets",
+          description: "List tickets in one queue, newest ticket first. Quarantined ones are hidden.",
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    });
+    const page = textOf(
+      await createMetaTools(makeRegistry([conn]), BASE).searchTools({ query: "quarantined" }),
+    ) as SearchResult;
+    expect(page.tools[0]).toMatchObject({
+      address: "desk.list_tickets",
+      description: "List tickets in one queue, newest ticket first.",
+      descriptionTruncated: true,
+    });
+  });
+
+  it("describes full text by default, within one budget per call", async () => {
+    const big = "x".repeat(MAX_DESCRIBE_DESCRIPTION_BYTES - 100);
+    const conn = connectorWith({
+      id: "desk",
+      kind: "api",
+      tools: [
+        {
+          name: "long",
+          description: `Read one ticket with everything on it. ${"Details follow in full. ".repeat(40)}`,
+          annotations: { readOnlyHint: true },
+        },
+        {
+          name: "huge",
+          description: `Read one huge ticket with its whole history. ${big}`,
+          annotations: { readOnlyHint: true },
+        },
+        {
+          name: "next",
+          description: `Read the next ticket in a queue. ${"More. ".repeat(40)}`,
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    });
+    const service = new CatalogService(makeRegistry([conn]), BASE);
+    const [one] = await service.describe({ addresses: ["desk.long"] });
+    expect(one?.description?.length).toBeGreaterThan(240);
+    expect(one?.descriptionTruncated).toBeUndefined();
+    const batch = await service.describe({ addresses: ["desk.long", "desk.huge", "desk.next"] });
+    expect(batch[0]?.descriptionTruncated).toBeUndefined();
+    expect(batch[1]).toMatchObject({
+      description: "Read one huge ticket with its whole history.",
+      descriptionTruncated: true,
+    });
+    // Order decides the budget, so a later small description can still fit.
+    expect(batch[2]?.descriptionTruncated).toBeUndefined();
+    expect(await service.describe({ addresses: ["desk.long", "desk.huge", "desk.next"] })).toEqual(batch);
+    const unabridged = await service.describe({
+      addresses: ["desk.long", "desk.huge", "desk.next"],
+      fullDescriptions: true,
+    });
+    expect(unabridged.every((entry) => entry.descriptionTruncated === undefined)).toBe(true);
+    expect(unabridged[1]?.description?.length).toBeGreaterThan(MAX_DESCRIBE_DESCRIPTION_BYTES - 100);
+  });
+
+  it("bounds full descriptions by the budget and fallback summaries by their own allowance", async () => {
+    const utf8 = (text: string | undefined) => new TextEncoder().encode(text ?? "").length;
+    for (const unit of ["x", "€"]) {
+      const description = unit.repeat(Math.floor(MAX_DESCRIBE_DESCRIPTION_BYTES / utf8(unit)));
+      const tools = Array.from({ length: 100 }, (_, index) => ({
+        name: `tool_${index}`,
+        description,
+        annotations: { readOnlyHint: true },
+      }));
+      const conn = connectorWith({ id: "desk", kind: "api", tools });
+      const entries = await new CatalogService(makeRegistry([conn]), BASE).describe({
+        addresses: tools.map((tool) => `desk.${tool.name}`),
+      });
+      const full = entries.filter((entry) => entry.descriptionTruncated === undefined);
+      const summaries = entries.filter((entry) => entry.descriptionTruncated === true);
+      expect(full.length).toBe(1);
+      expect(full.reduce((total, entry) => total + utf8(entry.description), 0)).toBeLessThanOrEqual(
+        MAX_DESCRIBE_DESCRIPTION_BYTES,
+      );
+      expect(summaries.length).toBe(99);
+      for (const entry of summaries) {
+        expect(entry.description!.length).toBeGreaterThan(0);
+        expect(entry.description!.length).toBeLessThanOrEqual(160);
+        expect(utf8(entry.description)).toBeLessThanOrEqual(480);
+      }
+    }
+  });
+});
 
 describe("describe recovery", () => {
   it("classifies and bounds catalog failures without call-path detail", async () => {
@@ -308,6 +480,339 @@ describe("search_tools", () => {
     expect(teams.readyCalls).toBeUndefined();
     expect(await ready("get team")).toEqual([]);
   });
+
+  const subscriptions = () =>
+    connectorWith({
+      id: "billing",
+      kind: "api",
+      tools: [
+        {
+          name: "list_subscriptions",
+          description: "List subscriptions with plan and status.",
+          annotations: { readOnlyHint: true },
+        },
+        {
+          name: "get_subscription",
+          description: "Get one subscription by id.",
+          annotations: { readOnlyHint: true },
+        },
+        {
+          name: "update_subscription",
+          description: "Update a subscription's plan.",
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        },
+      ],
+    });
+
+  it("keeps lexical partial matches beside a hatch whose operation vocabulary matched", async () => {
+    const alone = textOf(
+      await createMetaTools(makeRegistry([subscriptions()]), BASE).searchTools({ query: "cancel a subscription" }),
+    ) as SearchResult;
+    expect(alone.total).toBe(3);
+    expect(alone.matchMode).toBe("partial");
+    const beside = textOf(
+      await createMetaTools(makeRegistry([subscriptions(), cloudflareFixture.create("edge")]), BASE).searchTools({
+        query: "cancel a subscription",
+      }),
+    ) as SearchResult;
+    const addresses = beside.tools.map((tool) => tool.address);
+    expect(addresses).toContain("edge.cloudflare_api_search");
+    expect(addresses).toEqual(expect.arrayContaining(alone.tools.map((tool) => tool.address)));
+    // The hatch covers every word through one operation, so it precedes them, and the page is not partial.
+    expect(addresses[0]).toBe("edge.cloudflare_api_search");
+    expect(beside.matchMode).toBeUndefined();
+    // Limit and read-only endpoints still govern what the wider page shows.
+    const page = textOf(
+      await createMetaTools(makeRegistry([subscriptions(), cloudflareFixture.create("edge")]), BASE).searchTools({
+        query: "cancel a subscription",
+        limit: 2,
+      }),
+    ) as SearchResult;
+    expect(page.tools.map((tool) => tool.address)).toEqual(addresses.slice(0, 2));
+    expect(page.hasMore).toBe(true);
+    const readOnly = textOf(
+      await createMetaTools(makeRegistry([subscriptions(), cloudflareFixture.create("edge")]), BASE, {
+        readOnly: true,
+      }).searchTools({ query: "cancel a subscription" }),
+    ) as SearchResult;
+    expect(readOnly.tools.map((tool) => tool.address)).not.toContain("billing.update_subscription");
+    expect(readOnly.tools.every((tool) => tool.classification === "read")).toBe(true);
+  });
+
+  it("keeps a hatch on the page and below a complete authored tool", async () => {
+    const authored = connectorWith({
+      id: "billing",
+      kind: "api",
+      tools: [
+        {
+          name: "cancel_subscription",
+          description: "Cancel one subscription.",
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        },
+      ],
+    });
+    const page = textOf(
+      await createMetaTools(makeRegistry([cloudflareFixture.create("edge"), authored]), BASE).searchTools({
+        query: "cancel a subscription",
+      }),
+    ) as SearchResult;
+    expect(page.tools.map((tool) => tool.address)).toEqual([
+      "billing.cancel_subscription",
+      "edge.cloudflare_api_search",
+    ]);
+    // An operation with no named tool still routes to the hatch, on a named connector too.
+    const hatchOnly = textOf(
+      await createMetaTools(makeRegistry([stripeFixture.create("pay")]), BASE).searchTools({
+        query: "create a stripe refund",
+      }),
+    ) as SearchResult;
+    expect(hatchOnly.tools[0]?.address).toBe("pay.stripe_api_search");
+  });
+
+  it("ranks on what search shows: a description's tail is searchable but never complete", async () => {
+    const conn = connectorWith({
+      id: "desk",
+      kind: "api",
+      tools: [
+        {
+          name: "console",
+          description: "Administer the workspace from one place. Also archives invoices.",
+          annotations: { readOnlyHint: true },
+        },
+        { name: "list_invoices", description: "List invoices.", annotations: { readOnlyHint: true } },
+        { name: "archive_invoice", description: "Archive one invoice.", annotations: { readOnlyHint: true } },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([conn]), BASE);
+    const page = textOf(await mt.searchTools({ query: "archive invoice" })) as SearchResult;
+    expect(page.tools.map((tool) => tool.address)).toEqual(["desk.archive_invoice", "desk.console"]);
+    // Tail-only coverage keeps the tool findable, and does not call the page partial.
+    const tailOnly = connectorWith({
+      id: "desk",
+      kind: "api",
+      tools: [
+        {
+          name: "console",
+          description: "Administer the workspace from one place. Also archives invoices.",
+          annotations: { readOnlyHint: true },
+        },
+        { name: "ping", description: "Check the service answers.", annotations: { readOnlyHint: true } },
+      ],
+    });
+    const found = textOf(
+      await createMetaTools(makeRegistry([tailOnly]), BASE).searchTools({ query: "archive invoice" }),
+    ) as SearchResult;
+    expect(found.tools.map((tool) => tool.address)).toEqual(["desk.console"]);
+    expect(found.matchMode).toBeUndefined();
+  });
+
+  it("indexes titles at low weight and treats a one-word action name as no exact name", async () => {
+    const conn = connectorWith({
+      id: "ops",
+      kind: "api",
+      tools: [
+        { name: "op_1", title: "Rotate signing key", description: "Runs it.", annotations: { readOnlyHint: true } },
+        {
+          name: "op_2",
+          description: "Runs it.",
+          annotations: { readOnlyHint: true, title: "Rotate access token" },
+        },
+        { name: "rotate_key", description: "Runs it.", annotations: { readOnlyHint: true } },
+        { name: "search", description: "Search everything.", annotations: { readOnlyHint: true } },
+        { name: "search_logs", description: "Search service logs.", annotations: { readOnlyHint: true } },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([conn]), BASE);
+    const key = textOf(await mt.searchTools({ query: "rotate key" })) as SearchResult;
+    expect(key.tools[0]?.address).toBe("ops.rotate_key");
+    expect(key.tools.map((tool) => tool.address)).toContain("ops.op_1");
+    const annotated = textOf(await mt.searchTools({ query: "access token" })) as SearchResult;
+    expect(annotated.tools.map((tool) => tool.address)).toEqual(["ops.op_2"]);
+    const logs = textOf(await mt.searchTools({ query: "search logs" })) as SearchResult;
+    expect(logs.tools[0]?.address).toBe("ops.search_logs");
+    const exact = textOf(await mt.searchTools({ query: "search" })) as SearchResult;
+    expect(exact.tools[0]?.address).toBe("ops.search");
+    // The retained index is keyed by title too: a changed title is searchable at once.
+    const retitled = connectorWith({
+      id: "ops",
+      kind: "api",
+      tools: [{ name: "op_1", title: "Archive ledger", description: "Runs it.", annotations: { readOnlyHint: true } }],
+    });
+    const changed = textOf(
+      await createMetaTools(makeRegistry([retitled]), BASE).searchTools({ query: "archive ledger" }),
+    ) as SearchResult;
+    expect(changed.tools.map((tool) => tool.address)).toEqual(["ops.op_1"]);
+  });
+
+  it("matches a small abbreviation map as whole tokens in both directions", async () => {
+    const conn = connectorWith({
+      id: "host",
+      kind: "api",
+      tools: [
+        { name: "list_env_vars", description: "List settings.", annotations: { readOnlyHint: true } },
+        { name: "list_environments", description: "List stages.", annotations: { readOnlyHint: true } },
+        { name: "enlist_envelope", description: "Enlist one envelope.", annotations: { readOnlyHint: true } },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([conn]), BASE);
+    const addresses = async (query: string) =>
+      (textOf(await mt.searchTools({ query })) as SearchResult).tools.map((tool) => tool.address);
+    expect((await addresses("environment variables"))[0]).toBe("host.list_env_vars");
+    expect(await addresses("env")).toEqual(expect.arrayContaining(["host.list_env_vars", "host.list_environments"]));
+    expect(await addresses("env")).not.toContain("host.enlist_envelope");
+    // An inherited property name is not an abbreviation.
+    expect(await addresses("constructor")).toEqual([]);
+  });
+
+  it("keeps labelled ranking above its floors on both halves, deterministically", async () => {
+    const pages = async (queries: readonly { query: string }[]) => {
+      const mt = createMetaTools(
+        makeRegistry([
+          ...Object.values(providerFixtures).map((fixture) => fixture.create(fixture.name)),
+          ...lookalikeConnectors(),
+        ]),
+        BASE,
+      );
+      const ranked = new Map<string, string[]>();
+      for (const { query } of queries) {
+        const page = textOf(await mt.searchTools({ query })) as SearchResult;
+        expect(page.tools.length).toBeLessThanOrEqual(8);
+        ranked.set(
+          query,
+          page.tools.map((tool) => tool.address),
+        );
+      }
+      return ranked;
+    };
+    const first = await pages(LABELLED_QUERIES);
+    // A fresh registry ranks the same pages.
+    const sample = LABELLED_QUERIES.filter((_, index) => index % 8 === 0);
+    for (const [query, page] of await pages(sample)) expect(page).toEqual(first.get(query));
+    const half = (name: "tune" | "heldOut") => LABELLED_QUERIES.filter((entry) => queryHalf(entry) === name);
+    expect(LABELLED_QUERIES.length).toBeGreaterThanOrEqual(40);
+    const tune = rankingScore(half("tune"), first);
+    const heldOut = rankingScore(half("heldOut"), first);
+    expect(tune.mrr).toBeGreaterThanOrEqual(FLOOR.tune.mrr);
+    expect(tune.top3).toBeGreaterThanOrEqual(FLOOR.tune.top3);
+    expect(heldOut.mrr).toBeGreaterThanOrEqual(FLOOR.heldOut.mrr);
+    expect(heldOut.top3).toBeGreaterThanOrEqual(FLOOR.heldOut.top3);
+  }, 60_000);
+
+  const rankOf = (page: SearchResult, address: string) => page.tools.findIndex((tool) => tool.address === address) + 1;
+
+  it("keeps every hatch-only query of the separate group on its first ranks", async () => {
+    const mt = createMetaTools(
+      makeRegistry([
+        ...Object.values(providerFixtures).map((fixture) => fixture.create(fixture.name)),
+        ...lookalikeConnectors(),
+      ]),
+      BASE,
+    );
+    expect(HATCH_QUERIES.length).toBeGreaterThanOrEqual(11);
+    for (const { query, expect: answers } of HATCH_QUERIES) {
+      const page = textOf(await mt.searchTools({ query })) as SearchResult;
+      const rank = page.tools.findIndex((tool) => answers.includes(tool.address)) + 1;
+      expect(rank, query).toBeGreaterThan(0);
+      // `get refunds`: two deposit getters state both words, so they rightly lead.
+      expect(rank, query).toBeLessThanOrEqual(query === "get refunds" ? 4 : 3);
+      // The stuffed console mentions every guard's words and names none of them.
+      expect(page.tools[0]?.address, query).not.toBe("admin.admin_console");
+    }
+  }, 60_000);
+
+  it("ranks a hatch whose tail states rare words above unrelated getters, at any catalog size", async () => {
+    const fixtures = Object.values(providerFixtures);
+    const query = "get repository contents";
+    const unrelated = ["breeze.get_person", "planning-center.get_person", "overflow.get_contribution", "ccb.get_me"];
+    const providers = textOf(
+      await createMetaTools(makeRegistry(fixtures.map((fixture) => fixture.create(fixture.name))), BASE).searchTools({
+        query,
+        limit: MAX_SEARCH_LIMIT,
+      }),
+    ) as SearchResult;
+    expect(rankOf(providers, "github.github_api_search")).toBe(1);
+    expect(rankOf(providers, "github.github_api_read")).toBeLessThanOrEqual(5);
+    for (const address of unrelated)
+      expect(rankOf(providers, address), address).toBeGreaterThan(rankOf(providers, "github.github_api_read"));
+    // Clones double every document frequency; a crowd of getters makes `get` commoner still.
+    const crowd = connectorWith({
+      id: "crowd",
+      kind: "api",
+      tools: Array.from({ length: 50 }, (_, index) => ({
+        name: `get_record_${index}`,
+        description: `Get one record of kind ${index} by id.`,
+        annotations: { readOnlyHint: true },
+      })),
+    });
+    const connectors = [
+      ...fixtures.map((fixture) => fixture.create(fixture.name)),
+      ...fixtures.map((fixture) => fixture.create(`${fixture.name}-copy`)),
+      crowd,
+    ];
+    const toolCount = (await Promise.all(connectors.map((connector) => connector.listTools({} as never)))).flat()
+      .length;
+    expect(toolCount).toBe(494);
+    const cloned = textOf(
+      await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query, limit: MAX_SEARCH_LIMIT }),
+    ) as SearchResult;
+    expect(cloned.tools.slice(0, 2).map((tool) => tool.name)).toEqual(["github_api_search", "github_api_search"]);
+    const readRank = Math.min(
+      ...["github.github_api_read", "github-copy.github_api_read"].map((address) => rankOf(cloned, address)),
+    );
+    expect(readRank).toBeGreaterThan(0);
+    expect(readRank).toBeLessThanOrEqual(8);
+    expect(cloned.tools.findIndex((tool) => tool.name.startsWith("get_record_"))).toBeGreaterThan(readRank - 1);
+  }, 60_000);
+
+  it("weighs rare evidence over a common verb, without letting a long description pass a named tool", async () => {
+    const getter = (name: string) => ({
+      name,
+      description: `Get one ${name.replace("get_", "")} by id.`,
+      annotations: { readOnlyHint: true },
+    });
+    const crowd = Array.from({ length: 20 }, (_, index) => getter(`get_thing_${index}`));
+    const console = {
+      name: "console",
+      description: "Administer the workspace from one place. Covers zeppelin manifests among much else.",
+      annotations: { readOnlyHint: true },
+    };
+    const search = async (tools: ToolDef[], query: string) =>
+      textOf(
+        await createMetaTools(makeRegistry([connectorWith({ id: "desk", kind: "api", tools })]), BASE).searchTools({
+          query,
+          limit: 100,
+        }),
+      ) as SearchResult;
+    const named = await search([...crowd, console, getter("get_zeppelin_manifest")], "get zeppelin manifest");
+    expect(named.tools.slice(0, 2).map((tool) => tool.name)).toEqual(["get_zeppelin_manifest", "console"]);
+    // Only a tail states the rare word: it still leads the getters that state the verb.
+    const rare = await search([...crowd, console], "get zeppelin");
+    expect(rare.tools[0]?.name).toBe("console");
+    expect(rare.matchMode).toBe("partial");
+  });
+
+  it("keeps honest absence and no-match guidance, and filters before ranking", async () => {
+    const connectors = () => Object.values(providerFixtures).map((fixture) => fixture.create(fixture.name));
+    const mt = createMetaTools(makeRegistry(connectors()), BASE);
+    const nonsense = textOf(await mt.searchTools({ query: "zxqv frobnicate" })) as SearchResult;
+    expect(nonsense.tools).toEqual([]);
+    expect(nonsense.total).toBe(0);
+    expect(nonsense.queryAnalysis?.unmatchedTerms).toEqual(["zxqv", "frobnicate"]);
+    const withoutGithub = connectors().filter((connector) => connector.id !== "github");
+    const absent = textOf(
+      await createMetaTools(makeRegistry(withoutGithub), BASE).searchTools({ query: "github get repository contents" }),
+    ) as SearchResult;
+    expect(absent.tools).toEqual([]);
+    expect(absent.absence?.service).toBe("GitHub");
+    // A read-only endpoint hides writes before ranking, whatever their rare words.
+    const readOnly = textOf(
+      await createMetaTools(makeRegistry(connectors()), BASE, { readOnly: true }).searchTools({
+        query: "purge cache urls",
+      }),
+    ) as SearchResult;
+    expect(readOnly.tools.map((tool) => tool.address)).not.toContain("cloudflare.cloudflare_api_write");
+    expect(readOnly.tools.every((tool) => tool.classification === "read")).toBe(true);
+  }, 60_000);
 
   it("does not load unrelated catalogs for a connector-scoped search", async () => {
     const loads = { wanted: 0, unrelated: 0 };

@@ -1125,7 +1125,7 @@ function sandboxProvider(
           fullDescriptions?: boolean;
         };
         const result = { tools: await catalog.describe({ ...args, format: args.format ?? "json" }) };
-        boundedDiscoveryText(result, 'Split the address list or use format: "compact".');
+        boundedDiscoveryText(result, 'Split the address list, omit fullDescriptions, or use format: "compact".');
         for (const tool of result.tools) {
           if (!tool.error) catalogAddressDependency(tool.address);
           else {
