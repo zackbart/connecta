@@ -25,6 +25,8 @@ import { issueAgentToken } from "./helpers/agent-tokens.js";
 
 const BASE = "https://connecta.test";
 
+const APPROVAL_LINK = "Request apr_7Hq2: https://vendor.example/approve/apr_7Hq2?sig=c0ffee";
+
 function deployment(options: { classification?: Record<string, Record<string, "read" | "write">> } = {}) {
   const storage = memoryStorage();
   const sent: string[] = [];
@@ -64,13 +66,30 @@ function deployment(options: { classification?: Record<string, Record<string, "r
       },
     ],
   });
+  const vendor: Connector = {
+    id: "vendor",
+    kind: "mcp",
+    description: "A hosted tool that answers with its own errors",
+    async listTools() {
+      return [
+        { name: "pay", annotations: { readOnlyHint: false, destructiveHint: true }, inputSchema: { type: "object" } },
+      ];
+    },
+    async callTool() {
+      sent.push("pay");
+      return {
+        isError: true,
+        content: [{ type: "text", text: `${"Approval required. ".repeat(60)}${APPROVAL_LINK}` }],
+      };
+    },
+  };
   const member = { tools: ["crm"], members: ["agent:assistant"] };
   return {
     storage,
     sent,
     events,
     connecta: createTestConnecta({
-      connectors: [crm],
+      connectors: [crm, vendor],
       activity: activityHistory({
         store: {
           record: async (event) => {
@@ -83,6 +102,7 @@ function deployment(options: { classification?: Record<string, Record<string, "r
         meta: member,
         native: { ...member, surface: "native", description: "Team tier." },
         nocode: { ...member, surface: "native", executeCode: false },
+        hosted: { tools: ["vendor"], members: member.members, surface: "native", executeCode: false },
         other: { ...member, surface: "native", executeCode: false },
         reads: { ...member, surface: "native", readOnly: true },
       },
@@ -599,6 +619,21 @@ describe("native tool surface", () => {
       ) as { content: Array<{ text: string }> };
       expect(envelope(recovery).error.retry).toBe(`Retry crm__${tool}.`);
     }
+  });
+
+  it("INV-6: a tool's long error reaches a native write's agent whole and no activity record", async () => {
+    const { connecta, token, sent, events } = await admitted();
+    const called = await rpc(connecta, token, "hosted", "tools/call", {
+      name: await nativeToolName("vendor", "pay", "write"),
+      arguments: {},
+    });
+    expect(called.result.isError).toBe(true);
+    const { error } = envelope(called.result);
+    expect(error).toMatchObject({ retryable: false, writeOutcome: "unknown", toolAnswered: true });
+    expect(error.message).toContain(APPROVAL_LINK);
+    expect(sent).toEqual(["pay"]);
+    expect(events.length).toBeGreaterThan(0);
+    expect(JSON.stringify(events)).not.toContain("apr_7Hq2");
   });
 
   it("without execute_code, lists read_result and pages a truncated result through it", async () => {

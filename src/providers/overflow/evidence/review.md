@@ -85,3 +85,7 @@ not inherit this key pattern.
 Ordinary free text and operator/customer delivery payloads are not parsed as
 credentials. Existing sent-secret redaction and shared withheld-marker/link
 admission remain on every kit/hatch path. No generic transport opt-out exists.
+
+## Public identifier header
+
+https://docs.overflow.co/api-reference/authentication lists `x-client-id` as "Public identifier" and `x-api-key` as "Secret key". The provider declares only `x-client-id` a public identifier. The same page keeps both credentials out of logs, so the whole client id stays matched in output.

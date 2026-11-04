@@ -25,9 +25,12 @@ The generator refuses D or G violations before writing any output.
    Import internal kit modules by explicit source path. Deployment factories
    return ordinary Connectors; published declarations name no Effect type.
 2. Review the vendor contract, classification, credential withholding and
-   paging before implementing tools. Reviewed path calls need an indexed
-   safety resolver; caller-supplied templates never establish policy. An
-   explicit global review applies only where unindexed paths are permitted.
+   paging before implementing tools. Declare `publicIdentifierHeaders` only for
+   a header the vendor's contract shows names the account rather than proving
+   it, and cite that in `evidence/review.md`; a header's name is never evidence.
+   Reviewed path calls need an indexed safety resolver; caller-supplied
+   templates never establish policy. An explicit global review applies only
+   where unindexed paths are permitted.
 3. Reuse compact stateful provider outcomes through published deployment
    adapters. Grade independent fake state, physical requests, final answers,
    identity and secrecy; prove no-op and fabricated answers fail. Cover native
