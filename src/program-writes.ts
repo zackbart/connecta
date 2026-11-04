@@ -35,6 +35,7 @@ type WriteCompletion =
 
 /** Unknown writes one run retains and reports. */
 const MAX_REPORTED_WRITES = 10;
+/** UTF-16 code units per write, so its UTF-8 size can reach three times this. */
 const RETAINED_UNITS = 4 * MAX_TOOL_ERROR_BYTES;
 /** Serialized bytes of the whole report: two full messages, or more shorter ones. */
 const MAX_REPORT_BYTES = 2 * MAX_TOOL_ERROR_BYTES;

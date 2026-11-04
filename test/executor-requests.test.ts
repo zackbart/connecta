@@ -108,6 +108,41 @@ describe.skipIf(!worker)("execute_code across separate Worker requests", () => {
     expect(await (await worker!.fetch("http://localhost/call-failures")).text()).not.toContain("apr_7Hq2");
   }, 30_000);
 
+  it("INV-5: the bridge's clip leaves no opening of a credential a later call registers", async () => {
+    const result = await run(
+      "late-clip",
+      `async () => {
+        let held;
+        try { await connecta.call("source.read", {}); } catch (error) { held = error.message; }
+        await connecta.call("vault.read", {});
+        return held;
+      }`,
+      "/writer/mcp",
+    );
+    const held = result.structuredContent.result as unknown as string;
+    expect(held).toMatch(/^a a .* a … \[truncated\]$/);
+    expect(JSON.stringify(held).length).toBeLessThanOrEqual(2_000);
+    expect(JSON.stringify(result)).not.toContain("Zqx7");
+  }, 30_000);
+
+  it.each([
+    ["an Error", 'throw new Error("a ".repeat(496) + "x" + "Zqx79UVW_LATE_SECRET" + " tail")'],
+    ["a string", 'throw "a ".repeat(496) + "x" + "Zqx79UVW_LATE_SECRET" + " tail"'],
+  ])(
+    "INV-5: %s a Worker program throws, clipped at 1,000 characters, leaves no opening of a credential",
+    async (_label, thrown) => {
+      const result = await run(
+        `late-throw-${_label}`,
+        `async () => { await connecta.call("vault.read", {}); ${thrown}; }`,
+        "/writer/mcp",
+      );
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("a a a");
+      expect(JSON.stringify(result)).not.toContain("Zqx");
+    },
+    30_000,
+  );
+
   it("INV-7: the fixture's request binding refuses another request's entry with or without its token, as workerd does", async () => {
     const outcome = async (path: string) =>
       ((await (await worker!.fetch(`http://localhost${path}`)).json()) as { outcome: string }).outcome;

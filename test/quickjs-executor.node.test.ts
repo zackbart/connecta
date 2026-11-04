@@ -130,6 +130,108 @@ describe("quickJsExecutor", () => {
     expect(out).toMatchObject({ error: "TypeError: native data", failure: { name: "TypeError", line: 2 } });
   });
 
+  describe("INV-5: a clip never leaves the opening of a credential a later call registers", () => {
+    const LATE = "Zqx79UVW_LATE_SECRET";
+    const lateRegistry = (text: string) =>
+      makeRegistry([
+        {
+          id: "source",
+          kind: "mcp",
+          description: "Answers with a tool error",
+          listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+          callTool: async () => ({ isError: true, content: [{ type: "text", text }] }),
+        },
+        {
+          id: "vault",
+          kind: "api",
+          description: "Sends a credential",
+          listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+          callTool: async (_name, _args, context) => {
+            sentSecretsFor(context).secret(LATE);
+            return { ok: true };
+          },
+        },
+      ]);
+    const caughtThenRegistered = `async () => {
+      let held;
+      try { await connecta.call("source.read", {}); } catch (error) { held = error.message; }
+      await connecta.call("vault.read", {});
+      return held;
+    }`;
+
+    it("in a tool error the bridge clips, crossing its 2,000 serialized characters", async () => {
+      const text = `${"a ".repeat(996)}x${LATE}${" trailing ".repeat(10)}`;
+      const execute = createExecuteTool(lateRegistry(text), "https://connecta.test", executor, silentLogger);
+      const result = await execute({ code: caughtThenRegistered });
+      const held = result.structuredContent?.result as string;
+      expect(held).toMatch(/^a a .* a … \[truncated\]$/);
+      expect(JSON.stringify(held).length).toBeLessThanOrEqual(2_000);
+      expect(JSON.stringify(result)).not.toContain("Zqx7");
+      expect(JSON.stringify(result)).not.toMatch(/ x… | x /);
+    });
+
+    it("in a bridge clip counting JSON escapes, not characters", async () => {
+      const text = `${'"'.repeat(990)}x${LATE} tail`;
+      const execute = createExecuteTool(lateRegistry(text), "https://connecta.test", executor, silentLogger);
+      const result = await execute({ code: caughtThenRegistered });
+      expect(JSON.stringify(result.structuredContent?.result).length).toBeLessThanOrEqual(2_000);
+      expect(JSON.stringify(result)).not.toContain("Zqx");
+    });
+
+    it.each([
+      ["an Error", (text: string) => `throw new Error(${JSON.stringify(text)})`],
+      ["a string", (text: string) => `throw ${JSON.stringify(text)}`],
+    ])("in %s the program throws, clipped at 4,000 characters", async (_label, thrown) => {
+      const text = `${"a ".repeat(1_998)}x${LATE} tail`;
+      const execute = createExecuteTool(lateRegistry("unused"), "https://connecta.test", executor, silentLogger);
+      const result = await execute({
+        code: `async () => { await connecta.call("vault.read", {}); ${thrown(text)}; }`,
+      });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("a a a");
+      expect(JSON.stringify(result)).not.toContain("Zqx");
+    });
+
+    it("in a log line kept when a cancelled run ends without its final reply", async () => {
+      const cancel = new AbortController();
+      let calls = 0;
+      const registry = makeRegistry([
+        {
+          id: "vault",
+          kind: "api",
+          description: "Sends a credential",
+          listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+          callTool: async (_name, _args, context) => {
+            sentSecretsFor(context).secret(LATE);
+            // The log line reached the host before this second call.
+            if (++calls === 2) cancel.abort();
+            return { ok: true };
+          },
+        },
+      ]);
+      const text = `${"a ".repeat(1_998)}x${LATE} tail`;
+      const result = await createExecuteTool(
+        registry,
+        "https://connecta.test",
+        executor,
+        silentLogger,
+      )(
+        {
+          code: `async () => {
+            await connecta.call("vault.read", {});
+            console.log(${JSON.stringify(text)});
+            await connecta.call("vault.read", {});
+            await new Promise(() => {});
+          }`,
+        },
+        { signal: cancel.signal },
+      );
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent?.logs).toContain("a a a");
+      expect(JSON.stringify(result)).not.toContain("Zqx");
+    });
+  });
+
   it("INV-3 INV-6: accessor edits do not replace a retained typed host rejection", async () => {
     const result = await createExecuteTool(
       makeRegistry([calcConnector]),

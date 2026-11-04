@@ -196,7 +196,7 @@ export function guardedClient<R = never>(options: GuardedOptions<R>): GuardedCli
           );
         }
         confined = HttpClientRequest.setHeader(confined, name, value);
-        secrets.header(value);
+        secrets.namedHeader(name, value);
       }
       // Registered as guarded-fetch registers: the final URL, headers, and a
       // text body (a form body's secrets are read from it).

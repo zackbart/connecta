@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { schemaExample } from "../src/validate.js";
 import { CatalogService } from "../src/catalog-service.js";
-import { clipText, ConnectorCallError } from "../src/errors.js";
+import { boundedEchoText, clipSerialized, clipText, ConnectorCallError, tokenPrefix } from "../src/errors.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { connectorWith } from "./fixtures/connectors.js";
@@ -25,6 +25,38 @@ describe("clipping a tool's words", () => {
     const clipped = clipText(`é ${"é".repeat(60)}`, 40);
     expect(clipped).toBe("é … [truncated]");
     expect(clipped).not.toContain("\ufffd");
+  });
+});
+
+describe("every clip of text output redaction reads later", () => {
+  const open = "aaa bbb credential-with-no-boundary tail";
+
+  it.each([
+    ["tokenPrefix", (text: string) => tokenPrefix(text, 20)],
+    ["boundedEchoText", (text: string) => boundedEchoText(text, 20)],
+    ["clipSerialized", (text: string) => clipSerialized(text, 30)],
+    ["clipText", (text: string) => clipText(text, 30)],
+  ])("%s removes the unfinished tail", (_name, clip) => {
+    const clipped = clip(open);
+    expect(clipped).toMatch(/^aaa bbb/);
+    expect(clipped).not.toContain("cred");
+  });
+
+  it("returns text that fits exactly and keeps a finished token at the bound", () => {
+    expect(tokenPrefix("abc def", 7)).toBe("abc def");
+    expect(tokenPrefix("abc def", 3)).toBe("abc");
+    expect(tokenPrefix("abcdef", 3)).toBe("");
+    expect(boundedEchoText("abc def", 7)).toBe("abc def");
+    expect(clipSerialized("abc def", 9)).toBe("abc def");
+  });
+
+  it("counts JSON escapes and quotes against a serialized bound and splits no surrogate pair", () => {
+    const quoted = clipSerialized(`${'"'.repeat(50)} ${"x".repeat(20)}`, 40);
+    expect(JSON.stringify(quoted).length).toBeLessThanOrEqual(40);
+    expect(quoted).not.toContain("x");
+    const emoji = clipSerialized(`😀 ${"😀".repeat(50)}`, 30);
+    expect(emoji).toBe("😀 … [truncated]");
+    expect(tokenPrefix(`😀 ${"😀".repeat(50)}`, 11)).toBe("😀");
   });
 });
 

@@ -627,7 +627,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         wrapViewCredentials(ctx);
         const secrets = sentSecretsFor(ctx);
         if (opts.auth?.type === "headers") {
-          for (const value of Object.values(opts.auth.headers)) secrets.header(value);
+          for (const [name, value] of Object.entries(opts.auth.headers)) secrets.namedHeader(name, value);
         }
         const state = entryFor(ctx);
         let active = activeContexts.get(state);

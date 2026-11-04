@@ -1,6 +1,7 @@
 import { ownedByThisRequest, requestToken } from "./request-bound-async-resource.js";
 import { createConnecta, remoteMcp, type Connector } from "../../src/index.js";
 import { workerExecutor } from "../../src/worker.js";
+import { sentSecretsFor } from "../../src/sent-secrets.js";
 import type { AdmittingExecutor } from "../../src/types.js";
 
 interface Env {
@@ -50,6 +51,31 @@ function probeRoute(url: URL): Response {
     return Response.json({ outcome: requestToken.exit(() => enter(created)) });
   }
   return Response.json({ outcome: probe ? enter(probe) : "no probe" });
+}
+
+// A tool error holding a credential that another connector sends only later in the run.
+const LATE_SECRET = "Zqx79UVW_LATE_SECRET";
+function lateCredentialSource(): Connector {
+  const text = `${"a ".repeat(996)}x${LATE_SECRET}${" trailing ".repeat(10)}`;
+  return {
+    id: "source",
+    kind: "mcp",
+    description: "Answers with a tool error",
+    listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+    callTool: async () => ({ isError: true, content: [{ type: "text", text }] }),
+  };
+}
+function lateCredentialVault(): Connector {
+  return {
+    id: "vault",
+    kind: "api",
+    description: "Sends a credential",
+    listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+    callTool: async (_name, _args, context) => {
+      sentSecretsFor(context).secret(LATE_SECRET);
+      return { ok: true };
+    },
+  };
 }
 
 function slowConnector(env: Env): Connector {
@@ -131,9 +157,13 @@ function serve(request: Request, url: URL, env: Env, ctx: ExecutionContext): Res
         },
       },
       executor: executors.standard,
-      connectors: ["sequential", "iserror"].map((mode) =>
-        remoteMcp(mode, { url: `${env.ORIGIN}/executor/mcp/${mode}`, description: "Program write fixture" }),
-      ),
+      connectors: [
+        ...["sequential", "iserror"].map((mode) =>
+          remoteMcp(mode, { url: `${env.ORIGIN}/executor/mcp/${mode}`, description: "Program write fixture" }),
+        ),
+        lateCredentialSource(),
+        lateCredentialVault(),
+      ],
     });
     return writer.fetch(new Request(new URL("/mcp", url), request), env, ctx);
   }

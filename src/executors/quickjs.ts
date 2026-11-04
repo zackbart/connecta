@@ -18,7 +18,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Deferred, Duration, Effect, Exit, Schedule, Scope } from "effect";
 import { AdmissionController, ExecutorAdmissionError, ExecutorExecutionError } from "../executor-admission.js";
-import { msg } from "../errors.js";
+import { msg, tokenPrefix } from "../errors.js";
 import { InvocationFailure } from "../invocation-failure.js";
 import { brandExecutor } from "../executor-contract.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
@@ -179,7 +179,7 @@ function nonNegativeWhole(value: number | undefined, fallback: number, name: str
 function errorPayload(error: unknown): string {
   return JSON.stringify({
     ok: false,
-    error: msg(error).slice(0, MAX_ERROR_CHARS),
+    error: tokenPrefix(msg(error), MAX_ERROR_CHARS),
     ...(error instanceof InvocationFailure ? { call: error.details } : {}),
   } satisfies HostResultPayload);
 }
@@ -651,9 +651,15 @@ class QuickJsChildPool implements AdmittingExecutor {
         const entry: unknown = JSON.parse(message.payloadJson);
         if (typeof entry !== "string") return;
         const separator = active.logs.length > 0 ? 1 : 0;
-        const retained = entry.slice(0, MAX_EXECUTE_LOG_CHARS + 1 - active.logChars - separator);
-        active.logs.push(retained);
-        active.logChars += separator + retained.length;
+        const room = MAX_EXECUTE_LOG_CHARS + 1 - active.logChars - separator;
+        if (entry.length > room) {
+          // A cut between tokens can stop short of the bound, so its marker signals the loss.
+          active.logs.push(`${tokenPrefix(entry, room)}…[entry truncated]`);
+          active.logChars = MAX_EXECUTE_LOG_CHARS + 1;
+        } else {
+          active.logs.push(entry);
+          active.logChars += separator + entry.length;
+        }
       } catch {
         /* Malformed log messages carry no output. */
       }

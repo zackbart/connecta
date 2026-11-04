@@ -610,7 +610,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           );
         }
         headers[name] = value;
-        sentSecretsFor(ctx).header(value);
+        sentSecretsFor(ctx).namedHeader(name, value);
       }
 
       try {

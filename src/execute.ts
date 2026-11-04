@@ -45,7 +45,7 @@ import {
 } from "./program-result.js";
 import { MAX_EXECUTE_LOG_CHARS, MAX_EXECUTE_RESULT_CHARS, truncateExecuteText } from "./executor-result.js";
 import { ExecutorAdmissionError, ExecutorExecutionError, isAdmittingExecutor } from "./executor-admission.js";
-import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
+import { boundedEchoText, clipSerialized, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
 import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
@@ -439,27 +439,16 @@ function guestFailure(code: string, message: string, retryable = false): Invocat
 
 /**
  * E1/X11: bound typed host failure metadata, including JSON escapes, before transport.
+ * The guest keeps this text, and may return it after a later call registers a credential it
+ * holds, so the message is cut between tokens.
  * Keep optional recovery whole: clipping an address or echoed args could turn
  * recovery into a different call. Oversized metadata is omitted instead.
  */
 function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
-  const boundText = (text: string, maxChars: number): string => {
-    if (JSON.stringify(text).length <= maxChars) return text;
-    let low = 0;
-    let high = Math.min(text.length, maxChars);
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2);
-      if (JSON.stringify(`${text.slice(0, mid)}…`).length <= maxChars) low = mid;
-      else high = mid - 1;
-    }
-    // Do not manufacture a lone surrogate when clipping a Unicode message.
-    if (low > 0 && /[\uD800-\uDBFF]/.test(text[low - 1]!)) low--;
-    return `${text.slice(0, low)}…`;
-  };
   let details: CallErrorDetails = {
     ...failure.details,
-    code: boundText(failure.details.code, 128),
-    message: boundText(failure.details.message, 2_000),
+    code: clipSerialized(failure.details.code, 128),
+    message: clipSerialized(failure.details.message, 2_000),
   };
   // Keep typed metadata below the executor bridge bound.
   if (JSON.stringify(details).length > 3_700) {

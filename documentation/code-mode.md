@@ -571,7 +571,8 @@ access (`L4`); Workers guest computation may continue briefly until teardown (`X
 
 Both executor bridges rebuild typed host rejections as guest Errors and retain
 their identity in executor-owned state (`X11`). `message` stays human text, capped at 2,000
-JSON-serialized characters including quotes and an `…` marker when clipped.
+JSON-serialized characters including quotes and a `… [truncated]` marker when clipped,
+and cut only between tokens.
 `code` and `retryable` are the stable branch fields; `data` and `details` carry the same host
 classification, which fits 3,700 serialized characters. Optional recovery metadata
 that would exceed that bound is omitted whole, preserving `code`, `message`,
@@ -1243,15 +1244,16 @@ Program arguments pass through the credentials this request has already sent. Th
 check matches a whole credential or eight consecutive characters of what follows
 its public framing: an auth scheme, a vendor prefix such as `sk_test_`, or a JWT's
 header segment. Naming a prefix is no match, an identifier sent beside a credential
-(a client ID, a Basic username) is no match, and a private `writeOnly` value is
+(a client ID, a Basic username, an account email in `X-Auth-Email`) is no match, and a private `writeOnly` value is
 no match. A read that matches is sent with the match replaced. A write that matches
 is refused before dispatch with `invalid_args`, because it is never sent altered:
 nothing leaves, and a value that is genuine can go as its own direct call. A
 program's first call has no such credentials yet, so this can first appear on a
 later call. Otherwise a refusal needs one of these: a value that shares eight
 characters past the prefix with a credential, such as a publishable key beside its
-secret key; a credential configured from a non-secret field, or a header or query
-parameter whose name looks sensitive; or text the check cannot finish (escaping
+secret key; a credential configured from a non-secret field not named as an
+identifier, or a non-secret value in a header or query parameter whose sensitive-looking
+name is not an identifier's (`X-Auth-Email` and `x-client-id` are); or text the check cannot finish (escaping
 nested past eight layers, or past its work budget). The check is a backstop: fewer
 than eight characters past a prefix pass it, and a program never receives what
 output redaction withheld.

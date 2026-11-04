@@ -8,6 +8,7 @@ import { DynamicWorkerExecutor, normalizeCode, type DynamicWorkerExecutorOptions
 import { AdmissionController, type AdmissionControllerOptions, ExecutorExecutionError } from "./executor-admission.js";
 import type { AdmittingExecutor, ExecuteResult, ExecutorLease, ExecutorProvider } from "./types.js";
 import { brandExecutor } from "./executor-contract.js";
+import { TOKEN_END } from "./errors.js";
 import { InvocationFailure } from "./invocation.js";
 import { parse, type Node } from "acorn";
 import { guestInitializer, guestPrelude, guestPromiseInitializer, isolateGuestProgram } from "./guest-runtime.js";
@@ -207,12 +208,20 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
                 "return { result: undefined, error: err.message, logs: __logs };",
                 `
       const failureId = lookup(failures, err);
+      // tokenPrefix, for text the host redacts after this cut.
+      const tokenEnd = (unit) => ${[...TOKEN_END].map((unit) => `unit === ${unit}`).join(" || ")};
+      const prefix = (text, units) => {
+        if (units >= text.length) return text;
+        let end = units;
+        while (end > 0 && !tokenEnd(charCodeAt(text, end))) end--;
+        return slice(text, 0, end);
+      };
       let name = "Error", message = "Program threw a value.", stack = "";
       try {
-        if (typeof err === "string") message = slice(err, 0, 1000);
+        if (typeof err === "string") message = prefix(err, 1000);
         else if (err) {
-          if (typeof err.name === "string") name = slice(err.name, 0, 64);
-          if (typeof err.message === "string") message = slice(err.message, 0, 1000);
+          if (typeof err.name === "string") name = prefix(err.name, 64);
+          if (typeof err.message === "string") message = prefix(err.message, 1000);
           if (typeof err.stack === "string") stack = slice(err.stack, 0, 1000);
         }
       } catch {}
