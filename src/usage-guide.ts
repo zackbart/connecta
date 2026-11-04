@@ -89,8 +89,8 @@ Otherwise fetch for units, pagination, aliases, or sequences.
 Large direct results and program returns carry resultId when paging is available. Follow
 nextOffset in UTF-8 bytes, reassemble and reduce inside one program. Use the
 returned id in place of result-id below; this example assumes documented JSON.
-A large direct read may show only rows or text with counts, then a nextAction program:
-edit its last line and run it. Programs always see the whole value.
+A direct read over the cap may show only a sample of rows or text with counts, then a
+nextAction program: edit its last line and run it. Programs always see the whole value.
 
 Calls reconstruct up to 1 MiB through stash pages. Larger values return
 \`{ format: "paged", valueFormat, resultId?, totalBytes, hint }\`. Follow its hint.

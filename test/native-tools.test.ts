@@ -58,7 +58,7 @@ function deployment(options: { classification?: Record<string, Record<string, "r
         annotations: { readOnlyHint: true },
         inputSchema: { type: "object" },
         handler: async () => ({
-          people: Array.from({ length: 200 }, (_, id) => ({
+          people: Array.from({ length: 1_000 }, (_, id) => ({
             id: `p${id}`,
             name: `Person ${id}`,
             active: id % 2 === 0,
@@ -72,7 +72,7 @@ function deployment(options: { classification?: Record<string, Record<string, "r
         annotations: { readOnlyHint: false, destructiveHint: false },
         inputSchema: { type: "object" },
         handler: async () => ({
-          people: Array.from({ length: 200 }, (_, id) => ({ id: `p${id}`, name: `Person ${id}` })),
+          people: Array.from({ length: 1_000 }, (_, id) => ({ id: `p${id}`, name: `Person ${id}` })),
         }),
       },
       {
@@ -830,7 +830,7 @@ describe("native tool surface", () => {
   });
 });
 
-describe("large read previews by surface", () => {
+describe("previews of reads over the cap, by surface", () => {
   const notice = (result: { content: Array<{ text: string }> }) => {
     const text = result.content[0]!.text;
     return { text, notice: JSON.parse(text.slice(0, text.indexOf("\n"))), body: text.slice(text.indexOf("\n") + 1) };
@@ -849,7 +849,7 @@ describe("large read previews by surface", () => {
       )
     ).result;
     const { notice: seen, body } = notice(direct);
-    expect(seen.rows).toMatchObject({ path: "people", count: 200, keys: ["id", "name", "active"] });
+    expect(seen.rows).toMatchObject({ path: "people", count: 1_000, keys: ["id", "name", "active"] });
     expect(seen.nextAction.tool).toBe("execute_code");
     expect(JSON.parse(body).has_more).toBe(false);
   });
@@ -859,12 +859,12 @@ describe("large read previews by surface", () => {
     const direct = (await rpc(connecta, token, "native", "tools/call", { name: "crm__list_people", arguments: {} }))
       .result;
     const { notice: seen } = notice(direct);
-    expect(seen.rows.count).toBe(200);
+    expect(seen.rows.count).toBe(1_000);
     expect(seen.hint).toContain("execute_code");
     expect(seen.nextAction.tool).toBe("execute_code");
   });
 
-  it("keeps the whole result on a native pool without code, which lists no program", async () => {
+  it("keeps the first bytes and read_result on a native pool without code, which lists no program", async () => {
     const { connecta, token } = await admitted();
     const listed = (await rpc(connecta, token, "nocode", "tools/list", {})).result.tools.map(
       (tool: { name: string }) => tool.name,
@@ -873,17 +873,23 @@ describe("large read previews by surface", () => {
     expect(listed).not.toContain("execute_code");
     const direct = (await rpc(connecta, token, "nocode", "tools/call", { name: "crm__list_people", arguments: {} }))
       .result;
-    expect(JSON.parse(direct.content[0].text).people).toHaveLength(200);
+    const { notice: seen } = notice(direct);
+    expect(seen.nextAction.tool).toBe("read_result");
+    expect(seen).not.toHaveProperty("rows");
+    expect(seen.nextOffset).toBe(24_000);
   });
 
-  it("INV-9: keeps a write's result whole on every surface", async () => {
+  it("INV-9: keeps a write's first bytes and its warning on every surface", async () => {
     const { connecta, token } = await admitted();
     for (const [pool, name, args] of [
       ["meta", "call_destructive_tool", { address: "crm.list_created", args: {} }],
       ["native", "crm__list_created", {}],
     ] as const) {
       const direct = (await rpc(connecta, token, pool, "tools/call", { name, arguments: args }, false)).result;
-      expect(JSON.parse(direct.content[0].text).people).toHaveLength(200);
+      const { notice: seen } = notice(direct);
+      expect(seen.hint).toContain("This write already ran");
+      expect(seen).not.toHaveProperty("rows");
+      expect(seen.nextOffset).toBe(24_000);
     }
   });
 });

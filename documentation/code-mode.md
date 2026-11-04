@@ -755,12 +755,14 @@ with no content (see [truncated direct-call results](./meta-tools.md#truncated-d
 so keep the cap below what every client of the deployment accepts. Redaction scans the whole envelope once, so its cost grows with the cap.
 The cap does not change stash paging: pages still obey the stashed call's
 `maxResultBytes` and the 32 KiB bridge ceiling.
-A large direct read may answer with a [preview](./meta-tools.md#previews-of-large-reads)
+A direct read over its cap may answer with a [preview](./meta-tools.md#previews-of-reads-over-the-cap)
 whose `nextAction` is a program: it loops `connecta.result` over the retained
 result, parses it, and ends in a line the agent edits to reduce it. Editing that
 line and running it costs one host call per page, and a result it could not walk
 within `maxHostCalls` gets no preview. A program never sees a preview: its calls
-and its pages return the whole value.
+and its pages return the whole value. A read at or under its cap returns whole.
+If the host refuses the program, the rest of that result can't be read, and the
+notice says to narrow the read or say what was not read.
 An oversized return is stashed as compact JSON through the same
 result store as direct calls. The returned notice carries `truncated`, `resultId`,
 `totalBytes`, `hint`, `nextOffset: 0`, and an executable `nextAction` that pages

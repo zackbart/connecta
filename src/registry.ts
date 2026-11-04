@@ -278,7 +278,7 @@ export interface RegistryView {
     signal?: AbortSignal,
   ): Promise<boolean>;
   /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
-  stashResult(id: string, chunks: readonly string[], ttlSeconds: number, options?: StashOptions): Promise<boolean>;
+  stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
   /**
    * Local declared-vs-stored credential mismatch, with no downstream I/O. With
    * `requestScope`, the read joins that request's read memo.
@@ -354,17 +354,6 @@ function completeStash(effect: Effect.Effect<unknown, unknown, Storage>): Effect
     Effect.interruptible,
   );
 }
-
-/** How a stash a caller can do without differs from one that must page. */
-export interface StashOptions {
-  /** Refuse once the ledger is near full, leaving the rest for results that have no other route. */
-  keepFree?: boolean;
-  /** Give up sooner than the whole operation's 45 seconds. */
-  timeoutMs?: number;
-}
-
-/** A `keepFree` stash leaves this share of entries and bytes to results that must page. */
-const STASH_KEEP_FREE_DIVISOR = 4;
 
 /** One live stash charge: reservation id, bytes, and expiry (epoch ms). */
 type StashCharge = readonly [reservation: string, bytes: number, expiresAt: number];
@@ -928,10 +917,10 @@ export class Registry implements RegistryView {
     id: string,
     chunks: readonly string[],
     ttlSeconds: number,
-    options: StashOptions & { partition?: string } = {},
+    partition: string = scopes.results,
   ): Promise<boolean> {
     return runOnPartition(
-      registryEdgeProgram(Registry.prototype, this, "stashResult", id, chunks, ttlSeconds, options),
+      registryEdgeProgram(Registry.prototype, this, "stashResult", id, chunks, ttlSeconds, partition),
       this.opts,
     );
   }
@@ -1226,13 +1215,10 @@ export class Registry implements RegistryView {
 
   static {
     provideRegistryPrograms(Registry.prototype, {
-      stashResult: (self, id, chunks, ttlSeconds, options = {}) =>
+      stashResult: (self, id, chunks, ttlSeconds, partition = scopes.results) =>
         Effect.gen({ self }, function* () {
-          const partition = options.partition ?? scopes.results;
-          const share = (limit: number) =>
-            options.keepFree ? limit - Math.ceil(limit / STASH_KEEP_FREE_DIVISOR) : limit;
-          const maxBytes = share(this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes);
-          const maxEntries = share(this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries);
+          const maxBytes = this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes;
+          const maxEntries = this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries;
           // The paging envelope is ASCII, so its string length is its stored byte count.
           const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
           if (bytes > maxBytes || maxEntries === 0) return false;
@@ -1327,10 +1313,7 @@ export class Registry implements RegistryView {
           else yield* completeStash(settle);
           return written;
         }).pipe(
-          Effect.timeoutOrElse({
-            duration: Duration.millis(options.timeoutMs ?? STASH_TIMEOUT_MS),
-            orElse: () => Effect.succeed(false),
-          }),
+          Effect.timeoutOrElse({ duration: Duration.millis(STASH_TIMEOUT_MS), orElse: () => Effect.succeed(false) }),
           Effect.provideService(Storage, self.opts.storage),
         ),
       recheckResultAccess: () => Effect.succeed(true),
@@ -1573,11 +1556,13 @@ class ScopedRegistryView implements RegistryView {
     return registry.admitCall(...args);
   }
 
-  stashResult(id: string, chunks: readonly string[], ttlSeconds: number, options?: StashOptions): Promise<boolean> {
-    return this.root.stashResult(id, chunks, ttlSeconds, {
-      ...options,
-      partition: this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
-    });
+  stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
+    return this.root.stashResult(
+      id,
+      chunks,
+      ttlSeconds,
+      this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
+    );
   }
 
   resultIdentity(): ResultIdentity {
@@ -1644,11 +1629,15 @@ class ScopedRegistryView implements RegistryView {
   }
   static {
     provideRegistryPrograms(ScopedRegistryView.prototype, {
-      stashResult: (self, id, chunks, ttlSeconds, options) =>
-        registryProgram(self.root, "stashResult", id, chunks, ttlSeconds, {
-          ...options,
-          partition: self.scope.subjectKey ? scopes.subject(self.scope.subjectKey) : scopes.results,
-        }),
+      stashResult: (self, id, chunks, ttlSeconds) =>
+        registryProgram(
+          self.root,
+          "stashResult",
+          id,
+          chunks,
+          ttlSeconds,
+          self.scope.subjectKey ? scopes.subject(self.scope.subjectKey) : scopes.results,
+        ),
       recheckResultAccess: (self, dependencies, classification, signal) =>
         Effect.tryPromise({
           try: () => self.scope.currentResultAccess?.(dependencies, classification, signal) ?? Promise.resolve(true),

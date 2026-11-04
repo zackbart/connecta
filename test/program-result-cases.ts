@@ -223,7 +223,7 @@ export async function checkPreviewProgram(executor: Executor, storage: KVStorage
     nothing: null,
   }));
   const value = { "a.b": { rows }, has_more: false };
-  const log = Array.from({ length: 2_000 }, (_, line) => (line === 1_000 ? "FAIL: the real one" : `ok ${line}`)).join(
+  const log = Array.from({ length: 6_000 }, (_, line) => (line === 3_000 ? "FAIL: the real one" : `ok ${line}`)).join(
     "\n",
   );
   const connector: Connector = {
@@ -247,7 +247,7 @@ export async function checkPreviewProgram(executor: Executor, storage: KVStorage
     },
   };
   const registry = new Registry([connector, mcp], { storage, logger: silentLogger });
-  const meta = createMetaTools(registry, BASE, { programRoute: true });
+  const meta = createMetaTools(registry, BASE, { programTool: "execute_code" });
   const run = createExecuteTool(registry, BASE, executor, silentLogger);
   for (const [address, expected] of [
     ["large.rows", JSON.stringify(value)],
@@ -272,8 +272,8 @@ export async function checkPreviewProgram(executor: Executor, storage: KVStorage
         "a.b": { rows: rows.slice(0, notice.rows.shown) },
       });
     } else {
-      expect(notice.text.lines).toBe(2_000);
-      expect(offeredResult).toEqual({ lines: 2_000, matches: ["FAIL: the real one"] });
+      expect(notice.text.lines).toBe(6_000);
+      expect(offeredResult).toEqual({ lines: 6_000, matches: ["FAIL: the real one"] });
     }
     let retained = "";
     for (let offset: number | undefined = 0; offset !== undefined;) {

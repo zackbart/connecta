@@ -44,10 +44,10 @@ import {
   type ProgramResultDependency,
   type RegistryView,
   type ResultIdentity,
-  type StashOptions,
 } from "./registry.js";
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
+import { isWriteLike } from "./tool-safety.js";
 import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
@@ -55,7 +55,7 @@ import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
 import type { Logger, ToolDef } from "./types.js";
 import { PROGRAM_RESULT_PAGE_BYTES, PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
-import { previewResult } from "./result-preview.js";
+import { previewResult, type ResultPreview } from "./result-preview.js";
 import type { NativeCallRoute } from "./native-tools.js";
 
 export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
@@ -259,20 +259,13 @@ interface ResultStash {
   /** `execute.maxHostCalls` of a program that loops over this result. Default 20. */
   programHostCalls?: number;
   /**
-   * This surface lists execute_code, so a read may answer with a preview and a
-   * program. A paging tool does not imply this: without a program, the rows a
-   * preview leaves out could only be read a page at a time, the route that lost
+   * The tool that runs a preview's program on this surface; without one a read
+   * past its cap keeps its first bytes. A paging tool does not stand in: the rows
+   * a preview leaves out could only be read a page at a time, the route that lost
    * the answer in documentation/meta-tools.md#result-representation.
    */
-  programRoute?: boolean;
+  programTool?: string;
 }
-
-/**
- * How long a preview's stash may hold up a read, which needs no storage without
- * it. Five D1 round trips normally; contention retries take longer, not this long.
- * See documentation/meta-tools.md#previews-of-large-reads.
- */
-const PREVIEW_STASH_TIMEOUT_MS = 5_000;
 
 /** Calls a whole-result loop leaves the program, so it can also act on what it finds. */
 const LOOP_SPARE_HOST_CALLS = 2;
@@ -398,33 +391,6 @@ function pagingHint(results: ResultStash, id: string, totalBytes: number, previe
  * line with no raw newline, so the preview starts after the first `\n`.
  */
 
-const writeStash = function (bytes: Uint8Array, results: ResultStash, options?: StashOptions) {
-  return authFlow<string | undefined>(function* () {
-    const id = crypto.randomUUID();
-    try {
-      // Base64 permits byte-range decoding, and splitting the envelope across
-      // keys keeps a page's storage read proportional to the page instead of to
-      // the whole result. Chunk 0 carries the header; the connecta.result
-      // reader below maps a byte offset back to chunk index and base64 quad.
-      const chunkBytes = resultChunkBytes(bytes.length);
-      const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
-      const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${bytes.length}:${chunkBytes}:${results.cap}:`];
-      for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
-        const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
-        if (offset === 0) chunks[0] += chunk;
-        else chunks.push(chunk);
-      }
-      return (yield* upwardStep(authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS, options])))
-        ? id
-        : undefined;
-    } catch {
-      // Paging is advisory after a completed call, including an approved write.
-      // Neither backend prose nor a retry hint belongs in this successful result.
-      return undefined;
-    }
-  });
-};
-
 const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: PreviewShape, rawText?: string) {
   return authFlow<
     | {
@@ -456,8 +422,26 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
         totalBytes,
         hint: `${results.write ? WRITE_ALREADY_RAN + " " : ""}Paging is unavailable: text contains unpaired surrogates and can't be paged as text; request the value as JSON (value mode or a JSON-returning call) to recover it.`,
       };
-    const id = yield* upwardStep(writeStash(bytes, results));
-    if (id === undefined) {
+    const id = crypto.randomUUID();
+    try {
+      // Base64 permits byte-range decoding, and splitting the envelope across
+      // keys keeps a page's storage read proportional to the page instead of to
+      // the whole result. Chunk 0 carries the header; the connecta.result
+      // reader below maps a byte offset back to chunk index and base64 quad.
+      const chunkBytes = resultChunkBytes(totalBytes);
+      const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
+      const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
+      for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
+        const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
+        if (offset === 0) chunks[0] += chunk;
+        else chunks.push(chunk);
+      }
+      if (!(yield* upwardStep(authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS])))) {
+        throw new Error("Result stash capacity exhausted");
+      }
+    } catch {
+      // Paging is advisory after a completed call, including an approved write.
+      // Neither backend prose nor a retry hint belongs in this successful result.
       try {
         results.warn();
       } catch {
@@ -669,8 +653,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
 
 interface GuardedResult<T> {
   result: T;
-  /** The full result passed the call's cap, which is what activity counts as friction. */
-  overCap: boolean;
+  truncated: boolean;
 }
 
 /** The first `cap` bytes of `bytes`, ending on a character boundary. */
@@ -686,54 +669,38 @@ function noticeFirst(notice: object, preview: string): ToolResult {
 }
 
 /**
- * The schema-aware view of a large read, or undefined for today's path. Runs on
- * text that is already redacted and past value safety, and retains that same
- * text, so the handle pages exactly what a read without a view would have paged.
- *
- * Only a view that fires reaches storage, and failing to store leaves the call
- * as it was: a stash under the cap is optional, so it keeps room for results
- * that must page and stays quiet in the operator log.
+ * The view of a read past its cap, or undefined for its first bytes. A call that
+ * may have written is never reshaped, whatever a deployment override calls it: its
+ * result is its only copy, and repeating it to look again is forbidden (INV-9).
  */
-const previewRead = function (
-  text: string,
-  bytes: Uint8Array,
-  results: ResultStash,
-  cap: number,
-  format: "json" | "text",
-) {
-  return authFlow<GuardedResult<ToolResult> | undefined>(function* () {
-    // A write's result is its only copy and repeating it is forbidden (INV-9).
-    if (!results.programRoute || results.write) return undefined;
-    // The program this offers has to reach every byte within the run's host calls.
-    if (
-      !loopFits(cap, bytes.length, results.programHostCalls ?? CONFIG_DEFAULTS.execute.maxHostCalls) ||
-      !isWellFormedText(text)
-    )
-      return undefined;
-    const preview = previewResult(text, format, cap);
-    if (!preview) return undefined;
-    const overCap = bytes.length > cap;
-    const id = yield* upwardStep(
-      writeStash(bytes, results, { timeoutMs: PREVIEW_STASH_TIMEOUT_MS, ...(overCap ? {} : { keepFree: true }) }),
-    );
-    if (id === undefined) return undefined;
-    const notice = {
-      truncated: true,
-      resultId: id,
-      totalBytes: bytes.length,
-      ...preview.fields,
-      hint: `${preview.shown} All of it is retained for ${RESULT_TTL_SECONDS / 60} minutes: run nextAction in ${results.routes.program}, editing its last line to ${preview.noun === "rows" ? "filter, join or count the rows" : "search for what you need"}, instead of repeating this read or reading pages by hand.`,
-      nextOffset: 0,
-      nextAction: {
-        tool: "execute_code",
-        arguments: {
-          code: `async () => { let text = "", offset = 0, page; do { page = await connecta.result(${JSON.stringify(id)}, { offset }); text += page.text; offset = page.nextOffset; } while (page.hasMore); ${preview.reduce} }`,
-        },
+function previewOf(text: string, bytes: Uint8Array, results: ResultStash, format: "json" | "text") {
+  if (!results.programTool || results.write) return undefined;
+  // The program this offers has to reach every byte within the run's host calls.
+  if (!loopFits(results.cap, bytes.length, results.programHostCalls ?? CONFIG_DEFAULTS.execute.maxHostCalls))
+    return undefined;
+  return previewResult(text, format, results.cap);
+}
+
+/**
+ * A preview's notice. It says what the body holds and what it leaves out, and
+ * since a host may prompt for or refuse the program, what to do without it.
+ */
+function previewNotice(view: ResultPreview, id: string, totalBytes: number, tool: string) {
+  return {
+    truncated: true,
+    resultId: id,
+    totalBytes,
+    ...view.fields,
+    hint: `${view.shown} All of it is retained for ${RESULT_TTL_SECONDS / 60} minutes: run nextAction in ${tool}, editing its last line to ${view.noun === "rows" ? "filter, join or count the rows" : "search for what you need"}, instead of reading pages by hand. If ${tool} is refused or unavailable, the rest can't be read here: narrow this read with its own filter, limit or fields arguments, or say what was not read.`,
+    nextOffset: 0,
+    nextAction: {
+      tool,
+      arguments: {
+        code: `async () => { let text = "", offset = 0, page; do { page = await connecta.result(${JSON.stringify(id)}, { offset }); text += page.text; offset = page.nextOffset; } while (page.hasMore); ${view.reduce} }`,
       },
-    };
-    return { result: noticeFirst(notice, preview.body), overCap };
-  });
-};
+    },
+  };
+}
 
 /**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
@@ -752,17 +719,15 @@ const guardEncoded = function (
   format: "json" | "text",
 ) {
   return authFlow<GuardedResult<ToolResult>>(function* () {
-    const previewed = yield* upwardStep(previewRead(text, bytes, results, cap, format));
-    if (previewed) return previewed;
     if (bytes.length <= cap) {
       return {
         result: { content: [{ type: "text", text }] },
-        overCap: false,
+        truncated: false,
       };
     }
     if (!isWellFormedText(text)) {
       const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }, text));
-      return { result: noticeFirst(notice, ""), overCap: true };
+      return { result: noticeFirst(notice, ""), truncated: true };
     }
     const head = headOf(bytes, cap);
     const notice = yield* upwardStep(
@@ -771,7 +736,13 @@ const guardEncoded = function (
         bytes: head.length,
       }),
     );
-    return { result: noticeFirst(notice, dec.decode(head)), overCap: true };
+    // A preview needs the retained copy its program reads, so a failed stash keeps the first bytes.
+    const view = notice.resultId === undefined ? undefined : previewOf(text, bytes, results, format);
+    if (view && notice.resultId !== undefined) {
+      const shown = previewNotice(view, notice.resultId, bytes.length, results.programTool!);
+      return { result: noticeFirst(shown, view.body), truncated: true };
+    }
+    return { result: noticeFirst(notice, dec.decode(head)), truncated: true };
   });
 };
 
@@ -797,7 +768,7 @@ const guardValue = function (value: unknown, results: ResultStash, cap: number) 
     const serialized = serializeResultText(value);
     const text = results.secrets?.text(serialized) ?? serialized;
     const bytes = enc.encode(text);
-    if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, overCap: false };
+    if (bytes.length <= cap) return { result: results.secrets?.redact(value) ?? value, truncated: false };
     const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }));
     return {
       result: notice.resultId
@@ -806,7 +777,7 @@ const guardValue = function (value: unknown, results: ResultStash, cap: number) 
             ...notice,
             preview: escapedHeadOf(bytes, cap),
           },
-      overCap: true,
+      truncated: true,
     };
   });
 };
@@ -851,13 +822,9 @@ const guardContent = function (content: TextContent[], results: ResultStash, cap
     const only = content.length === 1 ? content[0] : undefined;
     if (only?.type === "text" && typeof only.text === "string") {
       const bytes = enc.encode(only.text);
-      // A block carrying annotations asked for them to reach the client as written.
-      const plain = Object.keys(only).length === 2;
       // Under the cap the block passes through untouched, annotations included.
-      if (bytes.length <= cap && !plain) return { result: { content }, overCap: false };
-      return yield* upwardStep(
-        guardEncoded(only.text, bytes, plain ? results : { ...results, programRoute: false }, cap, format),
-      );
+      if (bytes.length <= cap) return { result: { content }, truncated: false };
+      return yield* upwardStep(guardEncoded(only.text, bytes, results, cap, format));
     }
     let text: string;
     try {
@@ -868,26 +835,26 @@ const guardContent = function (content: TextContent[], results: ResultStash, cap
       // be measured, stashed, or paged either — there is nothing this guard could
       // do with it. Pass it through as the old text-only measure did, rather than
       // turning a call that used to succeed into result_processing_failed.
-      return { result: { content }, overCap: false };
+      return { result: { content }, truncated: false };
     }
     const bytes = enc.encode(text);
     // Under the cap the downstream blocks pass through untouched, non-text ones
     // included, in their original order.
     if (bytes.length <= cap) {
-      return { result: { content }, overCap: false };
+      return { result: { content }, truncated: false };
     }
     if (content.every((b) => b.type === "text")) {
       const joined = enc.encode(content.map((b) => b.text).join("\n"));
       const notice = yield* upwardStep(stashResult(bytes, results, { kind: "text-of-envelope" }));
       return {
         result: noticeFirst(notice, dec.decode(headOf(joined, cap))),
-        overCap: true,
+        truncated: true,
       };
     }
     const notice = yield* upwardStep(stashResult(bytes, results, { kind: "none" }));
     return {
       result: { content: [{ type: "text", text: JSON.stringify(notice) }] },
-      overCap: true,
+      truncated: true,
     };
   });
 };
@@ -992,8 +959,8 @@ function metaToolsForRequest(
     downstreamInput?: boolean;
     /** A native endpoint without execute_code: truncation notices page with read_result. */
     pagingTool?: "read_result" | undefined;
-    /** This request's surface lists execute_code, so a large read may answer with a preview. */
-    programRoute?: boolean | undefined;
+    /** The tool on this request's surface that runs programs, which a read past its cap may offer. */
+    programTool?: string | undefined;
     /** Route names this request's text uses; meta by default. */
     routes?: AgentRouteNames | undefined;
     /** `execute.maxResultChars`, which sizes the pages truncation notices ask programs to read. */
@@ -1130,14 +1097,14 @@ function metaToolsForRequest(
                       tool: resolved.definition.name,
                       classification: resolved.definition.classification === "read" ? "read" : "write",
                     },
-                    write: resolved.definition.classification !== "read",
+                    write: isWriteLike(resolved.definition),
                     cap,
                     ...(opts.pagingTool ? { pagingTool: opts.pagingTool } : {}),
-                    ...(opts.programRoute ? { programRoute: true } : {}),
+                    ...(opts.programTool ? { programTool: opts.programTool } : {}),
                     ...(opts.maxProgramResultChars !== undefined ? { programChars: opts.maxProgramResultChars } : {}),
                     ...(opts.maxProgramHostCalls !== undefined ? { programHostCalls: opts.maxProgramHostCalls } : {}),
-                    set: authMethod((id: string, value: string[], ttlSeconds: number, options?: StashOptions) =>
-                      registryProgram(registry, "stashResult", id, value, ttlSeconds, options),
+                    set: authMethod((id: string, value: string[], ttlSeconds: number) =>
+                      registryProgram(registry, "stashResult", id, value, ttlSeconds),
                     ),
                     // The catalog entry, never `toolName`: a record names a tool
                     // only through the grammar check (src/operator-record.ts).
@@ -1150,18 +1117,18 @@ function metaToolsForRequest(
                   };
                   const processed = (
                     toolResult: ToolResult,
-                    overCap: boolean,
+                    truncated: boolean,
                     value?: { value: unknown },
                   ): ProcessedCallResult => ({
                     toolResult,
                     ...value,
-                    ...(overCap ? { friction: "result_too_large" } : {}),
+                    ...(truncated ? { friction: "result_too_large" } : {}),
                   });
                   if (call.resultMode === "value") {
                     let value = result;
                     const guarded = yield* upwardStep(guardValue(value, results, cap));
                     value = guarded.result;
-                    return processed(jsonResult({ ok: true, data: value, format }), guarded.overCap, { value });
+                    return processed(jsonResult({ ok: true, data: value, format }), guarded.truncated, { value });
                   }
                   if (resolved.connector.kind === "mcp") {
                     const mcpResult = result as {
@@ -1182,12 +1149,12 @@ function metaToolsForRequest(
                     // Native blocks and bounded previews are the result. A format-only
                     // structuredContent hides them in clients that prefer that field.
                     guarded.result._meta = { "dev.connecta/format": format };
-                    return processed(guarded.result, guarded.overCap);
+                    return processed(guarded.result, guarded.truncated);
                   }
                   const value = result;
                   const guarded = yield* upwardStep(guardText(serializeResultText(value), results, cap, format));
                   guarded.result._meta = { "dev.connecta/format": format };
-                  return processed(guarded.result, guarded.overCap, { value });
+                  return processed(guarded.result, guarded.truncated, { value });
                 }),
             ),
             activityFriction: (processed: ProcessedCallResult) => processed.friction,
@@ -1781,8 +1748,8 @@ export function registerMetaTools(
      * has no execute_code, and return the route native tool calls take.
      */
     native?: { executeCode: boolean; catalogErrors: string[] } | undefined;
-    /** This request lists execute_code, so a large read may answer with a preview. */
-    programRoute?: boolean | undefined;
+    /** The tool this request lists for programs, which a read past its cap may offer. */
+    programTool?: string | undefined;
     /** Route names this request's text uses; meta by default. */
     routes?: AgentRouteNames | undefined;
   },
@@ -1790,7 +1757,7 @@ export function registerMetaTools(
   const mt = createMetaTools(registry, ctx.baseUrl, {
     maxProgramResultChars: ctx.maxProgramResultChars,
     maxProgramHostCalls: ctx.maxProgramHostCalls,
-    programRoute: ctx.programRoute,
+    programTool: ctx.programTool,
     routes: ctx.routes,
     ...(ctx.native && !ctx.native.executeCode ? { pagingTool: "read_result" as const } : {}),
     ...(ctx.native ? { activitySource: "native" as const } : {}),

@@ -38,7 +38,12 @@ write recovery, Overflow donor paging, Gmail attachment-preserving draft refusal
 Forms revision-conflict recovery, Docs indexes, Sheets rows across ranges and
 Slides deck/comment save outcomes. `p5-slow-read` runs one fast read beside one
 that outlasts the run, on a six-second run deadline: the answer must hold the
-fast data with no second fast read. The provider/HTTP cleanup also promotes
+fast data with no second fast read. `p5-preview-program-refused` reads a log over
+the cap on a host that refuses `execute_code`: the answer must say what was not
+read and name no test. Controls also require failure for an agent that stops at a
+preview and states the fact past its sample, for a refused program answered with
+the real test, the preview's decoy or silence, and for a rows sample with the right
+count stated. The provider/HTTP cleanup also promotes
 existing Tithe.ly cancellation recovery, a single GitHub draft release, a GitHub
 CI read that reports one repository's permission gap while finishing another,
 Cloudflare DNS and Vercel environment recovery, shared-drive permission

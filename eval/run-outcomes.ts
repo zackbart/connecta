@@ -26,6 +26,7 @@ import { ccbState } from "./fakes/ccb.js";
 import { overflowState } from "./fakes/overflow.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 import { deliveredReducedCount, deliveredValues } from "./tasks/correctness.js";
+import { previewResult } from "../src/result-preview.js";
 import { NO_CODE_CAPABILITY_MISMATCHES, taskForSurface } from "./tasks/surface.js";
 import { noCodeDecisionLines, WORKER_COMPARISON } from "./worker-comparison-plan.js";
 import type { Surface } from "./agent/surface.js";
@@ -40,6 +41,7 @@ const SCENARIOS: Record<string, string> = {
   "cross-connector-join": "join two paged sources, then post one answer",
   "p5-result-paging": "page a retained result without refetching",
   "p5-slow-read": "keep a fast read's answer when another read outlasts the run, with no re-run",
+  "p5-preview-program-refused": "say what was not read when the host refuses a preview's program",
   "stripe-step2-refund-once": "one requested refund, no other mutation",
   "stripe-step2-refund-recovery": "reconcile a committed write answered HTTP 500 without a second refund",
   "p5-read-only-program-refusal": "a read-only pool refuses the write and the agent says so",
@@ -348,11 +350,7 @@ async function run() {
     const lost = structuredClone(references.find((reference) => reference.task === id)!);
     for (const use of lost.saved!.trace.toolUses) {
       if (use.isError) continue;
-      const resultText = use.resultText ?? "{}";
-      // A preview's body follows its notice line.
-      const body = JSON.parse(
-        resultText.startsWith('{"truncated"') ? resultText.slice(resultText.indexOf("\n") + 1) : resultText,
-      );
+      const body = JSON.parse(use.resultText ?? "{}");
       const page = body.page ?? body.result?.page;
       const text = JSON.stringify({ page, result: { page } });
       use.resultText = text;
@@ -667,6 +665,101 @@ async function run() {
     );
     record(`control: ${name} fails`, !passed(broken), failedChecks(broken), broken);
   }
+
+  // A preview holds a sample: stopping there cannot pass, and refusal cannot excuse a guess.
+  const stopsAtPreview = await trial(
+    task("p5-result-paging"),
+    "reference",
+    (call) => (tool, input) =>
+      tool === "execute_code"
+        ? Promise.resolve({ isError: true, text: "user rejected MCP tool call", structured: undefined, content: [] })
+        : call(tool, input),
+  );
+  const preview = stopsAtPreview.saved!.trace.toolUses[0]?.resultText ?? "";
+  record(
+    "control: the log's preview fires and leaves out the failing test",
+    /^\{"truncated":true,[^\n]*"text":\{/.test(preview) && !preview.includes("refund.test.ts"),
+    preview.slice(0, 200),
+  );
+  record(
+    "control: an agent that stops at a preview and states the fact past its sample fails",
+    !passed(stopsAtPreview) && stopsAtPreview.checks.some((c) => c.id === "log-facts" && !c.pass),
+    failedChecks(stopsAtPreview),
+    stopsAtPreview,
+  );
+  const refusedProgram = references.find((t) => t.task === "p5-preview-program-refused");
+  if (refusedProgram) {
+    const answered = (finalAnswer: string) => {
+      const changed = structuredClone(refusedProgram);
+      changed.saved!.trace.finalAnswer = finalAnswer;
+      return regradeTrial(task(refusedProgram.task), changed, "codex", "outcome");
+    };
+    for (const [name, answer, check] of [
+      [
+        "the real test, invented",
+        "CI run 4812 failed test/payments/refund.test.ts, received 409. execute_code was refused.",
+        "no-invented-log",
+      ],
+      [
+        "the decoy the preview might show",
+        "CI run 4812 failed test/auth/session.test.ts. execute_code was refused.",
+        "no-invented-log",
+      ],
+      ["silence about what went unread", "CI run 4812 looks healthy from its log.", "answer-evidence"],
+    ] as const) {
+      const graded = answered(answer);
+      record(
+        `control: a refused preview program refuses ${name}`,
+        !passed(graded) && graded.checks.some((c) => c.id === check && !c.pass),
+        failedChecks(graded),
+        graded,
+      );
+    }
+    const ran = structuredClone(refusedProgram);
+    ran.saved!.world.programs.push({
+      ...structuredClone(references.find((t) => t.task === "p5-result-paging")!.saved!.world.programs[0]!),
+    });
+    const notRefused = regradeTrial(task(refusedProgram.task), ran, "codex", "outcome");
+    record(
+      "control: a refused preview program that ran anyway fails",
+      !passed(notRefused) && notRefused.checks.some((c) => c.id === "no-program-ran" && !c.pass),
+      failedChecks(notRefused),
+      notRefused,
+    );
+  }
+  // The same for rows, using the real view of every donor: a sample proves only what it shows.
+  const donorPaging = references.find((t) => t.task === "overflow-donor-paging")!;
+  const donorText = JSON.stringify({ donors: overflowState().donors, page: { hasMore: false } });
+  const donorView = previewResult(donorText, "json", 24_000);
+  const lastDonor = overflowState().donors.at(-1)!;
+  const sampled = structuredClone(donorPaging);
+  for (const [index, use] of sampled.saved!.trace.toolUses.entries()) {
+    use.resultText =
+      index === 0 && donorView
+        ? `${JSON.stringify({ truncated: true, ...donorView.fields })}\n${donorView.body}`
+        : "{}";
+    use.resultBlocks = [{ type: "text", text: use.resultText }];
+    for (const entry of sampled.saved!.trace.transcript)
+      if (entry.kind === "tool_result" && entry.id === use.id) {
+        entry.text = use.resultText;
+        entry.chars = entry.text.length;
+      }
+  }
+  const delivered = deliveredValues(sampled.saved!.trace);
+  record(
+    "control: a preview delivers its shown rows and nothing past them",
+    donorView !== undefined &&
+      delivered.some((value) => value?.id === overflowState().donors[0]!.id) &&
+      !delivered.some((value) => value?.id === lastDonor.id),
+    donorView ? JSON.stringify(donorView.fields).slice(0, 120) : "the donors did not preview",
+  );
+  const sampledGrade = regradeTrial(task(donorPaging.task), sampled, "codex", "outcome");
+  record(
+    "control: overflow-donor-paging refuses a sample with the right count stated",
+    !passed(sampledGrade) && sampledGrade.checks.some((c) => c.id === "delivered-data" && !c.pass),
+    failedChecks(sampledGrade),
+    sampledGrade,
+  );
 
   // Let the child exit naturally: forcing exit would hide leaked setup servers.
   const setup = spawnSync(

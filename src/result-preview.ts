@@ -1,16 +1,12 @@
 /**
- * Schema-aware views of large direct reads, as pure functions of redacted text.
- * Presentation only: the stash and what a program sees stay byte-identical to
- * the full result, and everything shown here also appears in it, unchanged.
- * Rules and their evidence: documentation/meta-tools.md#previews-of-large-reads.
+ * Schema-aware views of direct reads past their cap, as pure functions of redacted
+ * text. Presentation only: the stash and what a program sees stay byte-identical
+ * to the full result, and everything shown here also appears in it, unchanged.
+ * Rules: documentation/meta-tools.md#previews-of-reads-over-the-cap.
  */
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-/** Lists smaller than this stay whole. */
-const ROW_THRESHOLD_BYTES = 4_096;
-/** Plain text smaller than this stays whole. */
-const TEXT_THRESHOLD_BYTES = 8_192;
 /** Bytes of whole rows a view shows. */
 const ROW_BYTES = 1_500;
 /** One row can pass ROW_BYTES up to this, so a wide list still shows its shape. */
@@ -25,20 +21,13 @@ const MAX_KEYS = 40;
 const MAX_KEY_CHARS = 64;
 /** Rows sampled for key names. */
 const KEY_SAMPLE_ROWS = 50;
-/** A view must at least halve the context a read costs to be worth a stash and a program. */
-const MIN_SAVING_RATIO = 2;
-/** The notice's own bytes, before key names, for the saving check above. */
-const NOTICE_BYTES = 700;
-
-/** JSON.parse would round a number this long. A match inside a string only skips the view. */
-const UNSAFE_NUMBER = /[:[,]\s*-?\d{16,}/;
 
 export interface ResultPreview {
   /** Notice fields of this view: counts and key names, never values. */
   fields: { rows: RowsSummary } | { text: { lines: number; shownBytes: number } };
   /** Valid JSON in the result's own shape, or the head and tail of its text. */
   body: string;
-  /** Opens the hint: what `body` is. */
+  /** Opens the hint: what `body` holds and what it leaves out. */
   shown: string;
   /** What the offered program holds, for the hint. */
   noun: "rows" | "text";
@@ -122,19 +111,17 @@ function rowsPreview(parsed: object, total: number, cap: number): ResultPreview 
     shown.push(row);
     used += size;
   }
-  // An empty list here would read as a list with no rows: never show one.
-  if (!shown.length) return undefined;
   const count = found.rows.length;
+  // An empty list would read as a list with no rows, and a whole one needs no sample.
+  if (!shown.length || shown.length === count) return undefined;
   const keys = rowKeys(found.rows);
   const path = found.path.length ? accessor(found.path).replace(/^\./, "") : "(root)";
   const body = JSON.stringify(withRows(parsed, found.path, shown));
   if (byteLength(body) > cap) return undefined;
-  const notice = NOTICE_BYTES + byteLength(path) + byteLength(JSON.stringify(keys));
-  if ((byteLength(body) + notice) * MIN_SAVING_RATIO > total) return undefined;
   return {
     fields: { rows: { path, count, shown: shown.length, keys } },
     body,
-    shown: `${count} rows at ${path}; the first ${shown.length} follow, in the result's own shape, with every value outside the list.`,
+    shown: `Sample only: ${shown.length === 1 ? "row 1" : `rows 1-${shown.length}`} of ${count} at ${path} follow, in the result's own shape, with every value outside the list; the other ${count - shown.length} are not shown.`,
     noun: "rows",
     reduce: `const rows = JSON.parse(text)${accessor(found.path)}; return { count: rows.length, rows: rows.slice(0, 5) };`,
   };
@@ -151,6 +138,7 @@ const continues = (byte: number | undefined) => byte !== undefined && (byte & 0x
 
 function textPreview(text: string, reading: string, cap: number): ResultPreview | undefined {
   const bytes = enc.encode(text);
+  if (bytes.length <= TEXT_HEAD_BYTES + TEXT_TAIL_BYTES) return undefined;
   const marker = (omitted: number) => `\n…[${omitted} bytes omitted]…\n`;
   let headEnd = TEXT_HEAD_BYTES;
   while (continues(bytes[headEnd])) headEnd--;
@@ -163,43 +151,70 @@ function textPreview(text: string, reading: string, cap: number): ResultPreview 
   return {
     fields: { text: { lines, shownBytes } },
     body,
-    shown: `${lines} lines; the head and tail follow, with the middle omitted.`,
+    shown: `Sample only: the first ${headEnd} and last ${bytes.length - tailStart} bytes of ${lines} lines follow; the ${tailStart - headEnd} bytes between them are not shown.`,
     noun: "text",
     reduce: `const lines = ${reading}.split("\\n"); return { lines: lines.length, matches: lines.filter((line) => /error|fail/i.test(line)).map((line) => line.slice(0, 500)).slice(0, 40) };`,
   };
 }
 
+/** Parts of a JSON number token whose exact value is the same however it is spelled. */
+function exactValue(token: string): string | undefined {
+  const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(token);
+  if (!match) return undefined;
+  const fraction = match[3] ?? "";
+  const digits = `${match[2]}${fraction}`;
+  let start = 0;
+  let end = digits.length;
+  while (digits[start] === "0") start++;
+  while (end > start && digits[end - 1] === "0") end--;
+  if (start === end) return `${match[1]}0`;
+  return `${match[1]}${digits.slice(start, end)}e${Number(match[4] ?? 0) - fraction.length + digits.length - end}`;
+}
+
+/** Whether JSON.parse then JSON.stringify keeps this token's value, including its sign and range. */
+function keepsNumber(token: string): boolean {
+  const printed = String(Number(token));
+  return printed === token || exactValue(printed) === exactValue(token);
+}
+
 /**
- * The view of a read over a threshold, or undefined when today's path should
- * handle it: documents, scalars, small or deep lists and unsafe numbers.
+ * Whether every number in text JSON.parse has already accepted survives parsing.
+ * Both a view and the offered program parse it, so one lossy number anywhere,
+ * inside or outside the rows, declines the view. Strings are skipped, not read.
+ */
+function keepsNumbers(json: string): boolean {
+  let at = 0;
+  while (at < json.length) {
+    const code = json.charCodeAt(at);
+    if (code === 34) {
+      at++;
+      while (json.charCodeAt(at) !== 34) at += json.charCodeAt(at) === 92 ? 2 : 1;
+      at++;
+    } else if (code === 45 || (code >= 48 && code <= 57)) {
+      const start = at;
+      while (at < json.length && "+-.0123456789Ee".includes(json[at]!)) at++;
+      if (!keepsNumber(json.slice(start, at))) return false;
+    } else at++;
+  }
+  return true;
+}
+
+/**
+ * The view of a read past its cap, or undefined when its first bytes should stand:
+ * documents, scalars, shallow or deep lists a view would misstate, and numbers
+ * parsing would change.
  *
  * `format` is the result's own: an API connector's text arrives here as one
  * JSON string, whose decoded text is what a person would call the result.
  */
 export function previewResult(text: string, format: "json" | "text", cap: number): ResultPreview | undefined {
-  const total = byteLength(text);
-  if (total <= ROW_THRESHOLD_BYTES) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return total > TEXT_THRESHOLD_BYTES ? textPreview(text, "text", cap) : undefined;
+    return textPreview(text, "text", cap);
   }
-  if (typeof parsed === "string" && format === "text") {
-    return byteLength(parsed) > TEXT_THRESHOLD_BYTES ? textPreview(parsed, "JSON.parse(text)", cap) : undefined;
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  if (UNSAFE_NUMBER.test(text) || hasNonFinite(parsed)) return undefined;
-  return rowsPreview(parsed, total, cap);
-}
-
-/** JSON.parse reads 1e999 as Infinity, which JSON.stringify would then write as null. */
-function hasNonFinite(root: object): boolean {
-  const stack: unknown[] = [root];
-  while (stack.length) {
-    const node = stack.pop();
-    if (typeof node === "number" && !Number.isFinite(node)) return true;
-    if (typeof node === "object" && node !== null) for (const child of Object.values(node)) stack.push(child);
-  }
-  return false;
+  if (typeof parsed === "string" && format === "text") return textPreview(parsed, "JSON.parse(text)", cap);
+  if (typeof parsed !== "object" || parsed === null || !keepsNumbers(text)) return undefined;
+  return rowsPreview(parsed, byteLength(text), cap);
 }

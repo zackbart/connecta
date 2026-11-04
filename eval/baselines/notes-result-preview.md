@@ -1,5 +1,10 @@
 # Schema-aware preview validation (#703)
 
+**The rule measured here is not the rule that shipped.** These trials ran previews from about 5 KB,
+including results under the cap. The shipped rule fires only over the inline cap, because under-cap
+previews took away complete reads and this validation found no token saving from them. Most fires
+below were under-cap reads, so they do not measure the shipped rule. No new trials were run for it.
+
 Held-out check of the rule from the result-shaping study (#1331). Four tasks outside the
 study's twelve, fixed before any paid trial using only a no-model size probe:
 `overflow-refund-once`, `breeze-people-paging`, `pco-step2-people-paging`, `tithely-fund-totals`.

@@ -628,26 +628,29 @@ sooner but cannot extend the call deadline. Result processing happens after that
 deadline ends, because a completed downstream call must not turn into a
 retryable timeout while Connecta prepares its response.
 
-### Previews of large reads
+### Previews of reads over the cap
 
-A successful direct read on a surface that lists `execute_code` may answer with
-a preview: the structure and a sample, a retained copy of the whole result, and a
-ready-to-edit program, instead of the whole result or its first 24,000 bytes. The
-rule is generic and needs nothing from a provider. It reads the result after
-redaction and value safety, for API values and for a lone MCP text block with no
-annotations.
+A result at or under its cap always returns whole. A successful direct read over
+its cap (the connector's `maxResultBytes`, else `calls.maxResultBytes`, else 24,000
+bytes), on a surface that lists a program tool, may show a sample instead of its
+first bytes: the structure and whole rows, or the head and tail of its text, with a
+retained copy of the result and a ready-to-edit program. Such a read is already cut
+and already stashed, so a preview adds no storage cost, and valid JSON with a notice
+saying what it holds replaces raw JSON sliced mid-value. The rule is generic and
+needs nothing from a provider. It reads the result after redaction and value safety,
+for API values and for a lone MCP text block.
 
 **Rows.** A preview fires when all of these hold:
 
-- the result is over 4,096 bytes;
 - its largest list holds at least 3 records or arrays, sits within 3 keys of the
   root, and holds at least half the bytes;
 - everything outside that list fits in 1,024 bytes;
-- at least the first row can be shown whole, within 3,000 bytes;
-- the preview and its notice cost at most half of the result.
+- at least the first row can be shown whole, within 3,000 bytes, and at least one
+  row is left out;
+- every number in the result keeps its exact value through `JSON.parse`.
 
 ```text
-{"truncated":true,"resultId":"…","totalBytes":48210,"rows":{"path":"items","count":200,"shown":18,"keys":["id","email","status"]},"hint":"200 rows at items; the first 18 follow, in the result's own shape, with every value outside the list. All of it is retained for 15 minutes: run nextAction in execute_code, editing its last line to filter, join or count the rows, instead of repeating this read or reading pages by hand.","nextOffset":0,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => { let text = \"\", offset = 0, page; do { page = await connecta.result(\"…\", { offset }); text += page.text; offset = page.nextOffset; } while (page.hasMore); const rows = JSON.parse(text).items; return { count: rows.length, rows: rows.slice(0, 5) }; }"}}}
+{"truncated":true,"resultId":"…","totalBytes":48210,"rows":{"path":"items","count":200,"shown":18,"keys":["id","email","status"]},"hint":"Sample only: rows 1-18 of 200 at items follow, in the result's own shape, with every value outside the list; the other 182 are not shown. All of it is retained for 15 minutes: run nextAction in execute_code, editing its last line to filter, join or count the rows, instead of reading pages by hand. If execute_code is refused or unavailable, the rest can't be read here: narrow this read with its own filter, limit or fields arguments, or say what was not read.","nextOffset":0,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => { let text = \"\", offset = 0, page; do { page = await connecta.result(\"…\", { offset }); text += page.text; offset = page.nextOffset; } while (page.hasMore); const rows = JSON.parse(text).items; return { count: rows.length, rows: rows.slice(0, 5) }; }"}}}
 {"items":[{"id":"t_1","email":"alice@example.com","status":"open"},…],"has_more":true,"next_cursor":"c2"}
 ```
 
@@ -658,57 +661,59 @@ spell reads `["a.b"].items`, and a root array reads `(root)`. `rows.keys` sample
 up to 40 keys of at most 64 characters from the first 50 rows; `rows.count` and
 `totalBytes` describe the whole result.
 
-**Text.** Text that is not JSON, or an API connector's text value, over 8,192
-bytes returns its line count in `text.lines`, then its first 1,200 and last 800
-bytes around a marker saying how many bytes were left out, with
-`text.shownBytes` beside it. Cuts fall on character boundaries. Its program reads
-the retained text and returns the lines matching a pattern the agent can edit.
+**Text.** Text that is not JSON, or an API connector's text value, returns its line
+count in `text.lines`, then its first 1,200 and last 800 bytes around a marker saying
+how many bytes were left out, with `text.shownBytes` beside it. Cuts fall on
+character boundaries. Its program reads the retained text and returns the lines
+matching a pattern the agent can edit.
 
-**Everything else keeps the route below:** results no program can reach whole
-within `execute.maxHostCalls`, JSON objects with no such list, scalars, lists of
-scalars, lists deeper than 3 keys or shorter than 3 rows, a first row over 3,000
-bytes, numbers of 16 or more digits or outside the double range (a view would
-round them), text with unpaired surrogates, annotated blocks, several blocks,
-non-text blocks, value mode, and every write.
+**Everything else keeps the route below:** results no program can reach whole within
+`execute.maxHostCalls`, JSON objects with no such list, scalars, lists of scalars,
+lists deeper than 3 keys or shorter than 3 rows, a first row over 3,000 bytes, text
+with unpaired surrogates, several blocks, non-text blocks and value mode. So does any
+number parsing would change: complete tokens are compared by exact value, including
+fractions and exponents, so `9.007199254740993e15`, `1e999` and `-0` decline the view
+wherever they appear, and `1e3` and `12.50` do not. Digits inside a string never count.
+The offered program parses the same text, so a number past the sample declines too.
+
+**A call that may have written never previews.** That covers every effective write
+and a source write a deployment overrode to read: its result is its only copy, and
+repeating it to look again is forbidden. It keeps its first bytes, and its notice says
+the write already ran and offers no repeat.
 
 A preview is presentation only. A program's value and the handle's pages are
 byte-for-byte what they would have been: the retained text is the same redacted
 text the read would have paged, and `format` keeps its meaning. A view drops no
-continuation field, total, warning, status or `format`, shows no empty list in
-place of a full one, keeps array positions, and shows `false` and `0` as they are.
-`totalBytes` is the original size and `truncated` is true because the text is a
-part of the result. Clients that parse a direct read should branch on the first
-line's `truncated` whatever the size. The per-connector and deployment
-`maxResultBytes` still bound what is shown: a preview that does not fit the
-call's cap takes the route below, and a result under a raised cap can still
-preview. Only a result past its cap counts as `result_too_large` friction.
+continuation field, total, warning, status or `format`, shows no empty list in place
+of a full one, keeps array positions, and shows `false` and `0` as they are.
+`totalBytes` is the original size. Clients that parse a direct read should not assume
+the body after a `truncated` notice is a prefix: `nextOffset` is 0 and the body is a
+separate view. The per-connector and deployment `maxResultBytes` still bound what is
+shown: a preview that does not fit the call's cap takes the route below, and a raised
+cap returns more results whole. A preview counts as `result_too_large` friction, as
+any result past its cap does. If the stash fails, the read keeps its first bytes and
+its paging-unavailable notice, and the operator warning fires as usual.
 
-Previews need a program route, not only a paging tool. Page-first reading failed
-when an agent read a 185 KB log in pages and missed the failing range, and a
-preview shows too little to read by hand, so a native pool with `executeCode:
-false` keeps its whole result or its `read_result` notice. The check is the one
-that registers `execute_code` for the request, so the text never offers a tool
-the surface does not list.
+**Recovery depends on the program tool.** `connecta.result` exists only inside
+programs, and a host may prompt for or refuse `execute_code`, which is annotated as a
+write on a writable endpoint. A refused program means the rows or text the preview left
+out can't be read from this result, which is also true of the first-bytes route. So the
+hint states the fallback: narrow the read with its own arguments, or say what was not
+read. A view shows less of the result than first bytes would, 1,500 bytes of rows
+against 24,000, so narrowing matters more on such a host.
 
-**Stash cost.** A preview reaches storage only when it fires. On D1, one stash
-under 48 KiB takes five round trips: a ledger read and write, the chunk write, and
-a second ledger read and write, for three commits. That added about 17 ms with
-local D1 in workerd, and about 130 ms with 20 ms injected per round trip, the same
-as any over-cap result. Those commits share a compare-and-swap ledger, so 16 stashes at once
-retried to about 20 write statements each. The scarce resource is
-`results.maxStashEntries`, 64 live entries deployment-wide for 15 minutes each,
-or about 4 stashes a minute sustained. A stash for a read under its cap therefore
-leaves a quarter of entries and bytes to results that must page, including
-writes, and gives up after 5 seconds. Refused or failed, the read is returned
-whole with no operator warning, because nothing was lost; a read past its cap
-takes the route below, whose stash failure warns as usual. A deployment that sees
-many whole results where it expects previews can raise `results.maxStashEntries`.
+Previews need a program tool, not only a paging tool. Page-first reading failed when an
+agent read a 185 KB log in pages and missed the failing range, and a preview shows too
+little to read by hand, so a native pool with `executeCode: false` keeps its first
+bytes and its `read_result` notice. One value in `src/routes/mcp.ts` registers the
+program tool for a request and names it in `nextAction` and the hint, so the text never
+offers a tool the surface does not list.
 
 ### Truncated direct-call results
 
 A `call_tool` or `call_destructive_tool` result over its cap — the connector's
 `maxResultBytes`, else `calls.maxResultBytes`, else 24,000 bytes — that does not
-get a [preview](#previews-of-large-reads) comes back as one text block. Its first line is the truncation notice, one line of compact
+get a [preview](#previews-of-reads-over-the-cap) comes back as one text block. Its first line is the truncation notice, one line of compact
 JSON; everything after the first newline is the preview. `structuredContent`
 is absent, so the notice cannot hide the preview in clients that prefer it:
 
@@ -1809,7 +1814,7 @@ owns the supplied usage instructions, each endpoint's instructions
 listing, and call translation live in
 [native-tools.ts](https://github.com/zackbart/connecta/blob/main/src/native-tools.ts).
 [result-preview.ts](https://github.com/zackbart/connecta/blob/main/src/result-preview.ts)
-owns the rule behind previews of large reads, as pure functions of redacted text.
+owns the rule behind previews of reads over the cap, as pure functions of redacted text.
 
 [Schema tests](https://github.com/zackbart/connecta/blob/main/test/meta-tool-schemas.test.ts),
 [search tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-search.test.ts),
