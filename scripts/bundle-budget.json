@@ -8,6 +8,7 @@
     "2026-11-04: Run-deadline read caps merged with #1319, #1330, #1335 and #1315. The official Node 22.23.4 binary reproduces CI on origin/main at 736a1e1a exactly (424,610 B and 808,988 B) and measures this merge at 425,093 B and 809,586 B, up 483 B and 598 B against 190 B and 312 B of headroom. The caps move to 425,200 B and 809,700 B, leaving 107 B and 114 B.",
     "2026-11-04: #1319 and #1330 both move these caps. CI measured this PR alone at 423,133 B and 807,145 B, 958 B and 1,028 B over 422,175 B and 806,117 B, and its review fixes add 9 B and remove 11 B on one machine. Added to #1330's 423,700 B and 808,000 B caps, the caps move to 424,800 B and 809,300 B. These are estimates, to check against this PR's build (package) table.",
     "2026-11-04: Lexical search ranks on summaries, with title, summary and tail zones, summaries and a small abbreviation map. Measured on one machine against origin/main at 25e9e940, this adds 891 B to the root and 1,218 B to examples/worker; gzip output differs by machine, so these are deltas, not CI sizes. Added to CI's 422,175 B and 806,117 B they estimate 423,066 B and 807,335 B. The caps move to 423,400 B and 807,700 B, keeping about the same headroom as before.",
+    "2026-11-04: The response ceiling lives in the root: its clock, its queue refusal, the unsent refusals, the storage deadline and the direct-call cap. Node 22.23.4 measures this PR at 425,019 B and 809,333 B on the merged read-deadline base. The caps move to 425,100 B and 809,400 B; the combined branch sets final caps.",
     "2026-11-04: Run-deadline read caps on top of the failure-recovery text, with their discovery cancellation. CI on 92d32845 measures the root at 424,205 B and examples/worker at 808,467 B. The caps move to 424,300 B and 808,550 B.",
     "2026-11-04: Run-deadline read caps need to live in the root: the deadline clock, the write gate and the discovery timeout. CI measures this PR at 422,733 B and 806,774 B, up 528 B and 788 B from origin/main against 325 B and 383 B of headroom. The caps move to 422,800 B and 806,850 B, leaving 67 B and 76 B.",
     "2026-11-04: Failure-recovery text (agent-text/failure-recovery) adds about 1,398 B to the root and 1,809 B to examples/worker against main's CI measures of 422,175 B and 806,117 B, past their 325 B and 383 B of headroom. This is new agent-facing text, not drift; the root cap moves to 423,700 B and the examples/worker cap to 808,000 B.",
@@ -47,6 +48,7 @@
     "2026-11-02: Batched warm remote catalog reads (#1220) add physical-key prefetch across request storage views and listing-local private/public manifest batches. CI on 72e0f893 (run 41511421750, check:build) measures the root at 415,240 B gzip against its 415,000 B cap; UI (342,330 B) and the combined Worker example (796,373 B) remain within their caps. The root cap moves to 415,500 B, with 260 B CI headroom. Same-toolchain local clean main d6c6da35 measures 415,423 B and the implementation 415,788 B (+365 B); system zlib also overruns the unchanged UI and Worker caps on clean main, so those caps and every baselineGzip remain unchanged.",
     "Warm validated catalog reuse (#1225), Node 26.13.0 with local zlib-ng 1.3.1 and esbuild 0.28.2: same-toolchain origin/main root 415,841 B -> 416,146 B (+305 B), examples/worker 799,538 B -> 799,742 B (+204 B), ./ui unchanged at 346,344 B. Main already exceeds these three local caps; do not absorb those zlib overruns. CI main headroom is about 174 B root / 73 B Worker, below this measured delta. Raise only root 415,500 -> 415,750 B and Worker 796,500 -> 796,750 B (+250 B each) for bounded immutable JSON reuse after the unchanged storage fences; CI remains authoritative.",
     "Admission observation sampling (#1249): same-toolchain local origin/main 11799205 measures 800,137 B gzip for examples/worker; this change measures 800,251 B (+114 B), Node 26.13.0, esbuild 0.28.2, gzip level 9, zlib-ng 1.3.1. Local main already exceeds three caps; CI main was reported at about 796,984 B. Propose a 250 B Worker-only cap increase to 797,250 B for this independent item; when combining with #1241 retain the larger combined cap and remeasure. Root/UI caps remain unchanged; CI is the size authority.",
+    "2026-11-04: Response ceiling replayed onto main after #1326 squashed. Its growth against the read-deadlines head was about 950 B root and 1,060 B on the Worker example, so these caps are projected from those deltas, to check against this PR's build (package) table.",
     "./providers/breeze measures 348,592 B gzip standalone at ead939ea (step-2 round-1 fix snapshot), versus 341,226 B on main e4401cd7 (+7,366 B), Node 26.12.0 with system zlib. This includes the shared Effect kit, paid once per deployment; provider entries are reported, not capped, and their sizes are not additive (#899).",
     "./providers/ccb merged GitHub/Cloudflare/CCB step-2 snapshot measures 391,649 B standalone gzip-9 before recording these bundle facts, Node 26.12.0 with zlib-ng 1.3.1; recomputed with the combined opt-in hatch support. Earlier step-2 standalone gzip snapshot at ffd64b04, CI run 40080865116 static job, Node 22.23.3, against main ce0c7492 (345,272 B). Includes the reviewed 385-operation request/response index. Shared Effect is paid once per deployment; provider entries are reported, uncapped and non-additive (#703) (#899).",
     "./providers/cloudflare merged GitHub/Cloudflare/CCB step-2 snapshot measures 597,127 B gzip standalone before recording these bundle facts, versus 528,947 B on main ce0c7492 (Node 26.12.0, zlib-ng 1.3.1, gzip level 9). The standard hatch, response-field metadata, retained 120-character parameter descriptions and numeric bounds account for this reviewed growth. The shared Effect kit is paid once per deployment; provider entries are report-only, not capped (#899).",
@@ -68,7 +70,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 431500
+      "maxGzip": 433000
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -151,7 +153,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 815900
+      "maxGzip": 817800
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
