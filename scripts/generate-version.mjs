@@ -13,6 +13,6 @@ const source = `// Generated from package.json by scripts/generate-version.mjs.
 // Workers-safe: no runtime filesystem read or deployment override.
 export const CONNECTA_VERSION = ${JSON.stringify(version)};
 `;
-for (const path of ["src/version.ts", "bin/version.mjs"]) {
+for (const path of ["src/version.ts", "bin/version.mjs", "packages/connecta-eve/src/version.ts"]) {
   await writeFile(new URL(path, root), source);
 }
