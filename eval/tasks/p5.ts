@@ -433,18 +433,27 @@ function connectUrl(trace: AgentTrace, requireHandoff = false): string | undefin
   return undefined;
 }
 
-const auth = (capable: boolean): ActiveTask =>
-  withCorrectness(
+const auth = (mode: NonNullable<ActiveTask["host"]>["urlElicitation"]): ActiveTask => {
+  const capable = mode === "capable";
+  const autoDecline = mode === "auto-decline";
+  return withCorrectness(
     {
       ...base,
-      id: capable ? "p5-auth-url-capable" : "p5-auth-connect-incapable",
-      title: capable ? "Auth via capable host URL elicitation" : "Auth via /connect handoff",
-      measures:
-        "A simulated host recovers the fake OAuth invoice service using Connecta's identity-checked /connect route.",
+      id: capable ? "p5-auth-url-capable" : autoDecline ? "p5-auth-url-auto-decline" : "p5-auth-connect-incapable",
+      title: capable
+        ? "Auth via capable host URL elicitation"
+        : autoDecline
+          ? "Auth when a client auto-declines URL elicitation"
+          : "Auth via /connect handoff",
+      measures: autoDecline
+        ? "A client declaring URL elicitation refuses without showing it; the agent relays the refusal's link once and does not reach for another source."
+        : "A simulated host recovers the fake OAuth invoice service using Connecta's identity-checked /connect route.",
       world: { oauth: true },
-      host: { urlElicitation: capable ? "capable" : "incapable" },
-      prompt:
-        "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids. If connection is needed, give me the connection URL and wait for me to complete it.",
+      host: { urlElicitation: mode },
+      // Auto-decline gives no hint: the refusal alone must lead to the link.
+      prompt: autoDecline
+        ? "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids."
+        : "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids. If connection is needed, give me the connection URL and wait for me to complete it.",
       ...(capable
         ? {}
         : {
@@ -478,8 +487,20 @@ const auth = (capable: boolean): ActiveTask =>
           "the expected host mode was exercised",
           capable
             ? trace.urlElicitations?.length === 1 && trace.urlElicitations[0]?.connector === "oauth"
-            : !trace.urlElicitations?.length && Boolean(connectUrl(trace)),
+            : autoDecline
+              ? // One refused prompt: a second means the agent prompted again.
+                trace.urlElicitations?.length === 1 && trace.urlElicitations[0]?.action === "decline"
+              : !trace.urlElicitations?.length && Boolean(connectUrl(trace)),
         ),
+        ...(autoDecline
+          ? [
+              check(
+                "no-switch",
+                "the agent read nothing from another connector instead of waiting for the connection",
+                world.ledger.calls.every((c) => c.service === "oauth"),
+              ),
+            ]
+          : []),
         ...(capable
           ? []
           : [
@@ -513,6 +534,7 @@ const auth = (capable: boolean): ActiveTask =>
       referenceAnswer: "OAuth invoice service: Northwind owes $5,650.50 from in_1002, in_1003 and in_1005.",
     },
   );
+};
 
 // Keep recognition tied to the same full record set the fake CI serves.
 function ciRecords(world: World) {
@@ -868,8 +890,8 @@ export const P5_TASKS: ActiveTask[] = [
   paging,
   rich(false),
   rich(true),
-  auth(true),
-  auth(false),
+  auth("capable"),
+  auth("incapable"),
   fanout,
   revenuecat,
   supabase,
@@ -877,3 +899,6 @@ export const P5_TASKS: ActiveTask[] = [
   routing,
   resourceRead,
 ];
+
+/** Outside P5_TASKS: those are the retained #765 comparison's fixed task set. */
+export const AUTH_AUTO_DECLINE_TASK = auth("auto-decline");

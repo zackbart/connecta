@@ -1442,7 +1442,7 @@ longer live; one left behind cannot complete and expires with its link.
 `authorize_connector` issues the same browser link, with `force` carried in the
 signed handoff. On hosts without URL elicitation, direct and program auth
 failures and search/describe catalog failures include the same authorization
-handoff. The admitted registry and management permission govern issuance.
+handoff. A declined or cancelled URL elicitation returns it too. The admitted registry and management permission govern issuance.
 Each call or program run shares at most one handoff per connector; errors never
 request a forced restart. Signed links retain their fifteen-minute expiry,
 initiating-user and owner binding, origin check, and single-use browser nonce.
@@ -2610,6 +2610,10 @@ survives every round. Rotation invalidates outstanding states.
 Each state admits one retry through a connector-scoped storage CAS, including
 decline and cancel. Concurrent or repeated consumption is refused before
 dispatch, so retries cannot fork into sibling forced connection links.
+A decline or cancel returns one fresh link, issued only after that state verifies
+and the same management check as the prompt passes, so a refusal offers nothing
+this caller could not already request. The link is sealed like the prompt's, keeps
+the prompt's force, and stays bound to a pending forced start.
 The host records each entered call's classification, catalog freshness and
 classification digest in private invocation state, along with auth failure origins. Writes may elicit only
 when Connecta's own credential resolution fails before invoking the connector:

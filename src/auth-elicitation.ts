@@ -12,7 +12,9 @@ import {
   authOwnMethod,
 } from "./auth/native.js";
 import { registryProgram } from "./runtime/registry.js";
-import { connectLinkFields, enableAuthorizationHandoffs } from "./authorization-handoff.js";
+import { authorizationHandoff, connectLinkFields, enableAuthorizationHandoffs } from "./authorization-handoff.js";
+import type { AgentRouteNames } from "./types.js";
+import type { AuthorizationHandoff } from "./errors.js";
 import {
   createRequestStateCodec,
   inputRequired,
@@ -53,6 +55,23 @@ import {
 
 const INPUT_KEY = "connecta_auth";
 const MESSAGE = "Connect this service in your browser, then retry the request.";
+// A client may answer without showing anything, and the response cannot prove
+// otherwise. Neither text claims a person saw the prompt, and neither names a
+// route: an agent told to call again would only reach the same refusal.
+const REFUSED = {
+  decline: {
+    code: "auth_declined",
+    message:
+      "The client declined the connection prompt, possibly automatically, so the user may not have seen it. Nothing was retried.",
+  },
+  cancel: {
+    code: "auth_cancelled",
+    message:
+      "The client cancelled the connection prompt, possibly automatically, so the user may not have seen it. Nothing was retried.",
+  },
+} as const;
+const refusedPurpose = (recipient: string) =>
+  `Give this link to the user, unchanged, ${recipient}once, then stop. Do not prompt again, retry, or reach this service another way until they confirm. If they already refused this connection in this conversation, only mention that the link is available.`;
 
 interface AuthRequestState {
   version: 1;
@@ -107,6 +126,8 @@ export class AuthElicitation {
       claimRetry: (id: string, nonce: string) => Promise<boolean>;
       unavailable: string | undefined;
       credentialUi: boolean;
+      credentialHandoffUrl: string | undefined;
+      routes: AgentRouteNames | undefined;
       requestSignal: AbortSignal;
       requestScope: object;
       defer: DeferredWork | undefined;
@@ -147,6 +168,24 @@ export class AuthElicitation {
 
   private connected(id: string, context: ServerContext): Promise<boolean> {
     return runEdge(authOwnMethod<boolean>(AuthElicitation.prototype, this, "connected", [id, context]));
+  }
+
+  private refused(action: keyof typeof REFUSED, state: AuthRequestState, force: unknown): Promise<ToolResult> {
+    return runEdge(authOwnMethod<ToolResult>(AuthElicitation.prototype, this, "refused", [action, state, force]));
+  }
+
+  /** The one gate before any recovery link: this caller may connect this connector here. */
+  private mayConnect(id: unknown): id is string {
+    const { registry, principal, publicUrl, canManage, unavailable, credentialUi } = this.options;
+    const connector = typeof id === "string" ? registry.getConnector(id) : undefined;
+    return (
+      typeof id === "string" &&
+      /^[a-z0-9_-]+$/.test(id) &&
+      Boolean(connector?.startAuth || (connector?.credential && credentialUi)) &&
+      Boolean(principal && publicUrl) &&
+      !unavailable &&
+      canManage(id)
+    );
   }
 
   bind(context: ServerContext): void {
@@ -250,12 +289,10 @@ export class AuthElicitation {
             ) {
               return failure("invalid_request_state", "Invalid or expired requestState");
             }
-            if (previous && object(response)) {
-              if (response.action === "decline")
-                return failure("auth_declined", "Connection was declined. The request was not retried.");
-              if (response.action === "cancel")
-                return failure("auth_cancelled", "Connection was cancelled. The request was not retried.");
-            }
+            if (previous && object(response) && (response.action === "decline" || response.action === "cancel"))
+              return yield* upwardStep(
+                authInvoke<ToolResult>(self, "refused", [response.action, previous, args.force]),
+              );
             if (previous?.reads.length) {
               const catalog = new CatalogService(self.options.registry, self.options.publicUrl!, {
                 requestScope: self.options.requestScope,
@@ -377,19 +414,8 @@ export class AuthElicitation {
                 content: [{ type: "text", text: JSON.stringify(structuredContent) }],
               };
             }
-            const { registry, vault, principal, publicUrl, canManage, unavailable } = self.options;
-            const connector = typeof id === "string" ? registry.getConnector(id) : undefined;
-            const recoverable = connector?.startAuth || (connector?.credential && self.options.credentialUi);
-            if (
-              typeof id !== "string" ||
-              !/^[a-z0-9_-]+$/.test(id) ||
-              !recoverable ||
-              !principal ||
-              !publicUrl ||
-              unavailable ||
-              !canManage(id)
-            )
-              return result;
+            const { vault, principal } = self.options;
+            if (!self.mayConnect(id) || !principal) return result;
             // Incapable hosts already received the shared explicit-authorization handoff.
             if (!capable) return result;
             if (blocked || !vault?.requestStateKey || !vault.seal || !vault.open) {
@@ -486,6 +512,76 @@ export class AuthElicitation {
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as AuthElicitation).options.requestScope)));
       },
       AuthElicitation.prototype.run,
+    );
+    registerAuthMethod(
+      AuthElicitation.prototype,
+      "refused",
+      function (action: keyof typeof REFUSED, state: AuthRequestState, force: unknown) {
+        const self = this as AuthElicitation;
+        return authAwait(
+          authFlow<ToolResult>(function* () {
+            const { code, message } = REFUSED[action];
+            const { connector: id, tool } = state;
+            if (!self.mayConnect(id)) return failure(code, message);
+            const { registry, publicUrl, canManage, unavailable, credentialHandoffUrl, routes, requestScope } =
+              self.options;
+            try {
+              // The signed state bound these arguments, so this is the restart the
+              // caller asked for. A pending consent must not be reset by it either.
+              const forced = tool === "authorize_connector" && force === true;
+              const predecessor = forced
+                ? (yield* upwardStep(
+                    authInvoke<{ predecessor?: string; completed: boolean }>(self, "browserProgress", [state]),
+                  )).predecessor
+                : undefined;
+              // The ordinary handoff, except that the link is the sealed form this
+              // client was already shown: the agent sees no principal in it.
+              const handoff = yield* upwardStep(
+                authCall<AuthorizationHandoff>(authorizationHandoff, [
+                  registry,
+                  publicUrl!,
+                  requestScope,
+                  {
+                    canManageAuth: canManage,
+                    credentialHandoffUrl,
+                    oauthConnectUnavailable: unavailable,
+                    routes,
+                    oauthConnectUrl: authMethod(() =>
+                      authInvoke<{ url: string; nonce: string }>(self.options, "connectLink", [
+                        id,
+                        forced && !predecessor,
+                        predecessor,
+                      ]).pipe(Effect.map((link) => link.url)),
+                    ),
+                  },
+                  { connector: id },
+                ]),
+              );
+              const url = handoff.authorizationUrl ?? handoff.operatorUrl;
+              if (!url) return failure(code, message);
+              if (handoff.authorizationUrl) sentSecretsForRequest(requestScope).mintedState(handoff.authorizationUrl);
+              return toolError(
+                {
+                  ...handoff,
+                  code,
+                  message,
+                  retryable: false,
+                  nextAction: {
+                    url,
+                    purpose: refusedPurpose(handoff.authorizationUrl ? "" : "for the operator to open, "),
+                  },
+                },
+                { ok: false },
+              );
+            } catch {
+              // A signing or storage failure cannot replace the refusal itself.
+              return failure(code, message);
+            }
+          }),
+          (this as AuthElicitation).options.requestSignal,
+        ).pipe(Effect.provideService(RequestScope, requestOwner((this as AuthElicitation).options.requestScope)));
+      },
+      AuthElicitation.prototype.refused,
     );
     registerAuthMethod(
       AuthElicitation.prototype,
