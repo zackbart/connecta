@@ -2,6 +2,7 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
@@ -168,6 +169,11 @@ describe("guest API contract (QuickJS executor)", () => {
 
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(readDeadlineExecutor);
+  });
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(executor.deadlineMs).toBe(30_000);
+    expect(executor.deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
   });
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {

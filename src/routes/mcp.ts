@@ -394,6 +394,7 @@ function toolkitRetired(logger: Logger, sentSecrets: SentSecrets): Response {
 function serveMcp(
   request: Request,
   requestSignal: AbortSignal,
+  requestStartedAt: number,
   requestScope: object,
   opts: ServerOptions,
   baseUrl: string,
@@ -514,6 +515,8 @@ function serveMcp(
         credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
         ...(activity ? { activity } : {}),
         defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
+        responseCeilingMs: opts.config.execute.watchdogMs,
+        requestStartedAt,
         maxProgramResultChars: opts.config.execute.maxResultChars,
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         discoveryConcurrency: opts.config.discovery.concurrency,
@@ -527,6 +530,7 @@ function serveMcp(
           baseUrl,
           requestScope,
           executor: opts.executor,
+          requestStartedAt,
           defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
           logger: opts.config.logger,
           ...(activity ? { activity } : {}),
@@ -1139,6 +1143,7 @@ export function createMcpRoute(opts: ServerOptions): {
             yield* serveMcp(
               localRequest,
               localAbort.signal,
+              startedAt,
               requestScope,
               opts,
               baseUrl,

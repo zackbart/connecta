@@ -52,16 +52,27 @@ interface WorkerExecutorOptions {
   admission?: AdmissionControllerOptions;
 }
 
+/**
+ * The guest deadline when `timeout` is unset: below `execute.watchdogMs`, and
+ * so below the 60 s MCP clients give one request. Upstream's own default is
+ * that 60 s, which races them.
+ */
+const DEFAULT_TIMEOUT_MS = 50_000;
+const DEFAULT_QUEUE_TIMEOUT_MS = 40_000;
+
 /** Loader-only upstream sandbox whose lease disposes handles at run end. */
 export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecutor {
-  // One pool per executor, so per isolate. A queued run may wait out one
+  const timeoutMs = options.timeout ?? DEFAULT_TIMEOUT_MS;
+  // One pool per executor, so per isolate. A queued run may wait most of a
   // default guest deadline: programs spend it awaiting host calls, and a
-  // five-second wait refused nearly every run queued behind one.
+  // five-second wait refused nearly every run queued behind one. The wait
+  // spends the request's response ceiling, so it stops short enough to leave
+  // the run time to work and the refusal time to reach the client.
   const admission = new AdmissionController(
     options.admission ?? {
       concurrency: 2,
       maxQueueSize: 8,
-      queueTimeoutMs: 60_000,
+      queueTimeoutMs: DEFAULT_QUEUE_TIMEOUT_MS,
       retryAfterMs: 1_000,
     },
   );
@@ -219,7 +230,7 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
       const location = exec(/connecta-guest\\.js:(\\d+):\\d+/, stack);
       return { result: undefined, error: message, logs: __logs, failure: {
         name, ...(failureId ? { failureId } : {}), ...(location ? { line: toNumber(location[1]) - 1 } : {}),
-        ...(err === timeoutError ? { timeout: { elapsedMs: ${options.timeout ?? 60_000}, deadlineMs: ${options.timeout ?? 60_000} } } : {})
+        ...(err === timeoutError ? { timeout: { elapsedMs: ${timeoutMs}, deadlineMs: ${timeoutMs} } } : {})
       } };`,
               );
               const preludes: string[] = [];
@@ -401,7 +412,7 @@ const {
                 try: () => {
                   const upstream = new DynamicWorkerExecutor({
                     loader,
-                    ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+                    timeout: timeoutMs,
                   }).execute(code, detached);
                   // The SDK's own result, which settles only after endUpstream(),
                   // carries nothing; the native evaluation below owns the outcome.
@@ -539,7 +550,7 @@ const {
   const acquireShell: AdmittingExecutor["acquire"] = (request) => runEdge(acquire(request));
   const executor: AdmittingExecutor = {
     name: "DynamicWorkerExecutor",
-    deadlineMs: options.timeout ?? 60_000,
+    deadlineMs: timeoutMs,
     acquire: acquireShell,
     execute: (code, providers) => runEdge(execute(code, providers)),
     admissionSnapshot: () => admission.snapshot(),

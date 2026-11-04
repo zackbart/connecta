@@ -9,6 +9,7 @@
 // neither module resolves — there the arm skips and the host-side clauses below
 // carry the file.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { describe, expect, it } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -486,6 +487,11 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
 
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(required(workerReadDeadlineExecutor));
+  });
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(required(workerExecutor).deadlineMs).toBe(50_000);
+    expect(required(workerExecutor).deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
   });
 
   it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {

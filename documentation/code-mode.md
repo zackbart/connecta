@@ -64,9 +64,9 @@ import { workerExecutor } from "@zackbart/connecta/worker";
 createConnecta({ executor: workerExecutor({ loader: env.LOADER }), readOnly: false /* … */ });
 ```
 
-The adapter uses only `loader` and an optional `timeout`. Its admission defaults
-are two active runs, eight queued runs, a 60-second queue deadline (the default
-guest deadline) and a one-second `retryAfterMs` hint. `admission` replaces all
+The adapter uses only `loader` and an optional `timeout` (default 50 s, `L3`). Its admission defaults
+are two active runs, eight queued runs, a 40-second queue deadline (which leaves a
+queued run time inside the response ceiling, `L3`) and a one-second `retryAfterMs` hint. `admission` replaces all
 four: `{ concurrency, maxQueueSize, queueTimeoutMs, retryAfterMs? }`, where an
 omitted `retryAfterMs` equals `queueTimeoutMs`. The pool belongs to the executor
 instance, so a Worker that builds one per isolate bounds each isolate, not the
@@ -144,9 +144,10 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), within
    `P2`/`X5`. Settle `execute()` on your own deadline; connecta stops waiting
    at `execute.watchdogMs` and reports the sandbox unresponsive (`L3`). Expose
-   that deadline as `deadlineMs`, a positive whole number of milliseconds, so
-   connecta can end reads before it and state it in the tool description.
-   Without it, reads run to `execute.watchdogMs`, so a slow one can end the run.
+   that deadline as `deadlineMs`, a positive whole number of milliseconds, below
+   `execute.watchdogMs`, so connecta can end reads before it and state it in the
+   tool description. Without it, reads end only just before `execute.watchdogMs`,
+   so a slow one can leave a slower program no time to finish.
 7. **Grant no ambient authority.** Never use `eval` or `node:vm`: sandboxing
    supplements connecta's boundary; every capability arrives through `fns`.
 
@@ -947,7 +948,9 @@ use `execute.hostCallTimeoutMs`. The `execute_code` description advertises the
 `connecta.call` default as `<n>s/host call`, or, when `calls.defaultTimeoutMs`
 differs, both deadlines, for example `25s/call (15s result/skill/read)`.
 A guest may request a longer individual call, but the sandbox
-and request ceilings still bound the whole run (`L3`). Timeout details are agent-facing;
+and request ceilings still bound the whole run (`L3`). A direct call's deadline, however
+it was set, ends at the response ceiling, `execute.watchdogMs` from the
+request's arrival, and states the deadline it ran under (`L3`). Timeout details are agent-facing;
 operator records retain only checked classifications and numeric facts.
 Result processing, including stash reservation, uses the same remaining call
 budget and request cancellation. If it cannot finish after a successful call,
@@ -966,13 +969,14 @@ appear in `timeouts`, bounded to ten entries.
 **L3.** Every execution runs under a wall-clock deadline that includes time
 spent waiting on host calls. Expiry ends the run with an execution error and no
 partial result; the deadline's length is executor configuration (`X1`), which
-an executor publishes as `deadlineMs` (QuickJS 30 s, Dynamic Worker 60 s by
+an executor publishes as `deadlineMs` (QuickJS 30 s, Dynamic Worker 50 s by
 default).
 
 Reads stop before that deadline so one slow read costs only itself. Each
 `connecta.call` read, `read`, `result` and `skill` runs under the smaller of its
 own deadline (`L4`) and the time left until the run deadline minus a margin of
-1 s or a tenth of the deadline, whichever is less; scoped `search` and `describe`
+1 s or a tenth of the deadline, whichever is less, and never past the same margin
+before the response ceiling below; scoped `search` and `describe`
 are bounded the same way. Those clocks start before the executor's, so they end
 early rather than late. A read that reaches its cap fails with a retryable
 `timeout` the program can catch, so `Promise.allSettled` keeps every result that
@@ -990,14 +994,38 @@ could not reach the program, so a known "not sent" is worth more than a write
 only the final counts could report. It spends no write budget and adds nothing
 to `writes`. Send it again in a new program.
 
-Above the run deadline sits a ceiling connecta enforces outside the sandbox, `execute.watchdogMs`
-(120 s by default, above both executors' own deadlines), because an executor's
-deadline may live inside the sandbox it is meant to stop: a wedged Dynamic
-Worker never fires its in-isolate timer. A run whose executor has not settled
-by the ceiling ends as a non-retryable `timeout` whose message calls
-the sandbox unresponsive, with no partial result, and its admission lease is
-released, so wedged runs cannot fill the code pool. Raising an executor's
-deadline past the ceiling means raising the ceiling too.
+Above the run deadline sits the response ceiling, `execute.watchdogMs` (55 s by
+default, above both executors' own deadlines). Connecta enforces it outside the
+sandbox, because an executor's deadline may live inside the sandbox it is meant
+to stop: a wedged Dynamic Worker never fires its in-isolate timer. The ceiling
+counts from the inbound request's arrival, so time in the request and code
+queues spends it, and it also caps every direct call. A queue wait still running at the ceiling is refused as a retryable
+`executor_overloaded`.
+
+A run whose executor has passed its own deadline, or published none, by the ceiling ends as a
+non-retryable `timeout` whose message calls the sandbox unresponsive, and its
+admission lease is released, so wedged runs cannot fill the code pool. A run that
+reaches the ceiling first, because it queued or because its executor's deadline
+is set past the ceiling, ends as a retryable `timeout` at
+`details.stage: "response ceiling"`. Neither has a partial result. Each still
+carries `hostCalls`, and `writes` when the program sent any. A write still on the
+wire reaches its deadline at the ceiling and makes the result
+`write_outcome_unknown`, once, with no replay (`W9`).
+
+The ceiling exists because MCP clients abandon a request at about 60 s, and a client's
+timeout tells the agent nothing: no typed error, no counts, no write outcome.
+Connecta answers each `tools/call` as one JSON response, so nothing reaches the
+client until the run ends, and the client's per-request timer runs for all of it. Claude
+Code's HTTP transport times each request at 60 s unless `MCP_TOOL_TIMEOUT` or a
+server's `timeout` is higher; Codex's `tool_timeout_sec` defaults to 60 s, and
+the MCP TypeScript SDK's request timeout defaults to 60 s. The default leaves 5 s of that
+to finish result processing and reach the client. Raise it only when every client
+of the deployment allows longer. Then set the client's limit first, keep
+`execute.watchdogMs` a margin below it, and raise any executor deadline
+(`quickJsExecutor({ timeoutMs })`, `workerExecutor({ timeout })`) to stay below
+`execute.watchdogMs`. Construction warns when an executor's deadline does not.
+Cloudflare sets no wall-clock limit on an HTTP Worker while its client stays
+connected, so neither figure is a platform limit.
 
 **L4.** Per-execution bounds that are contract, identical in both executors
 because connecta enforces them above the sandbox:
@@ -1267,7 +1295,7 @@ removed. `W1`–`W8` and `W11` remain retired.
 Documented divergences, with reasons. Everything else must match.
 
 **X1. Deadline default.** QuickJS defaults to 30 s wall clock and terminates the
-child; the Dynamic Worker defaults to 60 s and races the program against an
+child; the Dynamic Worker defaults to 50 s and races the program against an
 in-isolate timer. Both satisfy `L3`; the numbers are each executor's
 configuration, published as `deadlineMs`, and the error text differs.
 
@@ -1421,7 +1449,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `Y1`, `Y2`, `Y3`       | `test/guest-api-contract.test.ts` (one attempt per call, retryable flags by code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `Y4`                   | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `L1`, `L2`             | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease)                                                                                                                                                                                                                                                                                     |
-| `L3`, `X1`             | `test/guest-api-contract.test.ts` (short-deadline executors, read caps, write exemption and the write gate), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value)                                                                                                                                                                                                                                                                                                                           |
+| `L3`, `X1`             | `test/guest-api-contract.test.ts` (short-deadline executors, read caps, write exemption, the write gate and a write on the wire at the ceiling), `test/request-admission.test.ts` (a 65 s downstream behind a 60 s client on a fake clock, with the old ceiling as its control), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value)                                                                                                                                                       |
 | `L4`, `L8`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors)                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `L5`, `L7`, `X2`       | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue), `test/executor-requests.test.ts` (queued handoffs and refusal shape across separate workerd requests), `test/request-context.node.test.ts` (queued and QuickJS host-call request context)                                                                                                                                                                                                                                                       |
 | `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/storage-sql-d1.test.ts` (SQL stash and native D1 fault probes), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message)                                                                                                                                                                                                        |

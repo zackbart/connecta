@@ -81,16 +81,28 @@ const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
  */
 const EXECUTE_WATCHDOG_MS = CONFIG_DEFAULTS.execute.watchdogMs;
 /**
- * How long before the executor's own deadline a program's reads stop: the time
- * the guest gets to receive their `timeout` and return what it has.
+ * How long before a deadline a program's reads stop: the time the guest gets
+ * to receive their `timeout` and return what it has.
  */
 const READ_DEADLINE_MARGIN_MS = 1_000;
+const readMarginMs = (deadlineMs: number) => Math.min(READ_DEADLINE_MARGIN_MS, Math.floor(deadlineMs / 10));
 
-/** Reads stop this long into a run, leaving its guest time to finish. */
-function readWindowMs(executor: Executor, watchdogMs: number): number {
+/**
+ * When a run's reads stop: before the executor's deadline, measured from now,
+ * and before the response ceiling, which queueing may already have spent.
+ */
+function readDeadlineAt(executor: Executor, ceiling: ResponseCeiling): number {
+  const beforeCeiling = ceiling.at - readMarginMs(ceiling.ms);
   const { deadlineMs } = executor;
-  if (deadlineMs === undefined) return watchdogMs;
-  return Math.min(watchdogMs, deadlineMs - Math.min(READ_DEADLINE_MARGIN_MS, Math.floor(deadlineMs / 10)));
+  if (deadlineMs === undefined) return beforeCeiling;
+  return Math.min(beforeCeiling, Date.now() + deadlineMs - readMarginMs(deadlineMs));
+}
+
+/** The time by which a request must have its answer, counted from its arrival (`execute.watchdogMs`). */
+interface ResponseCeiling {
+  ms: number;
+  at: number;
+  startedAt: number;
 }
 /**
  * Room to name every connector of a typical deployment. Past it, complete
@@ -1339,11 +1351,10 @@ function awaitExecutor<A>(
   signal: AbortSignal,
   options: {
     late?: (value: A) => void;
-    watchdog?: { ms: number; logger: Logger };
+    watchdog?: { ceiling: ResponseCeiling; executorDeadlineAt: number | undefined; logger: Logger };
     terminal?: Effect.Effect<never, unknown>;
   } = {},
 ): Effect.Effect<A, unknown> {
-  const started = Date.now();
   const contenders: Array<Effect.Effect<A, unknown>> = [
     typeof start !== "function"
       ? start
@@ -1377,19 +1388,32 @@ function awaitExecutor<A>(
   const { watchdog } = options;
   if (watchdog) {
     contenders.push(
-      Effect.sleep(Duration.millis(watchdog.ms)).pipe(
+      untilCeiling(watchdog.ceiling).pipe(
         Effect.andThen(
           Effect.suspend(() => {
+            const { ms: deadlineMs, startedAt } = watchdog.ceiling;
+            const elapsedMs = Date.now() - startedAt;
+            // Time ran out before the executor's own deadline could: queueing
+            // spent it, or that deadline is set past the ceiling. Nothing is wedged.
+            if (watchdog.executorDeadlineAt !== undefined && Date.now() < watchdog.executorDeadlineAt) {
+              return Effect.fail(
+                new InvocationFailure({
+                  code: "timeout",
+                  message: `Operation "execute_code" timed out during response ceiling after ${elapsedMs}ms (effective deadline ${deadlineMs}ms). Return sooner, or do less in one program.`,
+                  retryable: true,
+                  details: { operation: "execute_code", stage: "response ceiling", elapsedMs, deadlineMs },
+                }),
+              );
+            }
             watchdog.logger.warn("[connecta] execute_code executor did not settle; run abandoned", {
-              watchdogMs: watchdog.ms,
+              watchdogMs: deadlineMs,
             });
-            const elapsedMs = Date.now() - started;
             return Effect.fail(
               new InvocationFailure({
                 code: "timeout",
-                message: `Operation "execute_code" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${watchdog.ms}ms); sandbox unresponsive.`,
+                message: `Operation "execute_code" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${deadlineMs}ms); sandbox unresponsive.`,
                 retryable: false,
-                details: { operation: "execute_code", stage: "sandbox watchdog", elapsedMs, deadlineMs: watchdog.ms },
+                details: { operation: "execute_code", stage: "sandbox watchdog", elapsedMs, deadlineMs },
               }),
             );
           }),
@@ -1399,6 +1423,10 @@ function awaitExecutor<A>(
   }
   return Effect.raceAllFirst(contenders);
 }
+
+/** Waits until the ceiling; already past it, one timer turn. */
+const untilCeiling = (ceiling: ResponseCeiling) =>
+  Effect.suspend(() => Effect.sleep(Duration.millis(Math.max(1, ceiling.at - Date.now()))));
 
 /**
  * The run's own signal, aborted however the run ends. It follows the
@@ -1431,10 +1459,27 @@ function runSignal(caller: AbortSignal | undefined): Effect.Effect<AbortSignal, 
  * executor, so this request's providers and program run here, never in the
  * releasing request, which workerd refuses.
  */
-function leased(executor: AdmittingExecutor, signal: AbortSignal): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
+function leased(
+  executor: AdmittingExecutor,
+  signal: AbortSignal,
+  ceiling: ResponseCeiling,
+): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
   return Effect.acquireRelease(
     awaitExecutor(() => executor.acquire({ signal, wait: true }), signal, {
       late: (lease) => lease.release(),
+      // A queue configured to outwait the client still answers it.
+      terminal: untilCeiling(ceiling).pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            Effect.fail(
+              new ExecutorAdmissionError(
+                "executor_overloaded",
+                `Executor admission timed out after ${Date.now() - ceiling.startedAt}ms.`,
+              ),
+            ),
+          ),
+        ),
+      ),
     }),
     (lease) => Effect.sync(() => lease.release()),
   );
@@ -1444,6 +1489,8 @@ function leased(executor: AdmittingExecutor, signal: AbortSignal): Effect.Effect
 interface RunnerConfig {
   /** An HTTP request shares its scope with every registered tool. */
   requestScope?: object | undefined;
+  /** When the inbound request arrived; the response ceiling counts from it. Otherwise from the call. */
+  requestStartedAt?: number | undefined;
   defaultToolTimeoutMs?: number | undefined;
   discoveryConcurrency?: number | undefined;
   probeTimeoutMs?: number | undefined;
@@ -1513,6 +1560,8 @@ export function createExecuteTool(
       // closing it releases the lease and then aborts the signal, so
       // nothing the run started outlives the request.
       const run = Effect.gen(function* () {
+        const startedAt = config.requestStartedAt ?? Date.now();
+        const ceiling: ResponseCeiling = { ms: watchdog.ms, at: startedAt + watchdog.ms, startedAt };
         // Per-call signals cancel individual fetches, but do not close the
         // shared transport. Close its scope after the run's signal ends, on
         // every exit, using the existing bounded cleanup and deferred tail.
@@ -1533,7 +1582,7 @@ export function createExecuteTool(
             (elapsed) => {
               if (diagnostics) diagnostics.admissionMs = elapsed;
             },
-            leased(executor, signal),
+            leased(executor, signal, ceiling),
           );
           if ((lease.waitMs ?? 0) > 0) {
             logger.debug("[connecta] execute_code admitted after queue wait", {
@@ -1565,8 +1614,8 @@ export function createExecuteTool(
                 maxHostCalls: config.maxHostCalls,
                 hostCallTimeoutMs,
                 defaultToolTimeoutMs: config.defaultToolTimeoutMs,
-                programDeadlineAt: Date.now() + watchdog.ms,
-                readDeadlineAt: Date.now() + readWindowMs(executor, watchdog.ms),
+                programDeadlineAt: ceiling.at,
+                readDeadlineAt: readDeadlineAt(executor, ceiling),
                 defer: config.defer,
                 readOnly: config.readOnly,
                 maxWrites: config.maxWrites,
@@ -1611,7 +1660,20 @@ export function createExecuteTool(
               Effect.mapError((error) => sentSecrets.redact(error)),
             ),
             signal,
-            { watchdog, terminal: Deferred.await(terminal) },
+            {
+              watchdog: {
+                ceiling,
+                // With no published deadline, a run that queued has not shown it is wedged.
+                executorDeadlineAt:
+                  executor.deadlineMs !== undefined
+                    ? Date.now() + executor.deadlineMs
+                    : (admitted?.waitMs ?? 0) > 0
+                      ? Infinity
+                      : undefined,
+                logger: watchdog.logger,
+              },
+              terminal: Deferred.await(terminal),
+            },
           ).pipe(
             Effect.ensuring(
               Effect.suspend(() => {
@@ -2003,6 +2065,7 @@ export function registerExecuteTool(
     client?: McpClientContext | undefined;
     requestSignal?: AbortSignal | undefined;
     requestScope?: object | undefined;
+    requestStartedAt?: number | undefined;
     discoveryConcurrency?: number | undefined;
     /**
      * The deployment's configured per-connector probe deadline. Programs probe
@@ -2062,6 +2125,7 @@ export function registerExecuteTool(
     maxWrites,
     maxResultChars: ctx.maxResultChars,
     requestScope: ctx.requestScope,
+    requestStartedAt: ctx.requestStartedAt,
     routes: ctx.routes,
   });
   server.registerTool(

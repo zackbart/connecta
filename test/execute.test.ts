@@ -342,6 +342,33 @@ describe("execute_code run deadline", () => {
     expect(required(required(seen).details).deadlineMs).toBeLessThanOrEqual(270);
   });
 
+  it("L3: a read stops before a ceiling that queueing already spent", async () => {
+    let seen: CallErrorDetails | undefined;
+    const execute = createExecuteTool(
+      makeRegistry([hanging]),
+      "https://example.test",
+      running(5_000, async (fns) => {
+        seen = (await fns.call!("slow.read", {}, { timeoutMs: 600_000 }).catch(failure)) as CallErrorDetails;
+      }),
+      silentLogger,
+      undefined,
+      { watchdogMs: 2_000, requestStartedAt: Date.now() - 1_700 },
+    );
+    const out = await execute({ code: "async () => {}" });
+    expect(out.isError, JSON.stringify(out.structuredContent)).toBeFalsy();
+    expect(required(seen)).toMatchObject({ code: "timeout", retryable: true });
+    expect(required(required(seen).details).deadlineMs).toBeLessThanOrEqual(300);
+  });
+
+  it("INV-11: warns when an executor's deadline does not end before the ceiling", () => {
+    const warn = vi.fn();
+    makeDeployment({
+      logger: { ...silentLogger, warn },
+      executor: { deadlineMs: 55_000, execute: async () => ({ result: null }) },
+    });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("execute.watchdogMs"));
+  });
+
   it("L3: an executor that publishes no deadline keeps the watchdog cap", async () => {
     let seen: CallErrorDetails | undefined;
     const execute = createExecuteTool(
