@@ -235,6 +235,22 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "p5-absent-github": { route: [], outcome: ["no-lookalike-call", "states-absence", "structured-answer"] },
   "p5-known-read-routing": { route: ["direct-read"], outcome: ["one-read", "reads-only"] },
   "p5-connecta-read": { route: [], outcome: ["program-resource-read", "reads-only"] },
+  // Physical state and ledger evidence only, reached by any route on any arm.
+  "discovery-nohint-overdue": { route: [], outcome: ["reads-only"] },
+  "discovery-nohint-seats": { route: [], outcome: ["reads-only"] },
+  "discovery-lookalike-crm": { route: [], outcome: ["no-lookalike-call", "reads-only"] },
+  "discovery-lookalike-invoices": { route: [], outcome: ["no-lookalike-call", "reads-only"] },
+  "discovery-write-rollback": { route: [], outcome: ["no-lookalike-call", "state", "only-requested-writes"] },
+  "discovery-guidance-description": {
+    route: [],
+    outcome: ["prerequisite-first", "state", "only-requested-writes"],
+  },
+  "discovery-guidance-guide": { route: [], outcome: ["prerequisite-first", "state", "only-requested-writes"] },
+  "discovery-absent-read": { route: [], outcome: ["states-absence", "reads-only"] },
+  "discovery-absent-write": { route: [], outcome: ["states-absence", "zero-writes"] },
+  "discovery-failing-partial": { route: [], outcome: ["reports-limitation", "no-denial", "reads-only"] },
+  "discovery-failing-hung": { route: [], outcome: ["reports-limitation", "no-denial", "reads-only"] },
+  "discovery-join-unnamed": { route: [], outcome: ["reads-only"] },
 };
 const OUTER: Record<string, Grading> = {
   "conversation-completed": "outcome",
