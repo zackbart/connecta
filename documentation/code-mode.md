@@ -1002,7 +1002,7 @@ counts from the inbound request's arrival, so time in the request and code
 queues spends it, and it also caps every direct call. A queue wait still running at the ceiling is refused as a retryable
 `executor_overloaded`.
 
-A run whose executor has passed its own deadline, or published none, by the ceiling ends as a
+A run whose executor has passed its own deadline by the ceiling, or published none and never queued, ends as a
 non-retryable `timeout` whose message calls the sandbox unresponsive, and its
 admission lease is released, so wedged runs cannot fill the code pool. A run that
 reaches the ceiling first, because it queued or because its executor's deadline
