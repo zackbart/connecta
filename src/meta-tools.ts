@@ -12,7 +12,7 @@ import type { DownstreamInputResult } from "./downstream-input-context.js";
 import type { AuthorizeConnectorResult } from "./authorization-handoff.js";
 import { authCall, authInvoke, authFlow, authMethod, authStorage, registerAuth } from "./auth/native.js";
 import { registryProgram } from "./runtime/registry.js";
-import { runEdge } from "./runtime/run.js";
+import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { authorizationHandoff, authorizeConnector, bindAuthorizationHandoffs } from "./authorization-handoff.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
 import type { AuthElicitation } from "./auth-elicitation.js";
@@ -24,7 +24,6 @@ import { advertisedSchema } from "./advertised-schema.js";
 import {
   boundedDiscoveryText,
   CatalogService,
-  DEFAULT_SEARCH_LIMIT,
   DiscoveryPolicyError,
   flatSearchResult,
   MAX_DESCRIBE_ADDRESSES,
@@ -33,8 +32,16 @@ import {
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
-import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
+import {
+  boundedEchoText,
+  clipText,
+  ConnectorCallError,
+  MAX_TOOL_ERROR_BYTES,
+  msg,
+  type CallErrorDetails,
+} from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
+import { RESULT_ENVELOPE_V4, type HeldResults } from "./result-seal.js";
 import { guardExecuteResultValue, MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import { InvocationService, type InvocationTiming } from "./invocation.js";
 import {
@@ -47,7 +54,7 @@ import {
 } from "./registry.js";
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
-import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, SKILLS_OUTPUT } from "./meta-output.js";
+import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
@@ -169,8 +176,8 @@ function alignEndToCharBoundary(bytes: Uint8Array, offset: number, end: number, 
 }
 
 /** Every readable stash carries host-admitted bindings; older entries fail closed. */
-const RESULT_ENVELOPE_V4 = "connecta-result-v4:";
 const RESULT_ENVELOPE_V4_HEADER = /^connecta-result-v4:([A-Za-z0-9+/=]+):(\d+):(\d+):(\d+):/;
+const RESULT_REFUSED_V4_HEADER = /^connecta-result-refused-v4:([A-Za-z0-9+/=]+):$/;
 
 export type { ProgramResultDependency } from "./registry.js";
 
@@ -205,6 +212,22 @@ const RESULT_MAX_CHUNKS = 32;
 /** Chunk width for a result of `totalBytes`, always a multiple of three. */
 function resultChunkBytes(totalBytes: number): number {
   return Math.max(RESULT_CHUNK_BYTES, Math.ceil(totalBytes / RESULT_MAX_CHUNKS / 3) * 3);
+}
+
+const isBinary = (item: unknown) => ArrayBuffer.isView(item) || item instanceof ArrayBuffer;
+
+/**
+ * JSON text, and whether a binary value went into it: as written (the holder's value, before
+ * any toJSON) or as a toJSON returned it. Whatever JSON makes of one, redaction checks its bytes
+ * only while they are binary. Text results have no binary values to lose.
+ */
+function serializedWithBinary(value: unknown): { text: string; binary: boolean } {
+  let binary = false;
+  const text = JSON.stringify(value, function (this: Record<string, unknown>, key: string, item: unknown) {
+    binary ||= isBinary(this[key]) || isBinary(item);
+    return item;
+  });
+  return { text: text === undefined ? String(value) : text, binary };
 }
 
 /**
@@ -254,6 +277,45 @@ interface ResultStash {
   pagingTool?: "read_result";
   /** `execute.maxResultChars` of the program that runs nextAction. Default 24_000. */
   programChars?: number;
+  /** `execute.maxHostCalls` of a program that loops over this result. Default 20. */
+  programHostCalls?: number;
+  /**
+   * A program's result: the run seals it at its end, so its header waits in `results`.
+   * `passed` is the secret set's revision from before the bytes were checked.
+   */
+  held?: { results: HeldResults; passed: number; format: "json" | "text"; binary: boolean };
+}
+
+/** Calls a whole-result loop leaves the program, so it can also act on what it finds. */
+const LOOP_SPARE_HOST_CALLS = 2;
+
+/** A running program's `execute.maxHostCalls`, and how many of them remain. */
+interface ProgramHostCalls {
+  max: number;
+  left: number;
+}
+
+/**
+ * Host calls to read every page of a retained result at the default page size.
+ * A page can stop up to three bytes short to keep a character whole, so the
+ * count assumes every one does.
+ */
+const resultPages = (cap: number, totalBytes: number) =>
+  Math.ceil(totalBytes / Math.max(1, Math.min(cap, PROGRAM_RESULT_PAGE_BYTES) - 3));
+
+/** Whether a program with this many calls left can walk every page of a retained result. */
+const loopFits = (cap: number, totalBytes: number, calls: number) =>
+  resultPages(cap, totalBytes) + LOOP_SPARE_HOST_CALLS <= calls;
+
+/**
+ * A read handle's advice, sized to the calls its program has left. Overrunning
+ * them ends the run and discards everything it read, so a result that can't fit
+ * pages across programs, which carry the offset and reduction between them.
+ */
+function readHandleHint(id: string, cap: number, totalBytes: number, calls: ProgramHostCalls): string {
+  if (loopFits(cap, totalBytes, calls.left))
+    return "Loop connecta.result(handle, { offset }) until !hasMore, setting offset to nextOffset.";
+  return `Needs up to ${resultPages(cap, totalBytes)} host calls; this program has ${calls.left} left, and overrunning returns nothing. Call connecta.result(${JSON.stringify(id)}, { offset }) at most ${Math.max(0, calls.left - LOOP_SPARE_HOST_CALLS)} times here and ${Math.max(1, calls.max - LOOP_SPARE_HOST_CALLS)} per new program, return your reduction and nextOffset, and continue from both within ${RESULT_TTL_SECONDS / 60} minutes.`;
 }
 
 /**
@@ -264,6 +326,27 @@ interface ResultStash {
 function programPageBytes(results: ResultStash): number {
   const fits = Math.floor(((results.programChars ?? MAX_EXECUTE_RESULT_CHARS) - 1024) / 6);
   return Math.max(4, Math.min(fits, results.cap, PROGRAM_RESULT_PAGE_BYTES));
+}
+
+/** A retained result its run could not seal: a typed answer, and repeating this page cannot help. */
+function resultNotRetained(write: boolean, id: string): CallErrorDetails {
+  const label = `"${boundedEchoText(id, 96)}"`;
+  return write
+    ? {
+        code: "result_not_retained",
+        message: `Result ${label} is not retrievable: it was not retained past the run that produced it. ${WRITE_ALREADY_RAN}`,
+        retryable: false,
+        nextAction: {
+          action: "recover_result",
+          purpose: "Read the write's target for its outcome, or report the missing output. Never repeat the write.",
+        },
+      }
+    : {
+        code: "result_not_retained",
+        message: `Result ${label} was not retained past the run that produced it. Rerun the read for a fresh result.`,
+        retryable: false,
+        nextAction: { action: "recover_result", purpose: "Rerun the read in a new call or program." },
+      };
 }
 
 /** Opens a write's notice, ahead of any paging instruction. */
@@ -302,7 +385,7 @@ type PreviewShape = { kind: "prefix"; bytes: number } | { kind: "text-of-envelop
 const readReduceFirst = (routes: AgentRouteNames) =>
   `To find something specific, repeat this read inside ${routes.program} with connecta.call and filter or search the result there, returning only what matters`;
 
-function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewShape): string {
+function pagingHint(results: ResultStash, id: string, totalBytes: number, preview: PreviewShape): string {
   if (results.pagingTool === "read_result") {
     const shown =
       preview.kind === "prefix"
@@ -321,6 +404,11 @@ function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewSh
         : preview.kind === "text-of-envelope"
           ? ["Its text follows.", `to read the full ${totalBytes}-byte content array as JSON, page it`]
           : [`The result is ${totalBytes} bytes.`, "to read it in full, page it"];
+    // Stop fetching again when one program can reach every retained byte: the reduction
+    // still sees the whole value, and the downstream is asked only once. Beyond that the
+    // loop would end in budget_exceeded with nothing returned, so a program repeats the read.
+    if (loopFits(results.cap, totalBytes, results.programHostCalls ?? CONFIG_DEFAULTS.execute.maxHostCalls))
+      return `${shown} The full result is retained for ${RESULT_TTL_SECONDS / 60} minutes. To find something in it, loop connecta.result(${JSON.stringify(id)}, { offset }) from offset 0 until !hasMore, setting offset to nextOffset, in one ${results.routes.program} program; filter there and return the matches. To read on, run nextAction.`;
     return `${shown} ${readReduceFirst(results.routes)}; ${full} with connecta.result using nextAction.`;
   }
   const body =
@@ -382,15 +470,39 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
       // reader below maps a byte offset back to chunk index and base64 quad.
       const chunkBytes = resultChunkBytes(totalBytes);
       const binding = base64Of(enc.encode(JSON.stringify(results.binding)));
-      const chunks = [`${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`];
+      const head = `${RESULT_ENVELOPE_V4}${binding}:${totalBytes}:${chunkBytes}:${results.cap}:`;
+      const chunks = [head];
       for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
         const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
         if (offset === 0) chunks[0] += chunk;
         else chunks.push(chunk);
       }
-      if (!(yield* upwardStep(authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS])))) {
-        throw new Error("Result stash capacity exhausted");
-      }
+      const held = results.held;
+      // Taken before the booking, so a held header can never outlive the chunks it describes.
+      const expiresAtMs = Date.now() + RESULT_TTL_SECONDS * 1000;
+      if (held && !held.results.accepts()) throw new Error("The run already sealed its results");
+      const stashed = yield* upwardStep(
+        authInvoke<boolean>(results, "set", [id, chunks, RESULT_TTL_SECONDS, ...(held ? [{ holdFirst: true }] : [])]),
+      );
+      if (!stashed) throw new Error("Result stash capacity exhausted");
+      if (
+        held &&
+        !held.results.add({
+          id,
+          binding,
+          total: totalBytes,
+          chunkBytes,
+          cap: results.cap,
+          first: chunks[0]!.slice(head.length),
+          chunks: chunks.length,
+          passed: held.passed,
+          format: held.format,
+          binary: held.binary,
+          write: results.binding.classification === "write",
+          expiresAtMs,
+        })
+      )
+        throw new Error("The run already sealed its results");
     } catch {
       // Paging is advisory after a completed call, including an approved write.
       // Neither backend prose nor a retry hint belongs in this successful result.
@@ -413,7 +525,7 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
       truncated: true,
       resultId: id,
       totalBytes,
-      hint: pagingHint(results, totalBytes, preview),
+      hint: pagingHint(results, id, totalBytes, preview),
       nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
       nextAction:
         results.pagingTool === "read_result"
@@ -442,9 +554,24 @@ export function pageProgramResult(
   format: "json" | "text",
   secrets: SentSecrets,
   requestScope: object,
+  hostCalls: ProgramHostCalls,
   wireBytes = PROGRAM_RESULT_WIRE_BYTES,
+  held?: HeldResults,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
-  return runEdge(pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, wireBytes));
+  return runEdge(
+    pageProgramResultNative(
+      registry,
+      baseUrl,
+      resolved,
+      value,
+      format,
+      secrets,
+      requestScope,
+      hostCalls,
+      wireBytes,
+      held,
+    ),
+  );
 }
 const pageProgramResultNative = /* @__PURE__ */ registerAuth(
   pageProgramResult,
@@ -456,15 +583,20 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
     format: "json" | "text",
     secrets: SentSecrets,
     requestScope: object,
+    hostCalls: ProgramHostCalls,
     wireBytes: number = PROGRAM_RESULT_WIRE_BYTES,
+    held?: HeldResults,
   ) {
     return authFlow<{ data: unknown; format: "json" | "text" } | ProgramResultHandle>(function* () {
+      const passed = held?.secrets.revision ?? 0;
       const data = secrets.redact(value);
       const wire = JSON.stringify({ data, format });
       if (enc.encode(wire).length <= wireBytes) return { data, format };
-      const text = secrets.text(format === "text" ? String(data) : serializeResultText(data));
+      const serialized = format === "text" ? { text: String(data), binary: false } : serializedWithBinary(data);
+      const text = secrets.text(serialized.text);
       const bytes = enc.encode(text);
       const write = resolved.definition.classification !== "read";
+      const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes);
       const notice = yield* upwardStep(
         stashResult(
           bytes,
@@ -479,9 +611,10 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
               classification: write ? "write" : "read",
             },
             write,
-            cap: resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes),
-            set: authMethod((id: string, chunks: string[], ttl: number) =>
-              registryProgram(registry, "stashResult", id, chunks, ttl),
+            cap,
+            ...(held ? { held: { results: held, passed, format, binary: serialized.binary } } : {}),
+            set: authMethod((id: string, chunks: string[], ttl: number, options?: { holdFirst?: boolean }) =>
+              registryProgram(registry, "stashResult", id, chunks, ttl, options),
             ),
             warn: () =>
               logFailure(
@@ -501,7 +634,9 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
         totalBytes: bytes.length,
         truncated: true,
         hint: notice.resultId
-          ? `${write ? WRITE_ALREADY_RAN + " " : ""}Page this result with connecta.result(handle); do not repeat the call for output.`
+          ? write
+            ? `${WRITE_ALREADY_RAN} Page this result with connecta.result(handle); do not repeat the call for output.`
+            : readHandleHint(notice.resultId, cap, bytes.length, hostCalls)
           : notice.hint,
       };
     });
@@ -519,6 +654,8 @@ export function guardProgramReturn(
   maxChars: number,
   completedWrite: boolean,
   programChars?: number,
+  held?: HeldResults,
+  storeBy?: number,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -531,6 +668,8 @@ export function guardProgramReturn(
       maxChars,
       completedWrite,
       programChars,
+      held,
+      storeBy,
     ),
   );
 }
@@ -546,11 +685,15 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     maxChars: number,
     completedWrite: boolean,
     programChars?: number,
+    held?: HeldResults,
+    // Stalled storage costs the paging, never the answer.
+    storeBy?: number,
   ) {
     return authFlow<unknown>(function* () {
-      const serialized = serializeResultText(value);
-      if (serialized.length <= maxChars) return value;
-      const text = secrets.text(serialized);
+      if (serializeResultText(value).length <= maxChars) return value;
+      const passed = held?.secrets.revision ?? 0;
+      const serialized = serializedWithBinary(value);
+      const text = secrets.text(serialized.text);
       const bytes = enc.encode(text);
       const write = dependencies.some((dependency) => dependency.classification === "write");
       const cap = Math.min(
@@ -572,8 +715,14 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         write: completedWrite,
         cap,
         ...(programChars !== undefined ? { programChars } : {}),
-        set: authMethod((id: string, chunks: string[], ttl: number) =>
-          registryProgram(registry, "stashResult", id, chunks, ttl),
+        ...(held ? { held: { results: held, passed, format: "json" as const, binary: serialized.binary } } : {}),
+        set: authMethod((id: string, chunks: string[], ttl: number, options?: { holdFirst?: boolean }) =>
+          storeBy === undefined
+            ? registryProgram(registry, "stashResult", id, chunks, ttl, options)
+            : withDeadlineEffect(() => registryProgram(registry, "stashResult", id, chunks, ttl, options), {
+                timeoutMs: Math.max(1, storeBy - Date.now()),
+                timeoutError: new Error("Result storage did not answer."),
+              }),
         ),
         warn: () => logFailure(logger, "result paging unavailable", failureRecord({})),
       };
@@ -836,6 +985,10 @@ function metaToolsForRequest(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number | undefined;
+    /** `execute.watchdogMs`: no call's deadline runs past this, counted from `requestStartedAt`. */
+    responseCeilingMs?: number | undefined;
+    /** When the inbound request arrived. Otherwise the ceiling counts from each call. */
+    requestStartedAt?: number | undefined;
     /** The endpoint refuses every write call and write page, and search and describe omit write tools. */
     readOnly?: boolean | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
@@ -854,6 +1007,8 @@ function metaToolsForRequest(
     defer?: DeferredWork | undefined;
     /** Request identity shared by credential redaction, paging, and downstream invocation. */
     requestScope?: object | undefined;
+    /** The running program's unsealed results, which only its own pages may read. */
+    heldResults?: HeldResults | undefined;
     onResultRead?: (dependencies: ProgramResultDependency[]) => void;
     downstreamInput?: boolean;
     /** A native endpoint without execute_code: truncation notices page with read_result. */
@@ -862,6 +1017,8 @@ function metaToolsForRequest(
     routes?: AgentRouteNames | undefined;
     /** `execute.maxResultChars`, which sizes the pages truncation notices ask programs to read. */
     maxProgramResultChars?: number | undefined;
+    /** `execute.maxHostCalls`, which decides whether a notice can offer a whole-result loop. */
+    maxProgramHostCalls?: number | undefined;
     activitySource?: "native" | undefined;
   } = {},
 ) {
@@ -869,6 +1026,7 @@ function metaToolsForRequest(
   const globalCap = registry.maxResultBytes;
   const defaultToolTimeoutMs =
     normalizeTimeoutMs(opts.defaultToolTimeoutMs) ?? CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
+  const responseCeilingMs = normalizeTimeoutMs(opts.responseCeilingMs) ?? CONFIG_DEFAULTS.execute.watchdogMs;
   const probeTimeoutMs = normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
   const discoveryConcurrency = resolveDiscoveryConcurrency(opts.discoveryConcurrency);
   // createMetaTools() is called once per inbound MCP request. Sharing this
@@ -938,7 +1096,22 @@ function metaToolsForRequest(
   }
   const runCallNative = /* @__PURE__ */ registerAuth(runCall, function (call: CallArgs, source: ActivityCallSource) {
     return authFlow<RunCallOutcome>(function* () {
-      const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
+      // A deadline past the client's would trade a typed result for its transport timeout.
+      const now = Date.now();
+      const ceilingAt = (opts.requestStartedAt ?? now) + responseCeilingMs;
+      const remainingMs = ceilingAt - now;
+      const timeoutMs = Math.min(normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs, Math.max(1, remainingMs));
+      const pastCeiling = (): CallErrorDetails => ({
+        code: "timeout",
+        message: `This request used its ${responseCeilingMs}ms response ceiling before ${boundedEchoText(call.address, 512)} started, so it was not sent. Send it again.`,
+        retryable: true,
+        details: {
+          operation: boundedEchoText(call.address, 512),
+          stage: "response ceiling",
+          elapsedMs: responseCeilingMs - (ceilingAt - Date.now()),
+          deadlineMs: responseCeilingMs,
+        },
+      });
       const outcome = yield* upwardStep(
         authInvoke<InvocationOutcome<ProcessedCallResult>>(invocation, "invoke", [
           call.address,
@@ -949,7 +1122,11 @@ function metaToolsForRequest(
             sentSecrets,
             readOnly: opts.readOnly,
             routes,
-            ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+            timeoutMs,
+            // Auth or queueing spent the time, and a 1 ms deadline could still lose
+            // to a dispatch. A known "not sent" beats an answer the client won't hear.
+            ...(remainingMs <= 0 ? { refusal: pastCeiling() } : {}),
+            dispatchDeadline: { at: ceilingAt, refusal: pastCeiling },
             ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
             unwrapResult: call.resultMode === "value",
             ...(opts.downstreamInput
@@ -996,6 +1173,7 @@ function metaToolsForRequest(
                     cap,
                     ...(opts.pagingTool ? { pagingTool: opts.pagingTool } : {}),
                     ...(opts.maxProgramResultChars !== undefined ? { programChars: opts.maxProgramResultChars } : {}),
+                    ...(opts.maxProgramHostCalls !== undefined ? { programHostCalls: opts.maxProgramHostCalls } : {}),
                     set: authMethod((id: string, value: string[], ttlSeconds: number) =>
                       registryProgram(registry, "stashResult", id, value, ttlSeconds),
                     ),
@@ -1078,10 +1256,11 @@ function metaToolsForRequest(
         // both copies and JSON escaping when the bounded provider reason is large.
         if (!recoveryRequired) {
           const cap = resolveMaxResultBytes(outcome.resolved?.connector.maxResultBytes, globalCap);
-          let budget = 512;
+          const { message } = outcome.error;
+          let budget = 2 * MAX_TOOL_ERROR_BYTES;
           while (enc.encode(JSON.stringify(failedResult)).length > cap && budget > 0) {
             budget = Math.floor(budget / 2);
-            outcome.error.message = boundedEchoText(outcome.error.message, budget);
+            outcome.error.message = clipText(message, budget);
             failedResult = makeFailedResult();
           }
         }
@@ -1136,7 +1315,8 @@ function metaToolsForRequest(
             };
           }
           const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name]));
-          return { content: [{ type: "text", text }], structuredContent: { name: args.name, format: "text", text } };
+          // Guidance is text-only: a structured copy would double every fetch on the wire (result-representation).
+          return { content: [{ type: "text", text }] };
         } catch (error) {
           if (error instanceof SkillLookupError) return toolError(skillLookupRecovery(error.message));
           return toolError(
@@ -1247,7 +1427,9 @@ function metaToolsForRequest(
               return value;
             }),
           );
-          const stored = yield* upwardStep(authCall<string | false | null>(read, [resultKeys.chunk(args.id, 0)]));
+          const stored =
+            opts.heldResults?.stored(args.id) ??
+            (yield* upwardStep(authCall<string | false | null>(read, [resultKeys.chunk(args.id, 0)])));
           if (stored === false) return unavailableResult();
           if (stored === null) {
             return toolError(
@@ -1256,7 +1438,8 @@ function metaToolsForRequest(
           }
           const denied = () =>
             toolError(utilityRecovery("not_found", `Unknown or expired result id "${boundedEchoText(args.id, 96)}"`));
-          const header = RESULT_ENVELOPE_V4_HEADER.exec(stored);
+          const refused = RESULT_REFUSED_V4_HEADER.exec(stored);
+          const header = refused ?? RESULT_ENVELOPE_V4_HEADER.exec(stored);
           if (!header) return denied();
           let binding: ResultBinding;
           try {
@@ -1289,6 +1472,7 @@ function metaToolsForRequest(
             !["read", "write"].includes(binding.classification)
           )
             return denied();
+          if (refused) return toolError(resultNotRetained(binding.classification === "write", args.id));
           const allowed = authMethod(() =>
             authFlow<boolean>(function* () {
               options.onStage?.("access validation");
@@ -1482,17 +1666,17 @@ function metaToolsForRequest(
 // still routes correctly from these scopes plus execute_code's terse lead.
 // Only the meta surface lists these tools, so they use its names.
 const SEARCH_DESC = (readOnly: boolean) =>
-  `${readOnly ? "Catalog inspection; this read-only endpoint omits write tools." : `Catalog inspection, or finding a write before ${META_ROUTES.write}.`} For read work, search inside one ${META_ROUTES.program} program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" selects reads; "approvalRequired" selects the fail-closed write complement; neither grants authority. Empty query browses. Read catalogErrors and absence before selecting a tool. Compact schemas have schemaFormat="text".`;
+  `${readOnly ? "Inspect the catalog; this read-only endpoint omits write tools." : `Inspect the catalog, or find a write before ${META_ROUTES.write}.`} For read work, search inside one ${META_ROUTES.program} program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; set connector when known; an empty query browses. safety filters by classification and grants nothing. Read catalogErrors and absence before choosing a tool.`;
 const CALL_DESC = (readOnly: boolean) =>
-  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: ${META_ROUTES.program}. ${readOnly ? "This endpoint is read-only and refuses every write." : `Unannotated or write-capable tools fail closed to ${META_ROUTES.write}.`} A truncated result carries a connecta.result action.`;
+  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: ${META_ROUTES.program}. ${readOnly ? "This endpoint is read-only and refuses every write." : `Unannotated or write-capable tools fail closed to ${META_ROUTES.write}.`} A truncated result carries nextAction.`;
 const CALL_DESTRUCTIVE_DESC =
-  "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
+  "Call one tool not explicitly annotated readOnlyHint: true. Check its schema and consequences, then include a short reason for the human reviewer; it grants nothing and is not sent downstream. Sent once: never resend it to see output.";
 /** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */
 const CALL_DESTRUCTIVE_READ_ONLY_DESC = `This endpoint is read-only: search and describe omit write tools, and every write call here is refused. Reads still run; prefer ${META_ROUTES.read} or ${META_ROUTES.program} for them.`;
 const AUTHORIZE_DESC =
-  "Use after auth_required. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed with an authentication or operator-configuration error, give the retained handoff to the operator; otherwise proceed with the call. force=true requests an OAuth restart when the verified user opens the /connect URL; this tool never accepts credentials.";
+  "Use after auth_required when the error has no authorizationUrl or operatorUrl, or for a fresh link; otherwise pass that on. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed on authentication or configuration, give the retained handoff to the operator; otherwise proceed with the call. force=true restarts OAuth when the verified user opens the /connect URL. Never accepts credentials.";
 const SKILLS_DESC =
-  "List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.";
+  "List or fetch guidance by exact name. Fetch usage only when guidance is missing or a program needs repair.";
 
 /**
  * Sentences appended to a meta-tool description only when this connection
@@ -1503,9 +1687,9 @@ const SKILLS_DESC =
  * Registration is per connection and reads the configured connector set.
  */
 const GUIDE_NOTES = {
-  skills: " Also lists this deployment's connector guides by exact name.",
-  search: " A result with guideRequired: true requires its exact named connector guide before the call.",
-  destructive: " Fetch any exact connector guide named by discovery before the call.",
+  skills: " Includes connector guides.",
+  search: " guideRequired: true means fetch its named guide before the call.",
+  destructive: " Fetch any connector guide discovery names first.",
 } as const;
 
 /** `base`, plus its guide note when any VISIBLE connector carries a guide. */
@@ -1534,7 +1718,10 @@ const READ_ONLY_LOCAL = {
 } as const;
 
 const CALL_INPUT_SCHEMA = {
-  address: z.string().meta({ "x-mcp-header": "Address" }),
+  // Error text only: neither message reaches the advertised schema or widens what is accepted.
+  address: z
+    .string({ error: 'expected a string such as "connector.tool". Send { address, args }.' })
+    .meta({ "x-mcp-header": "Address" }),
   args: z.record(z.string(), z.unknown()).optional(),
   resultMode: z.enum(["mcp", "value"]).optional(),
   timeoutMs: z.number().int().positive().optional(),
@@ -1559,21 +1746,32 @@ const SEARCH_INPUT = advertisedSchema(
   }),
 );
 
-const CALL_INPUT = advertisedSchema(z.strictObject(CALL_INPUT_SCHEMA));
+/** MCP's own `tools/call` spells these `name` and `arguments`; say so at the point of failure. */
+const CALL_SHAPE = {
+  error: (issue: { code?: string | undefined; keys?: readonly string[] | undefined }) =>
+    issue.code === "unrecognized_keys"
+      ? `Unrecognized key${issue.keys?.length === 1 ? "" : "s"}: ${issue.keys?.map((key) => JSON.stringify(key)).join(", ")}. Send { address, args }, with the tool's arguments in args.`
+      : undefined,
+};
+
+const CALL_INPUT = advertisedSchema(z.strictObject(CALL_INPUT_SCHEMA, CALL_SHAPE));
 
 const CALL_DESTRUCTIVE_INPUT = advertisedSchema(
-  z.strictObject({
-    ...CALL_INPUT_SCHEMA,
-    // Bounded above, but with no lower bound: a model that sends `""` or
-    // whitespace has written no reason, and failing an entire consequential
-    // call over a cosmetic field the host merely displays is the wrong
-    // trade. It is normalized to absent in the handler instead.
-    reason: z.string().max(500).optional(),
-  }),
+  z.strictObject(
+    {
+      ...CALL_INPUT_SCHEMA,
+      // Bounded above, but with no lower bound: a model that sends `""` or
+      // whitespace has written no reason, and failing an entire consequential
+      // call over a cosmetic field the host merely displays is the wrong
+      // trade. It is normalized to absent in the handler instead.
+      reason: z.string().max(500).optional(),
+    },
+    CALL_SHAPE,
+  ),
 );
 
 const READ_RESULT_DESC =
-  "Page by resultId and nextAction from the truncation notice. UTF-8 byte ranges: continue from nextOffset while hasMore. Never repeat a write for output.";
+  "Page a truncated result: run nextAction, then continue from nextOffset while hasMore. Never repeat a write for output.";
 
 const READ_RESULT_INPUT = advertisedSchema(
   z.strictObject({
@@ -1607,6 +1805,8 @@ export function registerMetaTools(
     baseUrl: string;
     readOnly?: boolean | undefined;
     defaultToolTimeoutMs?: number | undefined;
+    responseCeilingMs?: number | undefined;
+    requestStartedAt?: number | undefined;
     probeTimeoutMs?: number | undefined;
     discoveryConcurrency?: number | undefined;
     activity?: ActivityRequestContext | undefined;
@@ -1620,17 +1820,20 @@ export function registerMetaTools(
     requestScope?: object | undefined;
     /** `execute.maxResultChars`: sizes the pages truncation notices ask programs to read. */
     maxProgramResultChars?: number | undefined;
+    /** `execute.maxHostCalls`: decides whether a notice can offer a whole-result loop. */
+    maxProgramHostCalls?: number | undefined;
     /**
      * A native pool: register `authorize_connector` and `skills`, plus `read_result` when the pool
      * has no execute_code, and return the route native tool calls take.
      */
-    native?: { executeCode: boolean; catalogErrors: string[] } | undefined;
+    native?: { executeCode: boolean; catalogErrors: string[]; staleCatalogs: string[] } | undefined;
     /** Route names this request's text uses; meta by default. */
     routes?: AgentRouteNames | undefined;
   },
 ): NativeCallRoute | undefined {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     maxProgramResultChars: ctx.maxProgramResultChars,
+    maxProgramHostCalls: ctx.maxProgramHostCalls,
     routes: ctx.routes,
     ...(ctx.native && !ctx.native.executeCode ? { pagingTool: "read_result" as const } : {}),
     ...(ctx.native ? { activitySource: "native" as const } : {}),
@@ -1638,6 +1841,8 @@ export function registerMetaTools(
     requestScope: ctx.requestScope,
     readOnly: ctx.readOnly,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
+    responseCeilingMs: ctx.responseCeilingMs,
+    requestStartedAt: ctx.requestStartedAt,
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
     activity: ctx.activity,
@@ -1660,7 +1865,6 @@ export function registerMetaTools(
       description: describedFor(registry, SKILLS_DESC, "skills"),
       ...(ctx.native ? { _meta: { "dev.connecta/surface": { surface: "native", ...ctx.native } } } : {}),
       inputSchema: SKILLS_INPUT,
-      outputSchema: SKILLS_OUTPUT,
       annotations: READ_ONLY_LOCAL,
     },
     authMethod((args: { name?: string | undefined }, request: ServerContext) =>

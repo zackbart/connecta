@@ -54,6 +54,38 @@ describe("one deadline over resolve, admission, and dispatch", () => {
     vi.useRealTimers();
   });
 
+  it("refuses at the final gate, unsent, and frees its permit", async () => {
+    const call = vi.fn(async () => "sent");
+    const registry = limited(call);
+    const service = new InvocationService(registry, new CatalogService(registry, BASE));
+    const refusal = vi.fn((address: string) => ({
+      code: "timeout",
+      message: `${address} was not sent.`,
+      retryable: true,
+      details: { operation: address, stage: "dispatch gate" },
+    }));
+    const refused = await service.invoke(
+      "limited.read",
+      {},
+      { source: "call_tool", dispatchDeadline: { at: Date.now() - 1, refusal } },
+    );
+    expect(refused).toMatchObject({
+      ok: false,
+      dispatched: false,
+      error: { code: "timeout", retryable: true, details: { stage: "dispatch gate" } },
+    });
+    // The gate's own words stand: the host's deadline phrasing would call this a timeout it was not.
+    expect(refused).toMatchObject({ error: { message: "limited.read was not sent." } });
+    expect(refusal).toHaveBeenCalledWith("limited.read");
+    expect(call).not.toHaveBeenCalled();
+    // maxConcurrency 1: a permit the refusal kept would hang this.
+    await expect(service.invoke("limited.read", {}, { source: "call_tool", timeoutMs: 1_000 })).resolves.toMatchObject({
+      ok: true,
+      dispatched: true,
+    });
+    expect(call).toHaveBeenCalledTimes(1);
+  });
+
   it("charges a call that timed out in the admission queue with that wait", async () => {
     vi.useFakeTimers();
     const call = vi.fn(async () => "never reached");

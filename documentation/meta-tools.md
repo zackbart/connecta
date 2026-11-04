@@ -49,8 +49,8 @@ Approval belongs to the client. A read-only endpoint keeps all six tools, omits
 write tools from `search_tools` results and describe, and refuses every write
 call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
-`resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
-advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
+`resources/read`) are documentation and may name tools the endpoint refuses. The three tools with structured-only success results
+(`execute_code`, `search_tools`, `authorize_connector`) advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
 including every authorization-handoff field, once under `$defs.failure`;
 `catalogErrors[]` references it through `allOf` with `connector` required, and
 `queryAnalysis.catalogError` references it directly. The schema declares no
@@ -147,16 +147,16 @@ inventory before any catalog search — registry order and each canonical id,
 with no second name minted for programs. An entry adds the configured title
 only when it says more than the id: a title whose words the id already spells,
 such as `Google Calendar` for `google_calendar`, is dropped. Titles normalize
-whitespace and cap at 48 UTF-8 bytes. A connector with a guide says how to
-fetch it: `read first: skills({name:"connector:<id>"})` for a required guide,
-`guide: skills({name:"connector:<id>"})` otherwise. For example:
-`Connectors: crm (Customer CRM; read first: skills({name:"connector:crm"})), tickets.`
+whitespace and cap at 48 UTF-8 bytes. A connector whose guide is required
+carries a `*`, and one legend follows when an entry shown has the mark. Optional
+guides are not named here; search and describe name them. For example:
+`Connectors: crm* (Customer CRM), tickets. *Read connecta.skill("connector:<id>") before its first call.`
 
-The complete line caps at 1,024 UTF-8 bytes, which names every connector of a
-typical deployment. Past the cap, detail degrades before names do: titles are
-dropped first, then optional guide pointers. Only when bare ids and required
-guide pointers still exceed it do whole entries give way, in registry order, to
-an exact `+N more` count. The inventory reads only the configured registry: no
+The complete line, legend included, caps at 1,024 UTF-8 bytes, which names every
+connector of a typical deployment. Past the cap, detail degrades before names do:
+titles are dropped first. Only when bare ids still exceed it do whole entries
+give way, in registry order, to an exact `+N more` count. The inventory reads
+only the configured registry: no
 catalog load, no credential probe, no live status, no capability, and no
 replacement for canonical discovery or addressing. Search pages carry the same
 bounded title once per connector in `connectors[<id>].title`, so choosing an
@@ -173,7 +173,7 @@ discovery. Both take the same arguments.
 | `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe client approval policy; a read-only endpoint has no write rows. |
 | `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                                                        |
 | `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                                                 |
-| `fullDescriptions` | unabridged tool purposes, at the obvious cost                                                                                                                                                                                                                                                       |
+| `fullDescriptions` | unabridged tool purposes instead of the one-sentence summary, at the obvious cost                                                                                                                                                                                                                   |
 
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
@@ -182,9 +182,10 @@ Main search also consults a standard hatch's construction-authored operation
 vocabulary (path, operation id, vendor summary and tag), without calling a tool
 or reading account data. A match returns the owning `_api_search` tool; call it
 with the original query to retrieve operations. Exact tool/address and complete
-authored-tool matches retain precedence. A vocabulary match requires every term
-in one operation, and the operation's hatch route must be visible and match the
-read/write filter. On `approvalRequired` searches the returned discovery tool
+authored-tool matches retain precedence, and a vocabulary match never suppresses
+lexical partial matches: both stay on the page, the hatch above partial tools.
+A vocabulary match requires every term in one operation, and the operation's
+hatch route must be visible and match the read/write filter. On `approvalRequired` searches the returned discovery tool
 is still a read. Hidden tools, missing grants and read-only restrictions remain
 in force. Browsing does not consult operation vocabulary.
 
@@ -277,9 +278,9 @@ directly; reserve `connecta.describe` for a search without schemas, an ambiguous
 compact shape, or exact constraints that need `format: "json"`.
 
 Compact search is a routing view, not a second copy of connector documentation,
-so it spends bytes on shape and none on prose: tool purposes cap at 160
-characters, connector descriptions and property prose are dropped, and required
-input fields render before optional ones. Both surfaces share one renderer, so
+so it spends bytes on shape and little on prose: a tool's purpose is its summary
+([below](#lexical-discovery)), connector descriptions and property prose are
+dropped, and required input fields render before optional ones. Both surfaces share one renderer, so
 its byte and work budgets, its truncation renderings, and its handling of enums,
 tuples, and conditional keywords are documented once under
 [`connecta.search`](./code-mode.md#connectasearch) and
@@ -341,12 +342,27 @@ A connector may attach a deployment-owned guide as markdown, keeping the
 original `usageGuide: string` configuration, or as
 `{ content, summary?, required? }` — which registers no connector and creates no
 shared runtime template. The skills catalog prepends Agent Skills frontmatter to
-`content` and preserves the guide body, including its whitespace.
+`content` for native `skills/get` and `resources/read`, and preserves the guide
+body, including its whitespace. The `skills` tool and `connecta.skill` return that
+body without the frontmatter; a downstream skill's file keeps its exact bytes on
+every reader. One read-only notice leads a guide: the endpoint's on a read-only
+endpoint, otherwise the connection's on a read-only connector.
 `summary` is normalized and refuses construction over 120 characters; absent,
 Connecta derives the same bounded fallback the skills listing uses from the
 guide's first meaningful body paragraph. `required: true` is reserved for
 generic API wrappers and cross-operation conventions a complete downstream
 schema cannot express.
+
+A maintained provider's guide states only what no schema, description or typed
+refusal already tells the agent where it acts. Generic rules live at the point of
+use: `cursor` and hatch `page` schemas for continuation, `fields` for narrowing,
+withheld values and cuts, hatch descriptions and `withheld` hints for operation
+discovery, and the `write_outcome_unknown` error for write-once. A hatch `page`
+with `hasMore: true` and no `nextCursor` also adds a `warnings` notice that the
+result is incomplete. Money units, account or environment selection, sensitive
+data reduction and "absence does not prove" rules stay in the guide, as does any
+disqualifier that no refusal enforces. A read-only connection is not served its
+guide's `writes` blocks.
 
 Describe results carry a `guide: "connector:<id>"` pointer and a
 `guideSummary`; a search page carries both once per connector in
@@ -410,16 +426,28 @@ or other live status reaches `tools/list` or the instructions, so the
 always-loaded surface stays byte-stable for a client's prompt cache.
 Instructions reflect the surface and endpoint write policy, subject to connector
 restrictions. When all admitted connectors are read-only, instructions state that
-writes are unavailable. They also include pool scope: at
-`/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
-[`description`](./auth.md#pools) has it placed first after `Use skills. `, so
-the model learns that endpoint's scope, for example
-`Use skills. Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
-The guide pointer precedes the scope so both appear in the first 512 characters
-for a description of up to 500 characters. The routing rules follow. Meta instructions use compact equivalent routing rules
-when a scope is present. Plain `/mcp` never carries one. The description changes no tool or tool
-description, and `initialize` and `server/discover` stay `cacheScope: "private"`,
-so a client keeps what it learned per endpoint. Connector
+writes are unavailable. On the meta surface they open by saying what the endpoint
+reaches, for example `Gateway to connected services: crm, tickets.`, and then give
+the routes, the write policy and recovery through `nextAction`. A native pool omits
+the ids, because its tool names show them.
+
+The ids come only from the caller's admitted view, the same view the `execute_code`
+inventory reads: configured ids in registry order, never a value from the request,
+a catalog or a credential. A maintainer at plain `/mcp` sees every id; a person
+routed there sees only their pool's, and an id outside the admitted view never
+appears. Past 120 UTF-8 bytes, ids give way, in registry order, to an exact
+`+N more` count, and the inventory carries the fuller list.
+
+They also include pool scope: a pool that sets a
+[`description`](./auth.md#pools) has it placed first at `/mcp/<pool>` and
+`/agent/<pool>`, and for a person routed to that pool at plain `/mcp`, so the model
+learns that endpoint's scope, for example
+`Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
+A maintainer at plain `/mcp` receives none. The description changes no tool or tool
+description. Plain `/mcp` can serve different ids and scope to different callers at
+one URL, as its tool list and inventory already do, so `initialize` and
+`server/discover` stay `cacheScope: "private"`: a client keeps what it learned per
+caller and endpoint and never shares it. Connector
 guides stay scoped to the deployment that listed them even when two deployments
 use identical content, and a deployment with no connector guides receives none of
 the short conditional guide pointers in its tool definitions.
@@ -525,7 +553,9 @@ dropping the text copy waits on host-forwarding measurements showing supported
 clients do not need it. Direct-call failures set `isError: true` and carry the
 same `{ ok: false, error, durationMs, attempts }` envelope in both forms, whether
 `resultMode` is omitted, `"mcp"`, or `"value"`. Plain-text guidance stays
-text-only. Successful direct calls with `resultMode` omitted or `"mcp"` return
+text-only: a `skills` fetch returns the guide once, in `content`, and the tool
+advertises no `outputSchema`, while its listing and errors keep `structuredContent`.
+A program's `connecta.skill` returns its own `{ name, format, text }` value. Successful direct calls with `resultMode` omitted or `"mcp"` return
 their data only in `content`, with the downstream format in
 `_meta["dev.connecta/format"]`. They omit `structuredContent`, including on
 truncated results, so clients that prefer it cannot replace data or a preview
@@ -623,7 +653,12 @@ Completed writes remain successful and must not be repeated. JSON values still
 round-trip such strings through their escaped JSON representation.
 
 A per-call `timeoutMs` covers catalog resolution, admission, and connector
-execution under one deadline. The admission queue's own timeout may expire
+execution under one deadline, cut to the response ceiling, `execute.watchdogMs`
+(55 s by default) from the request's arrival, so the client gets a typed result
+rather than its own transport timeout. A call with no time left is refused before it
+resolves, as a retryable `timeout` at `details.stage: "response ceiling"` that says it
+was not sent. A call whose time runs out during resolution, admission or auth gets the
+same refusal from a check that is the last step before its connector. See [`L3`](./code-mode.md#cancellation-and-limits). The admission queue's own timeout may expire
 sooner but cannot extend the call deadline. Result processing happens after that
 deadline ends, because a completed downstream call must not turn into a
 retryable timeout while Connecta prepares its response.
@@ -686,16 +721,25 @@ notice is `data` itself, with no preview and a next action at offset 0.
 The hint says what to do next. For a call not explicitly annotated read-only it
 opens with “This write already ran: do not call it again to see its result.”
 The approved write happened; repeating it to look again is how one export
-becomes three. For an explicitly read-only call, repeating is the better route,
-so the hint offers it first: to find something specific, repeat the read inside
-`execute_code` with `connecta.call` and filter or search the result there; to
-read it in full, page with `connecta.result`. Inside a program the inline cap does
-not apply to a host call's result, only to what the program returns (`L6` in
-[code mode](./code-mode.md) bounds a host call far higher), so the reduction
-sees the whole result at once. When the hint named paging alone, the eval's
-weakest model read a 185 KB CI log in 24,000-byte pages, skipped the range
-holding the real failure, and named the flaky test near the top; before the
-notice was visible, it had reduced the log in a program and found the failure.
+becomes three. For an explicitly read-only call, the hint offers reduction first:
+to find something specific, loop `connecta.result` over the retained result in
+one `execute_code` program, filter there and return the matches; to read
+on, run `nextAction`. A reduction must see the whole value at once, because
+page-by-page reading in the model misses things: when the hint named paging
+alone, the eval's weakest model read a 185 KB CI log in 24,000-byte pages, skipped
+the range holding the real failure, and named the flaky test near the top. The
+loop keeps that whole-value reduction without fetching from the downstream a
+second time. The hint names the result ID and that the result is retained for 15
+minutes.
+
+The loop is offered only when one program can finish it: every page at the
+connector's cap (at most the 32 KiB bridge ceiling), plus two host calls spare,
+must fit `execute.maxHostCalls`. At the defaults that is about 432 KB. Past that
+a loop would end in `budget_exceeded` with nothing returned, so the hint says to
+repeat the read inside `execute_code` with `connecta.call` and reduce it there;
+a host call's result is not bound by the inline cap, only what the program returns
+(`L6` in [code mode](./code-mode.md)). A value over `L6`'s host-call bound returns
+a paged handle instead, whose own hint is sized the same way.
 When paging is available, `nextAction` is the page handle for either kind of call, because paging is
 the one next step connecta can spell out exactly, while a reduction is a
 program the agent has to write. `resultId` stays beside the exact `nextAction`,
@@ -710,17 +754,26 @@ no paging route.
 
 Meta endpoints page inside a program. Native pools without code list `read_result` for the same bound handles. Program calls also
 return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
+A read's handle says to loop `connecta.result(handle, { offset })` until `!hasMore`
+only when every page at the connector's cap, plus two host calls spare, fits the
+calls its program has left. A handle's value is usually over 1 MiB, so at the
+default 20 calls and 24,000-byte cap it doesn't: its hint then gives the pages
+to read in this program and in each new one, and says to return the reduction so
+far with `nextOffset` and continue from both, by `resultId`, inside the 15-minute
+retention. A loop past the budget ends in `budget_exceeded` with nothing returned.
+A write's handle says the write already ran and not to repeat it.
 `connecta.result(handle, { page: 0 })` accepts those handles alongside direct
 result IDs. Numbered pages are zero-based and mutually exclusive with offset.
 Keep maxBytes fixed while incrementing pages. A direct call's
 notice carries a `resultId`, `nextOffset`, and an executable `execute_code`
-recovery action. Read and reduce the result in one program:
+recovery action. When the hint offers the loop, read and reduce the result in one
+program. Leave `maxBytes` unset, because a smaller page spends more host calls:
 
 ```js
 async () => {
   let text = "", offset = 0, page;
   do {
-    page = await connecta.result("result-id", { offset, maxBytes: 8_000 });
+    page = await connecta.result("result-id", { offset });
     text += page.text;
     offset = page.nextOffset;
   } while (page.hasMore);
@@ -742,6 +795,13 @@ A refused stash write cannot undo a downstream success. Direct calls and program
 a paging-unavailable notice, without a handle or recovery action. A write's
 notice still says it already ran. Activity records success; operator logs receive
 a fixed warning without storage error prose. Never repeat a write to recover output.
+
+A result a program retained is readable from later requests only once it has passed
+that run's final secret set. Otherwise it stays unreadable: paging answers
+`result_not_retained` with `retryable: false`, telling a read to rerun and a write
+not to repeat ([code mode `R4a`](./code-mode.md#results-and-projection)).
+A direct call's stash passes its own request's set when stored; a later direct call
+in another request shares no set with it.
 
 ## Lexical discovery
 
@@ -791,9 +851,87 @@ to 60 seconds: its entry keeps the recorded code with `retryable: true`,
 lookup failed recently (CODE). Search with connector "X" to try it now.` A
 scoped search always probes. Records are kept per owner, admitted endpoint and
 described connector configuration. A healthy connector whose catalog always
-takes more than 5 seconds can stay out of unscoped search; search it with
-`connector`, or let any longer-deadline operation warm its complete catalog.
-See [Discovery health](./architecture.md#storage-credentials-and-connectors).
+takes more than 5 seconds and has no earlier complete catalog can stay out of
+unscoped search; search it with `connector`, or let any longer-deadline operation
+warm its complete catalog. See
+[Discovery health](./architecture.md#storage-credentials-and-connectors).
+
+**Stale listings.** When a connector does not answer an unscoped search, because
+of a timeout, a skip after a recent one, the discovery budget, `unavailable`,
+`rate_limited` or a retryable downstream failure, the search lists that
+connector's last complete catalog if the same owner, credential and catalog
+generation have one no more than 24 hours past its expiry. Its `catalogErrors`
+entry then adds `stale: true` and `ageMs`, the milliseconds since the downstream
+last confirmed that catalog, and keeps `code`, `retryable` and any
+`retryAfterMs`. A downstream's own retry delay stays as it named it, and the
+message then says to wait rather than to search again. A skipped connector's
+`retryAfterMs` is when discovery next asks it, at most 60 seconds:
+
+```json
+{
+  "connector": "tickets",
+  "code": "timeout",
+  "message": "Connector \"tickets\" did not answer discovery (timeout), so its tools are listed from its last complete catalog. Calls still check the live catalog. Search with connector \"tickets\" to try it now.",
+  "retryable": true,
+  "stale": true,
+  "ageMs": 412000
+}
+```
+
+A stale listing grants nothing. A call, `connecta.describe` and a search with
+`connector` read the live catalog, so a tool the downstream removed fails with
+`unknown_tool` and a reclassified one runs under its current verdict. Deployment
+classification, hidden tools, pool grants and read-only endpoints apply to a
+stale listing as they do to a live one. Authorization and permission failures,
+refusals and malformed catalogs never list a stale catalog, and a partial catalog
+is never stored or listed. An entry without `stale` lists no tools for that
+connector. `queryAnalysis.catalogError` holds failures only.
+
+An authorization or permission refusal also retires that credential's catalog
+for later requests, in every isolate: it is neither listed nor reused, fresh or
+stale, by discovery or by a call's five-minute fallback, until a listing
+succeeds. On a connector with a shared credential this covers everyone using
+that credential; on any other connector, only the caller refused. A credential
+change, OAuth connect or disconnect, or operator invalidation has the same effect
+at once for every owner. A stale listing is read again after its probe fails, so
+any of these during the probe also takes the tools out of that search.
+
+A refusal retires the catalog of the credential, OAuth identity and catalog
+generation its attempt was dispatched under, whichever are current when it
+answers, so another credential's catalog keeps working. A listing lifts only the
+retirement it read before it asked the downstream; a refusal that lands while it
+runs stays until a later listing succeeds. A custom connector's answer is
+retained only if its credential did not change while it was listing. Connecta
+cannot see which credential a custom connector sent, so a refusal whose
+credential changed while it was listing, or cannot be read afterwards, retires
+that connector's catalogs for every credential and owner.
+
+Three limits follow:
+
+- A custom connector's credential is compared when its listing begins and when
+  it is refused. A change back to the same credential between them goes unseen,
+  as does a connector sending a credential it kept from earlier. The credential
+  actually refused is then not retired: its catalog can be listed stale if it
+  becomes current again, until its first answer.
+- A retirement that cannot be written is logged as `catalog fence failed` and the
+  refusal is still returned. The catalog stays reusable until a later refusal is
+  recorded, a listing replaces it or its stale limit passes.
+- A connector whose `tools/list` keeps answering 401 or 403 has no catalog to
+  fall back on, so every call that must resolve a tool through its catalog fails
+  with that refusal until a listing succeeds. This includes a credential that may
+  call tools but not list them, and the five-minute fallback does not apply while
+  the catalog is retired.
+
+`total` counts this response's matches. Offsets are stateless, so it stays the
+same across a browse's pages while each catalog is unchanged, including one
+listed stale, and can change if a catalog refreshes between pages or a connector
+with no stale catalog starts answering.
+
+A cached or authored catalog does not wait for a probe slot, so
+`discovery.concurrency` bounds the connectors actually being asked. A probe that
+runs out of its own deadline also starts one refresh in the runtime's tail
+(`ctx.waitUntil`, or the Node listener's tracked equivalent) under the full probe
+deadline, at most 20 seconds, and that refresh warms the next search.
 
 Tool rows carry the address, stored classification, and tool-specific
 `guideRequired` and `guideRequiredReasons`. Facts shared by every row of one
@@ -808,17 +946,44 @@ compact schema strings and TypeScript signatures. Compact schemas are text;
 `inputSchema.properties` is meaningful only in JSON mode. Pagination counts
 tools across connectors: `nextOffset` is present only when another page remains.
 
-Search tokenizes tool names and descriptions at punctuation and camel-case
-boundaries. Whole-token matches and a small set of inflectional variants preserve
-recall without admitting arbitrary mid-word substrings. Document frequency weights
-rare domain terms above ubiquitous action terms. Exact tool names and canonical
-addresses rank first, so `get_issue` beats `get_issue_status` even when a
-connector is named `issue`. Exact configured connector IDs, full display titles,
-and recognized service names rank next. Complete lexical matches then precede
-partial matches. Within a tier, a query whose first word outside connector names
-is `list`, `get`, `find`, `search`, `show`, `read`, `fetch`, or `count` ranks
-read rows before write rows; writes stay on the page. Score and catalog order
-break the remaining ties.
+A row's `description` is a summary: the first complete sentence, joined to the
+following ones until it reaches 40 characters, within 160 UTF-16 code units. Text
+with no sentence end in that range is cut at a word and marked `…`. The row
+carries `descriptionTruncated: true` whenever text was left out;
+`fullDescriptions: true` returns the original text and no flag.
+
+Search tokenizes tool names, titles and full descriptions at punctuation and
+camel-case boundaries. Whole-token matches, a small set of inflectional variants
+and a few unambiguous abbreviations (`config`/`configuration`, `db`/`database`,
+`doc`/`document`, `env`/`environment`, `org`/`organization`,
+`repo`/`repository`, `var`/`variable`) preserve recall without admitting
+arbitrary mid-word substrings. Document frequency weights rare domain terms above
+ubiquitous action terms. A term weighs most in the name, then the summary, then
+the title (`title` or `annotations.title`), and least in the rest of the
+description, which stays searchable but is weak evidence. A tool's score is then
+multiplied by the square of the share of the query's total rarity it covers in
+any zone, so rare words in a description's tail outrank a common verb in a name,
+and a tool covering every term is unaffected.
+
+Exact tool names and canonical addresses rank first, so `get_issue` beats
+`get_issue_status` even when a connector is named `issue`. A tool named only by
+an action word, such as `search`, is exact when it is the whole query, not when a
+longer query contains that word. Exact configured connector IDs, full display
+titles, and recognized service names rank next. Three tiers follow:
+
+1. Complete matches: every term is in the name, title or summary. A tool on the
+   connector the query or scope names need not repeat that connector's name.
+2. A hatch whose operation vocabulary matched, and a tool whose name states a
+   query word other than an action or the connector, with the remaining terms in
+   the rest of its description.
+3. Every other match.
+
+When a complete match exists, tier 3 keeps only tools covering every term
+somewhere, covering at least two terms, or whose name states a term at least as
+rare as the query's average. Otherwise it keeps any match. Within a tier, a query
+whose first word outside connector names is `list`, `get`, `find`, `search`,
+`show`, `read`, `fetch`, or `count` ranks read rows before write rows; writes stay
+on the page. Score and catalog order break the remaining ties.
 
 A maintained provider may declare `searchSynonyms`: groups of single lowercase
 words its users and its vendor use for the same record, such as `household`
@@ -843,8 +1008,9 @@ catalog is a catalog failure, never an absence. Absence records and catalog
 errors use only the endpoint's tools; a connector the endpoint does not serve
 is indistinguishable from an unconfigured one.
 
-If no tool covers every search term, wider any-term fallback remains available
-for ordinary action/object searches and the page carries `matchMode: "partial"`.
+If no tool covers every search term, in any part of its text or through one
+operation of its vocabulary, wider any-term fallback remains available for
+ordinary action/object searches and the page carries `matchMode: "partial"`.
 A service absence suppresses that fallback, so `GitHub get issue` cannot return
 Linear issues or Supabase projects. Tool rows expose no scores or
 per-result query coverage. `queryAnalysis` partitions at most eight terms of at
@@ -985,7 +1151,31 @@ behavior is unchanged.
 The host echoes `requestState` and its bare `inputResponses.connecta_auth`
 response on the original `tools/call`. Accept re-runs the original call; it
 does not prove browser consent completed. Decline or cancel ends without
-dispatch, with `auth_declined` or `auth_cancelled`. Three prompts are allowed
+dispatch or another prompt, with `auth_declined` or `auth_cancelled`. A client
+can answer without showing anything, so neither code means a person refused, and
+Connecta cannot tell the difference. When this caller may still connect, the
+refusal carries the handoff this connector would get on a host without URL
+support (`connector`, `recovery`, `authorizationUrl` or `operatorUrl`,
+`instructions`), plus `nextAction: { url, purpose }`:
+
+```json
+{
+  "code": "auth_declined",
+  "message": "The client declined the connection prompt, possibly automatically, so the user may not have seen it. Nothing was retried.",
+  "retryable": false,
+  "connector": "service",
+  "recovery": "oauth",
+  "authorizationUrl": "https://connecta.example/connect/service?h=...",
+  "nextAction": { "url": "https://connecta.example/connect/service?h=...", "purpose": "..." }
+}
+```
+
+Give that link to the user once, then stop. Do not prompt again, retry, or reach
+the service another way until they confirm. If they already refused this
+connection in the conversation, only mention that the link is available.
+A failed signing or storage step leaves the refusal without a link. Connecta
+keeps no record of which clients refuse, so each new prompt to such a client
+ends the same way. Three prompts are allowed
 within one ten-minute retry window, then `auth_round_limit` ends the flow.
 Each state can be consumed once; concurrent or repeated retries are refused
 before dispatch. A Continue link from a pending restart requires that restart
@@ -1039,11 +1229,10 @@ An OAuth call failure uses this envelope:
   "operation": "service.read",
   "recovery": "oauth",
   "authorizationUrl": "https://connecta.example/connect/service?h=...",
-  "instructions": "Copy authorizationUrl exactly as returned and sign in as the initiating user.",
+  "instructions": "For the person opening this link: sign in as the user who requested this connection; ...",
   "nextAction": {
-    "tool": "authorize_connector",
-    "arguments": { "connector": "service" },
-    "operatorHandoff": "Give the URL and instructions it returns to the operator."
+    "url": "https://connecta.example/connect/service?h=...",
+    "purpose": "Give this link to the user, unchanged, then stop. Retry after they confirm."
   },
   "retry": "Retry service.read after the operator completes recovery."
 }
@@ -1055,7 +1244,26 @@ returns for the admitted user, connector, and pool. Direct calls include them in
 `error`; program `connecta.call` failures include them in `error.data` and
 `error.details`. Search `catalogErrors` and scoped `queryAnalysis.catalogError`,
 and describe `errorDetails`, carry them too. When an auth error includes a
-handoff, give it to the user or operator. The class-specific handoff is:
+handoff, give it to the user or operator. An error that carries a handoff says
+so in `nextAction`, because calling `authorize_connector` would only return the
+same thing:
+
+- a link: `{ url, purpose }`, with `url` equal to `authorizationUrl` or `operatorUrl`;
+- no link (`unavailable`): `{ action: "contact_operator", purpose }`, with the
+  repair in `instructions`;
+- after a write of unknown outcome, either `purpose` says to re-read the write's
+  target once they confirm, never to retry.
+
+`message` drops its route text the same way. The typed fields are unchanged:
+`nextAction` repeats a link, it does not replace `authorizationUrl`, `operatorUrl`,
+`credential` or `instructions`. `nextAction` keeps
+`{ tool: "authorize_connector", arguments: { connector } }` in two cases: when no
+handoff could be attached, as for a request that has no handoff factory or whose
+signing failed, and in a program's terminal `write_outcome_unknown`-family result,
+which carries no handoff fields and so holds no link. A URL-elicitation host's
+call that falls back to a link gets the same `{ url, purpose }`.
+
+The class-specific handoff is:
 
 - `oauth`: an `authorizationUrl` to connecta's `/connect/<connector>?h=...` route
   and instructions to sign in as the initiating user;
@@ -1105,7 +1313,9 @@ way to call a tool. On a writable endpoint, `call_tool` reaching an unannotated,
 write-capable, or destructive tool returns `destructive_tool_requires_approval`
 with `nextAction` for `call_destructive_tool` and the canonical address. On a
 read-only endpoint every write path returns `read_only_endpoint` with no
-`nextAction`. Nothing is executed by these records.
+`nextAction`. Its message says no write route exists, not to try another route,
+to tell the user, and that only the operator can provide a writable connection.
+Nothing is executed by these records.
 
 `connecta.describe` keeps its failures inline instead, so one miss cannot
 discard the other schemas; each failed entry carries a human `error`, typed
@@ -1295,9 +1505,16 @@ its received types and schema facts. A custom connector's own findings must
 follow the same rule. Operator records contain only checked failure facts,
 never findings or examples.
 
-`nextAction` points to discovery scoped to the same connector and tool name when
-the compact schema is needed, routed like any other miss: a program to
-`connecta.search`, a top-level call to `search_tools`. `retry` says to correct
+When `issues` and `acceptedKeys` are present and nothing was truncated, the
+findings name the fix, so the envelope has no `nextAction` and `retry` leads.
+Otherwise `nextAction` points to discovery scoped to the same connector and tool
+name, with the purpose "Only if the validation above is not enough: inspect the
+schema.", routed like any other miss: a program to `connecta.search`, a top-level
+call to `search_tools`. `example` is synthesized from the published schema and
+checked against its validator; a plain required string reads as a named
+placeholder such as `"<id>"` rather than an empty string, which would pass local
+validation and reach the downstream. A schema that refuses the placeholder, and a
+`writeOnly` position, keep the plain sample. `retry` says to correct
 the listed arguments and reissue the original operation. What the local
 validator declines to evaluate is [code mode](./code-mode.md#errors)'s `E8`.
 
@@ -1309,6 +1526,15 @@ folds `repair` into `validation`.
 Unknown-address errors list `configuredConnectors` from the current endpoint's
 scoped registry, including an empty list when none are accessible. They never
 list connectors from another pool or identity's grants.
+
+An `unknown_tool` error from a direct call or a program carries `suggestions`
+when the connector has a tool with a near name: canonical addresses ranked as
+describe ranks them, and only reads on a read-only endpoint or connector.
+
+A direct call whose arguments do not match `call_tool` or `call_destructive_tool`
+fails input validation before anything is resolved. The message names the shape:
+`Send { address, args }`, with the tool's own arguments inside `args`. Neither
+tool accepts MCP's `name` or `arguments` keys.
 
 A write that times out after dispatch without complete auxiliary-only proof
 returns `write_outcome_unknown` with
@@ -1432,7 +1658,7 @@ resent. It is never retryable and carries no wait. Until the credential is
 renewed, the failure keeps its authorization code (`auth_required`, or
 `downstream_oauth_required` for an OAuth connector) with
 `writeOutcome: "unknown"`, `reconciliationRequired: true`, and the
-`authorize_connector` handoff, whose `instructions` say to authorize and then
+authorization handoff, whose `instructions` and `nextAction` say to authorize and then
 re-read the target before any fresh call. That holds whatever renewal meets: a
 refused or unreachable token endpoint, a disconnect, or the caller leaving. It
 also holds whatever the call met after the 401: a body past the response
@@ -1477,7 +1703,16 @@ in `writes.unknown` even when the program caught the failure. When that write
 met an authorization verdict, the program's error is that verdict, as a direct
 call reports it: its code, `connector`, `recovery`, and `nextAction`, with
 `writeOutcome: "unknown"` and `reconciliationRequired: true`. Any other unknown
-write makes it `write_outcome_unknown`.
+write makes it `write_outcome_unknown`. Either error's `unknownWrites` lists at
+most ten such writes with their `address`, `code` and redacted `message`, and
+`unknownWritesTruncated` marks a write left out or a message dropped. A write whose
+tool answered `isError` carries `toolAnswered: true`, on a direct call too: its
+message is the tool's own words, up to 4,096 UTF-8 bytes, cut only between tokens
+and marked `… [truncated]`. Its outcome stays unknown because its handler ran before
+it answered, and `retry` says to check the target and to give the user any approval
+link or request id. A program's `write_outcome_unknown` leads its `message` with
+those words instead of repeating them in the entry. A later call the tool's words
+ask for, such as one carrying a provider's approval token, is a new deliberate call.
 
 The classification served for the call decides this advice, including deployment
 `classification` overrides. For example, `classification: { crm: { get_person:
@@ -1518,13 +1753,13 @@ refuses it otherwise, and refuses any `surface` other than `"meta"` or
 `"native"`. Both pool endpoints, `/mcp/<pool>` and `/agent/<pool>`, serve the
 pool's surface.
 
-| A native pool lists          | Shape                                                                                                                                                             |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Each visible downstream tool | Named `<connector>__<tool>`; object input constraints and local references preserved; no `outputSchema`; `_meta["dev.connecta/address"]` is its address           |
-| `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes           |
-| `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks |
-| `authorize_connector`        | Always; requests the existing typed authorization handoff for a granted connector                                                                                 |
-| `skills`                     | Always                                                                                                                                                            |
+| A native pool lists          | Shape                                                                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Each visible downstream tool | A read is `<connector>__<tool>`, a write `<connector>__WRITE__<tool>`; object input constraints and local references preserved; no `outputSchema`; `_meta["dev.connecta/address"]` is its address |
+| `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes                                           |
+| `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks                                 |
+| `authorize_connector`        | Always; requests the existing typed authorization handoff for a granted connector                                                                                                                 |
+| `skills`                     | Always                                                                                                                                                                                            |
 
 `search_tools`, `call_tool`, and `call_destructive_tool` are not listed. Auth failures still carry their handoff in the error envelope.
 
@@ -1535,17 +1770,33 @@ name reserved for a built-in guide uses its canonical connector skill URI. This
 compact pointer repeats on each tool so host search results retain it; connectors
 without guides add nothing. It depends only on the admitted connector roster.
 
-**Names.** A name is a pure function of the connector id and downstream tool
-name, so it survives catalog refreshes. It is `<connector>__<tool>` when the
-tool name uses only `[A-Za-z0-9_-]`, contains no `__`, does not start with `_`,
-and the whole name fits 48 characters; otherwise it is that name's head plus
-`_` and the first six hex digits of the SHA-256 of `<connector>.<tool>`. A
-connector id that does not start with a letter is prefixed with `C`. 48
-characters leave room for a client's own prefix under common 64-character
-tool-name limits (Eve's `connecta__`, Claude Code's `mcp__connecta__`). Two
-tools that would share a name are both left out of the list, with an operator
-warning, and a call by that name is refused; both stay callable by address in
-`execute_code`.
+**Names.** A name is a pure function of the connector id, the downstream tool
+name and its served classification, so it survives catalog refreshes until the
+classification changes. A read is `<connector>__<tool>` and a write
+`<connector>__WRITE__<tool>` when the tool name uses only `[A-Za-z0-9_-]`,
+contains no `__`, does not start with `_`, and the whole name fits 48 characters.
+Otherwise a read is that name's head plus `_` and the first six hex digits of the
+SHA-256 of `<connector>.<tool>`, and a write is up to 24 characters of the
+connector, `__WRITE__`, the head of the tool name, `_w` and the same six hex
+digits. A write whose plain name would end in `_` and six lowercase hex digits,
+such as a tool named `get_373b87` or `facade`, also takes this hashed form. A
+connector id that does not start with a letter is prefixed with `C`. 48 characters
+leave room for a client's own prefix under common 64-character tool-name limits
+(Eve's `connecta__`, Claude Code's `mcp__connecta__`).
+
+A name a client holds for a read can never select a write. Every write's name
+contains `__WRITE__` and never ends in `_` and six lowercase hex digits. A read's
+name contains `__WRITE__` only when the tool's own name supplies it, and such a read
+is always hashed, so it ends that way and takes the read route. A tool's read name
+does not depend on its classification or on this rule, so names clients cached from
+earlier versions stay read names. Two tools that would share either name are both
+left out of the list, with an operator warning, and a call by either of their names
+is refused; both stay callable by address in `execute_code`.
+
+Read a tool's name from `tools/list` rather than building it. Host approval rules,
+allowlists, prompts and recipes that name a native write must use its `__WRITE__`
+name, and a tool that changes classification changes name. Programs keep using the
+address, which never changes.
 
 **Annotations** come from the served classification only: a read is
 `{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
@@ -1553,43 +1804,70 @@ write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
 whatever hints the downstream declared. A read-only endpoint or connector
 leaves write tools out of the list, by the same rule search and describe use.
 
-**Calls take the existing paths.** A call to a downstream tool is the
-`call_tool` call for its address when the tool is currently a read, and the
-`call_destructive_tool` call when it is a write, run by the same handler. So
-classification, `read_only_endpoint` refusal, argument validation and repair,
-admission, redaction, single-attempt writes, auth elicitation, downstream input,
-result caps, and activity use the same enforcement. Activity records source
-`native` with the canonical address and served classification. A name must
-exactly match the definition's native name before dispatch. Unknown or ambiguous
-names fail with `unknown_tool`; catalog failures retain their handoff. Success results are
+**Calls take the existing paths.** A name selects its route: a read's name is the
+`call_tool` call for its address, and a write's name is the
+`call_destructive_tool` call, run by the same handler. So classification,
+`read_only_endpoint` refusal, argument validation and repair, admission, redaction,
+single-attempt writes, auth elicitation, downstream input, result caps, and activity
+use the same enforcement. Activity records source `native` with the canonical
+address and served classification. Unknown or ambiguous names fail with
+`unknown_tool`; catalog failures retain their handoff. Success results are
 `call_tool`'s default mode: native `content`, never `structuredContent`, which
 is why no `outputSchema` is advertised. A truncated result's notice pages with
 `connecta.result` inside `execute_code`, or with `read_result` on a pool without
 `execute_code`.
 
 **Approval is the host's, enforcement is Connecta's.** The host approves from
-the annotations of the list it cached. If a tool changes from read to write
-between that list and a call (a downstream changes its hints, or the deployment
-changes its classification), the call runs under Connecta's current verdict:
-on the `call_destructive_tool` route, refused on a read-only endpoint, and never
-resent, although the host approved what it saw as a read. To narrow that
-window, a native `tools/list` carries a 300-second private cache hint, against
-an hour on meta endpoints. This hint does not guarantee that a host refreshes
-its cached annotations; the stale-approval race is accepted on writable pools.
+the annotations of the list it cached, and some hosts resend calls they believe
+are read-only when a connection fails. Those resends are new stateless requests:
+their JSON-RPC ids restart and they carry no session id, so Connecta cannot tell
+them from new calls. A name is therefore bound to its classification. If a tool
+changes from read to write between that list and a call (a downstream changes its
+hints, or the deployment changes its classification), the cached read name takes
+the `call_tool` route, which refuses before dispatch: `read_only_endpoint` on a
+read-only endpoint, otherwise `destructive_tool_requires_approval` with
+`nextAction.tool` set to the write's name. However often the host resends, nothing
+reaches the downstream. The write runs only by its own name, annotated destructive, after a refreshed
+list; Claude Code 2.1.318 and Codex 0.166.0 did not resend destructive calls when
+tested. In the other direction, a cached
+write name whose tool is now a read still runs, once, on the
+`call_destructive_tool` route. A native `tools/list` carries a 300-second private
+cache hint, against an hour on meta endpoints; hosts need not honor it. A listing
+that omits a connector or lists one stale carries 60 seconds instead, about when
+that connector is next asked.
+
+The verdict is Connecta's current catalog: a downstream change takes effect when
+Connecta's catalog next loads it. A tool whose source declares a write and whose
+deployment classification overrides it to read has a read's name and takes the
+`call_tool` route, and a host may resend it; do not override a write to read unless
+repeating it is harmless. This also applies to `call_tool` on the meta surface.
 
 **Listing.** `tools/list` is one page with no cursor (Eve's MCP client reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
 JSON-RPC error asking the operator to narrow the pool; nothing is silently
-dropped. A connector whose catalog cannot load is left out of that listing
-whole, never partially, with an operator warning; its tools return with the
-next listing that loads it. Listing never starts authorization. The server
-still declares `tools.listChanged: false`.
+dropped. A connector that does not answer in time, is `unavailable` or
+`rate_limited`, or hits a retryable downstream failure stays listed from its last
+complete catalog, under the same limit and partitioning as
+[stale listings](#lexical-discovery). Such a connector gets the 5-second deadline, or
+`discovery.probeTimeoutMs` when shorter, and is skipped for up to 60 seconds after
+a failure; one with nothing to fall back on keeps the full deadline. Each of its
+tools carries `_meta["dev.connecta/stale"]` with `code`, `ageMs` and any
+`retryAfterMs`, and `readOnlyHint: false, destructiveHint: true` whatever its stored
+classification, because an old catalog cannot vouch for a read (INV-1). The `skills`
+tool's `dev.connecta/surface` metadata names these connectors in `staleCatalogs`. A
+`tools/call` always resolves a live catalog, under the verdict it finds.
+
+A connector whose catalog cannot load and has no stale catalog, or that fails
+for authorization, permission or a malformed catalog, is left out of that listing
+whole, never partially, with an operator warning and a `catalogErrors` entry in the
+same metadata; its tools return with the next listing that loads it. Listing never
+starts authorization. The server still declares `tools.listChanged: false`.
 
 **Instructions** replace the meta routing text: call one known operation
-directly; with `execute_code`, use one program for several, dependent, or
-reduced calls; write tools are absent and refused on a read-only endpoint;
-never repeat a write; page a truncated result as its notice says. A pool
-`description` is appended as on meta endpoints.
+directly; with `execute_code`, combine several using each tool's `Program address`;
+state the endpoint's write policy; on a writable endpoint, never resend a write to
+see its output; follow `nextAction` on errors and truncated results. A pool
+`description` is placed first, as on meta endpoints.
 
 **Recovery.** `authorize_connector` remains listed even when a catalog fails.
 Its description lists all granted connector ids independently of catalog health.
@@ -1602,12 +1880,14 @@ Repair and validation fields retain the exact constraint details.
 Discovery `nextAction` points to the host's tool search (`host: "search"`), with
 only a `query` argument. Retry actions and retry text name the native tool,
 never a meta wrapper; a program on a native pool sees the same native wording
-in a failure it catches. An unknown name is reported as sent. Auth actions carry `authorizationUrl` or `operatorUrl`;
-give the returned URL and instructions to the user or operator. Capable modern
+in a failure it catches. An unknown name is reported as sent. Auth actions carry the link as `nextAction.url`,
+beside `authorizationUrl` or `operatorUrl`; give it and the instructions to the user or operator. Capable modern
 clients may resume native auth and downstream form/URL input with the same
 wire name, arguments and returned `requestState`. Changed names, targets or
 arguments, expired state and spent retry nonces are refused. Never resend a
-write to recover output.
+write to recover output. A refusal of a stale read name says nothing was sent:
+refresh the host's tool list and call the write's own name only if the write is
+still wanted.
 
 **Schemas.** Ordinary `type: "object"` schemas are byte-identical. Object
 constraints without a top-level type, composed object schemas and local
@@ -1618,8 +1898,9 @@ connectors remain listed. Correct the schema or use the meta surface.
 
 **Diagnostics.** `connecta doctor --pool assistant` recognizes the configured
 surface and code setting from the local `skills` tool's
-`_meta["dev.connecta/surface"]`. It checks the required local tools, reports
-unavailable connector catalogs and listing-cap errors, and runs only a constant
+`_meta["dev.connecta/surface"]`. It checks the required local tools, fails on
+unavailable connector catalogs, listing-cap errors and connectors listed stale
+(`Native discovery degraded`), and runs only a constant
 program when code is enabled. It never dispatches a downstream tool. The
 metadata's `catalogErrors` exposes this request's failing connector ids,
 including connectors with unrepresentable schemas, to every client of the pool.

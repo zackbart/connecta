@@ -203,14 +203,16 @@ helper places an Eve guide before it, built from the endpoint's
 [facts](https://github.com/zackbart/connecta/blob/main/documentation/meta-tools.md#endpoint-facts):
 
 - **Meta pools:** call `eve__tool({ name: "connecta__execute_code", input })`
-  directly, with a short example program. `eve__search` sees the six routing tools
-  and never a downstream operation, so its empty result does not mean a capability
-  is missing. Reachable connectors are listed by id.
-- **Native pools:** call `connecta__<connector>__<tool>`, scope a search with
-  `"connecta__<connector>__"` rather than `"<connector>__"`, use `execute_code` for
-  several, dependent or reduced calls (omitted when the pool has none), and use
-  `connecta__authorize_connector` when tools are missing. Eve lists tools again on
-  each step, so no reconnect is needed.
+  directly, with a short example program. `eve__search` sees the routing tools and
+  never a downstream operation, so its empty result does not mean a capability is
+  missing. Reachable connectors are listed by id.
+- **Native pools:** a read is `connecta__<connector>__<tool>` and a write
+  `connecta__<connector>__WRITE__<tool>`. Scope a search with
+  `"connecta__<connector>__"`, use `execute_code` for several, dependent or reduced
+  calls (omitted when the pool has none), and when tools are missing get a link from
+  `connecta__authorize_connector` for the user or operator. Eve lists tools again on
+  each step, so the repair needs no reconnect, unlike a host that keeps its first
+  list.
 - **Older servers without facts:** only the naming rule.
 
 The guide adds about 600 bytes with three connectors. Its roster stays under 512

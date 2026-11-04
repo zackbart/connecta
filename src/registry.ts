@@ -16,14 +16,18 @@ import {
   attachCatalogCache,
   catalogExpiry,
   catalogFetchedAt,
+  bindCustomCatalogListing,
   customCatalogFallback,
+  customCatalogPeek,
+  fenceCustomCatalog,
   invalidateCatalogCache,
   observeUncachedCatalogRefresh,
   retainedCatalogIdentity,
   storeCustomCatalogFallback,
   type CatalogToolFingerprint,
+  type CustomCatalogListing,
 } from "./catalog-cache.js";
-import { carryCatalogFreshness, markCatalogFreshness } from "./catalog-freshness.js";
+import { carryCatalogFreshness, markCatalogFreshness, markCatalogStale } from "./catalog-freshness.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { usesCallerIdentity, type ConnectorCaller } from "./connector-caller.js";
@@ -31,7 +35,7 @@ import { forwardsPrincipal } from "./request-principal.js";
 import { canonicalJson } from "./canonical-json.js";
 import type { CredentialVault } from "./credential-contract.js";
 import { storedCredentialShape } from "./credential-rules.js";
-import { ConnectorCallError } from "./errors.js";
+import { ConnectorCallError, isAccessRefusal } from "./errors.js";
 import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { boundedStatus, failureRecord, failureStatus, logFailure, ownStatus } from "./operator-record.js";
@@ -78,6 +82,7 @@ import { carryToolClassification, classifyTool } from "./tool-safety.js";
 import type {
   CatalogAccessObservation,
   Connector,
+  ConnectorCatalogPeek,
   ConnectorContext,
   ConnectorStatus,
   KVStorage,
@@ -244,6 +249,14 @@ export interface ProgramResultDependency {
   classification: "read" | "write";
 }
 
+/** A cached catalog as discovery may list it. */
+export interface CatalogPeek {
+  tools: ToolDef[];
+  fetchedAt: number;
+  /** Whether the connector's own cache would serve this now, with no failure to report. */
+  fresh: boolean;
+}
+
 export interface RegistryView {
   credentialUiAvailable(): boolean;
   /** Deployment-wide result-size cap threaded to the meta-tools. */
@@ -261,6 +274,17 @@ export interface RegistryView {
     requestScope?: object,
     callOptions?: ConnectorOperationOptions,
   ): Promise<ToolDef[]>;
+  /**
+   * The newest complete catalog this caller could be listed, classified and
+   * filtered as a listing is, from storage alone. For discovery; a call never
+   * resolves through it. Undefined for a static catalog or a miss.
+   */
+  peekCatalog(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions?: ConnectorOperationOptions,
+  ): Promise<CatalogPeek | undefined>;
   contextFor(
     id: string,
     baseUrl: string,
@@ -277,8 +301,17 @@ export interface RegistryView {
     classification: "read" | "write",
     signal?: AbortSignal,
   ): Promise<boolean>;
-  /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
-  stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
+  /**
+   * Reserve deployment-wide capacity before writing a paging envelope's chunks.
+   * `holdFirst` charges the whole envelope but leaves chunk 0, which makes the
+   * result readable, for the caller to write once the result is sealed.
+   */
+  stashResult(
+    id: string,
+    chunks: readonly string[],
+    ttlSeconds: number,
+    options?: { readonly holdFirst?: boolean },
+  ): Promise<boolean>;
   /**
    * Local declared-vs-stored credential mismatch, with no downstream I/O. With
    * `requestScope`, the read joins that request's read memo.
@@ -917,10 +950,10 @@ export class Registry implements RegistryView {
     id: string,
     chunks: readonly string[],
     ttlSeconds: number,
-    partition: string = scopes.results,
+    options: { readonly partition?: string; readonly holdFirst?: boolean } = {},
   ): Promise<boolean> {
     return runOnPartition(
-      registryEdgeProgram(Registry.prototype, this, "stashResult", id, chunks, ttlSeconds, partition),
+      registryEdgeProgram(Registry.prototype, this, "stashResult", id, chunks, ttlSeconds, options),
       this.opts,
     );
   }
@@ -1010,9 +1043,28 @@ export class Registry implements RegistryView {
       if (!connector) throw new Error(`Unknown connector "${id}"`);
       if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
       const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
+      // `remoteMcp()` binds and fences its own attempts, knowing how each was made.
+      const customListing = connector.peekCatalog
+        ? undefined
+        : yield* authCall<CustomCatalogListing | undefined>(bindCustomCatalogListing, [ctx, id]).pipe(
+            Effect.catch((failure) =>
+              Effect.sync(() => {
+                logFailure(this.opts.logger, "catalog read failed", failureRecord({ connector: id }, failure));
+                return undefined;
+              }),
+            ),
+          );
       const listed = yield* authInvoke<ToolDef[]>(connector, "listTools", [ctx]).pipe(
         Effect.catch((error) =>
-          Effect.gen(function* () {
+          Effect.gen({ self: this }, function* () {
+            if (customListing && isAccessRefusal(error))
+              yield* authCall<void>(fenceCustomCatalog, [ctx, id, customListing]).pipe(
+                Effect.catch((failure) =>
+                  Effect.sync(() =>
+                    logFailure(this.opts.logger, "catalog fence failed", failureRecord({ connector: id }, failure)),
+                  ),
+                ),
+              );
             const fallback =
               error instanceof ConnectorCallError && error.code === "unavailable"
                 ? yield* authCall<ToolDef[] | undefined>(customCatalogFallback, [ctx, id]).pipe(
@@ -1039,8 +1091,11 @@ export class Registry implements RegistryView {
       const facts = frozenFacts(structuredClone(tools));
       const accepted = this.acceptToolNames(facts);
       if (catalogFetchedAt(ctx) === undefined) {
-        for (const observe of [storeCustomCatalogFallback, observeUncachedCatalogRefresh]) {
-          yield* authCall<void>(observe, [ctx, id, facts]).pipe(
+        for (const observe of [
+          authCall<void>(storeCustomCatalogFallback, [ctx, facts, customListing]),
+          authCall<void>(observeUncachedCatalogRefresh, [ctx, id, facts]),
+        ]) {
+          yield* observe.pipe(
             Effect.catch((error) =>
               Effect.sync(() =>
                 logFailure(
@@ -1055,6 +1110,9 @@ export class Registry implements RegistryView {
       }
       const provenance = catalogExpiry(ctx);
       const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
+      // A transient-failure fallback answers the listing; discovery still reports its age.
+      if (provenance?.staleFallback)
+        markCatalogStale(accepted, { code: "unavailable", ageMs: Math.max(0, Date.now() - provenance.fetchedAt) });
       // Principal-forwarded listings belong to one caller, never to the shared
       // operator observation store. The actual catalog cache is identity-bound.
       if (!forwardsPrincipal(connector)) {
@@ -1065,6 +1123,35 @@ export class Registry implements RegistryView {
         });
       }
       return markCatalogFreshness(accepted, freshUntil);
+    });
+  }
+
+  /** See {@link RegistryView.peekCatalog}. Same classification and filtering as `loadTools`. */
+  private loadPeek(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions: ConnectorOperationOptions = {},
+    scope?: RegistryScope,
+  ): Effect.Effect<CatalogPeek | undefined, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const connector = this.connectors.get(id);
+      if (!connector || connector.staticTools) return undefined;
+      const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
+      const peek = connector.peekCatalog
+        ? yield* authInvoke<ConnectorCatalogPeek | undefined>(connector, "peekCatalog", [ctx])
+        : yield* authCall<ConnectorCatalogPeek | undefined>(customCatalogPeek, [ctx, id]);
+      if (!peek) return undefined;
+      const facts = redactCatalog(ctx, peek.tools).map(({ classification: _ignored, ...fact }) => fact);
+      const overrides = this.classification[id];
+      return {
+        tools: this.acceptToolNames(frozenFacts(structuredClone(facts)))
+          .filter((tool) => overrides?.[tool.name] !== "hidden")
+          .map((tool) => this.publishTool(id, tool)),
+        fetchedAt: peek.fetchedAt,
+        // A custom catalog is always listed anew, so its retained copy is never current.
+        fresh: connector.peekCatalog !== undefined && peek.expiresAt > Date.now(),
+      };
     });
   }
 
@@ -1154,6 +1241,18 @@ export class Registry implements RegistryView {
     }
   }
 
+  peekCatalog(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions: ConnectorOperationOptions = {},
+    scope?: RegistryScope,
+  ): Promise<CatalogPeek | undefined> {
+    return runEdge(
+      registryEdgeProgram(Registry.prototype, this, "peekCatalog", id, baseUrl, requestScope, callOptions, scope),
+    );
+  }
+
   getTools(
     id: string,
     baseUrl: string,
@@ -1215,8 +1314,9 @@ export class Registry implements RegistryView {
 
   static {
     provideRegistryPrograms(Registry.prototype, {
-      stashResult: (self, id, chunks, ttlSeconds, partition = scopes.results) =>
+      stashResult: (self, id, chunks, ttlSeconds, options = {}) =>
         Effect.gen({ self }, function* () {
+          const partition = options.partition ?? scopes.results;
           const maxBytes = this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes;
           const maxEntries = this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries;
           // The paging envelope is ASCII, so its string length is its stored byte count.
@@ -1279,7 +1379,8 @@ export class Registry implements RegistryView {
           const remaining = Math.max(0, writeDeadline - (yield* Clock.currentTimeMillis));
           const written = yield* Effect.gen(function* () {
             const multi = getNativeStorage(self.opts.storage)?.setMany;
-            for (let index = keys.length - 1; index >= 0;) {
+            const lowest = options.holdFirst ? 1 : 0;
+            for (let index = keys.length - 1; index >= lowest;) {
               const first = multi && index > 0 ? Math.max(1, index - 63) : index;
               const before = yield* Clock.currentTimeMillis;
               if (before >= writeDeadline || before >= chunkExpiry) return false;
@@ -1390,6 +1491,14 @@ export class Registry implements RegistryView {
               }
               return yield* load.join(signal);
             }),
+          );
+        }),
+      peekCatalog: (self, id, baseUrl, requestScope, callOptions = {}, scope) =>
+        Effect.suspend(() => {
+          if (!self.connectors.has(id)) return Effect.succeed(undefined);
+          const owner = self.contextFor(id, baseUrl, requestScope, callOptions, scope);
+          return duringViewEffect(owner, (signal) =>
+            self.loadPeek(id, baseUrl, owner.requestScope, { ...callOptions, signal }, scope),
           );
         }),
       credentialDriftFor: (self, id, requestScope) =>
@@ -1542,6 +1651,10 @@ class ScopedRegistryView implements RegistryView {
     return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "getTools", ...args));
   }
 
+  peekCatalog(...args: Parameters<RegistryView["peekCatalog"]>): Promise<CatalogPeek | undefined> {
+    return runEdge(registryEdgeProgram(ScopedRegistryView.prototype, this, "peekCatalog", ...args));
+  }
+
   contextFor(...args: Parameters<RegistryView["contextFor"]>): ConnectorContext {
     const registry = this.registryFor(args[0]);
     if (!registry) throw new Error(`Unknown connector "${args[0]}"`);
@@ -1556,13 +1669,16 @@ class ScopedRegistryView implements RegistryView {
     return registry.admitCall(...args);
   }
 
-  stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
-    return this.root.stashResult(
-      id,
-      chunks,
-      ttlSeconds,
-      this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
-    );
+  stashResult(
+    id: string,
+    chunks: readonly string[],
+    ttlSeconds: number,
+    options: { readonly holdFirst?: boolean } = {},
+  ): Promise<boolean> {
+    return this.root.stashResult(id, chunks, ttlSeconds, {
+      ...options,
+      partition: this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
+    });
   }
 
   resultIdentity(): ResultIdentity {
@@ -1629,15 +1745,11 @@ class ScopedRegistryView implements RegistryView {
   }
   static {
     provideRegistryPrograms(ScopedRegistryView.prototype, {
-      stashResult: (self, id, chunks, ttlSeconds) =>
-        registryProgram(
-          self.root,
-          "stashResult",
-          id,
-          chunks,
-          ttlSeconds,
-          self.scope.subjectKey ? scopes.subject(self.scope.subjectKey) : scopes.results,
-        ),
+      stashResult: (self, id, chunks, ttlSeconds, options = {}) =>
+        registryProgram(self.root, "stashResult", id, chunks, ttlSeconds, {
+          ...options,
+          partition: self.scope.subjectKey ? scopes.subject(self.scope.subjectKey) : scopes.results,
+        }),
       recheckResultAccess: (self, dependencies, classification, signal) =>
         Effect.tryPromise({
           try: () => self.scope.currentResultAccess?.(dependencies, classification, signal) ?? Promise.resolve(true),
@@ -1663,6 +1775,15 @@ class ScopedRegistryView implements RegistryView {
             }
           }
           return carryCatalogFreshness(tools, visible);
+        }),
+      peekCatalog: (self, ...args) =>
+        Effect.gen(function* () {
+          const registry = self.registryFor(args[0]);
+          if (!registry) return undefined;
+          const peek = yield* registryProgram(registry, "peekCatalog", args[0], args[1], args[2], args[3], self.scope);
+          const granted = self.scope.toolAccess?.get(args[0]);
+          // A pool grant binds a stale listing exactly as it binds a live one.
+          return peek && granted ? { ...peek, tools: peek.tools.filter((tool) => granted.has(tool.name)) } : peek;
         }),
       credentialDriftFor: (self, id, requestScope) =>
         Effect.suspend(() => {

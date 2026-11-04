@@ -36,7 +36,13 @@ import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import type { ConnectorCaller } from "../connector-caller.js";
 import { ENDPOINT_EXTENSION, endpointExtension, endpointInstructions } from "../skills.js";
-import { NATIVE_TOOLS_LIST_TTL_MS, NativeSurface, nativeRequestHint, type NativeRequestHint } from "../native-tools.js";
+import {
+  NATIVE_DEGRADED_TOOLS_LIST_TTL_MS,
+  NATIVE_TOOLS_LIST_TTL_MS,
+  NativeSurface,
+  nativeRequestHint,
+  type NativeRequestHint,
+} from "../native-tools.js";
 import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
@@ -394,6 +400,7 @@ function toolkitRetired(logger: Logger, sentSecrets: SentSecrets): Response {
 function serveMcp(
   request: Request,
   requestSignal: AbortSignal,
+  requestStartedAt: number,
   requestScope: object,
   opts: ServerOptions,
   baseUrl: string,
@@ -415,6 +422,8 @@ function serveMcp(
   const native = pool !== undefined ? opts.pools.get(pool)?.native : undefined;
   const createServer = authMethod((hint?: NativeRequestHint) =>
     authFlow<McpServer>(function* () {
+      // A native pool's text uses the native contract's wording.
+      const routes = native ? routeNames(native.executeCode ? "native-code" : "native") : opts.routes;
       const authElicitation = new AuthElicitation({
         vault: opts.config.vault,
         publicUrl: opts.config.publicUrl,
@@ -444,10 +453,14 @@ function serveMcp(
         ),
         unavailable: oauthConnectUnavailable(opts),
         credentialUi: Boolean(opts.config.ui && opts.config.vault),
+        credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
+        routes,
         requestSignal,
         requestScope,
         defer: runtimeContext?.waitUntil?.bind(runtimeContext),
       });
+      // Read as this request's response is built, so a degraded native listing can shorten it.
+      const toolsListHint = { ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000, cacheScope: "private" as const };
       const connectors = registry.listConnectors();
       const effectiveReadOnly =
         readOnly || (connectors.length > 0 && connectors.every((connector) => connector.readOnly === true));
@@ -466,21 +479,21 @@ function serveMcp(
             ),
           },
         },
-        // Instructions reflect the admitted pool and effective write policy. Every cache hint below is private, so a client keeps
-        // what it learned per endpoint URL and never shares it across them.
+        // Instructions reflect the admitted pool, its connector roster and the effective write
+        // policy. `registry` is this caller's admitted view, the one execute_code's inventory
+        // reads, so a person at plain /mcp never sees an id outside their pool. Every cache hint
+        // below is private, so a client keeps what it learned for this caller and endpoint URL.
         instructions: endpointInstructions(
           pool !== undefined ? opts.pools.get(pool)?.description : undefined,
           native,
           effectiveReadOnly,
+          connectors.map((connector) => connector.id),
         ),
         inputRequired: { legacyShim: false },
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },
         cacheHints: {
           "server/discover": { ttlMs: 3_600_000, cacheScope: "private" },
-          "tools/list": {
-            ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000,
-            cacheScope: "private",
-          },
+          "tools/list": toolsListHint,
         },
       });
       servers.push(server);
@@ -507,9 +520,9 @@ function serveMcp(
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
       });
-      const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
-      // A native pool's text uses the native contract's wording.
-      const routes = native ? routeNames(native.executeCode ? "native-code" : "native") : opts.routes;
+      const diagnostics = native
+        ? { ...native, catalogErrors: [] as string[], staleCatalogs: [] as string[] }
+        : undefined;
       const nativeRoute = registerMetaTools(server, registry, {
         native: diagnostics,
         routes,
@@ -526,7 +539,10 @@ function serveMcp(
         credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
         ...(activity ? { activity } : {}),
         defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
+        responseCeilingMs: opts.config.execute.watchdogMs,
+        requestStartedAt,
         maxProgramResultChars: opts.config.execute.maxResultChars,
+        maxProgramHostCalls: opts.config.execute.maxHostCalls,
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         discoveryConcurrency: opts.config.discovery.concurrency,
         requestSignal,
@@ -539,6 +555,7 @@ function serveMcp(
           baseUrl,
           requestScope,
           executor: opts.executor,
+          requestStartedAt,
           defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
           logger: opts.config.logger,
           ...(activity ? { activity } : {}),
@@ -559,6 +576,10 @@ function serveMcp(
               route: nativeRoute,
               bind: (context) => authElicitation.bind(context),
               catalogErrors: diagnostics!.catalogErrors,
+              staleCatalogs: diagnostics!.staleCatalogs,
+              onDegradedListing: () => {
+                toolsListHint.ttlMs = NATIVE_DEGRADED_TOOLS_LIST_TTL_MS;
+              },
               logger: opts.config.logger,
               requestScope,
               requestSignal,
@@ -821,6 +842,8 @@ export function createMcpRoute(opts: ServerOptions): {
         // The Node adapter has already buffered up to its own pre-auth cap
         // (`listen`'s `maxBodyBytes`) before a request reaches core.
         const startedAt = Date.now();
+        // The response ceiling counts from here; a future stamp could only extend it.
+        const arrivedAt = Math.min(context.runtimeContext?.requestArrivedAt ?? startedAt, startedAt);
         const maxDurationMs = opts.requestAdmission.maxDurationMs;
         const listenHeader = request.method === "POST" && request.headers.get("Mcp-Method") === "subscriptions/listen";
         const refuseAdmission = (error: unknown): Effect.Effect<Response, unknown> => {
@@ -1151,6 +1174,7 @@ export function createMcpRoute(opts: ServerOptions): {
             yield* serveMcp(
               localRequest,
               localAbort.signal,
+              arrivedAt,
               requestScope,
               opts,
               baseUrl,

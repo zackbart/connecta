@@ -201,6 +201,8 @@ async function enabled(when: ConnectaPredicate | undefined, ctx: DynamicContext)
 interface EndpointFacts {
   surface: "meta" | "native";
   executeCode: boolean;
+  /** The server's effective policy; only `true` drops write guidance. */
+  readOnly: boolean;
   connectors: { id: string; title?: string; readFirst?: string }[];
 }
 
@@ -213,6 +215,7 @@ function endpointFacts(value: unknown): EndpointFacts | undefined {
   return {
     surface: facts.surface,
     executeCode: facts.executeCode,
+    readOnly: facts.readOnly === true,
     connectors: facts.connectors.flatMap((connector) => {
       const id = text(connector?.id);
       if (!id) return [];
@@ -260,7 +263,7 @@ function eveGuide(connection: string, facts: EndpointFacts | undefined): string 
   if (facts.surface === "meta") {
     return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<tool>", input }). Names in this guidance and in nextAction omit the "${prefix}" prefix. Go straight to ${prefix}execute_code without eve__search, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }. eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program.${roster ? ` Reachable: ${roster}.` : ""}`;
   }
-  return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<connector>__<tool>", input }). Find them with eve__search; scope one connector with "${prefix}<connector>__", not "<connector>__". Names in this guidance and in nextAction omit "${prefix}".${facts.executeCode ? ` For several, dependent or reduced calls, go straight to ${prefix}execute_code with { code: "async () => { ... }" }, using the program address ending each tool's description.` : ""} Missing tools: ${prefix}authorize_connector. Tool lists refresh every step, so no reconnect is needed.${roster ? ` Connectors: ${roster}.` : ""}`;
+  return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<connector>__<tool>", input })${facts.readOnly ? "" : `, with writes named "${prefix}<connector>__WRITE__<tool>"`}. Find them with eve__search; scope one connector with "${prefix}<connector>__", not "<connector>__". Names in this guidance and in nextAction omit "${prefix}".${facts.executeCode ? ` For several, dependent or reduced calls, go straight to ${prefix}execute_code with { code: "async () => { ... }" }, using each tool's Program address.` : ""} Tools missing: ${prefix}authorize_connector returns a link; give it to the user or operator once and stop. Eve lists tools again every step, so a repair needs no reconnect.${roster ? ` Connectors: ${roster}.` : ""}`;
 }
 
 /** Release lines a helper and server must share; a patch difference is compatible. */

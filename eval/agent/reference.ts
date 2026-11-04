@@ -76,9 +76,7 @@ export async function playReference<T>(
       ? await options.deploy(world)
       : await startDeployment(options.target ?? "node", world, task, surface);
     const hostEvents: StreamEvent[] = [];
-    host = task.host
-      ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
-      : undefined;
+    host = task.host ? await startAuthHost(deployment, task.host.urlElicitation, (e) => hostEvents.push(e)) : undefined;
     session = await connectMcp(host?.mcpUrl ?? deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
     if (!task.world?.oauth && !/^cta_[A-Za-z0-9_-]{43}$/.test(deployment.token)) {
       throw new Error("Node eval did not provision a managed machine token");
@@ -117,12 +115,23 @@ export async function playReference<T>(
               probe.on("error", reject);
             });
           }
+          let native;
+          if (
+            (surface === "native" || surface === "native-no-code") &&
+            ["call_tool", "call_destructive_tool"].includes(tool)
+          ) {
+            native = (await live.listTools()).find((listed) => listed.address === args.address);
+            if (!native) throw new Error(`Reference native tool is unavailable: ${String(args.address)}`);
+            tool = native.name;
+            args = args.args as Record<string, unknown>;
+          }
           const result = await live.call(tool, args);
           toolUses.push({
             id: `ref-${toolUses.length + 1}`,
             turn,
             tool,
             input: args,
+            ...(native?.address ? { native: { address: native.address, readOnly: native.readOnly } } : {}),
             isError: result.isError,
             resultText: result.text,
             resultBlocks: result.content,

@@ -480,11 +480,13 @@ it("prefixes the server's text with the guide for each surface, from a real endp
   expect(renamed).not.toContain("connecta__");
   const [native] = await guide({ surface: "native" });
   expect(native).toBe(
-    `Connecta tools are deferred: call eve__tool({ name: "connecta__<connector>__<tool>", input }). Find them with eve__search; scope one connector with "connecta__<connector>__", not "<connector>__". Names in this guidance and in nextAction omit "connecta__". For several, dependent or reduced calls, go straight to connecta__execute_code with { code: "async () => { ... }" }, using the program address ending each tool's description. Missing tools: connecta__authorize_connector. Tool lists refresh every step, so no reconnect is needed. Connectors: crm, billing, tickets.`,
+    `Connecta tools are deferred: call eve__tool({ name: "connecta__<connector>__<tool>", input }), with writes named "connecta__<connector>__WRITE__<tool>". Find them with eve__search; scope one connector with "connecta__<connector>__", not "<connector>__". Names in this guidance and in nextAction omit "connecta__". For several, dependent or reduced calls, go straight to connecta__execute_code with { code: "async () => { ... }" }, using each tool's Program address. Tools missing: connecta__authorize_connector returns a link; give it to the user or operator once and stop. Eve lists tools again every step, so a repair needs no reconnect. Connectors: crm, billing, tickets.`,
   );
   const [lean] = await guide({ surface: "native", executeCode: false });
   expect(lean).toContain('"connecta__<connector>__"');
   expect(lean).not.toContain("execute_code");
+  // A read-only endpoint lists no write, so the guide names none.
+  expect((await guide({ surface: "native", readOnly: true }))[0]).not.toContain("WRITE");
 });
 
 it("reads the same facts through the legacy initialize fallback", async () => {

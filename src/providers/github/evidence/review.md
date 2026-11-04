@@ -3,7 +3,7 @@
 Step 2 exposes four standard operation hatches plus `list_scopes`,
 `search_scoped` and `merge_pull_request`. The immutable index describes 1,204
 operations; discovery is not permission to dispatch. `lib/operations.ts` admits
-exactly 31 repository reads and three release writes. Raw merge, raw search,
+exactly 39 repository reads and three release writes. Raw merge, raw search,
 private App routes and every other indexed operation refuse before authentication.
 Natural resource queries prefer this reviewed coverage; explicit paths and
 unsupported queries still expose the full pin's refusal metadata. Acronym
@@ -14,7 +14,7 @@ splitting in shared discovery means “list PR” and “list pull requests” w
 
 The following official references document the fine-grained permission selected
 for each operation. The explicit per-operation table is authoritative; no GET
-or path-prefix permission inference is used. The provider test sends all 31 reads
+or path-prefix permission inference is used. The provider test sends all 39 reads
 and verifies their minted permission and exact repository ID.
 
 | Permission         | Admitted operations                                                                    | Official reference                                                                                                                                                                           |
@@ -24,12 +24,50 @@ and verifies their minted permission and exact repository ID.
 | pull_requests:read | PR list/detail; reviews list/detail; review comments list/detail; files and PR commits | [Pull requests](https://docs.github.com/en/rest/pulls/pulls), [reviews](https://docs.github.com/en/rest/pulls/reviews), [review comments](https://docs.github.com/en/rest/pulls/comments)    |
 | contents:read      | Commits list/detail, compare, inline contents; releases list/detail/latest/tag         | [Commits](https://docs.github.com/en/rest/commits/commits), [contents](https://docs.github.com/en/rest/repos/contents), [releases](https://docs.github.com/en/rest/releases/releases)        |
 | actions:read       | Workflows list/detail; repository and workflow runs; run detail/jobs; job detail       | [Workflows](https://docs.github.com/en/rest/actions/workflows), [runs](https://docs.github.com/en/rest/actions/workflow-runs), [jobs](https://docs.github.com/en/rest/actions/workflow-jobs) |
+| checks:read        | Check runs and suites for a ref; check run detail/annotations; suite detail/runs       | [Permissions required for GitHub Apps](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-checks)                                |
+| statuses:read      | Combined status and status list for a ref                                              | [Permissions required for GitHub Apps](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps#repository-permissions-for-commit-statuses)                       |
 
 PR commits require pull_requests:read, not contents:read. Existing release writes
 retain contents:write. Guarded merge retains contents:write, pull_requests:write
 and workflows:write; its auxiliary lookup only requests pull_requests:read.
 Named data search requests metadata, issues, pull_requests or contents read
 according to its selected kind. No new write operation is admitted.
+
+## CI inspection reads (2026-11-04)
+
+Session logs showed agents leaving for the `gh` CLI after check-runs refusals. The
+eight admitted reads are the check and commit-status endpoints those logs actually
+used, each read with one named permission. Writes, rerequests and suite preferences
+stay refused. No named tool is warranted under decision 0014: these are ordinary
+indexed reads with `{status, data, page?}` hatch envelopes, and no projection or
+multi-step guard. Paged lists use the existing GitHub Link adapter; `ref` keeps the
+repository-local `%2F` and owner-prefix rules. The pinned schema flags only
+`repository.temp_clone_token` and `security_and_analysis` on the suite and combined
+status responses, reviewed in `safety.ts`. Check output and annotation text are
+authored content under the same embedded-URL scan as other reads; `details_url` and
+`target_url` come from third parties, so the shared URL rules sanitize them.
+
+## Failure classification
+
+A 401 stays `auth_required`. A 403 is `provider_permission_denied` with no credential
+handoff unless `retry-after` or an exhausted `x-ratelimit-remaining` makes it
+`rate_limited`. A 403 proves a refusal, not its cause: [GitHub documents](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api)
+lockouts after repeated invalid credentials answering 403, secondary limits arrive
+unmarked, and policies refuse sufficient permissions. Classification never reads
+GitHub's prose, so the wording states what is known, what is likely and what to do, in
+that order, and never claims the key works or a grant is missing. Permission and scope
+headers pass only when the whole value matches a strict name pattern, and are worded as
+what the endpoint accepts, since they describe the endpoint and not this token;
+`x-github-sso` is read as far as its `required` keyword and its URL never leaves.
+A 403 on `GET /app/installations` is `auth_required`: only the App JWT is in play.
+A mint's 422 is [documented](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app)
+as validation failure or spam protection. A refused mint is called a permission gap
+only when `permissions` in GitHub's installation record lacks a requested permission,
+so no prose is read; otherwise a 422 is a neutral `connector_call_failed` and a 403
+keeps its causes open. Installation or repository-selection gaps in `AppAuth` follow a
+successful App-authenticated listing, so they can say the credential works.
+Installation tokens are still evicted on a non-rate 403 so repaired access applies on
+the next call.
 
 ## Authentication and confinement
 

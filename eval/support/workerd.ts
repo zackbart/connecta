@@ -4,6 +4,7 @@
  * process group. Every group still running when the harness exits, or when it
  * receives SIGINT/SIGTERM, is killed, so no workerd outlives the run.
  */
+import { build } from "esbuild";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -209,6 +210,12 @@ export async function wranglerDev(options: {
   /** Pass `PUBLIC_URL:<origin>` on the command line, as the smoke always has. */
   publicUrlVar?: boolean;
   bootMs?: number;
+  /**
+   * Serve a pre-built snapshot of `main`'s module graph, with Wrangler's bundling
+   * and watch off, so a source edit in this checkout cannot reload the Worker.
+   * Agent trials need it; smokes leave it off so they exercise Wrangler's bundler.
+   */
+  freeze?: boolean;
 }): Promise<WranglerDev> {
   const persist = await mkdtemp(join(tmpdir(), `${options.name}-`));
   const { rawConfig: example } = experimental_readRawConfig({
@@ -236,11 +243,32 @@ export async function wranglerDev(options: {
     proxyPort = await unclaimedPort();
     origin = `http://127.0.0.1:${port}`;
   };
+  const snapshot = join(persist, "snapshot", "worker.mjs");
+  if (options.freeze) {
+    try {
+      await build({
+        entryPoints: [options.main],
+        outfile: snapshot,
+        bundle: true,
+        format: "esm",
+        platform: "neutral",
+        conditions: ["workerd", "worker", "browser"],
+        mainFields: ["module", "main"],
+        external: ["cloudflare:*", "node:*"],
+        tsconfig: join(ROOT, "tsconfig.json"),
+        logLevel: "silent",
+      });
+    } catch (error) {
+      await rm(persist, { recursive: true, force: true });
+      throw error;
+    }
+  }
   await writeFile(
     config,
     JSON.stringify({
       name: options.name,
-      main: options.main,
+      main: options.freeze ? snapshot : options.main,
+      ...(options.freeze ? { no_bundle: true } : {}),
       compatibility_date: example.compatibility_date,
       compatibility_flags: example.compatibility_flags,
       d1_databases: example.d1_databases,

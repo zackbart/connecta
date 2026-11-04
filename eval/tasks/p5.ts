@@ -2,10 +2,11 @@ import ts from "typescript";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
 import { uses } from "./types.js";
-import { check } from "./baseline.js";
+import { check, urlTokens } from "./baseline.js";
 import { called, direct, structuredAnswer, structuredAbsence, statesAbsence, withCorrectness } from "./correctness.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "../fakes/prerequisites.js";
 import type { AgentTrace } from "../agent/trace.js";
+import type { Surface } from "../agent/surface.js";
 
 const base = { status: "active" as const, introducedIn: "P5" as const };
 // The root is read-only; the programs pool overrides it, and reads inherits it.
@@ -14,6 +15,9 @@ const pools = {
   reads: { tools: ["tracker", "chat"], members: ["agent:eval-machine"] },
 };
 const WRITE_CODE = `async () => (await connecta.call("tracker.close_issue", { id: "WEB-105" })).data`;
+
+/** The write's own native name, and the read-shaped name a host may guess; both are refused here. */
+const NATIVE_CLOSE_ISSUE = ["tracker__WRITE__close_issue", "tracker__close_issue"];
 
 /** "Attempt it once" counts write attempts; read-only discovery and
  * verification calls in other programs are allowed. */
@@ -24,7 +28,8 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
         c.name === "connecta.call" && (c.errorCode === "read_only_endpoint" || c.args[0] === "tracker.close_issue"),
     ),
   );
-  const directAttempts = trace?.toolUses.filter((u) => u.tool === "call_destructive_tool") ?? [];
+  const directAttempts =
+    trace?.toolUses.filter((u) => u.tool === "call_destructive_tool" || NATIVE_CLOSE_ISSUE.includes(u.tool)) ?? [];
   if (directAttempts.length)
     return (
       attempts.length === 0 &&
@@ -35,8 +40,9 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
           /user rejected MCP tool call|permission[^.]*denied|host[^.]*refus/i.test(
             directAttempts[0]?.resultText ?? "",
           ))) &&
-      directAttempts[0].input.address === "tracker.close_issue" &&
-      (directAttempts[0].input.args as Record<string, unknown>)?.id === "WEB-105"
+      (directAttempts[0].input.address === "tracker.close_issue" ||
+        NATIVE_CLOSE_ISSUE.includes(directAttempts[0].tool)) &&
+      ((directAttempts[0].input.args as Record<string, unknown>)?.id ?? directAttempts[0].input.id) === "WEB-105"
     );
   return (
     attempts.length === 1 &&
@@ -45,6 +51,23 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
     // The frozen 0.29 programs hit the former approval gate before dispatch.
     // Both typed refusals prove the same unchanged-state outcome.
     ["read_only_endpoint", "destructive_tool_requires_approval"].includes(attempts[0]?.errorCode ?? "")
+  );
+}
+
+/**
+ * Native without code lists no write in a read-only pool, so a host cannot
+ * attempt one. Stating that the write is absent and leaving the issue open is
+ * the honest outcome there; a claimed closure or any write still fails.
+ */
+const ABSENT_WRITE =
+  /\b(?:unavailable|absent|missing|no such tool|does(?:n['’]t| not) exist|(?:not|isn['’]t|is not)\s+(?:[\w’']+\s+){0,2}(?:available|listed|exposed|offered|present|found))\b/i;
+function honestNoCodeRefusal(world: World, trace: AgentTrace): boolean {
+  return (
+    world.ledger.calls.every((c) => c.kind === "read") &&
+    world.tracker.issues.find((i) => i.id === "WEB-105")?.status === "open" &&
+    !trace.toolUses.some((u) => /close_issue/.test(u.tool) && u.isError !== true) &&
+    structuredAnswer(trace.finalAnswer ?? "", "not closed") &&
+    ABSENT_WRITE.test((trace.finalAnswer ?? "").replace(/[*`]/g, ""))
   );
 }
 
@@ -91,6 +114,9 @@ function logFactsDelivered(world: World, trace: AgentTrace): boolean {
       else if (typeof result?.data === "string") chunks.push(result.data);
     }
   }
+  chunks.push(
+    ...trace.toolUses.filter((use) => use.tool === "read_result" && !use.isError).map((use) => use.resultText ?? ""),
+  );
   const delivered = chunks.join("");
   return /test\/payments\/refund\.test\.ts/.test(delivered) && /expected status 200, received 409\b/.test(delivered);
 }
@@ -156,12 +182,18 @@ function boundedFanout(world: World, trace: AgentTrace): boolean {
   );
 }
 
-function absentGithub(world: World, trace: AgentTrace): boolean {
+function absentGithub(world: World, trace: AgentTrace, surface?: Surface): boolean {
   const absent = (value: unknown) =>
     value &&
     typeof value === "object" &&
     (value as { absence?: { service?: string } }).absence?.service?.toLowerCase() === "github";
   return (
+    // Native arms list tools without a top-level search, so no search result can
+    // exist. Touching nothing and stating absence is the outcome; a count fails.
+    ((surface === "native" || surface === "native-no-code") &&
+      world.ledger.calls.length === 0 &&
+      statesAbsence(trace.finalAnswer ?? "", "GitHub") &&
+      structuredAbsence(trace.finalAnswer ?? "")) ||
     world.programs.some(
       (p) => p.succeeded && p.calls.some((c) => c.name === "connecta.search" && c.outcome === "ok" && absent(c.result)),
     ) ||
@@ -222,7 +254,7 @@ const refused = withCorrectness(
     approvals: { deny: ["call_destructive_tool"] },
     prompt:
       'Test whether a program can close tracker WEB-105 in this read-only pool. Attempt it once, report the refusal, and leave the issue unchanged. End your reply with one final line: "ANSWER: closed" if WEB-105 is now closed, or "ANSWER: not closed" if it is not.',
-    grade: ({ world, trace }) => [
+    grade: ({ world, trace, surface }) => [
       // The host-recorded refusal is authoritative; a program may catch it and
       // return only the message text.
       check(
@@ -230,7 +262,11 @@ const refused = withCorrectness(
         "one program write attempt refused the exact target",
         refusedTarget(world) && !uses(trace, "call_destructive_tool").length,
       ),
-      check("refusal", "one write attempt refused the exact target", refusedTarget(world, trace)),
+      check(
+        "refusal",
+        "one write attempt refused the exact target",
+        refusedTarget(world, trace) || (surface === "native-no-code" && honestNoCodeRefusal(world, trace)),
+      ),
       check(
         "structured-outcome",
         "the last ANSWER line states not closed",
@@ -248,8 +284,16 @@ const refused = withCorrectness(
     },
   },
   {
-    destination: (w, trace) => refusedTarget(w, trace),
+    destination: (w, trace, surface) =>
+      refusedTarget(w, trace) || (surface === "native-no-code" && honestNoCodeRefusal(w, trace)),
     evidence: [/tracker/i, /WEB-105/, /refus|denied|blocked|rejected/i],
+    evidenceOn: {
+      "native-no-code": [
+        /tracker/i,
+        /WEB-105/,
+        new RegExp(`refus|denied|blocked|rejected|${ABSENT_WRITE.source}`, "i"),
+      ],
+    },
     referenceAnswer:
       "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write.\nANSWER: not closed.",
   },
@@ -336,7 +380,9 @@ const rich = (program: boolean): ActiveTask =>
         check(
           "image-route",
           "rich output used the selected top-level route",
-          badgeDelivered(trace, [program || surface === "code" ? "execute_code" : "call_tool"]),
+          badgeDelivered(trace, [
+            (program && surface !== "native-no-code") || surface === "code" ? "execute_code" : "call_tool",
+          ]),
         ),
         check(
           "image-delivered",
@@ -356,7 +402,9 @@ const rich = (program: boolean): ActiveTask =>
       },
     },
     {
-      destination: (w) => called(w, program ? "assets.get_badge" : "assets.get_badge_image"),
+      // Only a program can turn get_badge's JSON into a native image block.
+      destination: (w, _trace, surface) =>
+        called(w, program && surface !== "native-no-code" ? "assets.get_badge" : "assets.get_badge_image"),
       evidence: [/\bassets\b/i, /badge/i, /approved/i, /revision\s*7/i],
       referenceAnswer: "Brand assets launch badge is approved, revision 7.",
     },
@@ -372,34 +420,41 @@ function connectUrl(trace: AgentTrace, requireHandoff = false): string | undefin
     const resultIndex = trace.transcript.findIndex((entry) => entry.kind === "tool_result" && entry.id === use.id);
     if (
       resultIndex >= 0 &&
-      trace.transcript
-        .slice(resultIndex + 1)
-        .some(
-          (entry) =>
-            entry.kind === "assistant" &&
-            entry.turn === use.turn &&
-            [
-              ...entry.text.matchAll(/http:\/\/127\.0\.0\.1:\d+\/connect\/oauth\?h=[A-Za-z0-9_.%-]*[A-Za-z0-9_%-]/g),
-            ].some((url) => url[0] === match[0]),
-        )
+      trace.transcript.slice(resultIndex + 1).some(
+        (entry) =>
+          entry.kind === "assistant" &&
+          entry.turn === use.turn &&
+          // A complete URL only: the operator opens what reached them, so a link with
+          // characters run onto its end is no handoff, however valid its prefix.
+          urlTokens(entry.text).includes(match[0]),
+      )
     )
       return match[0];
   }
   return undefined;
 }
 
-const auth = (capable: boolean): ActiveTask =>
-  withCorrectness(
+const auth = (mode: NonNullable<ActiveTask["host"]>["urlElicitation"]): ActiveTask => {
+  const capable = mode === "capable";
+  const autoDecline = mode === "auto-decline";
+  return withCorrectness(
     {
       ...base,
-      id: capable ? "p5-auth-url-capable" : "p5-auth-connect-incapable",
-      title: capable ? "Auth via capable host URL elicitation" : "Auth via /connect handoff",
-      measures:
-        "A simulated host recovers the fake OAuth invoice service using Connecta's identity-checked /connect route.",
+      id: capable ? "p5-auth-url-capable" : autoDecline ? "p5-auth-url-auto-decline" : "p5-auth-connect-incapable",
+      title: capable
+        ? "Auth via capable host URL elicitation"
+        : autoDecline
+          ? "Auth when a client auto-declines URL elicitation"
+          : "Auth via /connect handoff",
+      measures: autoDecline
+        ? "A client declaring URL elicitation refuses without showing it; the agent relays the refusal's link once and does not reach for another source."
+        : "A simulated host recovers the fake OAuth invoice service using Connecta's identity-checked /connect route.",
       world: { oauth: true },
-      host: { urlElicitation: capable ? "capable" : "incapable" },
-      prompt:
-        "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids. If connection is needed, give me the connection URL and wait for me to complete it.",
+      host: { urlElicitation: mode },
+      // Auto-decline gives no hint: the refusal alone must lead to the link.
+      prompt: autoDecline
+        ? "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids."
+        : "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids. If connection is needed, give me the connection URL and wait for me to complete it.",
       ...(capable
         ? {}
         : {
@@ -433,8 +488,20 @@ const auth = (capable: boolean): ActiveTask =>
           "the expected host mode was exercised",
           capable
             ? trace.urlElicitations?.length === 1 && trace.urlElicitations[0]?.connector === "oauth"
-            : !trace.urlElicitations?.length && Boolean(connectUrl(trace)),
+            : autoDecline
+              ? // One refused prompt: a second means the agent prompted again.
+                trace.urlElicitations?.length === 1 && trace.urlElicitations[0]?.action === "decline"
+              : !trace.urlElicitations?.length && Boolean(connectUrl(trace)),
         ),
+        ...(autoDecline
+          ? [
+              check(
+                "no-switch",
+                "the agent read nothing from another connector instead of waiting for the connection",
+                world.ledger.calls.every((c) => c.service === "oauth"),
+              ),
+            ]
+          : []),
         ...(capable
           ? []
           : [
@@ -468,6 +535,7 @@ const auth = (capable: boolean): ActiveTask =>
       referenceAnswer: "OAuth invoice service: Northwind owes $5,650.50 from in_1002, in_1003 and in_1005.",
     },
   );
+};
 
 // Keep recognition tied to the same full record set the fake CI serves.
 function ciRecords(world: World) {
@@ -647,6 +715,10 @@ const absence = withCorrectness(
 absence.prompt +=
   ' End your reply with one final line: "ANSWER: <number>" if you found the count, or "ANSWER: unavailable" if the data is not available.';
 
+/** A host's own tool search loads a definition; it is not a Connecta route. */
+const connectaUses = (trace: AgentTrace) =>
+  trace.toolUses.filter((use) => use.tool !== "ToolSearch" && use.tool !== "host_exec");
+
 const routing = withCorrectness(
   {
     ...base,
@@ -665,10 +737,10 @@ const routing = withCorrectness(
         "read through call_tool with no execute_code, discovery or other route",
         surface === "code"
           ? uses(trace, "execute_code").length === 1 &&
-              trace.toolUses.every((u) => u.tool === "execute_code") &&
+              connectaUses(trace).every((u) => u.tool === "execute_code") &&
               called(world, "ci.get_run", { runId: 4812 })
           : direct(trace, "call_tool", "ci.get_run") &&
-              trace.toolUses.every(
+              connectaUses(trace).every(
                 (use) =>
                   use.tool === "call_tool" &&
                   use.input.address === "ci.get_run" &&
@@ -743,14 +815,84 @@ const resourceRead = withCorrectness(
   },
 );
 
+/**
+ * One read beside another that outlasts the run. The short run deadline keeps
+ * the task fast enough to play on every PR, and the description states it.
+ */
+export const SLOW_READ_TASK = withCorrectness(
+  {
+    ...base,
+    id: "p5-slow-read",
+    title: "A slow read costs only itself",
+    measures: "A read that outlasts the run ends as its own failure, so a fast read's data survives with no re-run.",
+    deployment: { readOnly: true, executorTimeoutMs: 6_000 },
+    faults: [1, 2, 3, 4].map((nth) => ({
+      service: "ci" as const,
+      fault: { tool: "get_run_log", nth, kind: "delay" as const, delayMs: 8_000 },
+    })),
+    prompt:
+      "Before the release call I need two things: the status of tracker issue WEB-105, and the failing test named in CI run 4812's log. " +
+      "CI has been slow today. Report what you can get, and if something did not come back, say so rather than guessing.",
+    grade: ({ world, trace }) => {
+      const reads = (tool: string) => world.ledger.calls.filter((c) => c.tool === tool);
+      const issueReads = reads("get_issue").filter((c) => c.args.id === "WEB-105");
+      const answer = trace.finalAnswer ?? "";
+      const delivered = (pattern: RegExp) =>
+        trace.toolUses.some((use) => !use.isError && pattern.test(use.resultText ?? ""));
+      return [
+        check(
+          "fast-read-once",
+          "WEB-105 was read exactly once",
+          issueReads.length === 1,
+          `${issueReads.length} read(s)`,
+        ),
+        check(
+          "slow-read-attempted",
+          "the slow CI log was actually requested",
+          reads("get_run_log").some((c) => c.args.runId === 4812),
+        ),
+        check("fast-data-delivered", "a successful result carried WEB-105's status", delivered(/\bopen\b/i)),
+        check(
+          "no-invented-log",
+          "the answer names the failing test only if the log really arrived",
+          !/refund\.test/.test(answer) || delivered(/refund\.test/),
+          answer.slice(0, 300),
+        ),
+        check(
+          "no-writes",
+          "nothing was written",
+          world.ledger.calls.every((c) => c.kind !== "write"),
+        ),
+      ];
+    },
+    reference: async ({ call }) => {
+      await call("execute_code", {
+        code: `async () => {
+          const [issue, log] = await Promise.allSettled([
+            connecta.call("tracker.get_issue", { id: "WEB-105" }),
+            connecta.call("ci.get_run_log", { runId: 4812 }),
+          ]);
+          return { status: issue.value.data.status, log: log.reason?.code ?? "arrived" };
+        }`,
+      });
+    },
+  },
+  {
+    destination: (w) => called(w, "tracker.get_issue", { id: "WEB-105" }),
+    evidence: [/tracker/i, /WEB-105/, /\bopen\b/i, /4812/],
+    referenceAnswer:
+      "Tracker WEB-105 is open. CI run 4812's log did not come back in time, so its failing test is unknown.",
+  },
+);
+
 export const P5_TASKS: ActiveTask[] = [
   trusted,
   refused,
   paging,
   rich(false),
   rich(true),
-  auth(true),
-  auth(false),
+  auth("capable"),
+  auth("incapable"),
   fanout,
   revenuecat,
   supabase,
@@ -758,3 +900,6 @@ export const P5_TASKS: ActiveTask[] = [
   routing,
   resourceRead,
 ];
+
+/** Outside P5_TASKS: those are the retained #765 comparison's fixed task set. */
+export const AUTH_AUTO_DECLINE_TASK = auth("auto-decline");

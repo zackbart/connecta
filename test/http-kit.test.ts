@@ -422,6 +422,25 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
   [
     "INV-5 INV-6: reviewed headers are bounded and value safety withholds the body before detail",
     () => {
+      for (const maxHeaderChars of [0, 1.5, 1025])
+        expect(() => validateVendorErrors({ ...VENDOR, maxHeaderChars })).toThrow(/maxHeaderChars/);
+      const widened: unknown[] = [];
+      toConnectorCallError(
+        status(400, { "x-long": "r".repeat(129), "x-longer": "r".repeat(130) }, {}),
+        {
+          ...VENDOR,
+          headers: ["x-long", "x-longer"],
+          maxHeaderChars: 129,
+          classify: [
+            (input) => {
+              widened.push(input.headers);
+              return undefined;
+            },
+          ],
+        },
+        { classification: "read", dispatches: [] },
+      );
+      expect(widened).toEqual([Object.fromEntries([["x-long", "r".repeat(129)]])]);
       for (const withheld of [true, false]) {
         let seen: unknown;
         const vendor: VendorErrors = {
@@ -702,10 +721,10 @@ describe("fields (decision 0011 S5)", () => {
     const fieldsOf = (tool: ApiTool) =>
       (tool.inputSchema!.properties as Record<string, { description: string }>)["fields"]!.description;
     expect(fieldsOf(one)).toBe(
-      'Dot paths to keep. Paths start at the result, e.g. ["id"]. It only narrows the result.',
+      'Dot paths to keep. Paths start at the result, e.g. ["id"]. It only narrows the result. A withheld value reads "[redacted]"; truncated lists paths cut for size, and the ids to fetch them stay.',
     );
     expect(fieldsOf(many)).toBe(
-      'Dot paths to keep. Paths start at each item in items, e.g. ["id"]. It only narrows the result.',
+      'Dot paths to keep. Paths start at each item in items, e.g. ["id"]. It only narrows the result. A withheld value reads "[redacted]"; truncated lists paths cut for size, and the ids to fetch them stay.',
     );
     const connector = apiConnector("acme", { tools: [one, many] });
     // Declared paths the data lacks (an absent optional, an empty list's items) and paths
@@ -1752,6 +1771,8 @@ function acme(
     sensitive?: "drop" | "return";
     refresh?: boolean;
     authenticate?: GuardedOptions["authenticate"];
+    publicIdentifierHeaders?: GuardedOptions["publicIdentifierHeaders"];
+    headers?: GuardedOptions["headers"];
     timeoutMs?: number;
     result?: Parameters<typeof connect>[2]["result"];
     errors?: VendorErrors;
@@ -1760,6 +1781,8 @@ function acme(
   const guarded = guardedClient({
     ...OPTIONS,
     maxResponseBytes: 4096,
+    ...(options.publicIdentifierHeaders ? { publicIdentifierHeaders: options.publicIdentifierHeaders } : {}),
+    ...(options.headers ? { headers: options.headers } : {}),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     ...(options.refresh ? { authenticate: bearer } : {}),
     ...(options.authenticate ? { authenticate: options.authenticate } : {}),
@@ -2492,6 +2515,63 @@ describe("one dispatch per logical write (decision 0010, B.2)", () => {
     expect(read).toEqual({ value: { ok: true } });
     expect(sent).toHaveLength(2);
   });
+});
+
+describe("INV-5: public identifier headers", () => {
+  const ID = "client-7Qm2Xv9Lp4Zt";
+  const INTERIOR = ID.slice(7, 17);
+  const sentWith = async (
+    authenticated: Record<string, string>,
+    options: Pick<GuardedOptions, "publicIdentifierHeaders" | "headers"> = {},
+  ) => {
+    const secrets = new SentSecrets();
+    await runEdge(
+      acme({ authenticate: Effect.succeed(authenticated), ...options })
+        .sendPath({ method: "GET", path: "/keys", template: "/keys" })
+        .pipe(Effect.provideContext(services("read", secrets))),
+    );
+    expect(new Headers(sent.at(-1)!.headers).get(Object.keys(authenticated)[0]!)).toBe(Object.values(authenticated)[0]);
+    return secrets;
+  };
+  const isCredential = (secrets: SentSecrets) => secrets.filterCredentials({ note: INTERIOR }).changed;
+
+  it.each([["x-client-id"], ["x-user"], ["x-auth-email"]])("an undeclared %s header is a credential", async (name) => {
+    expect(isCredential(await sentWith({ [name]: ID }))).toBe(true);
+  });
+
+  it("a declared header is matched whole only, however its name is cased, and a sensitive name does not undo it", async () => {
+    const secrets = await sentWith({ "X-Auth-Email": ID }, { publicIdentifierHeaders: ["x-auth-email"] });
+    expect(isCredential(secrets)).toBe(false);
+    expect(secrets.text(`row ${INTERIOR}`)).toBe(`row ${INTERIOR}`);
+    expect(secrets.text(ID)).toBe("[redacted]");
+  });
+
+  it("a declaration covers no other header sent beside it", async () => {
+    const secrets = await sentWith(
+      { "x-client-id": "alice@example.com", "x-api-key": ID },
+      { publicIdentifierHeaders: ["x-client-id"] },
+    );
+    expect(isCredential(secrets)).toBe(true);
+  });
+
+  it("a declaration covers only what authentication returned, not a header the same name carries otherwise", async () => {
+    const secrets = await sentWith(
+      { Authorization: "Bearer another-credential" },
+      { publicIdentifierHeaders: ["x-auth-email"], headers: { "X-Auth-Email": ID } },
+    );
+    expect(isCredential(secrets)).toBe(true);
+  });
+
+  it.each([["Bearer"], ["token"], ["Basic"], ["ApiKey"]])(
+    "a declared header's %s value is a credential",
+    async (scheme) => {
+      const secrets = await sentWith(
+        { "x-client-id": `${scheme} ${ID}` },
+        { publicIdentifierHeaders: ["x-client-id"] },
+      );
+      expect(isCredential(secrets)).toBe(true);
+    },
+  );
 });
 
 describe("idempotency keys (decision 0010, B.4)", NODE, () => {

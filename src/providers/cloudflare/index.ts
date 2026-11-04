@@ -210,6 +210,8 @@ export const cloudflare = defineApiProvider<CloudflareOptions>({
   defaultCallAdmission: (options) => admissionPolicy(options.maxConcurrency ?? 6),
   credential: (options) => (options.auth.type === "globalApiKey" ? GLOBAL_API_KEY_CREDENTIAL : API_TOKEN_CREDENTIAL),
   authenticate,
+  // The Global API Key scheme's account email names the account; X-Auth-Key proves it.
+  publicIdentifierHeaders: ["x-auth-email"],
   errors: cloudflareErrors,
   inBandRefusals: true,
   idempotencyKey: false,

@@ -64,6 +64,7 @@ export type ClassificationCode =
   | "ambiguous_tool_alias"
   | "catalog_lookup_failed"
   | "result_too_large"
+  | "result_not_retained"
   | "destructive_tool_requires_approval"
   | "read_only_endpoint"
   | "auth_replay_refused"
@@ -100,6 +101,7 @@ const CLASSIFICATION_CODE_TABLE = {
   ambiguous_tool_alias: true,
   catalog_lookup_failed: true,
   result_too_large: true,
+  result_not_retained: true,
   destructive_tool_requires_approval: true,
   read_only_endpoint: true,
   auth_replay_refused: true,
@@ -194,7 +196,7 @@ const MAX_ARGUMENT_VALIDATION_BYTES = 4096;
 function boundedIssueText(value: string, maxChars: number): { value: string; truncated: boolean } {
   if (value.length <= maxChars) return { value, truncated: false };
   return {
-    value: `${value.slice(0, Math.max(0, maxChars - 1))}…`,
+    value: `${tokenPrefix(value, maxChars - 1)}…`,
     truncated: true,
   };
 }
@@ -230,12 +232,42 @@ const MAX_ECHOED_BYTES = 512;
 const echoEncoder = new TextEncoder();
 const echoDecoder = new TextDecoder();
 
+/** Whitespace and the quotes and brackets that delimit a link in text, HTML and JSON. Each is
+ * ASCII, so a cut before one splits no codepoint in UTF-8 or UTF-16. */
+export const TOKEN_END = new Set([0x09, 0x0a, 0x0d, 0x20, 0x22, 0x3c, 0x3e, 0x60]);
+
 /**
- * Clamp a string to a UTF-8 byte budget, appending `…` when it clipped.
- * Short strings — the common case, and the one that has to stay exact — are
+ * The first `units` UTF-16 units of `value`, less any unfinished token. Every cut of text
+ * that output redaction reads later goes through this or a sibling below: a remnant shorter
+ * than a fragment matches nothing, so a credential registered after the cut must not leave
+ * its opening behind. A whole token is the only tail a cut can prove finished.
+ */
+export function tokenPrefix(value: string, units: number): string {
+  if (units >= value.length) return value;
+  let end = Math.max(0, units);
+  while (end > 0 && !TOKEN_END.has(value.charCodeAt(end))) end--;
+  return value.slice(0, end).trimEnd();
+}
+
+/**
+ * Clamp a string to a UTF-8 byte budget without cutting a token, appending `…` when it
+ * clipped. Short strings — the common case, and the one that has to stay exact — are
  * returned unchanged and untagged.
  */
 export function boundedEchoText(value: string, maxBytes: number = MAX_ECHOED_BYTES): string {
+  const bytes = echoEncoder.encode(value);
+  if (bytes.length <= maxBytes) return value;
+  let end = Math.max(0, maxBytes);
+  while (end > 0 && !TOKEN_END.has(bytes[end]!)) end--;
+  return `${echoDecoder.decode(bytes.slice(0, end)).trimEnd()}…`;
+}
+
+/**
+ * Clamp a name for an operator's record, which no agent reads and no output redaction
+ * follows, to a UTF-8 byte budget. Its prefix is what identifies it, so it may end inside a
+ * token; agent-facing text goes through {@link boundedEchoText}.
+ */
+export function clampedRecordName(value: string, maxBytes: number): string {
   const bytes = echoEncoder.encode(value);
   if (bytes.length <= maxBytes) return value;
   // Never split a codepoint: walk back off UTF-8 continuation bytes (10xxxxxx)
@@ -243,6 +275,49 @@ export function boundedEchoText(value: string, maxBytes: number = MAX_ECHOED_BYT
   let end = Math.max(0, maxBytes);
   while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
   return `${echoDecoder.decode(bytes.slice(0, end))}…`;
+}
+
+/**
+ * How much of a tool's own `isError` text reaches the agent. A refusal can be the
+ * only copy of what to do next: a paragraph of instructions, a request id and a
+ * signed approval URL, which alone commonly run to a couple of kilobytes. Four
+ * kilobytes holds those, and in a direct result's two copies stays well inside the
+ * default result cap; a tighter cap shrinks it further.
+ */
+export const MAX_TOOL_ERROR_BYTES = 4_096;
+
+const CLIPPED = "… [truncated]";
+const CLIPPED_BYTES = echoEncoder.encode(CLIPPED).length;
+
+/**
+ * Clamp downstream prose to a UTF-8 byte budget, marker included, without cutting
+ * a token. The cut backs off to a byte no URL or credential holds, so a link arrives
+ * whole or not at all, and no prefix of a credential registered later stays behind.
+ * Each such byte is ASCII, so no codepoint is split.
+ */
+export function clipText(value: string, maxBytes: number = MAX_TOOL_ERROR_BYTES): string {
+  const bytes = echoEncoder.encode(value);
+  if (bytes.length <= maxBytes) return value;
+  let end = Math.max(0, maxBytes - CLIPPED_BYTES);
+  while (end > 0 && !TOKEN_END.has(bytes[end]!)) end--;
+  return `${echoDecoder.decode(bytes.slice(0, end)).trimEnd()}${end > 0 ? " " : ""}${CLIPPED}`;
+}
+
+/**
+ * Clamp text so its JSON string fits `maxChars` serialized characters, quotes and marker
+ * included, without cutting a token. Escapes make a character cost up to six.
+ */
+export function clipSerialized(value: string, maxChars: number): string {
+  if (JSON.stringify(value).length <= maxChars) return value;
+  const marked = (kept: string) => `${kept}${kept ? " " : ""}${CLIPPED}`;
+  let low = 0;
+  let high = Math.min(value.length, maxChars);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (JSON.stringify(marked(value.slice(0, mid))).length <= maxChars) low = mid;
+    else high = mid - 1;
+  }
+  return marked(tokenPrefix(value, low));
 }
 
 /**
@@ -523,6 +598,16 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   connector_call_failed: false,
 };
 
+/** The downstream said this caller has no access: affirmative evidence, unlike a failure to answer. */
+export function isAccessRefusal(error: unknown): boolean {
+  return (
+    error instanceof ConnectorCallError &&
+    (error.code === "auth_required" ||
+      error.code === "downstream_oauth_required" ||
+      error.code === "provider_permission_denied")
+  );
+}
+
 /** Runtime membership in the closed connector taxonomy, checked against its exhaustive table. */
 export function isConnectorCallErrorCode(value: unknown): value is ConnectorCallErrorCode {
   return typeof value === "string" && Object.hasOwn(RETRYABLE_BY_CODE, value);
@@ -674,6 +759,13 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
    * {@link ConnectorCallError.writeOutcome}). Check its target before repeating it.
    */
   writeOutcome?: "unknown";
+  /**
+   * A write's downstream tool answered `isError` itself, so `message` holds its
+   * words. They do not prove the write unapplied: its handler ran before it answered.
+   */
+  toolAnswered?: true;
+  /** On `unknown_tool`: nearby canonical addresses on the same connector. */
+  suggestions?: string[];
   /** The single model-facing entry point for every credential class. */
   nextAction?:
     | { tool: "skills"; arguments: Record<string, never>; purpose: string }
@@ -685,6 +777,11 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
         tool: "authorize_connector";
         arguments: { connector: string };
         operatorHandoff: string;
+      }
+    | {
+        /** An error that carries its handoff: pass this link on; no tool call is needed. */
+        url: string;
+        purpose: string;
       }
     | {
         tool: "search_tools";

@@ -96,7 +96,8 @@ export const RESULT_TTL_SECONDS = 900;
 
 /**
  * A stashed result: chunk 0 at `result:<id>`, chunk n at `result:<id>#<n>`.
- * The value is the paging envelope `src/meta-tools.ts` writes and reads.
+ * The value is the paging envelope `src/meta-tools.ts` writes and reads, or at
+ * chunk 0 the refusal `src/result-seal.ts` writes for a result it did not publish.
  */
 export const resultKeys = {
   family: {
@@ -243,7 +244,7 @@ export const responseCacheKeys = {
     codec: textCodec,
     ttl: {
       kind: "configured",
-      by: "bounded downstream ttlMs; generations and hash refresh baselines expire after 48 hours",
+      by: "bounded downstream ttlMs; generations, refusal fences and hash refresh baselines expire after 48 hours",
     },
     durable: false,
   },

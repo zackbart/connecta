@@ -512,8 +512,8 @@ describe("ccb() typed failures (H11)", () => {
     );
     fake.route(on("GET", "/groups/5", () => json({ message: value }, {}, 400)));
     const failed = await failure(Promise.resolve(connector.callTool("get_group", { groupId: 5 }, context)));
-    expect(failed.message).toContain("[redacted]");
-    expect(failed.message).not.toContain("private-error-with-whitespace");
+    // Longer than the detail's bound with no boundary to cut at, so none of it stays.
+    expect(failed.message).toBe("CCB returned HTTP 400.");
   });
 
   it("reads CCB's stated wait from a 429 body without a Retry-After header", async () => {

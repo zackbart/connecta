@@ -28,6 +28,11 @@ const MIN_SECRET_LENGTH = 8;
 // units is fragment-indexed. Eight units keeps ordinary words, dates, counts and auth framing out
 // of the index: a public run must repeat eight consecutive units of a secret's form to match.
 const FRAGMENT_LENGTH = MIN_SECRET_LENGTH;
+// A credential's public label, for the outbound argument check alone: a vendor prefix of up to
+// three short segments (`sk_test_`, `github_pat_`, `xoxb-`) or a JWT's header segment. Documents
+// name these and every credential of a kind shares them. Reading a secret's opening as a label
+// only stops runs starting inside it from matching; the rest of the value still matches.
+const PUBLIC_LABEL = /^(?:[Ee]yJ[\w-]*\.|(?:[A-Za-z][A-Za-z0-9]{1,6}[-_]){1,3})/;
 // A private value shorter than this is matched only as a whole field value: a leaf, key, number,
 // boolean or decoded view equal to one of its forms. One to three units recur inside ordinary
 // words, counts and ids, so a substring match would rewrite them everywhere.
@@ -125,7 +130,7 @@ const TAGS = new Set(
 );
 // Outcome flags: a boolean under these names is kept, since a boolean carries one bit whatever
 // produced it. A number or string under them is matched like any other.
-const FACTS = new Set(["isError", "ok", "retryable", "truncated", "hasMore"]);
+const FACTS = new Set(["isError", "ok", "retryable", "truncated", "hasMore", "toolAnswered"]);
 // An error's diagnostics. Its own accessors under these names, such as V8's stack, are read once
 // into its copy, as is whatever its chain answers for them; any other own accessor is never
 // invoked. Accessors its class chain defines are read once too.
@@ -1143,6 +1148,9 @@ function windows(layer: Layer, reach: number): number[] {
 }
 
 export class SentSecrets {
+  /** Rises whenever this set could match more. Text checked at one revision has not been
+   * checked against a later one. */
+  revision = 0;
   /** Normalized form to its strongest kind. */
   private readonly forms = new Map<string, number>();
   /** A form's leading units that encode only public auth framing; absent is none. */
@@ -1165,6 +1173,7 @@ export class SentSecrets {
     whole?: Matcher | null;
     fragments?: Fragments;
     credentials?: SentSecrets;
+    outbound?: SentSecrets;
     folded?: SentSecrets;
   } = {};
 
@@ -1183,6 +1192,7 @@ export class SentSecrets {
     this.widestForm = Math.max(this.widestForm, form.length);
     this.smallForms ||= kind < PRIVATE;
     this.unicodeForms ||= /[\u0080-\uffff]/.test(form);
+    this.revision++;
     this.views = {};
     this.memo = new Map();
     for (const recipient of this.recipients) recipient.store(form, kind, frame);
@@ -1191,6 +1201,7 @@ export class SentSecrets {
   private unregistered(length: number): void {
     if (length >= this.unmatched) return;
     this.unmatched = length;
+    this.revision++;
     this.views = {};
     this.memo = new Map();
     for (const recipient of this.recipients) recipient.unregistered(length);
@@ -1314,6 +1325,18 @@ export class SentSecrets {
         /* An invalid Basic value is still registered verbatim. */
       }
     } else this.secret(framed[1]!);
+  }
+
+  /** A header maintained provider code declares a public identifier: matched whole only. A name
+   * alone never establishes this. Whitespace means an auth scheme or other framing, so that value
+   * is a credential whatever its header, and the answer is false. */
+  publicIdentifierHeader(value: string): boolean {
+    if (/\s/.test(value)) {
+      this.header(value);
+      return false;
+    }
+    this.identifier(value);
+    return true;
   }
 
   request(input: RequestInfo | URL, init?: RequestInit): void {
@@ -1451,6 +1474,16 @@ export class SentSecrets {
     return this.credentials().redact(value, "envelope");
   }
 
+  /** A program's outbound arguments, with what the {@link outbound} check matched replaced,
+   * and whether it matched anything: a write that did is refused rather than sent altered.
+   * Output keeps the stricter matching; a program never holds what output withheld. */
+  filterCredentials<T>(value: T): { value: T; changed: boolean } {
+    const outbound = this.outbound();
+    if (outbound.idle()) return { value, changed: false };
+    const filtered = outbound.project(value, outbound.scan(false));
+    return { value: filtered.value as T, changed: filtered.changed };
+  }
+
   private idle(): boolean {
     return !this.forms.size && this.unmatched === Infinity;
   }
@@ -1499,6 +1532,24 @@ export class SentSecrets {
       this.views.credentials = view;
     }
     return this.views.credentials;
+  }
+
+  /** Credentials as an outbound argument can hold them: a whole form, or eight units of what
+   * follows its public framing and label. Identifiers and submitted private values are not
+   * here. Telling a secret from a label by shape has a limit: fewer than eight units past a
+   * label pass, and a public value sharing eight units of the rest, such as a publishable key
+   * beside its secret key, still matches. */
+  private outbound(): SentSecrets {
+    if (!this.views.outbound) {
+      const view = new SentSecrets();
+      for (const [form, kind] of this.forms) {
+        const frame = this.frames.get(form) ?? 0;
+        if (kind === CREDENTIAL && frame !== Infinity)
+          view.store(form, kind, frame + (PUBLIC_LABEL.exec(form.slice(frame))?.[0].length ?? 0));
+      }
+      this.views.outbound = view;
+    }
+    return this.views.outbound;
   }
 
   /** Every form lowercased, for fields such as hosts that reach output lowercased. */

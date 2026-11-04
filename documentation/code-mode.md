@@ -64,9 +64,9 @@ import { workerExecutor } from "@zackbart/connecta/worker";
 createConnecta({ executor: workerExecutor({ loader: env.LOADER }), readOnly: false /* … */ });
 ```
 
-The adapter uses only `loader` and an optional `timeout`. Its admission defaults
-are two active runs, eight queued runs, a 60-second queue deadline (the default
-guest deadline) and a one-second `retryAfterMs` hint. `admission` replaces all
+The adapter uses only `loader` and an optional `timeout` (default 50 s, `L3`). Its admission defaults
+are two active runs, eight queued runs, a 40-second queue deadline (which leaves a
+queued run time inside the response ceiling, `L3`) and a one-second `retryAfterMs` hint. `admission` replaces all
 four: `{ concurrency, maxQueueSize, queueTimeoutMs, retryAfterMs? }`, where an
 omitted `retryAfterMs` equals `queueTimeoutMs`. The pool belongs to the executor
 instance, so a Worker that builds one per isolate bounds each isolate, not the
@@ -90,6 +90,7 @@ also need the lifecycle wrapper above; structural compatibility alone is insuffi
 ```ts
 interface Executor {
   readonly name?: string;                       // what /health and doctor report
+  readonly deadlineMs?: number;                 // the run's wall-clock deadline (`L3`)
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
   close?(): void | Promise<void>;
 }
@@ -115,8 +116,8 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
    called with the program's arguments and awaited. Connecta supplies `search`,
    `describe`, `call`, `read`, `result`, `skill`, and `emit`; the prelude also
    binds the guest's `skills` alias to `skill`. Connecta also supplies
-   `unawaited`, which the built-in prelude calls at most once, after a failed
-   program read a result field off an unawaited call. It spends no host call;
+   `unawaited`, which the built-in prelude calls at most once, after a
+   program read a result field off an unawaited call, whether it then failed or finished. It spends no host call;
    the host admits one notice per run and ends the run with `budget_exceeded`
    on any further call, so a bridge that exposes it directly gains no
    uncounted round trips.
@@ -142,7 +143,11 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
    call order (`R5`), bounding what it retains.
 6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), within
    `P2`/`X5`. Settle `execute()` on your own deadline; connecta stops waiting
-   at `execute.watchdogMs` and reports the sandbox unresponsive (`L3`).
+   at `execute.watchdogMs` and reports the sandbox unresponsive (`L3`). Expose
+   that deadline as `deadlineMs`, a positive whole number of milliseconds, below
+   `execute.watchdogMs`, so connecta can end reads before it and state it in the
+   tool description. Without it, reads end only just before `execute.watchdogMs`,
+   so a slow one can leave a slower program no time to finish.
 7. **Grant no ambient authority.** Never use `eval` or `node:vm`: sandboxing
    supplements connecta's boundary; every capability arrives through `fns`.
 
@@ -248,7 +253,9 @@ unchanged as `connecta.call(entry.address, entry.args)`
 ([fully determined operations](./meta-tools.md#discovery-context) only).
 
 Each entry carries `address`, `name`, and — when requested — `description`,
-the rendered schemas, and `annotations`. The page's `connectors` map holds each
+the rendered schemas, and `annotations`. `description` is the one-sentence
+[summary](./meta-tools.md#lexical-discovery), with `descriptionTruncated: true`
+when text was left out; `fullDescriptions: true` returns the original text. The page's `connectors` map holds each
 row's connector facts once, keyed by the id before the address's first dot: the
 configured `title` when present (normalized whitespace, at most 120 UTF-8
 bytes), and `guide` (the skill name) with a bounded `guideSummary` when the
@@ -354,7 +361,14 @@ and catalog failures add only `retryAfterMs` when known. Each failed entry
 clamps its caller-authored `address` to 512 UTF-8 bytes with an `…` marker, and
 entry order correlates a clipped address with its request; successes keep
 canonical addresses. More than 100 addresses is `invalid_args`, and the same
-256,000-byte ceiling applies. Compact describe keeps property prose within a
+256,000-byte ceiling applies. `description` is the tool's full text. One call
+returns at most 32 KiB of UTF-8 full description text in address order; an entry
+that does not fit in what remains gets the search summary, with
+`descriptionTruncated: true` when that summary leaves text out, and a later,
+shorter entry may still fit. Summaries have their own allowance and spend none of
+that budget: each is at most 160 UTF-16 code units, at most 480 UTF-8 bytes, so
+100 addresses return at most 80,288 bytes of description text.
+`fullDescriptions: true` lifts the budget, leaving the ceiling. Compact describe keeps property prose within a
 separate 8,192-byte UTF-8 shape cap and shares search's 2,000-visit budget; a
 capped shape sets `inputSchemaTruncated` or `outputSchemaTruncated`, and
 `format: "json"` gives the exact schema. `format: "typescript"` returns a
@@ -370,9 +384,12 @@ The `execute_code` description declares a compact subset of it inline: argument
 shapes that match what `GuestApi` accepts, result fields it returns, and no
 others. Authored emit blocks are the exact variants `M1` accepts;
 forwarded blocks are the native variants from `result.content`. It also
-states that search and describe return objects rather than arrays, that a call
-result over 1 MiB returns a paged handle, and that every function except `emit`
-spends a host call (`M7`). `GuestApi`'s `emit` takes no paged handle, which the
+states that search and describe return objects rather than arrays, that a row with
+`guideRequired` needs its connector guide first (only when a visible connector has
+a guide), that a call result over 1 MiB returns a paged handle to loop with
+`connecta.result`, and that every function except `emit` spends a host call and
+that passing the limit ends the program with nothing returned, even under
+`Promise.allSettled` (`M7`). `GuestApi`'s `emit` takes no paged handle, which the
 host refuses. Programs still use plain JavaScript.
 
 ```js
@@ -437,8 +454,9 @@ connector id as top-level `skills`, within the admitted connector view; built-in
 names stay reserved (see
 [meta-tools](./meta-tools.md#connector-guides-and-skills)). It reads the
 registry behind native `skills/get` and `resources/read`, including opted-in
-downstream skills. It returns
-`{ name, format: "text", text }`; an unknown name is `not_found`. It also
+downstream skills. It returns `{ name, format: "text", text }`, where a local
+guide's `text` omits the frontmatter native readers receive; an unknown name is
+`not_found`. It also
 accepts the top-level tool's `{ name }` object, and `connecta.skills` is an
 undeclared alias of `connecta.skill` with the same host-call accounting, because
 models copy the `skills` tool's shape into programs. Any other argument is
@@ -562,7 +580,8 @@ access (`L4`); Workers guest computation may continue briefly until teardown (`X
 
 Both executor bridges rebuild typed host rejections as guest Errors and retain
 their identity in executor-owned state (`X11`). `message` stays human text, capped at 2,000
-JSON-serialized characters including quotes and an `…` marker when clipped.
+JSON-serialized characters including quotes and a `… [truncated]` marker when clipped,
+and cut only between tokens.
 `code` and `retryable` are the stable branch fields; `data` and `details` carry the same host
 classification, which fits 3,700 serialized characters. Optional recovery metadata
 that would exceed that bound is omitted whole, preserving `code`, `message`,
@@ -610,20 +629,22 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 | `input_required_unsupported` | a downstream asked for input; a read gets `nextAction` for the equivalent direct call, a write is an unknown outcome (`writeOutcome: "unknown"`) to reconcile before any fresh call                   | false         |
 | `rate_limited`               | the downstream reported a rate limit                                                                                                                                                                  | true          |
 | `unavailable`                | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose                     | true          |
-| `timeout`                    | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs                                                                                                          | per operation |
+| `timeout`                    | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs; at `write gate` or `dispatch gate`, it was not sent (`L3`)                                              | per operation |
 | `program_error`              | guest JavaScript failed; `details.name`, `line`, and a fixed repair hint describe it                                                                                                                  | false         |
 | `cancelled`                  | the run ended while this call was in flight (`E5`)                                                                                                                                                    | false         |
 | `connector_call_failed`      | anything else the connector threw                                                                                                                                                                     | per message   |
 | `catalog_lookup_failed`      | the connector's catalog could not be loaded                                                                                                                                                           | per cause     |
 | `result_processing_failed`   | the result could not be prepared                                                                                                                                                                      | per message   |
 | `result_too_large`           | a discovery response exceeded its byte bound                                                                                                                                                          | false         |
+| `result_not_retained`        | paging a result its run did not publish (`R4a`): rerun a read, never repeat a write                                                                                                                   | false         |
 | `budget_exceeded`            | the run exhausted a host-call, write, or emitted-output budget                                                                                                                                        | false         |
-| `write_outcome_unknown`      | a program write was sent and no answer came back; it is never sent again (`W9`)                                                                                                                       | false         |
+| `write_outcome_unknown`      | a program write was sent and no answer proves whether it applied; `unknownWrites` says how each failed, and none is sent again (`W9`)                                                                 | false         |
 | `executor_failed`            | the executor returned a malformed result or failed outside the guest program                                                                                                                          | false         |
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
 `connector`, `operation`, `recovery` (`oauth`, `operator_config`, or
-`unavailable`), `nextAction` naming `authorize_connector`, and a `retry`
+`unavailable`), a `nextAction` carrying the handoff as
+[authorization recovery](./meta-tools.md#authorization-recovery) describes, and a `retry`
 sentence. A program cannot recover credentials — only an operator can — so stop
 and let the failure reach the model.
 
@@ -660,11 +681,16 @@ non-enumerable getters for result fields (`data`, `format`, `content`, `tools`,
 `catalogErrors`, `total`, `text`, `resultId`, `hasMore`, `nextOffset`). Reading
 one before `await`, as in `connecta.call(...).data` or
 `const { tools } = connecta.search(...)`, returns undefined as before and sets
-a per-run flag. When that program then fails, the prelude reports the flag
-through the uncounted `unawaited` host function before the failure crosses,
-and the hint is `connecta.* returns a Promise; await it`. Awaiting, `then`,
-`Promise.all`, and `Promise.allSettled` never read those fields. Hints are
-fixed text; no program source, field name, or value enters them.
+a per-run flag. The prelude reports the flag through the uncounted `unawaited`
+host function before the program's outcome crosses. A failed program's hint is
+`connecta.* returns a Promise; await it`; a program that still finished carries
+the same words in `note` (`R1`). Awaiting, `then`, `Promise.all`, and
+`Promise.allSettled` never read those fields. A `TypeError` saying a value is not a
+function or not iterable, in a program that uses `connecta.search`, `describe` or
+`call`, names the result shape: `search and describe return { tools }; call returns
+{ data, format }.` A syntax error in source that does not start
+as a program says `Pass one expression: async () => { ...; return answer; }.`
+Hints are fixed text; no program source, field name, or value enters them.
 
 An unchanged uncaught host error retains its classification through Error
 identity. A new error containing its message is a new program error. Copied
@@ -714,6 +740,15 @@ unchanged except for `R2`'s size guard. Connecta does not summarize or select
 fields. Program-authored projection saved bytes; host heuristics could drop
 deliberately returned fields. Helpers need [#222](https://github.com/zackbart/connecta/issues/222)
 evidence that programs fail to project.
+
+A program that finished with nothing to read looks like nothing happened, and a
+write inside it must not run again. When `result` is absent and nothing was
+emitted, the response carries a fixed `note`. After a write:
+`Program returned nothing. Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.`
+After reads only: `Program returned nothing, though its calls ran. Add a return.`
+With no calls: `Program returned nothing and made no host calls. Add a return.`
+A returned `null` is a return. An unawaited read (`E6`) puts its await hint in
+`note` even beside a value, followed by the write sentences when a write was sent.
 
 **R2.** The boundary is `execute.maxResultChars` serialized characters, shared
 with emitted text: 24,000 (~6k tokens) by default, configurable from 4,000 to
@@ -767,6 +802,47 @@ grants, pool membership, and endpoint OR connector `readOnly`. Reading a stash i
 its dependencies forward to any new return stash. The page cap is the smallest
 of the deployment cap and contributing connectors' effective `maxResultBytes`.
 Read-only endpoints cannot page write results. A UUID is a handle, never a grant.
+
+**R4a.** A run's retained results are unreadable from other requests by default.
+One becomes readable only after its bytes pass the run's final secret set, including
+any credential or private argument registered after they were stored. This covers
+every result the run stashes: oversized `connecta.call` reads and writes, those
+transferred without showing a handle, and an oversized return. An id the program
+places in its return value, its error or a later call's arguments is covered alike.
+Executors do not take part, so QuickJS, Worker and custom executors behave the same.
+
+Each entry's first chunk, which a reader needs, stays in memory until the run ends,
+and paging inside the run reads it from there. Every way a run answers then seals.
+Sealing starts no further host calls, then waits for the run's host calls and the
+request's credential reads to finish, so its secret set is final. Only then does it
+write first chunks. An entry the set has not grown past is written with no other
+storage work. After growth, its stored bytes are read back and checked, in stored
+form and structurally, so JSON-escaped, URL-encoded and base64 forms and a form split
+across text blocks are found. An entry with no match is written unchanged. An entry
+whose JSON was serialized from a typed array, `Buffer`, `DataView` or `ArrayBuffer`,
+including one a `toJSON` holds or returns, is not read back and stays unreadable
+after growth, since those bytes are checked only while still binary. Stored bytes are
+never rewritten, so
+`totalBytes` and any offset issued during the run stay valid in later runs.
+
+An entry that was not written stays unreadable: it matched the final set, a read-back
+or write failed, or work was still pending at the response's answer-by time, which
+is `execute.watchdogMs` plus a margin of at most 2 seconds. None of these publishes
+anything first and withdraws it later. The run's response carries a `note` that
+paging such an id may fail and to rerun the read, and with a write's output among
+them, not to repeat that write. Paging it from a later request fails with
+`result_not_retained`, `retryable: false`: a read's message says to rerun, and a
+write's says its output is not retrievable and not to repeat it. That answer comes
+from a marker holding the entry's binding and no bytes. If storing the marker fails,
+the id answers `not_found`. Cancellation starts no marker or cleanup; storage expiry
+reclaims the chunks. A write's output is always retrievable inside the run that wrote
+it, so a program that needs it can read it before it ends.
+
+A direct `call_tool`, `call_destructive_tool` or native tool's stash has no later
+call in its request to wait for, so its bytes pass that request's set when stored,
+and no seal applies. A direct call in a different request shares no secret set
+with it: a credential first used there never checks an earlier direct entry, just
+as it never checks that earlier call's inline output.
 
 If paging is unavailable because the stash is full, storage fails, or text
 cannot round-trip as UTF-8, the successful return keeps the existing bounded
@@ -943,7 +1019,9 @@ use `execute.hostCallTimeoutMs`. The `execute_code` description advertises the
 `connecta.call` default as `<n>s/host call`, or, when `calls.defaultTimeoutMs`
 differs, both deadlines, for example `25s/call (15s result/skill/read)`.
 A guest may request a longer individual call, but the sandbox
-and request ceilings still bound the whole run. Timeout details are agent-facing;
+and request ceilings still bound the whole run (`L3`). A direct call's deadline, however
+it was set, ends at the response ceiling, `execute.watchdogMs` from the
+request's arrival, and states the deadline it ran under (`L3`). Timeout details are agent-facing;
 operator records retain only checked classifications and numeric facts.
 Result processing, including stash reservation, uses the same remaining call
 budget and request cancellation. If it cannot finish after a successful call,
@@ -961,15 +1039,95 @@ appear in `timeouts`, bounded to ten entries.
 
 **L3.** Every execution runs under a wall-clock deadline that includes time
 spent waiting on host calls. Expiry ends the run with an execution error and no
-partial result; the deadline's length is executor configuration (`X1`). Above
-it sits a ceiling connecta enforces outside the sandbox, `execute.watchdogMs`
-(120 s by default, above both executors' own deadlines), because an executor's
-deadline may live inside the sandbox it is meant to stop: a wedged Dynamic
-Worker never fires its in-isolate timer. A run whose executor has not settled
-by the ceiling ends as a non-retryable `timeout` whose message calls
-the sandbox unresponsive, with no partial result, and its admission lease is
-released, so wedged runs cannot fill the code pool. Raising an executor's
-deadline past the ceiling means raising the ceiling too.
+partial result; the deadline's length is executor configuration (`X1`), which
+an executor publishes as `deadlineMs` (QuickJS 30 s, Dynamic Worker 50 s by
+default).
+
+Reads stop before that deadline so one slow read costs only itself. Each
+`connecta.call` read, `read`, `result` and `skill` runs under the smaller of its
+own deadline (`L4`) and the time left until the run deadline minus a margin of
+1 s or a tenth of the deadline, whichever is less, and never past the same margin
+before the response ceiling below; scoped `search` and `describe`
+are bounded the same way. Those clocks start before the executor's, so they end
+early rather than late. A read that reaches its cap fails with a retryable
+`timeout` the program can catch, so `Promise.allSettled` keeps every result that
+finished. Caught or not, it is the read's failure, not a sandbox timeout. A
+later read gets the one-tick deadline that is left, and fails the same way.
+The cap ends the work as well as the wait: the read's downstream signal aborts
+before the program hears `timeout`, and a listing other callers still wait on is
+cancelled once the last of them leaves. Storage operations cannot be withdrawn
+once sent, so one in flight runs to its end. A discovery-health routine already
+under way cannot be interrupted either, and it may start its next operation,
+such as reading the connector's generation key, after the program hears
+`timeout`. No deadline bounds that storage latency.
+
+Writes are exempt, because a write ended early is a write with an unknown
+outcome. A write-like call (`W9`), a source write overridden to read included,
+keeps its own deadline up to `execute.watchdogMs`, and when it outlasts the run
+the drain still learns its outcome. Classification comes from the catalog, so
+resolution uses the read's cap for every call: nothing has been sent if it
+expires. A write that reaches its gate after reads have stopped is refused
+unsent with a retryable `timeout` at `details.stage: "write gate"`: its answer
+could not reach the program, so a known "not sent" is worth more than a write
+only the final counts could report. It spends no write budget and adds nothing
+to `writes`. Send it again in a new program. If an earlier write in the run landed,
+a program that lets this refusal end it is not retryable as a whole (below): send
+only what is left.
+
+The same time is checked once more as the last step before a call reaches its
+connector, for reads and writes alike, because resolution, admission or auth can
+spend it after the write gate, and synchronous work can cross it before a timer
+runs. A call refused there is a retryable `timeout` at
+`details.stage: "dispatch gate"` and was not sent. A write refused there had
+already passed its gate, so it spends write budget and counts in `writes.failed`.
+
+Above the run deadline sits the response ceiling, `execute.watchdogMs` (55 s by
+default, above both executors' own deadlines). Connecta enforces it outside the
+sandbox, because an executor's deadline may live inside the sandbox it is meant
+to stop: a wedged Dynamic Worker never fires its in-isolate timer. The ceiling
+counts from the inbound request's arrival, so upload and time in the request and
+code queues spend it, and it also caps every direct call. On Node, arrival is when
+`listen` received the request's headers, before it buffered the body. On Workers it
+is the route's start, which reads the body afterwards. A queue wait still running at
+the ceiling is refused as a retryable `executor_overloaded`. A run with no time left
+when it would queue or start is refused as a retryable `timeout` at
+`details.stage: "response ceiling"`: it did not run and sent nothing.
+
+A run whose executor has passed its own deadline by the ceiling, or published none and never queued, ends as a
+non-retryable `timeout` whose message calls the sandbox unresponsive, and its
+admission lease is released, so wedged runs cannot fill the code pool. A run that
+reaches the ceiling first, because it queued or because its executor's deadline
+is set past the ceiling, ends as a retryable `timeout` at
+`details.stage: "response ceiling"`. Neither has a partial result. Each still
+carries `hostCalls`, and `writes` when the program sent any. A write still on the
+wire reaches its deadline at the ceiling and makes the result
+`write_outcome_unknown`, once, with no replay (`W9`).
+
+`retryable` on a program's final error answers whether the whole program can run
+again. Once a write in the run has landed, it is `false` however the run ended, a
+retryable read, the write gate and the ceiling included, and `retryAfterMs` is
+dropped, because running the program again would repeat that write. Writes that
+failed, which are proven not applied, leave the failure's own verdict standing.
+
+Work after the run that can hold its response, such as storing an oversized return
+for paging, stops at most 2 s past the ceiling, or a tenth of it if that is smaller
+(57 s by default). Storage still stalled then costs the paging: the program's return
+comes back as its preview with no `resultId`.
+
+The ceiling exists because MCP clients abandon a request at about 60 s, and a client's
+timeout tells the agent nothing: no typed error, no counts, no write outcome.
+Connecta answers each `tools/call` as one JSON response, so nothing reaches the
+client until the run ends, and the client's per-request timer runs for all of it. Claude
+Code's HTTP transport times each request at 60 s unless `MCP_TOOL_TIMEOUT` or a
+server's `timeout` is higher; Codex's `tool_timeout_sec` defaults to 60 s, and
+the MCP TypeScript SDK's request timeout defaults to 60 s. The default leaves 5 s of that
+for storage after the run and to reach the client. Raise it only when every client
+of the deployment allows longer. Then set the client's limit first, keep
+`execute.watchdogMs` a margin below it, and raise any executor deadline
+(`quickJsExecutor({ timeoutMs })`, `workerExecutor({ timeout })`) to stay below
+`execute.watchdogMs`. Construction warns when an executor's deadline does not.
+Cloudflare sets no wall-clock limit on an HTTP Worker while its client stays
+connected, so neither figure is a platform limit.
 
 **L4.** Per-execution bounds that are contract, identical in both executors
 because connecta enforces them above the sandbox:
@@ -997,7 +1155,7 @@ Every `call`, `read`, `search`, `describe`, `result`, and `skill` spends one hos
 call on entry, before resolution, validation, or dispatch; automatic transfer
 pages of a paged result do not. Catching a local refusal refunds nothing.
 The first call beyond the budget ends the host run with one non-retryable
-`budget_exceeded` (`E2`). Its bridge stays pending until lease disposal so guest
+`budget_exceeded` (`E2`), whose message says the run ended with nothing returned, to split the remaining work across programs within the limit, and not to resend any write already sent. Its bridge stays pending until lease disposal so guest
 `try/catch` cannot swallow it. Later host access, including `emit`, stops; pending
 replies are withheld. The refusal reaches no connector, returns no partial result,
 and discards accepted emits (`M4`). Calls still resolving or awaiting admission
@@ -1034,8 +1192,10 @@ including U+FEFF at page starts. Larger values return a
 `{ format: "paged", valueFormat, resultId, totalBytes, truncated: true, hint }`
 handle. Pass the handle or its `resultId` to `connecta.result` and reduce the
 pages before returning them. Automatic transfers spend no additional host-call
-budget; explicit paging does. This policy is shared by QuickJS, Worker and custom
-executors that run provider preludes.
+budget; explicit paging does, so a read's `hint` offers the whole loop only when
+it fits the calls left and otherwise bounds the pages per program
+([paging](./meta-tools.md#paging-with-connectaresult)). This policy is shared by
+QuickJS, Worker and custom executors that run provider preludes.
 Oversized raw text containing unpaired UTF-16 surrogates returns a handle without
 `resultId`, with a notice that it cannot be paged as text. This preserves the
 UTF-8 byte-offset contract without silently replacing code units. The completed
@@ -1047,6 +1207,7 @@ caps and aggregate capacity charges on memory, SQLite and D1. Capacity exhaustio
 or a storage failure returns a successful notice without a `resultId`. A failed
 automatic reconstruction retains the handle. Neither result path reissues the
 call or changes a completed write into a failed or unknown write. Guest returns use the same store when they exceed the presentation cap (`R2`–`R4`).
+Pages from a later run see these results only after the run publishes them (`R4a`).
 
 Over-bound arguments and other unpaged bridge results still fail catchably with
 executor-owned text. An over-bound result names the called address; an argument
@@ -1073,10 +1234,11 @@ on arrival. A queued run also holds its MCP request permit
 ([request admission](./architecture.md#admission-in-two-places)) while it waits.
 
 **L8.** Result, log, host-call, and emission budgets are deployment configuration.
-A call may request `timeoutMs` just as a direct call does; the guest deadline is
-capped by the time remaining before the program watchdog. `execute_code`'s description states the host-call
-budget and the per-call deadline — the ones a program must plan around before it
-runs. The result and log caps live here and in the truncation notice itself
+A call may request `timeoutMs` just as a direct call does. A read's deadline is
+capped by the time left before reads stop, a write's by the time left before the
+program watchdog (`L3`). `execute_code`'s description states the host-call
+budget, the per-call deadline and, when the executor publishes one, the run
+deadline as `<n>s/run` — the ones a program must plan around before it runs. The result and log caps live here and in the truncation notice itself
 (`R2`, `R5`).
 
 ## Activity
@@ -1193,8 +1355,49 @@ They are never inferred from descriptions or arguments.
 if the program does not await it, bounded by its host-call deadline. A write
 that reaches accounting after the program settles is not sent. An unanswered
 write makes the run fail `write_outcome_unknown` with
-`writes: { succeeded, failed, unknown }`, regardless of its return value.
-A failed program that already wrote carries those counts on its error. No
+`writes: { succeeded, failed, unknown }`, regardless of its return value. Its
+`unknownWrites` lists at most ten such writes, each with `address` when resolved,
+`code`, the redacted `message`, and `toolAnswered: true` when the downstream tool
+itself answered `isError`. `unknownWritesTruncated` marks a write left out or a
+message dropped. When a tool answered, the error's `message` leads with
+`<address> answered: <the tool's words>`, and that entry carries no second copy.
+An authorization verdict keeps its own lead, with the words in its entry. The
+words say why the tool answered as it did, not that nothing applied, so read them
+and check the target before acting. Give the user any approval link or request id
+they hold. Never rerun the program: writes it already sent would repeat. If the
+tool's words call for a further call, such as one carrying a provider's approval
+token, send only that operation, as a new call. Connecta does not block it.
+
+A tool's words reach any agent up to 4,096 UTF-8 bytes, on direct and native calls
+too. A longer text is cut between tokens and ends `… [truncated]`, so a link
+arrives whole or not at all. A tighter result cap on a direct call cuts it further.
+A program's report is redacted against the run's final credentials before any cut,
+holds at most 4,096 serialized bytes per message and 8,192 in all, and stays inside
+`execute.maxResultChars`. Activity and logs never receive these words.
+
+Program arguments pass through the credentials this request has already sent. The
+check matches a whole credential or eight consecutive characters of what follows
+its public framing: an auth scheme, a vendor prefix such as `sk_test_`, or a JWT's
+header segment. Naming a prefix is no match, an identifier sent beside a credential
+(a confidential client's ID, a Basic username, or a maintained provider's declared
+header: Cloudflare's `X-Auth-Email`, Overflow's `x-client-id`) is no match, and a
+private `writeOnly` value is no match. A read that matches is sent with the match replaced. A write that matches
+is refused before dispatch with `invalid_args`, because it is never sent altered:
+nothing leaves, and a value that is genuine can go as its own direct call. A
+program's first call has no such credentials yet, so this can first appear on a
+later call. Otherwise a refusal needs one of these: a value that shares eight
+characters past the prefix with a credential, such as a publishable key beside its
+secret key; a non-secret value configured as a credential, such as a field not
+named as an identifier, a `remoteMcp()` or `api()` auth header under any name, or a
+query parameter with a sensitive-looking name; or text the check cannot finish (escaping
+nested past eight layers, or past its work budget). The check is a backstop: fewer
+than eight characters past a prefix pass it, and a program never receives what
+output redaction withheld.
+
+A failed program that already wrote carries those counts on its error. The
+write-budget refusal is `execute_code write budget exceeded (10 writes per run); <address> was not sent.`,
+followed by checking the run's writes count and sending only the remaining writes
+in a new program. No
 write is automatically retried, including an ambiguous timeout. A downstream
 refusal can establish failure only when it covers the whole call: a request
 connecta never sent, or an HTTP 4xx refusal (not 408) of the only request the
@@ -1238,9 +1441,9 @@ removed. `W1`–`W8` and `W11` remain retired.
 Documented divergences, with reasons. Everything else must match.
 
 **X1. Deadline default.** QuickJS defaults to 30 s wall clock and terminates the
-child; the Dynamic Worker defaults to 60 s and races the program against an
+child; the Dynamic Worker defaults to 50 s and races the program against an
 in-isolate timer. Both satisfy `L3`; the numbers are each executor's
-configuration and the error text differs.
+configuration, published as `deadlineMs`, and the error text differs.
 
 **X2. Memory, stack, and CPU mechanism.** QuickJS exposes explicit heap, stack,
 and guest-CPU limits (`L5`); the Dynamic Worker has no such knobs, so workerd's
@@ -1365,49 +1568,49 @@ rejection, and branded adapter acceptance across module copies.
 declaration against `GuestApi`, checks arguments in both directions, and rejects
 invented, mistyped, and missing members and authored blocks the host refuses.
 
-| Clauses                | Test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `P1`, `P5`             | both guest-contract executors (TypeScript syntax, trailing terminators, wrapper recovery), `test/program-source.test.ts` (which semicolons and wrappers are recovered), `test/quickjs-executor.node.test.ts` (`normalizeCode`)                                                                                                                                                                                                                                                                                                                                                                |
-| `P2`, `X5`             | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.node.test.ts` (exact absent globals and blocked imports), `test/deployment-shapes.node.test.ts` (loader-only Worker construction)                                                                                                                                                                                                                                                                             |
-| `P3`, `X9`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `P4`                   | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution)                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `A1`, `A2`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (canonical addressing), `test/server.test.ts` (bounded live connector inventory)                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `S1`, `S1a`, `S2`      | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling)                                                                                                                                         |
-| `S3`                   | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `S4`                   | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds)                                                                                                                                                                                                                                                                                                                                     |
-| `S5`, `S6`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `S7`                   | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `S8`, `E1`, `X11`      | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged outcomes)                                                                                                                                                                                                                                                                                                                                                                 |
-| `S9`                   | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation)                                                                                                                                                                                                                                                                                                                                    |
-| `S10`                  | `test/resource-read.test.ts` (qualified routing, whole-connector grants, personal credentials, redaction, admission, timeout, cancellation and downstream MCP reads), both guest-contract executors (successful resource reads and caught/uncaught typed failures)                                                                                                                                                                                                                                                                                                                            |
-| `E2`, `E8`             | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts`                                                                                                                                                                                                                                                                                           |
-| `E3`, `E4`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/identity-write-journey.node.test.ts` (read-only refusals before validation or dispatch, actual QuickJS)                                                                                                                                                                                                                                                                                                                                                                               |
-| `E5`                   | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.node.test.ts` (mid-run shutdown)                                                                                                                                                                                                                                                                                                                                                                          |
-| `E6`, `X8`             | `test/guest-api-contract.test.ts` (unknown and inherited members, retained error identities), `test/quickjs-executor.node.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `E7`                   | `test/guest-api-contract.test.ts` (refusals about a `503`-named connector), `test/errors.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `R1`, `R2`, `R3`, `R4` | `test/guest-api-contract.test.ts` and `test/guest-api-contract-quickjs.node.test.ts` (small pass-through, shared return paging and unavailable fallback, no repeated writes, live authority), `test/program-result-cases.ts` (reconstruction, redaction, notice survives a 2,000-character spill)                                                                                                                                                                                                                                                                                             |
-| `M6`, `M9`             | verdicts; `R2`'s guard, `M1`'s strict typing, and `M2`'s collect-then-deliver are their enforcement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `R5`                   | `test/guest-api-contract.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `R6`–`R8`              | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion)                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `Y1`, `Y2`, `Y3`       | `test/guest-api-contract.test.ts` (one attempt per call, retryable flags by code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `Y4`                   | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `L1`, `L2`             | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease)                                                                                                                                                                                                                                                                                     |
-| `L3`, `X1`             | `test/guest-api-contract.test.ts` (short-deadline executors), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value)                                                                                                                                                                                                                                                                                                                                                                          |
-| `L4`, `L8`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors)                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `L5`, `L7`, `X2`       | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue), `test/executor-requests.test.ts` (queued handoffs and refusal shape across separate workerd requests), `test/request-context.node.test.ts` (queued and QuickJS host-call request context)                                                                                                                                                                                                                                                       |
-| `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/storage-sql-d1.test.ts` (SQL stash and native D1 fault probes), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message)                                                                                                                                                                                                        |
-| `V1`–`V4`              | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no execution event by default), `test/identity-write-journey.node.test.ts` (opt-in real-program utility/program rows, payload exclusion and detached writes), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/browser/operator-ui.spec.ts` (identity changes), `test/sql-storage-contract.ts`, run by `test/sqlite-storage.node.test.ts` (historical activity rows still round-trip) |
-| `V5`, `W9`             | `test/program-writes.test.ts` (unawaited program drain, failed-program accounting), `test/identity-write-journey.node.test.ts` (committed ambiguity, reconciliation and physical writes), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                                                               |
-| `W10`, `W12`           | `test/identity-write-journey.node.test.ts` (real HTTP/MCP and QuickJS: write budget, read-only discovery and refusal, named guide, pool inheritance/reopening and connector policy), `test/program-writes.test.ts` (construction refusals and classification drift), `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                                                                                                                                                           |
-| `M1`                   | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (rejected shapes, bounded native snapshots, paging before metadata traversal, and cyclic presentation refusal)                                                                                                                                                                                                                                                                                                                                                                 |
-| `M2`, `M3`             | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path)                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `M4`                   | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.node.test.ts` (mid-run shutdown)                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `M5`, `M7`             | `test/execute-emit.test.ts` (both budgets fail the crossing block; host-call budget untouched)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `M8`                   | two arms passing one case table, `test/codemode-compat.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `M10`                  | `test/execute-emit.test.ts` (aggregate present, numbers only, absent when nothing emitted)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `X4`                   | `test/guest-api-contract.test.ts` (string logs only), `test/quickjs-executor.node.test.ts` (logs before cancellation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `X3`, `X6`             | `test/quickjs-executor.node.test.ts` (cancels a running child, never-settling await), `test/execute.test.ts` (a wedged executor stops being awaited)                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| `X7`                   | `P3`'s tests; the Workers superset is deliberately unused                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Clauses                | Test                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `P1`, `P5`             | both guest-contract executors (TypeScript syntax, trailing terminators, wrapper recovery), `test/program-source.test.ts` (which semicolons and wrappers are recovered), `test/quickjs-executor.node.test.ts` (`normalizeCode`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `P2`, `X5`             | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.node.test.ts` (exact absent globals and blocked imports), `test/deployment-shapes.node.test.ts` (loader-only Worker construction)                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `P3`, `X9`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `P4`                   | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `A1`, `A2`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (canonical addressing), `test/server.test.ts` (bounded live connector inventory)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `S1`, `S1a`, `S2`      | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling)                                                                                                                                                                                                                                                                                      |
+| `S3`                   | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `S4`                   | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `S5`, `S6`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `S7`                   | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `S8`, `E1`, `X11`      | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged outcomes)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `S9`                   | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `S10`                  | `test/resource-read.test.ts` (qualified routing, whole-connector grants, personal credentials, redaction, admission, timeout, cancellation and downstream MCP reads), both guest-contract executors (successful resource reads and caught/uncaught typed failures)                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `E2`, `E8`             | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery, a conflict's bounded `current`), `test/meta-tools-call.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `E3`, `E4`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`, destructive reroute), `test/identity-write-journey.node.test.ts` (read-only refusals before validation or dispatch, actual QuickJS)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `E5`                   | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.node.test.ts` (mid-run shutdown)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `E6`, `X8`             | `test/guest-api-contract.test.ts` (unknown and inherited members, retained error identities), `test/quickjs-executor.node.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `E7`                   | `test/guest-api-contract.test.ts` (refusals about a `503`-named connector), `test/errors.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `R1`, `R2`, `R3`, `R4` | `test/guest-api-contract.test.ts` and `test/guest-api-contract-quickjs.node.test.ts` (small pass-through, shared return paging and unavailable fallback, no repeated writes, live authority), `test/program-result-cases.ts` (reconstruction, redaction, notice survives a 2,000-character spill)                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `M6`, `M9`             | verdicts; `R2`'s guard, `M1`'s strict typing, and `M2`'s collect-then-deliver are their enforcement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `R5`                   | `test/guest-api-contract.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `R6`–`R8`              | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `Y1`, `Y2`, `Y3`       | `test/guest-api-contract.test.ts` (one attempt per call, retryable flags by code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `Y4`                   | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `L1`, `L2`             | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease)                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `L3`, `X1`             | `test/guest-api-contract.test.ts` (short-deadline executors, read caps, write exemption, the write gate, the final dispatch gate, a write on the wire at the ceiling and a stall after a write), `test/node.node.test.ts` (upload counts against the ceiling, arrival comes only from the host), `test/program-writes.test.ts` (what makes a failed program retryable), `test/meta-tools-call.test.ts` (direct and native calls at the final gate), `test/request-admission.test.ts` (a 65 s downstream behind a 60 s client on a fake clock, with the old ceiling as its control), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value) |
+| `L4`, `L8`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `L5`, `L7`, `X2`       | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue), `test/executor-requests.test.ts` (queued handoffs and refusal shape across separate workerd requests), `test/request-context.node.test.ts` (queued and QuickJS host-call request context)                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/storage-sql-d1.test.ts` (SQL stash and native D1 fault probes), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message)                                                                                                                                                                                                                                                                                                                                                     |
+| `V1`–`V4`              | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no execution event by default), `test/identity-write-journey.node.test.ts` (opt-in real-program utility/program rows, payload exclusion and detached writes), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/browser/operator-ui.spec.ts` (identity changes), `test/sql-storage-contract.ts`, run by `test/sqlite-storage.node.test.ts` (historical activity rows still round-trip)                                                                                                                                              |
+| `V5`, `W9`             | `test/program-writes.test.ts` (unawaited program drain, failed-program accounting), `test/identity-write-journey.node.test.ts` (committed ambiguity, reconciliation and physical writes), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `W10`, `W12`           | `test/identity-write-journey.node.test.ts` (real HTTP/MCP and QuickJS: write budget, read-only discovery and refusal, named guide, pool inheritance/reopening and connector policy), `test/program-writes.test.ts` (construction refusals and classification drift), `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `M1`                   | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (rejected shapes, bounded native snapshots, paging before metadata traversal, and cyclic presentation refusal)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `M2`, `M3`             | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `M4`                   | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.node.test.ts` (mid-run shutdown)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `M5`, `M7`             | `test/execute-emit.test.ts` (both budgets fail the crossing block; host-call budget untouched)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `M8`                   | two arms passing one case table, `test/codemode-compat.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `M10`                  | `test/execute-emit.test.ts` (aggregate present, numbers only, absent when nothing emitted)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `X4`                   | `test/guest-api-contract.test.ts` (string logs only), `test/quickjs-executor.node.test.ts` (logs before cancellation)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `X3`, `X6`             | `test/quickjs-executor.node.test.ts` (cancels a running child, never-settling await), `test/execute.test.ts` (a wedged executor stops being awaited)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `X7`                   | `P3`'s tests; the Workers superset is deliberately unused                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 The surface itself is checked by `test/server.test.ts` (the exact six-tool list)
 and `test/program-writes.test.ts` (deployment policy and classification construction refusals).
@@ -1422,16 +1625,16 @@ each bridge call by the entry's budget class and binds it by name to a host
 implementation, and the `execute_code` description joins each entry's compact
 declaration and names the functions that spend no host call.
 
-| Function    | Budget     | Purpose                                                                    |
-| ----------- | ---------- | -------------------------------------------------------------------------- |
-| `search`    | `hostCall` | Searches the catalog and returns one flat page of `{ tools }`.             |
-| `describe`  | `hostCall` | Describes exact addresses, one entry per address in order.                 |
-| `call`      | `hostCall` | Calls one tool and inlines transfer pages and native content.              |
-| `read`      | `hostCall` | Reads one advertised resource URI.                                         |
-| `result`    | `hostCall` | Pages a retained result by page or UTF-8 byte offset.                      |
-| `skill`     | `hostCall` | Fetches a skill's text by exact name.                                      |
-| `emit`      | `emission` | Forwards a content block to the client; needs no await.                    |
-| `unawaited` | `once`     | Tells the host a failed program read a result field off an unawaited call. |
+| Function    | Budget     | Purpose                                                             |
+| ----------- | ---------- | ------------------------------------------------------------------- |
+| `search`    | `hostCall` | Searches the catalog and returns one flat page of `{ tools }`.      |
+| `describe`  | `hostCall` | Describes exact addresses, one entry per address in order.          |
+| `call`      | `hostCall` | Calls one tool and inlines transfer pages and native content.       |
+| `read`      | `hostCall` | Reads one advertised resource URI.                                  |
+| `result`    | `hostCall` | Pages a retained result by page or UTF-8 byte offset.               |
+| `skill`     | `hostCall` | Fetches a skill's text by exact name.                               |
+| `emit`      | `emission` | Forwards a content block to the client; needs no await.             |
+| `unawaited` | `once`     | Tells the host a program read a result field off an unawaited call. |
 
 A `hostCall` function spends one host call on entry (`L4`, `M7`) and returns a
 Promise whose result fields mark an unawaited read. The runtime wraps

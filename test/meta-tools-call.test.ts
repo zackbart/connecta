@@ -3,6 +3,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { InvocationService } from "../src/invocation.js";
+import { registerInvocationAuth } from "../src/invocation-auth.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -36,6 +37,124 @@ function pageOf(result: { content: { text: string }[] }): {
     text: whole.slice(newline + 1),
   };
 }
+
+describe("a direct call with no response time left", () => {
+  const world = () => {
+    const calls: string[] = [];
+    const connector = connectorWith({
+      id: "tracker",
+      kind: "api",
+      tools: [
+        { name: "get", annotations: { readOnlyHint: true } },
+        { name: "close", annotations: { readOnlyHint: false, destructiveHint: true } },
+      ],
+      call: async (name) => {
+        calls.push(name);
+        return { ok: true };
+      },
+    });
+    const { activity, events } = activitySink();
+    return { calls, events, registry: makeRegistry([connector]), activity };
+  };
+
+  it.each([
+    { route: "callDestructiveTool", address: "tracker.close" },
+    { route: "callTool", address: "tracker.get" },
+  ] as const)("L3: $route is refused unsent, and says so", async ({ route, address }) => {
+    const { calls, events, registry, activity } = world();
+    const tools = createMetaTools(registry, BASE, {
+      responseCeilingMs: 1_000,
+      requestStartedAt: Date.now() - 2_000,
+      activity,
+    });
+    const out = await tools[route]({ address, args: {} });
+    expect(out.isError).toBe(true);
+    const { error } = out.structuredContent as { error: Record<string, any> };
+    expect(error).toMatchObject({
+      code: "timeout",
+      retryable: true,
+      details: { operation: address, stage: "response ceiling", deadlineMs: 1_000 },
+    });
+    expect(error.message).toContain("not sent");
+    expect(error).not.toHaveProperty("uncertainCall");
+    expect(calls).toEqual([]);
+    expect(events).toMatchObject([{ outcome: "timeout" }]);
+  });
+
+  // Synchronous work crosses the ceiling before its timer can run, so only a
+  // check of the clock at dispatch can tell.
+  describe.each([
+    { route: "callDestructiveTool", address: "t.close", tool: "close" },
+    { route: "callTool", address: "t.get", tool: "get" },
+  ] as const)("L3, INV-9: $route out of time at the final gate", ({ route, address, tool }) => {
+    const burn = (ms: number) => {
+      const until = Date.now() + ms;
+      while (Date.now() < until);
+    };
+    const definitions = [
+      { name: "get", annotations: { readOnlyHint: true } },
+      { name: "close", annotations: { readOnlyHint: false, destructiveHint: true } },
+    ];
+    it.each([
+      { probe: "catalog resolution", slow: "catalog", native: false },
+      { probe: "catalog resolution on the native path", slow: "catalog", native: true },
+      { probe: "an auth hook", slow: "auth", native: false },
+      { probe: "an auth hook on the native path", slow: "auth", native: true },
+    ])("is refused unsent after $probe spends it", async ({ slow, native }) => {
+      const calls: string[] = [];
+      const connector = connectorWith({
+        id: "t",
+        kind: "api",
+        tools: async () => {
+          if (slow === "catalog") burn(150);
+          return definitions;
+        },
+        call: async (name) => {
+          calls.push(name);
+          return { ok: true };
+        },
+      });
+      if (slow === "auth") registerInvocationAuth(connector, async () => burn(150));
+      const { activity, events } = activitySink();
+      const tools = createMetaTools(makeRegistry([connector]), BASE, {
+        responseCeilingMs: 100,
+        requestStartedAt: Date.now(),
+        activity,
+        ...(native ? { activitySource: "native" as const } : {}),
+      });
+      const out = await tools[route]({ address, args: {} });
+      expect(calls, `${tool} must not reach its connector`).toEqual([]);
+      expect(out.isError).toBe(true);
+      const { error } = out.structuredContent as { error: Record<string, any> };
+      expect(error).toMatchObject({
+        code: "timeout",
+        retryable: true,
+        details: { operation: address, stage: "response ceiling", deadlineMs: 100 },
+      });
+      expect(error.details.elapsedMs).toBeGreaterThanOrEqual(100);
+      expect(error.message).toContain("not sent");
+      expect(error).not.toHaveProperty("uncertainCall");
+      expect(error).not.toHaveProperty("writeOutcome");
+      expect(events).toMatchObject([
+        {
+          outcome: "timeout",
+          source: native ? "native" : route === "callTool" ? "call_tool" : "call_destructive_tool",
+        },
+      ]);
+    });
+  });
+
+  it("L3: one with time left still runs", async () => {
+    const { calls, registry } = world();
+    const tools = createMetaTools(registry, BASE, {
+      responseCeilingMs: 60_000,
+      requestStartedAt: Date.now() - 2_000,
+    });
+    const out = await tools.callDestructiveTool({ address: "tracker.close", args: {} });
+    expect(out.isError).toBeFalsy();
+    expect(calls).toEqual(["close"]);
+  });
+});
 
 describe("call_tool", () => {
   it.each(["invalid_args", "not_found", "unavailable"] as const)(
@@ -111,6 +230,33 @@ describe("call_tool", () => {
     expect(tool.error.message).toContain("Unknown tool");
     expect(tool.error.nextAction.arguments.connector).toBe("calc");
     expect(tool.error.nextAction.arguments.query.length).toBeLessThan(600);
+
+    // A typo names the near tool, as describe does, and a read-only scope never names a write.
+    const nearby = makeRegistry([
+      {
+        id: "tickets",
+        kind: "api",
+        listTools: async () => [
+          { name: "get_ticket", annotations: { readOnlyHint: true } },
+          { name: "set_ticket", annotations: { readOnlyHint: false } },
+        ],
+        callTool: async () => null,
+      },
+    ]);
+    const typo = { address: "tickets.get_tickt" };
+    const suggested = textOf(await createMetaTools(nearby, BASE).callTool(typo)) as {
+      error: { code: string; suggestions?: string[] };
+    };
+    expect(suggested.error.code).toBe("unknown_tool");
+    expect(suggested.error.suggestions).toEqual(["tickets.get_ticket", "tickets.set_ticket"]);
+    const readOnly = textOf(await createMetaTools(nearby, BASE, { readOnly: true }).callTool(typo)) as {
+      error: { suggestions?: string[] };
+    };
+    expect(readOnly.error.suggestions).toEqual(["tickets.get_ticket"]);
+    const distant = textOf(await createMetaTools(nearby, BASE).callTool({ address: "tickets.zzzzzzzzzzzzzzzzzz" })) as {
+      error: Record<string, unknown>;
+    };
+    expect(distant.error).not.toHaveProperty("suggestions");
 
     // The common case must stay exact — a short address is corrected verbatim.
     const short = textOf(await mt.callTool({ address: "ghost.read_items" })) as {

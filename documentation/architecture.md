@@ -358,6 +358,13 @@ reader. `program-result.ts` owns executor-independent byte limits;
 values through provider preludes. Cursors hold only an ID and offset for the
 current run. Result bytes, expiry, authority and capacity charges stay in the
 existing storage and ledger; no executor-specific store or storage key is added.
+`result-seal.ts` keeps a run's results unreadable to other requests until they pass
+its final secret set ([`R4a`](./code-mode.md#results-and-projection)): chunk 0 waits in a
+request-owned ledger, and absence of chunk 0 is the refusal, so every exit leaves
+unpublished entries unreadable with no further write. Sealing waits for the work that can
+add to the set (`HeldResults.track` for the run's host calls, `RequestOwner.credentialReads`
+for credential reads, which outlast a caller that stopped waiting), then publishes each
+entry that passes. Stored bytes are never rewritten.
 
 ## Admission, in two places
 
@@ -749,8 +756,8 @@ the search returns, never raced or detached, since a storage write cannot be
 withdrawn once sent. The budget bounds when health work starts, not when it
 finishes, so slow storage can carry a search past it by one operation's
 latency. A scoped search,
-`connecta.describe`, native `tools/list` and tool calls keep the full
-`discovery.probeTimeoutMs`. A probe that times out on its own deadline, or a
+`connecta.describe` and tool calls keep the full `discovery.probeTimeoutMs`,
+as does a native `tools/list` for a connector with no stale catalog. A probe that times out on its own deadline, or a
 retryable failure that itself took at least one second or named its own wait,
 writes a record in the `connector-health:v1:` family: the connecta
 classification code, observation time, retry time (60 seconds later, or the
@@ -800,7 +807,56 @@ retain a complete private fallback, and static catalogs remain
 in configuration. After a transient first-page tool listing failure, ordinary calls
 may use a complete catalog for up to five minutes after its expiry in the same
 auth partition. Partial walks, permission and auth failures do not use this
-fallback. Resources require unexpired inventories. There is no deferred refresh.
+fallback, and a refusal keeps later failures from using it until a listing succeeds.
+Resources require unexpired inventories.
+
+**Stale listings.** Discovery alone may list a tool catalog up to 24 hours past
+its expiry (`STALE_DISCOVERY_MS`), so chunks and manifests keep that storage TTL
+and a publish deletes the revision it supersedes. Each discovery first peeks the
+entry without a connection (`Connector.peekCatalog`, or the retained custom
+catalog once its listing has failed): storage reads only, through the listing's
+address, fingerprint, generation and credential fences (INV-5, INV-8, INV-10). A
+peek takes no probe slot, and a listing that follows it in the request takes what
+it read, so a resolver still runs once and the entry is read once. A current peek
+skips the probe queue. A stale one stands in for a probe that did not answer, on
+the failures [meta-tools](./meta-tools.md#lexical-discovery) lists, marked in host-only
+provenance (`markCatalogStale`). It stays out of the request's retained catalogs,
+so `resolve` and every call read the live one. A probe that exhausts its own
+deadline hands one refresh to `defer`: a listing in a new request scope, with its
+own signal and transport, closed in that scope and settling the health record it
+leased. Nothing of the original request reaches it (INV-7). One clock, started as
+it is scheduled, bounds its whole tail at 20 seconds, inside Workers' `waitUntil`:
+queueing and the claim spend it, the listing gets what remains less a second for
+settlement and two for cleanup, and a claim that spends it all dispatches nothing.
+Only the request whose settlement wrote the health record takes that refresh;
+settlement and the claim are compare-and-set against the record the request read,
+including creating an absent one, so concurrent failures start one refresh.
+
+A peek read before a wait is not served after it. Once a probe or a slot has kept
+the request waiting, the entry is read again through every fence, so an invalidation
+or a refusal in the meantime retires it, in this isolate or another.
+
+**Refusal fences.** `auth_required`, `downstream_oauth_required` or
+`provider_permission_denied` from a listing or its handshake writes one key
+(`fenceTools`) in the namespace of the catalog's current generation, addressed by
+the owner partition and credential identity, or by the auth partition alone on a
+shared connector, whose credential gets one answer whoever asks. A tool listing that
+sees it misses, fresh or stale, so `peekTools` and the five-minute fallback have
+nothing to serve; both also read it fresh before serving an expired entry. A listing
+that succeeds lifts by compare-and-set only the fence it first saw, so a refusal
+that lands while it runs stays. The key outlives every entry it guards
+(`CATALOG_FENCE_TTL_SECONDS`) and the generation's rotation discards it with them.
+It adds no round trip to a read: it travels in the catalog snapshot or the manifest
+read. Timeouts and retryable failures write nothing here, and neither does a
+caller-local refusal repeated within one request.
+
+The 24-hour limit stays because of these. Everything that can end a caller's access
+and that Connecta can observe (a refusal, a credential change, a disconnect, an
+invalidation) now retires the catalog at once. What remains is a revocation behind a
+connector that has not answered since: tool names and schemas that caller was
+already shown, marked stale, granting nothing, for at most a day. The first answer
+ends it.
+
 Host-only provenance carries each catalog's original fetch time, TTL and expiry,
 and whether it was a fallback, through classification and request-local copies.
 Zero TTL and stale fallbacks cannot authorize post-entry auth recovery.
@@ -808,8 +864,8 @@ Zero TTL and stale fallbacks cannot authorize post-entry auth recovery.
 A manifest is published by CAS only after every UTF-8 chunk is written. It
 records the original fetch time, absolute expiry, revision, fingerprint, and
 monotonic stamp. Readers verify all chunks and fingerprint before accepting it.
-Freshness expires at the bounded TTL; tool facts remain for the five-minute
-fallback window, and generations expire after 48 hours; invalidation
+Freshness expires at the bounded TTL; tool facts remain for the 24-hour stale
+listing limit, of which calls may use five minutes, and generations expire after 48 hours; invalidation
 rotates the generation, and old chunks expire without becoming reachable
 again. Remote clients pin that generation before listing, including SDK cache
 refreshes. Each new listing pins the current generation, so a live client can
@@ -1352,15 +1408,15 @@ guide (G) violations before writing. It derives `drift.json` version 2's
 `generated` block from kit operations and evidence digests, and the guide's
 `## Conventions` from definition declarations into `skill.generated.ts`.
 The generator requires `fixtures.ts` to export `createAuthored()` with a
-nonempty offline `staticTools` catalog. Its input/output schemas derive one
-paging convention, including `get_*`, hatch search and details, excluding
-tools whose `page.hasMore` is always false. The convention distinguishes
-top-level `cursor` from `query[page.param]` or `body[page.param]` continuation
-and tells agents to return `page.nextCursor` before the call that would exceed
-the per-program call limit, then continue in the next program. The Hatch line
-reports a nonzero explicit refusal count with singular/plural wording and
-points to the actual prefixed details tool with method/path lookup; it never
-embeds the refusal table. Unreviewed operations remain refused.
+nonempty offline `staticTools` catalog, which the installed inventory lists.
+Conventions render only provider-specific declarations: the vendor envelope
+root, the hatch's tools and refusal count, the `idempotencyKey` rule where a
+provider has one, and the Errors line. Paging, `fields`, withheld-value and
+write-once rules live at the agent's point of use, and
+`test/provider-conventions.test.ts` asserts each paged tool's continuation there.
+The Hatch line reports a nonzero explicit refusal count with singular/plural
+wording and points to the actual prefixed details tool with method/path lookup;
+it never embeds the refusal table. Unreviewed operations remain refused.
 `ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
 with the definition's `blocks`. Maintained drift records use version 2;
 `providers:check` retains version-1 endpoint/manual record parsing for historical
@@ -2013,18 +2069,18 @@ storage is the root's namespaced to its principal.
 
 ### What runs on Effect
 
-| Area                                                                   | Shape                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Requests (`src/server.ts`, `src/routes/mcp.ts`, `src/routes/oauth.ts`) | One fiber per `fetch`, tied to `request.signal`. An `/mcp` request's admission permit and every `McpServer` it builds live in a Scope the response carries out, closed when the body ends, fails, or is cancelled, when the signal aborts, when its admitted-request lifetime ends in that request, or at once if the handler fails first. If workerd runs none of those callbacks, the next request reclaims only the expired admission record; it cannot close another request's Scope. The OAuth callback is uninterruptible: a single-use code's exchange and catalog invalidation are one commitment. |
-| Admission (`executor-admission.ts`, `call-admission.ts`)               | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires.                                                                                                                                                                                                                                                                                                                                    |
-| One tool call (`invocation.ts`)                                        | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`.                                                                                                                                                                                                                                                                                                     |
-| `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. Public executor methods stay Promise-shaped; registered built-in execution composes directly as an Effect under the signal and `execute.watchdogMs`. Queued acquisition retains its Promise request handoff. Each guest host call is a fiber of its own.                                                                                                                                                                     |
-| Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency; unscoped search adds the discovery budget and health record (`discovery-health.ts`).                                                                                               |
-| Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                       |
-| Remote MCP (`connectors/remote-mcp.ts`, `connectors/remote-mcp/`)      | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                             |
-| Downstream OAuth (`auth/downstream-oauth*`, `auth/static-oauth.ts`)    | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                  |
-| Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                |
-| QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Area                                                                   | Shape                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Requests (`src/server.ts`, `src/routes/mcp.ts`, `src/routes/oauth.ts`) | One fiber per `fetch`, tied to `request.signal`. An `/mcp` request's admission permit and every `McpServer` it builds live in a Scope the response carries out, closed when the body ends, fails, or is cancelled, when the signal aborts, when its admitted-request lifetime ends in that request, or at once if the handler fails first. If workerd runs none of those callbacks, the next request reclaims only the expired admission record; it cannot close another request's Scope. The OAuth callback is uninterruptible: a single-use code's exchange and catalog invalidation are one commitment.                                        |
+| Admission (`executor-admission.ts`, `call-admission.ts`)               | Queued waiters are Deferreds settled by whoever removes them from the queue; a wait is one flat race of grant, Clock timeout, and signal. The uncontended path stays synchronous. Two controllers, as [#453](https://github.com/zackbart/connecta/issues/453) requires.                                                                                                                                                                                                                                                                                                                                                                           |
+| One tool call (`invocation.ts`)                                        | One fiber: resolution, the read-only and schema refusals, admission, and the downstream attempt sit under a single `withDeadlineEffect`, whose expiry interrupts the call wherever it is. The permit is an `acquireRelease`; the connector call is `Effect.tryPromise` over the unchanged `Connector`.                                                                                                                                                                                                                                                                                                                                            |
+| `execute_code` (`execute.ts`)                                          | One fiber whose Scope owns the run's signal and executor lease, so a result, a throw, the watchdog, and cancellation all release the lease and abort the signal the same way. Public executor methods stay Promise-shaped; registered built-in execution composes directly as an Effect under the signal and `execute.watchdogMs`. Queued acquisition retains its Promise request handoff. Each guest host call is a fiber of its own.                                                                                                                                                                                                            |
+| Discovery (`catalog-service.ts`)                                       | A request-scoped cache: one shared read per connector (`runtime/shared-read.ts`), settled by the read itself and carrying its own signal and the probe timeout whichever asker starts it. Each asker waits under its own deadline and signal, so one that times out or is cancelled fails alone, and the read is cancelled only once every asker has gone. Fan-out is `Effect.forEach` under the discovery concurrency, which an unscoped search or native listing applies only to connectors it must ask; those add a cached-catalog peek and stale listing, and unscoped search the discovery budget and health record (`discovery-health.ts`). |
+| Registry (`registry.ts`)                                               | The result stash is a program over `Storage`. Same-request catalog loads share one read the way discovery's do. Remote MCP caching uses the SDK ResponseCacheStore adapter over SQL-backed KV, with no cross-request catalog flight.                                                                                                                                                                                                                                                                                                                                                                                                              |
+| Remote MCP (`connectors/remote-mcp.ts`, `connectors/remote-mcp/`)      | Each request scope's state holds a Scope, each connection is a lease forked from it, and a connect in flight is a Deferred carrying the client it connected. Closing a session and the transport are each bounded to a second.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Downstream OAuth (`auth/downstream-oauth*`, `auth/static-oauth.ts`)    | A refresh flight is a Deferred. Before the first durable coordinator write (claim CAS) is submitted, call/request closure stops preparation without a CAS, token request or state change. Submission transfers renewal to the storage coordinator under its own 35-second preparation deadline and 20-second token-request/body deadline, followed by the fenced rotation commit through the runtime deferred-work hook. A closed caller promptly fails without consuming the result, marking its ledger renewed or sending/resending a resource request.                                                                                         |
+| Operator and activity data (`routes/operator.ts`)                      | Each JSON route is one program run by `serveOperator` behind the Promise `handle()`. Reads run under the request's signal; writes do not, so a vault write or OAuth disconnect that started reaches its cache invalidation.                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| QuickJS pool (`executors/quickjs.ts`, Node only)                       | Each child is a scoped resource whose release sends SIGTERM, then SIGKILL after a second; crash respawn backoff is a `Schedule`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
 ### Native registry and request services (contributor)
 
@@ -2344,8 +2400,11 @@ late publication from an invalidated request unreachable. Missing chunks,
 expired entries, storage errors, or a failed page trigger a fresh complete
 listing. A transient first-page tool-listing failure may use a complete catalog
 within five minutes of expiry in the same auth partition. Partial walks and
-auth or permission failures refuse fallback; resources require unexpired
-inventories, and stale fallback cannot authorize post-entry auth recovery.
+auth or permission failures refuse fallback, and a refusal fences later fallback
+until a listing succeeds; resources require unexpired inventories, and stale
+fallback cannot authorize post-entry auth recovery.
+Discovery's [stale listing](#storage-credentials-and-connectors) reads the same
+entries and answers no call.
 
 **Repeated reads share one request's memo.** `src/runtime/request-reads.ts`
 gives each request owner a memo of storage reads, emptied when the request
@@ -2604,11 +2663,9 @@ this declaration keep parameter-based continuation.
 An explicit initialAnchor adapter on parameter-based paging can retain a numeric
 timestamp as a first-page time-window anchor; opaque string continuations still
 require a signed token.
-The generated Paging convention follows the read tool's input schema: tools
-that take `cursor` restore `page.nextCursor` as that top-level argument; tools
-without it restore the token in `query[page.param]` or `body[page.param]`, as
-`page.in` specifies. `kit.hatch.paging` still validates declared mode values as
-a sanity check; it does not select the generated continuation instruction.
+A read tool's input schema states how to continue: tools that take `cursor`
+restore `page.nextCursor` as that top-level argument; tools without it restore
+the token in `query[page.param]` or `body[page.param]`, as `page.in` specifies.
 An unsafe continuation keeps the safe page data with `hasMore: true` and no
 `nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
@@ -2657,7 +2714,8 @@ contracts, `Summary` annotations and lenient success schemas become the
 index's parameters, bodies, summaries and declared fields (optional
 `OpenApiData.fields`). Kit facts carry the vendor's declared
 `VendorErrors.meanings` and an `idempotencyKey` checked against the write
-builders at construction, which the generated Conventions state.
+builders at construction; the generated Conventions state the key rule only where
+a provider has one, and the Errors line always.
 
 Hatch request paths and query keys/values refuse any containment of the shared
 `[redacted]` marker, including decoded spellings. Body fields and kit write
@@ -2668,8 +2726,7 @@ Admission iteratively visits keys and values before the write program runs;
 it checks agent arguments, not whole bodies later composed from internal
 reads. The kit connection also checks actual typed path parameters and query
 values before transport. Legacy non-kit tools retain their link-only admission;
-arbitrary binary/base64 bytes are not decoded by this scalar rule. The kit
-sets `refusesWithheld` for the standard hatch, enabling the generated convention.
+arbitrary binary/base64 bytes are not decoded by this scalar rule.
 Declared error-code facts use the closed `ConnectorCallErrorCode` set at
 construction (INV-11); classification callbacks are not run at construction.
 
@@ -3370,7 +3427,7 @@ compiling and configuring the real thing.
   is not a declared refusal standing for the whole call makes the call
   unknown, never retryable, with no wait and no resend or key-reuse advice;
   while any such 401 is unrenewed the verdict keeps an authorization code,
-  so invocation keeps the `authorize_connector` handoff and picks its
+  so invocation keeps the authorization handoff and picks its
   reconcile-first words. Its code and words are the failure's when that is an
   authorization verdict, else the 401's own recorded verdict, else
   `auth_required`, with a sentence saying the write was sent before the
@@ -3926,7 +3983,8 @@ physical-attempt and body/admission suites remain compatibility evidence.
 
 The standard hatch privately registers bounded vendor operation text against its
 ApiTool identity; `apiConnector` transfers those facts to the constructed
-connector. `operation-vocabulary.ts` contains only pure lexical/cache logic and
+connector, and a provider that wraps that connector carries them to its outer
+object with `carryConnectorVocabulary`. `operation-vocabulary.ts` contains only pure lexical/cache logic and
 types. Catalog discovery consumes those facts after loading and classifying a
 complete visible catalog. It never imports a provider or an operation index,
 parses operation contracts, invokes a handler, or authenticates. Matching requires

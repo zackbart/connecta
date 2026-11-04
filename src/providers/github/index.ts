@@ -1,5 +1,6 @@
 import { array, keys, optionsOf } from "../../config-schema.js";
 import { ConnectorCallError } from "../../errors.js";
+import { carryConnectorVocabulary } from "../../operation-vocabulary.js";
 import { delegatesEachCall, knownProviderFailure } from "../../provider-call.js";
 import { defineProvider, PROVIDER_COMMON, type ProviderOptions } from "../../provider.js";
 import { kit } from "./api.js";
@@ -19,6 +20,7 @@ export interface GitHubOptions extends ProviderOptions {
 
 /** One GitHub App, multiple owner installations, explicit org/repo grants. */
 export const github = defineProvider<GitHubOptions>({
+  blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
   name: "github",
   title: "GitHub",
   kind: "api",
@@ -46,7 +48,7 @@ export const github = defineProvider<GitHubOptions>({
       context: [
         `Act as the GitHub App. Reachable configuration: ${policy.summary()}.`,
         `Purpose: ${options.purpose}`,
-        "The App identity is already configured. Installation access is resolved on use; ask the operator to repair configuration only after an auth failure.",
+        "The App identity is already configured. Installation access is resolved on use; ask the operator to repair configuration only after an auth or permission failure.",
         ...(options.readOnly === true ? ["This connection is read-only; every write is refused."] : []),
       ],
       summary: "Load for GitHub repository searches, releases and guarded merges.",
@@ -62,7 +64,7 @@ export const github = defineProvider<GitHubOptions>({
           }
         : undefined;
     // Each call goes to its REST boundary, whose write-outcome verdict stands.
-    return delegatesEachCall({
+    const connector = delegatesEachCall({
       id,
       title: options.title ?? "GitHub",
       // Preserve the REST tools' existing MCP result envelope.
@@ -93,5 +95,8 @@ export const github = defineProvider<GitHubOptions>({
         return { state: "ok", message: "GitHub App configured; installation access is resolved lazily on use." };
       },
     });
+    // Search reads hatch operations through this outer object, not the REST one.
+    carryConnectorVocabulary(rest, connector);
+    return connector;
   },
 });

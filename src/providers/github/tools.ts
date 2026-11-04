@@ -19,7 +19,7 @@ import type { ConnectorContext } from "../../types.js";
 import { checked } from "../_shared/rest/kit.js";
 import { withholdEmbeddedUrlsIn } from "../_shared/rest/value-safety.js";
 import { githubConnection, rejectedToken } from "./api.js";
-import { AppAuth, type Permissions } from "./lib/auth.js";
+import { AppAuth, permissionWords, type Permissions } from "./lib/auth.js";
 import { contentsPath, githubIndex, GITHUB_HATCH } from "./lib/discovery.js";
 import { READ_PERMISSIONS, RELEASE_PERMISSIONS, hatchRefusal } from "./lib/operations.js";
 import { ScopePolicy, target, workflowPath, isPullHead, type GitHubScope, type Target } from "./lib/scope.js";
@@ -275,6 +275,10 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           ),
         );
     });
+  /** What this request's failure wording may state: a bound repository and the reviewed permissions. */
+  const refusing = (repository: string, permissions: Permissions) => ({
+    context: { repository, permissions: permissionWords(permissions) },
+  });
   const cursorArgs = (args: Record<string, unknown>) => {
     const { fields: _fields, cursor: _cursor, ...rest } = args;
     return { ...rest, grants: policy.scopes };
@@ -367,7 +371,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
         const answer = yield* send(
           { method: "GET", path: "/installation/repositories", query: { page, per_page: limit } },
           token,
-          { responseHeaders: ["link"] },
+          { responseHeaders: ["link"], ...refusing(owner, { metadata: "read" }) },
         );
         const body = row(answer.data);
         if (!Array.isArray(body.repositories))
@@ -498,7 +502,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
         const answer = yield* send(
           { method: "GET", path: `/search/${kind}`, query: { q: query, page, per_page: limit } },
           token,
-          { responseHeaders: ["link"] },
+          { responseHeaders: ["link"], ...refusing(partition.owner, permissions) },
         );
         const body = row(answer.data);
         if (!Array.isArray(body.items))
@@ -583,6 +587,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           (yield* send({ method: "GET", path: `${repoPath(t)}/pulls/${args.pull_number}` }, reader, {
             step: "pull",
             effect: "read",
+            ...refusing(`${t.owner}/${t.repo}`, { pull_requests: "read" }),
           })).data,
         );
         const head = row(pr.head),
@@ -598,9 +603,8 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
               "Merge requires the expected head SHA and a same-repository head and base. Reread the pull request.",
             );
           });
-        const token = yield* authCall(ctx, (view) =>
-          auth.repo(t, { contents: "write", pull_requests: "write", workflows: "write" }, view),
-        );
+        const mergeAccess: Permissions = { contents: "write", pull_requests: "write", workflows: "write" };
+        const token = yield* authCall(ctx, (view) => auth.repo(t, mergeAccess, view));
         return row(
           (yield* send(
             {
@@ -609,6 +613,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
               body: { sha: args.sha, merge_method: args.merge_method ?? "merge" },
             },
             token,
+            refusing(`${t.owner}/${t.repo}`, mergeAccess),
           )).data,
         );
       }),
@@ -687,7 +692,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
             ...(call.body === undefined ? {} : { body: call.body }),
           },
           token,
-          options,
+          { ...options, ...refusing(`${t.owner}/${t.repo}`, permissions) },
         );
         const bounded = yield* checked(() => boundedData(answer.data, ctx));
         return { ...answer, ...bounded };

@@ -93,10 +93,10 @@ const GOLDEN: Record<string, unknown> = {
       code: {
         type: "string",
         description:
-          "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
+          "Source text of one zero-argument JavaScript async arrow: async () => { ...; return answer; }. Pass a string, even from a JavaScript host. Use the connecta global. At most 65,536 UTF-8 bytes.",
       },
       diagnostics: {
-        description: "Add request-local, payload-free timing and result-size summaries.",
+        description: "Add timing and result-size summaries.",
         type: "boolean",
       },
     },
@@ -140,7 +140,9 @@ describe("meta-tool output schemas", () => {
       expect(list.result.tools).toHaveLength(6);
       for (const tool of list.result.tools) {
         const directCall = tool.name === "call_tool" || tool.name === "call_destructive_tool";
-        if (directCall) expect(tool.outputSchema, tool.name).toBeUndefined();
+        // Guidance is text-only, so skills cannot promise a structured result.
+        const undeclared = directCall || tool.name === "skills";
+        if (undeclared) expect(tool.outputSchema, tool.name).toBeUndefined();
         else expect(tool.outputSchema, tool.name).toMatchObject({ type: "object", properties: expect.any(Object) });
         const response = await readJsonRpc(
           await mcpRpc(app, "tools/call", { name: tool.name, arguments: cases[tool.name] }, { token: TOKEN }),
@@ -150,7 +152,7 @@ describe("meta-tool output schemas", () => {
         if (directCall) {
           expect(JSON.parse(response.result.content[0].text), tool.name).toEqual(response.result.structuredContent);
         }
-        if (!directCall) {
+        if (!undeclared) {
           expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(
             true,
           );
@@ -174,6 +176,8 @@ describe("meta-tool output schemas", () => {
       expect(searchValidator.validate({ ...flat, catalogErrors: [unscoped] }).valid).toBe(false);
       expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(false);
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
+      // The paging rule no guide repeats: stop before the limit and resume in the next program.
+      expect(execute.description).toContain("Near the host-call limit, return page.nextCursor to resume next program.");
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
       expect(
         new Validator(execute.outputSchema).validate({
@@ -193,20 +197,26 @@ describe("meta-tool output schemas", () => {
 // execute_code description varies with connector count, so the fixture below
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
-  total: 14_900,
-  instructions: 1_050,
+  total: 14_200,
+  // The pinned fixture's instructions, then the most a pool can serve: a
+  // 500-unit description plus a connector list at its 120-byte cap.
+  instructions: 460,
+  instructionsPeak: 1_040,
   description: {
-    skills: 220,
-    search_tools: 650,
-    call_tool: 260,
+    skills: 150,
+    search_tools: 480,
+    call_tool: 240,
     call_destructive_tool: 300,
-    authorize_connector: 460,
+    // Grew to say when no call is needed: an auth error that already carries its link.
+    authorize_connector: 510,
     execute_code: 2_850,
   },
   // search_tools grew for readyCalls, the complete reads that save the
   // details and operation-search host calls; its reasons enum is now shared.
-  outputSchema: { skills: 660, search_tools: 4_150, authorize_connector: 420, execute_code: 1_070 },
-  usage: 5_700,
+  // It grew again for catalogErrors' stale and ageMs, which report a stale listing.
+  // Declaring descriptionTruncated adds 37 bytes.
+  outputSchema: { search_tools: 4_240, authorize_connector: 420, execute_code: 1_070 },
+  usage: 5_500,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
   searchPage: { default: 470, compact: 730 },
@@ -336,7 +346,7 @@ describe("always-loaded agent surface budgets", () => {
           else expect(JSON.stringify(tool.outputSchema).length, name).toBeLessThanOrEqual(schemaBudget!);
         }
         const usage = await callTool(app, "skills", { name: "usage" });
-        expect(usage.structuredContent.text.length).toBeLessThanOrEqual(BUDGETS.usage);
+        expect(usage.content[0].text.length).toBeLessThanOrEqual(BUDGETS.usage);
         for (const mode of ["default", "compact"] as const) {
           const page = await callTool(app, "search_tools", {
             connector: "crm",
@@ -392,9 +402,33 @@ describe("always-loaded agent surface budgets", () => {
   });
 });
 
+it("names the right call shape when a direct call uses MCP's own argument names, accepting nothing new", async () => {
+  const app = makeDeployment({ executor: stubExecutor, readOnly: false, connectors: [calcApi()] });
+  try {
+    for (const name of ["call_tool", "call_destructive_tool"]) {
+      const call = async (args: Record<string, unknown>) =>
+        (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: TOKEN }))).result;
+      const wrongKey = await call({ address: "calc.add", arguments: { a: 1, b: 2 } });
+      expect(wrongKey.isError, name).toBe(true);
+      expect(wrongKey.content[0].text, name).toContain(
+        'Unrecognized key: "arguments". Send { address, args }, with the tool\'s arguments in args.',
+      );
+      const mcpShape = await call({ name: "calc.add", arguments: { a: 1, b: 2 } });
+      expect(mcpShape.isError, name).toBe(true);
+      expect(mcpShape.content[0].text, name).toContain(
+        'address: expected a string such as "connector.tool". Send { address, args }.',
+      );
+      expect(mcpShape.content[0].text, name).toContain('Unrecognized keys: "name", "arguments".');
+    }
+  } finally {
+    await app.close();
+  }
+});
+
 it("front-loads configured scope and guidance within the instructions budget", async () => {
-  const { endpointInstructions, CONNECTA_INSTRUCTIONS } = await import("../src/skills.js");
-  expect(endpointInstructions()).toBe(CONNECTA_INSTRUCTIONS);
+  const { endpointInstructions } = await import("../src/skills.js");
+  // The largest id list the cap admits, so this is the peak a pool can serve.
+  const connectorIds = Array.from({ length: 40 }, (_, index) => `service_${String(index).padStart(2, "0")}`);
   for (const native of [undefined, { executeCode: true }, { executeCode: false }]) {
     for (const description of ["x".repeat(500), "😀".repeat(250), "a😀".repeat(166) + "ab"]) {
       const app = makeDeployment({
@@ -404,11 +438,10 @@ it("front-loads configured scope and guidance within the instructions budget", a
       });
       await app.close();
       for (const readOnly of [false, true]) {
-        const instructions = endpointInstructions(description, native, readOnly);
-        expect(instructions.slice(0, 512)).toContain(description);
-        expect(instructions.slice(0, 512)).toContain("Use skills.");
-        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
-        expect(endpointInstructions(description, native, readOnly)).toBe(instructions);
+        const instructions = endpointInstructions(description, native, readOnly, connectorIds);
+        expect(instructions.startsWith(`${description} `)).toBe(true);
+        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructionsPeak);
+        expect(endpointInstructions(description, native, readOnly, connectorIds)).toBe(instructions);
       }
     }
   }

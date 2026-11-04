@@ -45,13 +45,15 @@ import {
 } from "./program-result.js";
 import { MAX_EXECUTE_LOG_CHARS, MAX_EXECUTE_RESULT_CHARS, truncateExecuteText } from "./executor-result.js";
 import { ExecutorAdmissionError, ExecutorExecutionError, isAdmittingExecutor } from "./executor-admission.js";
-import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
+import { boundedEchoText, clipSerialized, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
 import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
 import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { readResource } from "./resource-read.js";
+import { failureRecord, logFailure } from "./operator-record.js";
+import { HeldResults, sealHeldResults } from "./result-seal.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import { normalizeTimeoutMs } from "./timeout.js";
@@ -63,7 +65,6 @@ import {
   connectorGuide,
   connectorGuideRequired,
   connectorInventoryTitle,
-  connectorSkillName,
   hasConnectorGuides,
   SkillsRegistry,
 } from "./skills.js";
@@ -81,6 +82,60 @@ const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
  * never settles at all.
  */
 const EXECUTE_WATCHDOG_MS = CONFIG_DEFAULTS.execute.watchdogMs;
+/**
+ * How long before a deadline a program's reads stop: the time the guest gets
+ * to receive their `timeout` and return what it has.
+ */
+const READ_DEADLINE_MARGIN_MS = 1_000;
+const readMarginMs = (deadlineMs: number) => Math.min(READ_DEADLINE_MARGIN_MS, Math.floor(deadlineMs / 10));
+
+/**
+ * When a run's reads stop: before the executor's deadline, measured from now,
+ * and before the response ceiling, which queueing may already have spent.
+ */
+function readDeadlineAt(executor: Executor, ceiling: ResponseCeiling): number {
+  const beforeCeiling = ceiling.at - readMarginMs(ceiling.ms);
+  const { deadlineMs } = executor;
+  if (deadlineMs === undefined) return beforeCeiling;
+  return Math.min(beforeCeiling, Date.now() + deadlineMs - readMarginMs(deadlineMs));
+}
+
+/** The time by which a request must have its answer, counted from its arrival (`execute.watchdogMs`). */
+interface ResponseCeiling {
+  ms: number;
+  at: number;
+  startedAt: number;
+  /**
+   * The absolute deadline for work after the run that may still hold its
+   * response, such as storing what it leaves for recovery. Past `at`, because a
+   * run the ceiling ended has this to do too; still short of the client's limit.
+   */
+  answerBy: number;
+}
+
+/** Past the ceiling, room to store what a run leaves behind. Default 57 s against a 60 s client. */
+const RESPONSE_STORAGE_MARGIN_MS = 2_000;
+
+function responseCeiling(startedAt: number, ms: number): ResponseCeiling {
+  const at = startedAt + ms;
+  return { ms, at, startedAt, answerBy: at + Math.min(RESPONSE_STORAGE_MARGIN_MS, Math.floor(ms / 10)) };
+}
+
+/** Refuse a run with no time left to start. Nothing has run, so running it again is safe. */
+const startable = (ceiling: ResponseCeiling): Effect.Effect<void, InvocationFailure> =>
+  Effect.suspend(() => {
+    const elapsedMs = Date.now() - ceiling.startedAt;
+    return elapsedMs < ceiling.ms
+      ? Effect.void
+      : Effect.fail(
+          new InvocationFailure({
+            code: "timeout",
+            message: `Operation "execute_code" used its ${ceiling.ms}ms response ceiling before it started, so it did not run and sent nothing. Run it again.`,
+            retryable: true,
+            details: { operation: "execute_code", stage: "response ceiling", elapsedMs, deadlineMs: ceiling.ms },
+          }),
+        );
+  });
 /**
  * Room to name every connector of a typical deployment. Past it, complete
  * entries plus an exact omission count stay inside this byte cap.
@@ -440,27 +495,16 @@ function guestFailure(code: string, message: string, retryable = false): Invocat
 
 /**
  * E1/X11: bound typed host failure metadata, including JSON escapes, before transport.
+ * The guest keeps this text, and may return it after a later call registers a credential it
+ * holds, so the message is cut between tokens.
  * Keep optional recovery whole: clipping an address or echoed args could turn
  * recovery into a different call. Oversized metadata is omitted instead.
  */
 function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
-  const boundText = (text: string, maxChars: number): string => {
-    if (JSON.stringify(text).length <= maxChars) return text;
-    let low = 0;
-    let high = Math.min(text.length, maxChars);
-    while (low < high) {
-      const mid = Math.ceil((low + high) / 2);
-      if (JSON.stringify(`${text.slice(0, mid)}…`).length <= maxChars) low = mid;
-      else high = mid - 1;
-    }
-    // Do not manufacture a lone surrogate when clipping a Unicode message.
-    if (low > 0 && /[\uD800-\uDBFF]/.test(text[low - 1]!)) low--;
-    return `${text.slice(0, low)}…`;
-  };
   let details: CallErrorDetails = {
     ...failure.details,
-    code: boundText(failure.details.code, 128),
-    message: boundText(failure.details.message, 2_000),
+    code: clipSerialized(failure.details.code, 128),
+    message: clipSerialized(failure.details.message, 2_000),
   };
   // Keep typed metadata below the executor bridge bound.
   if (JSON.stringify(details).length > 3_700) {
@@ -495,6 +539,8 @@ interface SandboxLimits {
   sentSecrets?: SentSecrets;
   defaultToolTimeoutMs?: number | undefined;
   programDeadlineAt?: number | undefined;
+  /** When reads stop, shortly before the executor's own deadline. Writes are exempt (W9). */
+  readDeadlineAt?: number | undefined;
   signal?: AbortSignal | undefined;
   hostCalls?: HostCalls | undefined;
   maxHostCalls?: number | undefined;
@@ -521,8 +567,10 @@ interface SandboxLimits {
   programWrites?: ProgramWrites | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
-  /** Set when a failed program had read a result field off an unawaited host call. */
+  /** Set when a program read a result field off an unawaited host call. */
   unawaited?: { read: boolean } | undefined;
+  /** The run's retained results, which it seals when it ends. */
+  heldResults?: HeldResults | undefined;
 }
 
 /** Numeric accounting only; no addresses, arguments, or results. */
@@ -538,7 +586,7 @@ class HostCallBudgetExceeded extends InvocationFailure {
   ) {
     super({
       code: "budget_exceeded",
-      message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
+      message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum); the run returned nothing. Split the rest across programs of at most ${maxHostCalls} calls each; do not resend any write it sent.`,
       retryable: false,
     });
   }
@@ -599,6 +647,9 @@ function sandboxProvider(
   const maxHostCalls = Math.max(1, Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS));
   const hostCallTimeoutMs = Math.max(1, Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS));
   const { signal, diagnostics, programWrites } = limits;
+  /** The part of `requestedMs` left before reads stop; never below one tick. */
+  const readBudget = (requestedMs: number) =>
+    Math.min(requestedMs, Math.max(1, (limits.readDeadlineAt ?? Infinity) - Date.now()));
   const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: InvocationFailure | undefined;
   let emitAttempts = 0;
@@ -631,14 +682,34 @@ function sandboxProvider(
     }
     return value;
   };
+  const dispatchDeadlineAt = limits.readDeadlineAt ?? limits.programDeadlineAt;
   /** Budget and account for writes a writable endpoint admits. */
-  const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number) => ({
+  const invocationContext = (
+    sending: { settle?: SettleWrite; rewritten: boolean },
+    timeoutMs: number,
+    writeTimeoutMs: number,
+  ) => ({
     source: "execute_code" as const,
     sentSecrets,
     timeoutMs,
+    writeTimeoutMs,
     ...(limits.routes ? { routes: limits.routes } : {}),
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
+    ...(dispatchDeadlineAt !== undefined
+      ? {
+          // Past the gate's time, a call's answer could not reach the program either.
+          dispatchDeadline: {
+            at: dispatchDeadlineAt,
+            refusal: (address: string): CallErrorDetails => ({
+              code: "timeout",
+              message: `Too little of this run's deadline remains for ${address}, so it was not sent. Return what you have and send it in a new program.`,
+              retryable: true,
+              details: { operation: address, stage: "dispatch gate" },
+            }),
+          },
+        }
+      : {}),
     unwrapResult: true,
     readOnly: limits.readOnly,
     processResult: authMethod(
@@ -656,7 +727,9 @@ function sandboxProvider(
               valueFormat,
               secrets,
               requestScope,
+              { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
+              limits.heldResults,
             ]);
           const envelope =
             resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
@@ -758,13 +831,38 @@ function sandboxProvider(
             unrecorded: true,
           };
         }
+        // A write is exactly what its program asked for, or it stays here. Reads
+        // keep the filtered value: sending one changes nothing it could not repeat.
+        if (sending.rewritten) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "invalid_args",
+              message: `${target.connector.id}.${target.toolName} was not sent: its arguments hold a credential this request sent, and a write is never sent altered. If the value is genuine, send it as its own direct call.`,
+              retryable: false,
+            },
+          };
+        }
+        // Its answer could not reach the program, so refuse now while the outcome
+        // is known. Earlier writes go out and drain past the deadline (W9).
+        if (limits.readDeadlineAt !== undefined && Date.now() >= limits.readDeadlineAt) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "timeout",
+              message: `Too little of this run's deadline remains for ${target.connector.id}.${target.toolName}, so it was not sent. Return what you have and send it in a new program.`,
+              retryable: true,
+              details: { operation: `${target.connector.id}.${target.toolName}`, stage: "write gate" },
+            },
+          };
+        }
         const budgeted = target.definition.classification !== "read";
         if (budgeted && writes >= maxWrites) {
           return {
             kind: "refuse",
             error: {
               code: "budget_exceeded",
-              message: `execute_code write budget exceeded (${maxWrites} writes maximum, execute.maxWrites); ${target.connector.id}.${target.toolName} was not sent`,
+              message: `execute_code write budget exceeded (${maxWrites} writes per run); ${target.connector.id}.${target.toolName} was not sent. Check the run's writes count, then send only the rest in a new program; do not resend those that succeeded.`,
               retryable: false,
             },
           };
@@ -814,12 +912,14 @@ function sandboxProvider(
         normalizeTimeoutMs(timeout as number | undefined) ??
         normalizeTimeoutMs(limits.defaultToolTimeoutMs) ??
         hostCallTimeoutMs;
-      const timeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
+      const timeoutMs = readBudget(requestedMs);
+      const writeTimeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A program write settles here — unknown if the call never returned an
       // outcome. Credentials are filtered from arguments; submitted private values are not.
-      const sending: { settle?: SettleWrite } = {};
+      const filtered = sentSecrets.filterCredentials(args ?? {});
+      const sending: { settle?: SettleWrite; rewritten: boolean } = { rewritten: filtered.changed };
       const outcome = yield* invocation
-        .pipeline(address, sentSecrets.redactCredentials(args ?? {}), invocationContext(sending, timeoutMs))
+        .pipeline(address, filtered.value, invocationContext(sending, timeoutMs, writeTimeoutMs))
         .pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
@@ -852,21 +952,52 @@ function sandboxProvider(
   // `cancelled` instead of holding the program until its probe deadline.
   // Policy failures use the same thrown vocabulary as calls and utilities;
   // the transport below reconstructs their code inside the guest.
-  const discovery = <T>(operation: "search" | "describe", read: () => Promise<T>): Effect.Effect<unknown, unknown> =>
+  const discovery = <T>(
+    operation: "search" | "describe",
+    read: () => Effect.Effect<T, unknown>,
+  ): Effect.Effect<unknown, unknown> =>
     Effect.suspend(() => {
       const started = Date.now();
       const cancelled = () => guestFailure("cancelled", `connecta.${operation} was cancelled because the run ended.`);
-      const reading = Effect.tryPromise({
-        try: read,
-        catch: (err) => (err instanceof DiscoveryPolicyError ? guestFailure(err.code, err.message) : err),
-      });
-      return (
-        !hostAccessSignal
-          ? reading
-          : hostAccessSignal.aborted
-            ? Effect.fail(cancelled())
-            : Effect.raceAllFirst([reading, fromSignal(hostAccessSignal).pipe(Effect.mapError(cancelled))])
-      ).pipe(
+      // In the race itself, not behind a Promise: losing interrupts the catalog
+      // work and aborts its listing before the program hears the outcome (L3).
+      // The catalog hears the run's end as well, so its failure may arrive first.
+      const reading = Effect.suspend(read).pipe(
+        Effect.catchDefect((err) => Effect.fail(err)),
+        Effect.mapError((err) =>
+          hostAccessSignal?.aborted
+            ? cancelled()
+            : err instanceof DiscoveryPolicyError
+              ? guestFailure(err.code, err.message)
+              : err,
+        ),
+      );
+      const contenders: Array<Effect.Effect<unknown, unknown>> = [reading];
+      // A catalog probe may outlast the run; end it as a catchable timeout first.
+      if (limits.readDeadlineAt !== undefined)
+        contenders.push(
+          Effect.suspend(() => {
+            const deadlineMs = readBudget(Infinity);
+            return Effect.sleep(Duration.millis(deadlineMs)).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  const elapsedMs = Date.now() - started;
+                  const name = `connecta.${operation}`;
+                  return Effect.fail(
+                    new InvocationFailure({
+                      code: "timeout",
+                      message: `Operation "${name}" timed out during catalog after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`,
+                      retryable: true,
+                      details: { operation: name, stage: "catalog", elapsedMs, deadlineMs },
+                    }),
+                  );
+                }),
+              ),
+            );
+          }),
+        );
+      if (hostAccessSignal) contenders.push(fromSignal(hostAccessSignal).pipe(Effect.mapError(cancelled)));
+      return (hostAccessSignal?.aborted ? Effect.fail(cancelled()) : Effect.raceAllFirst(contenders)).pipe(
         Effect.onExit((exit) =>
           Effect.sync(() =>
             diagnostics?.recordCatalog(
@@ -883,6 +1014,7 @@ function sandboxProvider(
   const meta = createMetaTools(registry, baseUrl, {
     readOnly: limits.readOnly,
     requestScope,
+    heldResults: limits.heldResults,
     onResultRead: (dependencies) => limits.resultDependencies?.push(...dependencies),
   });
   const catalogDependency = (connector: string, tool?: string) => {
@@ -899,7 +1031,7 @@ function sandboxProvider(
     if (resolved) catalogDependency(resolved.connector.id, resolved.toolName);
   };
   const operations: GuestBindings = {
-    // Uncounted: a failed program read a result field off an unawaited host call.
+    // Uncounted: a program read a result field off an unawaited host call.
     unawaited: () => {
       if (limits.unawaited) limits.unawaited.read = true;
     },
@@ -1012,7 +1144,7 @@ function sandboxProvider(
           baseUrl,
           requestScope,
           sentSecrets,
-          timeoutMs: hostCallTimeoutMs,
+          timeoutMs: readBudget(hostCallTimeoutMs),
           onResolved: (connector) =>
             limits.resultDependencies?.push({ connector: connector.id, classification: "read" }),
           onConnectorTime: (elapsed) => {
@@ -1076,7 +1208,7 @@ function sandboxProvider(
         catch: (err) => err,
       }),
     search: (raw) =>
-      discovery("search", async () => {
+      discovery("search", () => {
         const args = (raw ?? {}) as {
           query?: string;
           connector?: string;
@@ -1087,42 +1219,50 @@ function sandboxProvider(
           includeSchemas?: "compact" | "json" | "typescript";
           includeSchemaKeys?: boolean;
         };
-        const result = flatSearchResult(
-          await catalog.search(
+        return catalog
+          .searchEffect(
             {
               ...args,
               includeSchemas: args.includeSchemas ?? "typescript",
               includeSchemaKeys: args.includeSchemaKeys !== false,
             },
             catalogDependency,
-          ),
-        );
-        boundedDiscoveryText(
-          result,
-          "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
-        );
-        return result;
+          )
+          .pipe(
+            Effect.map((page) => {
+              const result = flatSearchResult(page);
+              boundedDiscoveryText(
+                result,
+                "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
+              );
+              return result;
+            }),
+          );
       }),
     describe: (raw) =>
-      discovery("describe", async () => {
+      discovery("describe", () => {
         const args = (raw ?? {}) as {
           address?: unknown;
           addresses?: unknown;
           format?: "compact" | "json" | "typescript";
           fullDescriptions?: boolean;
         };
-        const result = { tools: await catalog.describe({ ...args, format: args.format ?? "json" }) };
-        boundedDiscoveryText(result, 'Split the address list or use format: "compact".');
-        for (const tool of result.tools) {
-          if (!tool.error) catalogAddressDependency(tool.address);
-          else {
-            const resolved = registry.resolveAddress(tool.address);
-            if (resolved) catalogDependency(resolved.connector.id);
-            for (const connector of tool.errorDetails?.configuredConnectors ?? []) catalogDependency(connector);
-            for (const suggestion of tool.errorDetails?.suggestions ?? []) catalogAddressDependency(suggestion);
-          }
-        }
-        return result;
+        return catalog.describeEffect({ ...args, format: args.format ?? "json" }).pipe(
+          Effect.map((tools) => {
+            const result = { tools };
+            boundedDiscoveryText(result, 'Split the address list, omit fullDescriptions, or use format: "compact".');
+            for (const tool of result.tools) {
+              if (!tool.error) catalogAddressDependency(tool.address);
+              else {
+                const resolved = registry.resolveAddress(tool.address);
+                if (resolved) catalogDependency(resolved.connector.id);
+                for (const connector of tool.errorDetails?.configuredConnectors ?? []) catalogDependency(connector);
+                for (const suggestion of tool.errorDetails?.suggestions ?? []) catalogAddressDependency(suggestion);
+              }
+            }
+            return result;
+          }),
+        );
       }),
   };
   // Recoverable failures remain typed at the host-owned executor bridge. Terminal host-budget exhaustion bypasses it.
@@ -1155,7 +1295,8 @@ function sandboxProvider(
         return [
           name,
           (...args: unknown[]) => {
-            if (budgetFailure) return stopped;
+            // Once sealing begins the run's secret set is final, so nothing new may start.
+            if (budgetFailure || limits.heldResults?.accepts() === false) return stopped;
             // Uncounted: one per run; any further call through the bridge ends the run.
             if (budget === "once") {
               if (++notices > 1)
@@ -1183,6 +1324,7 @@ function sandboxProvider(
             }
             if (counted) hostCalls.admitted++;
             const started = Date.now();
+            const utilityDeadlineMs = readBudget(hostCallTimeoutMs);
             let stage = deadline ?? "";
             const invoke = Effect.suspend(() => operation(...args));
             const guarded = deadline
@@ -1194,7 +1336,7 @@ function sandboxProvider(
                       }),
                     ),
                   {
-                    timeoutMs: hostCallTimeoutMs,
+                    timeoutMs: utilityDeadlineMs,
                     ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
                     timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
                   },
@@ -1204,7 +1346,7 @@ function sandboxProvider(
               activity?.recordOperation && ["search", "describe", "result", "skill"].includes(name)
                 ? operationActivity(activity, registry, name as "search" | "describe" | "result" | "skill", guarded)
                 : guarded;
-            const settled = runEdge(
+            const running = runEdge(
               operationEffect.pipe(
                 Effect.catch((error) => {
                   if (deadline && hostAccessSignal?.aborted)
@@ -1213,7 +1355,7 @@ function sandboxProvider(
                     );
                   if (deadline && error instanceof InvocationFailure && error.code === "timeout") {
                     const elapsedMs = Date.now() - started;
-                    const message = `Operation "connecta.${name}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
+                    const message = `Operation "connecta.${name}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${utilityDeadlineMs}ms).`;
                     return typedFailure(
                       new InvocationFailure({
                         code: "timeout",
@@ -1223,7 +1365,7 @@ function sandboxProvider(
                           operation: `connecta.${name}`,
                           stage,
                           elapsedMs,
-                          deadlineMs: hostCallTimeoutMs,
+                          deadlineMs: utilityDeadlineMs,
                         },
                       }),
                     );
@@ -1231,7 +1373,9 @@ function sandboxProvider(
                   return typedFailure(error);
                 }),
               ),
-            ).then(
+            );
+            limits.heldResults?.track(running);
+            const settled = running.then(
               (value) => {
                 if (counted) hostCalls.succeeded++;
                 return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
@@ -1284,11 +1428,10 @@ function awaitExecutor<A>(
   signal: AbortSignal,
   options: {
     late?: (value: A) => void;
-    watchdog?: { ms: number; logger: Logger };
+    watchdog?: { ceiling: ResponseCeiling; executorDeadlineAt: number | undefined; logger: Logger };
     terminal?: Effect.Effect<never, unknown>;
   } = {},
 ): Effect.Effect<A, unknown> {
-  const started = Date.now();
   const contenders: Array<Effect.Effect<A, unknown>> = [
     typeof start !== "function"
       ? start
@@ -1322,19 +1465,32 @@ function awaitExecutor<A>(
   const { watchdog } = options;
   if (watchdog) {
     contenders.push(
-      Effect.sleep(Duration.millis(watchdog.ms)).pipe(
+      untilCeiling(watchdog.ceiling).pipe(
         Effect.andThen(
           Effect.suspend(() => {
+            const { ms: deadlineMs, startedAt } = watchdog.ceiling;
+            const elapsedMs = Date.now() - startedAt;
+            // Time ran out before the executor's own deadline could: queueing
+            // spent it, or that deadline is set past the ceiling. Nothing is wedged.
+            if (watchdog.executorDeadlineAt !== undefined && Date.now() < watchdog.executorDeadlineAt) {
+              return Effect.fail(
+                new InvocationFailure({
+                  code: "timeout",
+                  message: `Operation "execute_code" timed out during response ceiling after ${elapsedMs}ms (effective deadline ${deadlineMs}ms). Return sooner, or do less in one program.`,
+                  retryable: true,
+                  details: { operation: "execute_code", stage: "response ceiling", elapsedMs, deadlineMs },
+                }),
+              );
+            }
             watchdog.logger.warn("[connecta] execute_code executor did not settle; run abandoned", {
-              watchdogMs: watchdog.ms,
+              watchdogMs: deadlineMs,
             });
-            const elapsedMs = Date.now() - started;
             return Effect.fail(
               new InvocationFailure({
                 code: "timeout",
-                message: `Operation "execute_code" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${watchdog.ms}ms); sandbox unresponsive.`,
+                message: `Operation "execute_code" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${deadlineMs}ms); sandbox unresponsive.`,
                 retryable: false,
-                details: { operation: "execute_code", stage: "sandbox watchdog", elapsedMs, deadlineMs: watchdog.ms },
+                details: { operation: "execute_code", stage: "sandbox watchdog", elapsedMs, deadlineMs },
               }),
             );
           }),
@@ -1344,6 +1500,10 @@ function awaitExecutor<A>(
   }
   return Effect.raceAllFirst(contenders);
 }
+
+/** Waits until the ceiling; already past it, one timer turn. */
+const untilCeiling = (ceiling: ResponseCeiling) =>
+  Effect.suspend(() => Effect.sleep(Duration.millis(Math.max(1, ceiling.at - Date.now()))));
 
 /**
  * The run's own signal, aborted however the run ends. It follows the
@@ -1376,10 +1536,27 @@ function runSignal(caller: AbortSignal | undefined): Effect.Effect<AbortSignal, 
  * executor, so this request's providers and program run here, never in the
  * releasing request, which workerd refuses.
  */
-function leased(executor: AdmittingExecutor, signal: AbortSignal): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
+function leased(
+  executor: AdmittingExecutor,
+  signal: AbortSignal,
+  ceiling: ResponseCeiling,
+): Effect.Effect<ExecutorLease, unknown, Scope.Scope> {
   return Effect.acquireRelease(
     awaitExecutor(() => executor.acquire({ signal, wait: true }), signal, {
       late: (lease) => lease.release(),
+      // A queue configured to outwait the client still answers it.
+      terminal: untilCeiling(ceiling).pipe(
+        Effect.andThen(
+          Effect.suspend(() =>
+            Effect.fail(
+              new ExecutorAdmissionError(
+                "executor_overloaded",
+                `Executor admission timed out after ${Date.now() - ceiling.startedAt}ms.`,
+              ),
+            ),
+          ),
+        ),
+      ),
     }),
     (lease) => Effect.sync(() => lease.release()),
   );
@@ -1389,6 +1566,8 @@ function leased(executor: AdmittingExecutor, signal: AbortSignal): Effect.Effect
 interface RunnerConfig {
   /** An HTTP request shares its scope with every registered tool. */
   requestScope?: object | undefined;
+  /** When the inbound request arrived; the response ceiling counts from it. Otherwise from the call. */
+  requestStartedAt?: number | undefined;
   defaultToolTimeoutMs?: number | undefined;
   discoveryConcurrency?: number | undefined;
   probeTimeoutMs?: number | undefined;
@@ -1437,9 +1616,13 @@ export function createExecuteTool(
     requestScope: object,
     hostCalls: HostCalls,
     programWrites: ProgramWrites,
+    unawaited: { read: boolean },
+    retention: { note?: string },
+    ceiling: ResponseCeiling,
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
+      const heldResults = new HeldResults(sentSecrets, requestOwner(requestScope).credentialReads);
       const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
       const emitted = new EmitCollector(
         resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
@@ -1448,7 +1631,6 @@ export function createExecuteTool(
         maxResultChars,
       );
       const resultDependencies: ProgramResultDependency[] = [];
-      const unawaited = { read: false };
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
       let budgetFailure: InvocationFailure | undefined;
@@ -1470,6 +1652,7 @@ export function createExecuteTool(
           ),
         );
         const signal = yield* runSignal(callerSignal);
+        yield* startable(ceiling);
         // Admission comes before provider construction: queued calls retain
         // no catalogs or provider closures.
         let lease: ExecutorLease | undefined;
@@ -1478,7 +1661,7 @@ export function createExecuteTool(
             (elapsed) => {
               if (diagnostics) diagnostics.admissionMs = elapsed;
             },
-            leased(executor, signal),
+            leased(executor, signal, ceiling),
           );
           if ((lease.waitMs ?? 0) > 0) {
             logger.debug("[connecta] execute_code admitted after queue wait", {
@@ -1510,7 +1693,8 @@ export function createExecuteTool(
                 maxHostCalls: config.maxHostCalls,
                 hostCallTimeoutMs,
                 defaultToolTimeoutMs: config.defaultToolTimeoutMs,
-                programDeadlineAt: Date.now() + watchdog.ms,
+                programDeadlineAt: ceiling.at,
+                readDeadlineAt: readDeadlineAt(executor, ceiling),
                 defer: config.defer,
                 readOnly: config.readOnly,
                 maxWrites: config.maxWrites,
@@ -1519,6 +1703,7 @@ export function createExecuteTool(
                 resultDependencies,
                 dispatchController,
                 unawaited,
+                heldResults,
               },
               requestScope,
             ),
@@ -1529,6 +1714,7 @@ export function createExecuteTool(
             new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled during sandbox setup."),
           );
         }
+        yield* startable(ceiling);
         const admitted = lease;
         // A program write may still be on the wire when the program settles:
         // close, so a write gated after this is not sent, then let the ones
@@ -1555,7 +1741,20 @@ export function createExecuteTool(
               Effect.mapError((error) => sentSecrets.redact(error)),
             ),
             signal,
-            { watchdog, terminal: Deferred.await(terminal) },
+            {
+              watchdog: {
+                ceiling,
+                // With no published deadline, a run that queued has not shown it is wedged.
+                executorDeadlineAt:
+                  executor.deadlineMs !== undefined
+                    ? Date.now() + executor.deadlineMs
+                    : (admitted?.waitMs ?? 0) > 0
+                      ? Infinity
+                      : undefined,
+                logger: watchdog.logger,
+              },
+              terminal: Deferred.await(terminal),
+            },
           ).pipe(
             Effect.ensuring(
               Effect.suspend(() => {
@@ -1586,6 +1785,8 @@ export function createExecuteTool(
             maxResultChars - emitted.textChars,
             programWrites.hasSucceeded,
             maxResultChars,
+            heldResults,
+            ceiling.answerBy,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
@@ -1596,7 +1797,20 @@ export function createExecuteTool(
           budgetFailure ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit)) : Effect.succeed(exit),
         ),
       );
-      return Effect.flatMap(exited, (exit) => {
+      // Every way a run answers can carry a result id, so every one of them seals, by the
+      // time the response must be on its way. A sealing cut short leaves entries unreadable.
+      const sealRun = Effect.suspend(() =>
+        sealHeldResults(heldResults, registry.resultsStorage(), ceiling.answerBy, callerSignal),
+      ).pipe(
+        Effect.tap(({ refused, refusedWrite }) =>
+          Effect.sync(() => {
+            if (refused === 0) return;
+            retention.note = refusedWrite ? RESULTS_REFUSED_WRITE_NOTE : RESULTS_REFUSED_NOTE;
+            logFailure(logger, "result paging unavailable", failureRecord({}));
+          }),
+        ),
+      );
+      const answered = Effect.flatMap(exited, (exit) => {
         // A synchronous fire-and-forget burst can also settle its executor in
         // this turn. The host's terminal refusal always wins over that value.
         if (budgetFailure instanceof HostCallBudgetExceeded) {
@@ -1627,6 +1841,7 @@ export function createExecuteTool(
           ),
         );
       });
+      return Effect.tap(answered, () => sealRun);
     });
 
   return authMethod(
@@ -1638,6 +1853,9 @@ export function createExecuteTool(
         if (!owner.open) return Effect.fail(owner.controller.signal.reason);
         const hostCalls: HostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
         const programWrites = new ProgramWrites();
+        const unawaited = { read: false };
+        const retention: { note?: string } = {};
+        const ceiling = responseCeiling(config.requestStartedAt ?? Date.now(), watchdog.ms);
         const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
           // that first so a huge direct-call string is never encoded in full.
@@ -1657,6 +1875,9 @@ export function createExecuteTool(
             requestScope,
             hostCalls,
             programWrites,
+            unawaited,
+            retention,
+            ceiling,
           );
         });
         return operationActivity(
@@ -1668,11 +1889,24 @@ export function createExecuteTool(
             Effect.map((unfinished) => {
               // Every response, including intake refusals, crosses accounting and
               // exactly one envelope check at this operation boundary.
-              const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
+              const result = redactAgentOutput(
+                sentSecrets,
+                programWrites.finish(unfinished, sentSecrets, maxResultChars),
+              );
               // Calls abandoned by the guest are failed when the run cancels them.
               // Connecta attaches its own integers after the envelope check.
               const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
-              result.structuredContent = { ...result.structuredContent, hostCalls: counts };
+              const note = [
+                finishedRunNote(result, hostCalls.attempted, programWrites.sent, unawaited.read),
+                retention.note,
+              ]
+                .filter(Boolean)
+                .join(" ");
+              result.structuredContent = {
+                ...result.structuredContent,
+                ...(note ? { note } : {}),
+                hostCalls: counts,
+              };
               if (result.content[0]?.type === "text") result.content[0].text = JSON.stringify(result.structuredContent);
               return result;
             }),
@@ -1683,6 +1917,32 @@ export function createExecuteTool(
         );
       }),
   );
+}
+
+const RESULTS_REFUSED_NOTE =
+  "A result this run retained was not kept for later runs, so paging its id from a new program may fail. Rerun the read for a fresh result.";
+const RESULTS_REFUSED_WRITE_NOTE = `${RESULTS_REFUSED_NOTE} A write's output among them may not be retrievable: that write already ran, so do not repeat it.`;
+const UNAWAITED_HINT = "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.";
+const SENT_NOTE =
+  "Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.";
+
+/**
+ * A completed run that gave the agent nothing to read looks like nothing
+ * happened, and a write inside it is exactly what must not run again (INV-9).
+ * Fixed text only: attached after the envelope check, like the counters.
+ */
+function finishedRunNote(
+  result: ToolResult,
+  attempted: number,
+  wrote: boolean,
+  unawaited: boolean,
+): string | undefined {
+  if (result.isError) return undefined;
+  if (unawaited) return wrote ? `${UNAWAITED_HINT} ${SENT_NOTE}` : UNAWAITED_HINT;
+  const body = result.structuredContent;
+  if (body?.result !== undefined || body?.emitted !== undefined) return undefined;
+  if (wrote) return `Program returned nothing. ${SENT_NOTE}`;
+  return `Program returned nothing${attempted > 0 ? ", though its calls ran" : " and made no host calls"}. Add a return.`;
 }
 
 interface RunReport {
@@ -1855,39 +2115,43 @@ function discardedEmits(emitted: EmitCollector): {
   return emitted.blocks.length > 0 ? { emittedDiscarded: emitted.blocks.length } : {};
 }
 
+/** Follows the inventory only when an entry shown carries the mark; `*` cannot appear in an id. */
+const REQUIRED_GUIDE_LEGEND = ' *Read connecta.skill("connector:<id>") before its first call.';
+
 /**
  * Every configured connector, from configuration alone. Detail degrades before
- * names do: titles go first, then optional guide pointers, and only past the
- * byte cap do whole entries give way to an exact omission count.
+ * names do: titles go first, and only past the byte cap do whole entries give
+ * way to an exact omission count. Search and describe name optional guides.
  */
 function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"]>): string {
   const prefix = "Connectors: ";
   if (connectors.length === 0) return `${prefix}none.`;
   const fits = (line: string) => boundedEchoText(line, CONNECTOR_INVENTORY_MAX_BYTES) === line;
-  const entry = (connector: (typeof connectors)[number], detail: number): string => {
-    const notes: string[] = [];
-    const title = connectorInventoryTitle(connector);
-    if (detail >= 2 && title) notes.push(title);
-    const required = connectorGuideRequired(connector);
-    if (connectorGuide(connector) && (required || detail >= 1)) {
-      const fetch = `skills({name:"${connectorSkillName(connector.id)}"})`;
-      notes.push(required ? `read first: ${fetch}` : `guide: ${fetch}`);
-    }
-    return notes.length > 0 ? `${connector.id} (${notes.join("; ")})` : connector.id;
+  const guideFirst = (connector: (typeof connectors)[number]) =>
+    connectorGuide(connector) !== undefined && connectorGuideRequired(connector);
+  const legend = (shown: typeof connectors) => (shown.some(guideFirst) ? REQUIRED_GUIDE_LEGEND : "");
+  const entry = (connector: (typeof connectors)[number], titled: boolean): string => {
+    const name = guideFirst(connector) ? `${connector.id}*` : connector.id;
+    const title = titled ? connectorInventoryTitle(connector) : undefined;
+    return title ? `${name} (${title})` : name;
   };
-  for (const detail of [2, 1, 0]) {
-    const line = `${prefix}${connectors.map((connector) => entry(connector, detail)).join(", ")}.`;
+  for (const titled of [true, false]) {
+    const line = `${prefix}${connectors.map((connector) => entry(connector, titled)).join(", ")}.${legend(connectors)}`;
     if (fits(line)) return line;
   }
-  const entries = connectors.map((connector) => entry(connector, 0));
+  const truncated = (shown: number) => {
+    const kept = connectors.slice(0, shown);
+    const names = kept.map((connector) => entry(connector, false)).join(", ");
+    return `${prefix}${names}${shown > 0 ? "; " : ""}+${connectors.length - shown} more.${legend(kept)}`;
+  };
   let shown = 0;
-  while (fits(`${prefix}${entries.slice(0, shown + 1).join(", ")}; +${entries.length - shown - 1} more.`)) shown++;
-  return `${prefix}${entries.slice(0, shown).join(", ")}${shown > 0 ? "; " : ""}+${entries.length - shown} more.`;
+  while (fits(truncated(shown + 1))) shown++;
+  return truncated(shown);
 }
 
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
-  hostLimits: { maxHostCalls: number; callTimeoutMs: number; hostCallTimeoutMs: number },
+  hostLimits: { maxHostCalls: number; callTimeoutMs: number; hostCallTimeoutMs: number; runDeadlineMs?: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
@@ -1895,16 +2159,16 @@ const executeDescription = (
   native = false,
   routes: AgentRouteNames = META_ROUTES,
 ) =>
-  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}.
+  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the host approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the host approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
 ${connectorInventory(connectors)}
 
-Use async () => { ... }, no arguments. No portable ambient capabilities. API:
+Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or timers. API:
 \`\`\`ts
 ${GUEST_API_DECLARATION}
 \`\`\`
-search and describe return objects, not arrays. Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle; read it with connecta.result(handle, { offset }), which pages by UTF-8 byte offset. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call. Promise.allSettled keeps per-call errors, but exceeding the host-call limit ends the program. When paging is available, an oversized program return carries resultId and nextAction.
+search and describe return objects, not arrays.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle: follow its hint. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call; over the limit the program returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction when paging is available.
 
-Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks unchanged; an authored Block's image/audio data is base64. emit needs no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}.`;
+${readOnly ? "" : "Never repeat writes for output. "}emit(result) or emit(block) forwards MCP blocks; authored image/audio data is base64. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; text shares the return cap. connecta.skill("usage"): repair.`;
 
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and
@@ -1914,9 +2178,9 @@ const EXECUTE_INPUT = advertisedSchema(
     code: z
       .string()
       .describe(
-        "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
+        "Source text of one zero-argument JavaScript async arrow: async () => { ...; return answer; }. Pass a string, even from a JavaScript host. Use the connecta global. At most 65,536 UTF-8 bytes.",
       ),
-    diagnostics: z.boolean().optional().describe("Add request-local, payload-free timing and result-size summaries."),
+    diagnostics: z.boolean().optional().describe("Add timing and result-size summaries."),
   }),
 );
 
@@ -1934,6 +2198,7 @@ export function registerExecuteTool(
     client?: McpClientContext | undefined;
     requestSignal?: AbortSignal | undefined;
     requestScope?: object | undefined;
+    requestStartedAt?: number | undefined;
     discoveryConcurrency?: number | undefined;
     /**
      * The deployment's configured per-connector probe deadline. Programs probe
@@ -1950,7 +2215,7 @@ export function registerExecuteTool(
     maxHostCalls?: number | undefined;
     /** Deadline per host call in milliseconds. Default 15_000. */
     hostCallTimeoutMs?: number | undefined;
-    /** Hard ceiling on one execution, outside the sandbox. Default 120_000. */
+    /** The response ceiling, enforced outside the sandbox. Default 55_000. */
     watchdogMs?: number | undefined;
     defer?: DeferredWork | undefined;
     /** The endpoint refuses every write. Resolved by the host route; default writable. */
@@ -1993,6 +2258,7 @@ export function registerExecuteTool(
     maxWrites,
     maxResultChars: ctx.maxResultChars,
     requestScope: ctx.requestScope,
+    requestStartedAt: ctx.requestStartedAt,
     routes: ctx.routes,
   });
   server.registerTool(
@@ -2004,6 +2270,9 @@ export function registerExecuteTool(
           ...hostLimits,
           // connecta.call falls back to calls.defaultTimeoutMs; result, skill and read always use hostCallTimeoutMs.
           callTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs,
+          ...(ctx.executor.deadlineMs !== undefined
+            ? { runDeadlineMs: Math.min(ctx.executor.deadlineMs, resolveBudget(ctx.watchdogMs, EXECUTE_WATCHDOG_MS)) }
+            : {}),
         },
         hasConnectorGuides(connectors),
         connectors,

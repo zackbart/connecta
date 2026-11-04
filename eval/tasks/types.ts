@@ -30,6 +30,12 @@ export interface Check {
   retained?: boolean;
 }
 
+/** Why a trial was recorded without running: the host or the arm cannot exercise it. */
+export interface TrialSkip {
+  code: "runner-limitation" | "capability-mismatch";
+  reason: string;
+}
+
 interface TurnContext {
   world: World;
   deployment: Deployment;
@@ -76,8 +82,8 @@ export interface ActiveTask {
   introducedIn: "baseline" | "P2" | "P3" | "P5" | "#801" | "#703";
   /** Omitted tasks stay visible in reports. Explicit opt-in is needed to run them. */
   skip?: { flag: string; reason: string };
-  runnerSkips?: Partial<Record<"claude" | "codex", { code: "runner-limitation"; reason: string }>>;
-  host?: { urlElicitation: "capable" | "incapable" };
+  runnerSkips?: Partial<Record<"claude" | "codex", TrialSkip>>;
+  host?: { urlElicitation: "capable" | "incapable" | "auto-decline" };
   /** What behaviour the task isolates, in one sentence. */
   measures: string;
   world?: WorldOptions;

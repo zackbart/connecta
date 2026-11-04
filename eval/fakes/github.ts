@@ -6,11 +6,25 @@ import { registerFakeRoute, unregisterFakeRoute } from "./rest.js";
 
 type Row = Record<string, any>;
 export const HEAD_SHA = "a".repeat(40);
+/** The vendor's 403 prose. A connector must never repeat it. */
+export const GITHUB_REFUSAL_TEXT = "EVAL_GITHUB_REFUSAL_PROSE";
+/** The accepted-permission header's value per CI read, as GitHub reports it. */
+const refusedPermission = (path: string) =>
+  /\/commits\/[^/]+\/status(?:es)?$/.test(path)
+    ? "statuses=read"
+    : path.includes("/actions/")
+      ? "actions=read"
+      : "checks=read";
+const CHECK_RUNS = [
+  { id: 8101, name: "lint", status: "completed", conclusion: "success", head_sha: HEAD_SHA },
+  { id: 8102, name: "integration-tests", status: "completed", conclusion: "failure", head_sha: HEAD_SHA },
+  { id: 8103, name: "package", status: "completed", conclusion: "success", head_sha: HEAD_SHA },
+];
 export function githubState() {
   return {
     repositories: Array.from({ length: 137 }, (_, i) => ({
       id: 1001 + i,
-      full_name: `alice/${i === 0 ? "widget" : `repo${String(i).padStart(3, "0")}`}`,
+      full_name: `alice/${i === 0 ? "widget" : i === 1 ? "gadget" : `repo${String(i).padStart(3, "0")}`}`,
       default_branch: i === 0 ? "main" : "trunk",
       archived: false,
     })),
@@ -35,7 +49,7 @@ export class FakeGitHub {
     readonly name: string,
     private readonly ledger: Ledger,
     readonly state: GitHubState,
-    private readonly fault?: "search-503",
+    private readonly fault?: "search-503" | "ci-scope-gap",
   ) {}
   get url() {
     if (!this.served) throw new Error("GitHub fake not started");
@@ -132,8 +146,19 @@ export class FakeGitHub {
     if (path === "/installation/repositories") return page(visible, "repositories");
     const repo = visible.find((r) => `/repos/${r.full_name}` === path);
     if (repo) return respond(repo);
+    if (
+      this.fault === "ci-scope-gap" &&
+      path.startsWith("/repos/alice/gadget/") &&
+      visible.some((r) => r.full_name === "alice/gadget")
+    )
+      return respond({ message: `Resource not accessible by integration. ${GITHUB_REFUSAL_TEXT}` }, 403, {
+        "x-accepted-github-permissions": refusedPermission(path),
+        "x-accepted-oauth-scopes": "",
+        "x-oauth-scopes": "",
+        "x-ratelimit-remaining": "4999",
+      });
     if (path.startsWith("/search/")) {
-      if (this.fault && !this.state.faulted) {
+      if (this.fault === "search-503" && !this.state.faulted) {
         this.state.faulted = true;
         return respond({ message: "Unavailable" }, 503);
       }
@@ -202,6 +227,14 @@ export class FakeGitHub {
         content: Buffer.from('{"region":"north","retryLimit":7}\n').toString("base64"),
         size: 34,
       });
+    if (new RegExp(`^/repos/alice/widget/commits/(?:${HEAD_SHA}|main)/check-runs$`).test(path)) {
+      if (token.permissions.checks !== "read") return respond({ message: "Resource not accessible" }, 403);
+      return page(CHECK_RUNS, "check_runs");
+    }
+    if (new RegExp(`^/repos/alice/widget/commits/(?:${HEAD_SHA}|main)/status$`).test(path)) {
+      if (token.permissions.statuses !== "read") return respond({ message: "Resource not accessible" }, 403);
+      return respond({ state: "pending", sha: HEAD_SHA, total_count: 0, statuses: [] });
+    }
     if (path === "/repos/alice/widget/releases" && request.method === "POST") {
       const release = { id: 9001, ...body };
       this.state.releases.push(release);

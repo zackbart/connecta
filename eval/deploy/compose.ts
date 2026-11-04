@@ -5,6 +5,8 @@
  * `eval/deploy/node.ts` serves it with `listen()`. Only the platform slots
  * differ: storage, executor, vault key and, on Workers, Access.
  */
+import { codeConfig } from "./code-surface.js";
+import type { Surface } from "../agent/surface.js";
 import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
 import { PROVIDER_DEPLOYS } from "./providers.generated.js";
 import { gmail } from "@zackbart/connecta/providers/gmail";
@@ -41,6 +43,7 @@ interface EvalFixtures {
 const QUIET = { debug() {}, info() {}, warn() {}, error() {} };
 
 export interface EvalComposition {
+  surface?: Surface;
   connectors: ConnectorSpec[];
   /** The task's untyped `deployment` passthrough. */
   extra: Record<string, unknown>;
@@ -53,8 +56,9 @@ export interface EvalComposition {
 /**
  * `extra` is a task's untyped passthrough, spread over the config last, so a
  * later phase's task can switch on a config key the adapters have never heard
- * of without a harness change. `pool`, `pools` and `quickbooksWrites` are the
- * adapter's own keys.
+ * of without a harness change. `pool`, `pools`, `quickbooksWrites` and
+ * `executorTimeoutMs`, the run deadline of the executor each target builds,
+ * are the adapters' own keys.
  */
 export function evalConfig(
   composition: EvalComposition,
@@ -64,7 +68,13 @@ export function evalConfig(
   },
 ): Config {
   const { connectors, fixtures, everyPool = [] } = composition;
-  const { pool: _pool, pools: taskPools, quickbooksWrites, ...passthrough } = composition.extra;
+  const {
+    pool: _pool,
+    pools: taskPools,
+    quickbooksWrites,
+    executorTimeoutMs: _deadline,
+    ...passthrough
+  } = composition.extra;
   const ids = [...(slots.oauthConnector ? ["oauth"] : []), ...connectors.map((spec) => spec.id)];
   const qb = connectors.find((spec) => spec.quickbooks);
   const withEvery = (pools: Record<string, { tools: string[] }> | undefined) =>
@@ -72,7 +82,7 @@ export function evalConfig(
     Object.fromEntries(
       Object.entries(pools).map(([id, pool]) => [id, { ...pool, tools: [...new Set([...pool.tools, ...everyPool])] }]),
     );
-  return {
+  const config = {
     readOnly: composition.readOnly,
     storage: slots.storage,
     agents: ["eval-machine"],
@@ -108,6 +118,19 @@ export function evalConfig(
       : {}),
     ...(passthrough as Partial<Config>),
   } as Config;
+  if (composition.surface === "native" || composition.surface === "native-no-code") {
+    config.pools = Object.fromEntries(
+      Object.entries(config.pools ?? {}).map(([id, pool]) => [
+        id,
+        {
+          ...pool,
+          surface: "native",
+          executeCode: composition.surface === "native",
+        },
+      ]),
+    );
+  }
+  return codeConfig(config, composition.surface ?? "six");
 }
 
 function evalConnector(spec: ConnectorSpec, fixtures: EvalFixtures) {

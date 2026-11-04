@@ -406,7 +406,7 @@ describe("reading content", () => {
     try {
       const catalog = await rpc("reads", "tools/list", {});
       expect(catalog.result.tools.some((t: any) => t.name === "files__drive_api_read")).toBe(true);
-      expect(catalog.result.tools.some((t: any) => t.name === "files__drive_api_write")).toBe(false);
+      expect(catalog.result.tools.some((t: any) => t.name === "files__WRITE__drive_api_write")).toBe(false);
       route = () => ({ body: { id: "f1", name: "Review.pdf" } });
       calls.length = 0;
       const read = await rpc("native", "tools/call", {
@@ -417,14 +417,14 @@ describe("reading content", () => {
       expect(calls.map((c) => c.method)).toEqual(["GET"]);
       calls.length = 0;
       const written = await rpc("native", "tools/call", {
-        name: "files__drive_api_write",
+        name: "files__WRITE__drive_api_write",
         arguments: { method: "PATCH", path: "/files/f1", body: { name: "Review.pdf" } },
       });
       expect(written.result.isError).toBeFalsy();
       expect(calls.map((c) => c.method)).toEqual(["PATCH"]);
       calls.length = 0;
       await rpc("reads", "tools/call", {
-        name: "files__drive_api_write",
+        name: "files__WRITE__drive_api_write",
         arguments: { method: "PATCH", path: "/files/f1", body: { name: "Denied.pdf" } },
       });
       expect(calls).toEqual([]);

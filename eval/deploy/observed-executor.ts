@@ -5,6 +5,6 @@ import { observePrograms } from "./observe.js";
 
 export type { ProgramObservation } from "./observe.js";
 
-export function observedExecutor(surface: Surface = "six") {
-  return observePrograms(quickJsExecutor(), surface);
+export function observedExecutor(surface: Surface = "six", timeoutMs?: number) {
+  return observePrograms(quickJsExecutor(timeoutMs === undefined ? {} : { timeoutMs }), surface);
 }

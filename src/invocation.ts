@@ -12,6 +12,7 @@ import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } fr
 import { CatalogService, type ResolvedCatalogTool } from "./catalog-service.js";
 import {
   boundedEchoText,
+  clipText,
   classificationCode,
   classifyCallError,
   classifyWithoutAdvice,
@@ -33,6 +34,7 @@ import {
   failureRecord,
   logFailure,
   recordedToolName,
+  labelErrorClass,
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { causeError, runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -166,7 +168,19 @@ function isCallerCancellation(error: unknown, signal: AbortSignal | undefined): 
  * plain `Error`: untyped and non-retryable. It is a read's answer; for a
  * write it is a 2xx reply after which the handler may have applied it.
  */
-class DownstreamToolError extends Error {}
+class DownstreamToolError extends Error {
+  /** Everything it said, kept for a program's report; the message is what fits a result. */
+  readonly #text: string;
+  constructor(text: string) {
+    super(clipText(text));
+    this.#text = text;
+  }
+  fullText(): string {
+    return this.#text;
+  }
+}
+// Records tell the tool's own answer from a transport or runtime failure.
+labelErrorClass(DownstreamToolError, "DownstreamToolError");
 
 function isTimeoutFailure(error: CallErrorDetails): boolean {
   const code = error.details?.code;
@@ -185,12 +199,10 @@ function assertRawMcpSuccess(kind: ResolvedCatalogTool["connector"]["kind"], res
   };
   if (!mcpResult.isError) return;
   throw new DownstreamToolError(
-    boundedEchoText(
-      mcpResult.content
-        ?.filter((block) => block.type === "text")
-        .map((block) => block.text ?? "")
-        .join("") || "Downstream tool call failed",
-    ),
+    mcpResult.content
+      ?.filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("\n") || "Downstream tool call failed",
   );
 }
 
@@ -239,6 +251,12 @@ export type InvocationOutcome<T> =
        * (an MCP `isError`). Absent when nothing was dispatched.
        */
       answered?: boolean;
+      /**
+       * A tool's complete `isError` text when `error.message` holds what fit. A
+       * program's write report redacts it again at the end of the run; it stays in
+       * memory for this request and never reaches activity or a log.
+       */
+      failureText?: string;
     });
 
 /**
@@ -265,6 +283,12 @@ export interface InvocationContext<T> {
   /** Route names for text this call writes, the request's surface; the registry's otherwise. */
   routes?: AgentRouteNames | undefined;
   timeoutMs?: number;
+  /**
+   * A longer deadline for a call that turns out to be write-like. Classification
+   * comes from the catalog, so `timeoutMs` bounds resolution either way; a
+   * dispatched write then keeps running so its outcome can be learned (INV-9).
+   */
+  writeTimeoutMs?: number;
   requestSignal?: AbortSignal;
   /** Run ended: cancel resolution/admission, but spare a dispatched write. */
   dispatchSignal?: AbortSignal;
@@ -295,6 +319,15 @@ export interface InvocationContext<T> {
   activityFriction?: (value: T) => AgentFriction | undefined;
   /** Account for an admitted write after validation and before admission. */
   beforeWrite?: (target: ResolvedCatalogTool, args: unknown) => Effect.Effect<WriteDecision>;
+  /** The caller already knows this call may not start: nothing resolves or dispatches. */
+  refusal?: CallErrorDetails | undefined;
+  /**
+   * The absolute time past which this call may not reach its connector, and what
+   * it answers then. The deadline timer cannot enforce this: synchronous work in
+   * resolution, admission or auth can cross the time before the timer runs, and a
+   * program write's timer runs past it by design (`writeTimeoutMs`).
+   */
+  dispatchDeadline?: { at: number; refusal: (address: string) => CallErrorDetails } | undefined;
 }
 
 export { InvocationFailure } from "./invocation-failure.js";
@@ -348,6 +381,7 @@ export class InvocationService {
       const recoveryState = recoveryRecord();
       let preInvocationAuthFailure = false;
       let answered = false;
+      let failureText: string | undefined;
       // A dispatched failure's advice to send it again, composed by enrich
       // only once the outcome allows it (resendAdvice), and its advice to
       // reuse an idempotency key, only where that key protects the whole
@@ -358,6 +392,10 @@ export class InvocationService {
       context.sentSecrets?.include(sentSecrets);
       // A write gate's refusal that is no attempt; see WriteGateDecision.
       let unrecorded = false;
+      // The gate's refusal states its own deadline facts; nothing timed out here.
+      let gateRefused = false;
+      // The deadline this call runs under, once its classification is known.
+      let timeoutMs = context.timeoutMs;
       let resolved: ResolvedCatalogTool | undefined;
       let activityTarget: Pick<ResolvedCatalogTool, "connector" | "toolName"> | undefined;
       // The address as written, used for activity when resolution never reached
@@ -431,7 +469,7 @@ export class InvocationService {
           return {
             ...error,
             code: "write_outcome_unknown",
-            message: `${error.message} Its outcome is unknown. Check the target before repeating this call.`,
+            message: `${error.message} It was sent once; its outcome is unknown. Check the target before repeating this call.`,
             retryable: false,
             ...(sentSourceWrite() ? { writeOutcome: "unknown" as const } : {}),
             connector: target.connector.id,
@@ -478,7 +516,9 @@ export class InvocationService {
             writeOutcome: "unknown",
             ...(!recovery && error.retry === undefined
               ? {
-                  retry: "No safe replay action exists. Re-read the target to reconcile whether the write took effect.",
+                  retry: error.toolAnswered
+                    ? "Its outcome is unknown: its handler ran before it answered, so check its target before acting. Give the user any approval link or request id in the message. Connecta will not resend it; a call the tool's words ask for is a new call."
+                    : "No safe replay action exists. Re-read the target to reconcile whether the write took effect.",
                 }
               : {}),
           };
@@ -623,13 +663,18 @@ export class InvocationService {
               },
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
-              nextAction: this.catalog.searchRecovery(
-                {
-                  query: target.toolName,
-                  connector: target.connector.id,
-                },
-                "Inspect the current input shape if the validation findings are not sufficient.",
-              ),
+              // Findings naming the fix lead on their own; a search would only cost a turn.
+              ...(error.validation.issues?.length && error.validation.acceptedKeys && !error.validation.truncated
+                ? {}
+                : {
+                    nextAction: this.catalog.searchRecovery(
+                      {
+                        query: target.toolName,
+                        connector: target.connector.id,
+                      },
+                      "Only if the validation above is not enough: inspect the schema.",
+                    ),
+                  }),
               retry: `Correct the listed arguments and retry ` + `${target.connector.id}.${target.toolName}.`,
             };
           case "not_found":
@@ -700,13 +745,13 @@ export class InvocationService {
         // Read before any step below rebuilds the details: Q8's verdict is final.
         const settled = isSettledWrite(error);
         // Attach host deadline facts before write recovery changes the code.
-        if (isTimeoutFailure(error)) {
+        if (isTimeoutFailure(error) && !gateRefused) {
           const elapsedMs = Date.now() - started;
           const operation = boundedEchoText(address, 512);
           error = {
             ...error,
-            message: `Operation "${operation}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${context.timeoutMs}ms).`,
-            details: { ...error.details, operation, stage, elapsedMs, ...defined({ deadlineMs: context.timeoutMs }) },
+            message: `Operation "${operation}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${timeoutMs}ms).`,
+            details: { ...error.details, operation, stage, elapsedMs, ...defined({ deadlineMs: timeoutMs }) },
           };
         }
         // Downstream diagnostics were redacted under payload rules where they entered.
@@ -719,6 +764,7 @@ export class InvocationService {
           ...defined({ resolved }),
           dispatched: dispatchedToConnector,
           ...(dispatchedToConnector ? { answered } : {}),
+          ...defined({ failureText }),
           error: details,
         });
         // A write refused only because its program had already returned
@@ -771,6 +817,11 @@ export class InvocationService {
       // classified like a failure, as the async body this replaced did.
       const dispatch = (callSignal?: AbortSignal): Effect.Effect<CallErrorDetails | undefined, unknown> =>
         Effect.gen({ self: this }, function* () {
+          if (context.refusal) {
+            gateRefused = true;
+            return context.refusal;
+          }
+          let pastDeadline: CallErrorDetails | undefined;
           const admissionSignal = context.dispatchSignal
             ? AbortSignal.any([context.dispatchSignal, ...(callSignal ? [callSignal] : [])])
             : callSignal;
@@ -798,6 +849,7 @@ export class InvocationService {
 
           const write = target.definition.classification !== "read";
           const writeLike = isWriteLike(target.definition);
+          if (writeLike && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
           const input =
             context.source !== "execute_code"
@@ -828,7 +880,7 @@ export class InvocationService {
           if (refusal === "read_only_endpoint") {
             return framingError(
               "read_only_endpoint",
-              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. No write route exists ${connectorReadOnly ? "for this connection" : "on this endpoint"}. Ask the operator for a writable connection if writes are required.`,
+              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. No write route exists ${connectorReadOnly ? "for this connection" : "on this endpoint"}; tell the user. Only the operator can provide a writable connection.`,
             );
           }
           if (refusal === "destructive_tool_requires_approval") {
@@ -861,6 +913,7 @@ export class InvocationService {
             const decision = yield* context.beforeWrite(target, args ?? {});
             if (decision.kind === "refuse") {
               unrecorded = decision.unrecorded === true;
+              gateRefused = true;
               return decision.error;
             }
           }
@@ -875,7 +928,7 @@ export class InvocationService {
                 this.catalog.requestScope,
                 defined({
                   signal: callSignal,
-                  timeoutMs: context.timeoutMs,
+                  timeoutMs,
                   defer: this.catalog.defer,
                   routes: context.routes,
                 }),
@@ -930,8 +983,20 @@ export class InvocationService {
                   }),
                 ),
               );
-              // Cancellation can arrive during admission or context construction.
+              // Reflect.apply, never the function's own `call` or `apply`
+              // property, which anyone holding the function could replace.
+              const options = { definition: cloneTool(target.definition), ...defined({ input }) };
+              const entry = callEntry(connector, callTool);
+              // The final gate. Cancellation can arrive during admission or context
+              // construction, and resolution, admission or auth can spend the deadline.
+              // Nothing is awaited from here to the connector call below, so a call
+              // refused here is proven unsent and one let through left in time (INV-9).
               if (admissionSignal?.aborted) throw admissionSignal.reason;
+              if (context.dispatchDeadline && Date.now() >= context.dispatchDeadline.at) {
+                gateRefused = true;
+                pastDeadline = context.dispatchDeadline.refusal(canonicalAddress);
+                return undefined;
+              }
               dispatchedToConnector = true;
               recordCallEntry(
                 this.catalog.requestScope,
@@ -942,10 +1007,6 @@ export class InvocationService {
                 },
                 target.definition,
               );
-              // Reflect.apply, never the function's own `call` or `apply`
-              // property, which anyone holding the function could replace.
-              const options = { definition: cloneTool(target.definition), ...defined({ input }) };
-              const entry = callEntry(connector, callTool);
               if (entry)
                 return yield* entry(target.toolName, args ?? {}, options).pipe(
                   Effect.provideContext(viewServices(connectorContext)),
@@ -982,6 +1043,7 @@ export class InvocationService {
                 const reply = yield* timed((elapsed) => {
                   connectorMs += elapsed;
                 }, call(permit));
+                if (pastDeadline) return { pastDeadline };
                 if (target.connector.kind === "mcp" && isDownstreamInputResult(reply)) {
                   // The downstream suspended for input. A handler asks for
                   // input from inside its run, so a write may already have
@@ -1028,8 +1090,14 @@ export class InvocationService {
             const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
             // An inner call's verdict that does not hold for this one is withdrawn.
             if (failureWrite && !answered) forgetProviderFailure(details);
+            // The tool's own words, which a program's write accounting keeps.
+            if (failureWrite && attemptError === thrown && thrown instanceof DownstreamToolError) {
+              details.toolAnswered = true;
+              failureText = thrown.fullText();
+            }
             return details;
           }
+          if ("pastDeadline" in attempt.value) return attempt.value.pastDeadline;
           if ("inputRequired" in attempt.value) {
             inputRequiredValue = { value: attempt.value.value as T };
             return undefined;
@@ -1059,6 +1127,7 @@ export class InvocationService {
           ? withDeadlineEffect(dispatch, {
               ...defined({
                 timeoutMs: context.timeoutMs,
+                extendMs: () => (timeoutMs ?? 0) - (context.timeoutMs ?? 0),
                 signal: context.requestSignal,
               }),
               timeoutError: new ConnectorCallError("timeout", `Tool call timed out after ${context.timeoutMs}ms`),
@@ -1105,8 +1174,7 @@ export class InvocationService {
           Effect.tap(
             withDeadlineEffect(() => processing, {
               ...defined({
-                timeoutMs:
-                  context.timeoutMs === undefined ? undefined : Math.max(1, context.timeoutMs - (Date.now() - started)),
+                timeoutMs: timeoutMs === undefined ? undefined : Math.max(1, timeoutMs - (Date.now() - started)),
                 signal: context.requestSignal,
               }),
               timeoutError: new ConnectorCallError("timeout", "Result processing exceeded the tool call deadline."),

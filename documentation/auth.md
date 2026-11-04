@@ -981,7 +981,7 @@ admitted.
 | Refusal      | A person with zero or several memberships at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer` (zero memberships), `ambiguous_pool` (several memberships), `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                            |
 | Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                                                                                            |
 | Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                                                                                             |
-| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` prefix the MCP instructions with `Use skills. ` and the description before routing rules; a maintainer at plain `/mcp` and a pool without one serve the shared instructions unchanged. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                            |
+| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` place the description before the rest of the MCP instructions; a maintainer at plain `/mcp` and a pool without one serve none. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                                                                    |
 | Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, mixed people and agent membership (a `ConfigError` naming the pool), unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 UTF-16 code units of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
 | Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                                                                                                 |
 | Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                                                                                                    |
@@ -1442,7 +1442,7 @@ longer live; one left behind cannot complete and expires with its link.
 `authorize_connector` issues the same browser link, with `force` carried in the
 signed handoff. On hosts without URL elicitation, direct and program auth
 failures and search/describe catalog failures include the same authorization
-handoff. The admitted registry and management permission govern issuance.
+handoff. A declined or cancelled URL elicitation returns it too. The admitted registry and management permission govern issuance.
 Each call or program run shares at most one handoff per connector; errors never
 request a forced restart. Signed links retain their fifteen-minute expiry,
 initiating-user and owner binding, origin check, and single-use browser nonce.
@@ -1681,7 +1681,7 @@ If the refresh fails instead, whatever it met (a dead grant, a waiter
 deadline, the caller leaving), or hands back the token the API just
 rejected, the 401's verdict stays:
 `downstream_oauth_required`, never retryable, with `reconciliationRequired`
-and `writeOutcome: "unknown"`, and an `authorize_connector` handoff that says
+and `writeOutcome: "unknown"`, and a handoff that says
 to re-read the target before any fresh call. A read is refreshed and sent
 once more. MCP sends a tool only once when either its effective classification
 or its original server hints say write. A deployment write-to-read override
@@ -2012,9 +2012,14 @@ any registered form is still withheld, however short.
 Identifiers sent beside a credential are matched whole only, because consent
 URLs and vendor metadata carry their parts by design: a confidential OAuth
 client's ID, a Basic username beside a password of at least eight characters,
-and credential-slot fields named as identifiers (ending in `id`, `user`,
-`username`, `login`, or `email`, or starting with `public`). A Basic username
-beside a shorter or empty password is the credential itself and is fully
+credential-slot fields named as identifiers (ending in `id`, `user`,
+`username`, `login`, or `email`, or starting with `public`), and the two headers
+maintained providers declare public from their vendors' contracts: Cloudflare's
+Global API Key `X-Auth-Email` and Overflow's `x-client-id`. A value in either
+that holds whitespace, as an auth scheme's framing does, is a credential. Any
+other header or query parameter is never public by name: `remoteMcp()` and
+`api()` auth headers under any name are credentials, fully matched. A Basic
+username beside a shorter or empty password is the credential itself and is fully
 matched. Query parameters named as continuation cursors (`pageToken`,
 `nextPageToken`, `next_token`, `continuationToken`, `syncToken`) are public
 result state and are not registered. Header values a connector adds to token
@@ -2610,6 +2615,15 @@ survives every round. Rotation invalidates outstanding states.
 Each state admits one retry through a connector-scoped storage CAS, including
 decline and cancel. Concurrent or repeated consumption is refused before
 dispatch, so retries cannot fork into sibling forced connection links.
+A decline or cancel returns one fresh link, issued only after that state verifies
+and the same management check as the prompt passes, so a refusal offers nothing
+this caller could not already request. The link is sealed like the prompt's, keeps
+the prompt's force, and stays bound to a pending forced start.
+A refused `force: true` flow retires its unspent links through the same CAS before
+issuing that link, so one link can begin the reset however late a browser arrives.
+Opening a retired prompt link starts nothing and returns the invalid-link refusal;
+the link in the refusal performs the restart. A link already claimed in a browser
+keeps its reset, and the refusal's link continues it. An unforced prompt link stays open.
 The host records each entered call's classification, catalog freshness and
 classification digest in private invocation state, along with auth failure origins. Writes may elicit only
 when Connecta's own credential resolution fails before invoking the connector:
@@ -2962,12 +2976,12 @@ owner's access token as `Authorization: Bearer` with these rules:
 - Whatever that recovery meets, a write's failure is never retryable and its
   outcome is unknown. Until a refresh succeeds the 401's verdict stands:
   `downstream_oauth_required`, which the invocation marks
-  `reconciliationRequired`, with the `authorize_connector` handoff, whether
+  `reconciliationRequired`, with the authorization handoff, whether
   the refresh was [dead](#refresh-failures), lost after it was sent, raced
   by a disconnect or reset, failed in storage or contention, or handed back
   the token the API just rejected, which renews nothing.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
-  `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
+  `downstream_oauth_required`, carrying the authorization handoff. Refresh waiter deadlines
   return retryable `unavailable` for a read. Latch second 401s for the request scope,
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.

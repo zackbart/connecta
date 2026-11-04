@@ -9,6 +9,7 @@
 // neither module resolves — there the arm skips and the host-side clauses below
 // carry the file.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { describe, expect, it } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -24,6 +25,11 @@ import {
   checkProgramReadDependencies,
   checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
+  checkReadDeadlineCancels,
+  checkReadDeadlineUtilities,
+  checkDispatchGateAfterAuth,
+  checkDispatchGateAfterCatalog,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -35,6 +41,10 @@ import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.j
 import {
   checkLargeProgramRead,
   checkLargeProgramWrite,
+  checkRetainedResultsPassFinalSet,
+  checkRetainedResultsSameRunAndCost,
+  checkRetainedResultsUnreadableWhileSealing,
+  retainedSealingCases,
   checkProgramResultBom,
   checkProgramResultSurrogates,
   checkProgramReturnFallback,
@@ -58,7 +68,7 @@ async function loadWorkerExecutor(options: { timeout?: number } = {}): Promise<E
 }
 
 const workerExecutor = await loadWorkerExecutor();
-const workerDeadlineExecutor = await loadWorkerExecutor({ timeout: 500 });
+const workerReadDeadlineExecutor = await loadWorkerExecutor({ timeout: 2_000 });
 
 /** True in the workers project, where the arm below must not silently skip. */
 const inWorkerd = await (async () => {
@@ -420,6 +430,26 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
+    it(`INV-5: ${custom ? "customExecutor: " : ""}a retained result is readable from later runs only if it passes its run's final secret set`, async () => {
+      await checkRetainedResultsPassFinalSet(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
+    it(`INV-5: ${custom ? "customExecutor: " : ""}same-run paging keeps working and a run pays no extra storage to seal`, async () => {
+      await checkRetainedResultsSameRunAndCost(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
+    for (const [title, check] of Object.entries(retainedSealingCases)) {
+      it(`INV-5 INV-7: ${custom ? "customExecutor: " : ""}${title}`, async () => {
+        await check(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+      }, 60_000);
+    }
+    it(`INV-5: ${custom ? "customExecutor: " : ""}at every step of sealing another request reads only what sealing published`, async () => {
+      await checkRetainedResultsUnreadableWhileSealing(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
     it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
       const executor = required(workerExecutor);
       await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);
@@ -475,13 +505,38 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
   for (const contractCase of CONTRACT_CASES.filter(({ name }) => !duplicateCases.has(name))) {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness(contractCase.maxStashEntries);
-      const executor = required(contractCase.deadline ? workerDeadlineExecutor : workerExecutor);
+      const executor = required(contractCase.runDeadline ? workerReadDeadlineExecutor : workerExecutor);
       const config = caseConfig(contractCase);
       const outcome = await harness.run(executor, contractCase.code, config);
       const follow = contractCase.follows ? await harness.run(executor, contractCase.follows, config) : undefined;
       contractCase.check(outcome, harness.state, follow);
     });
   }
+
+  it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
+    await checkReadDeadlineUtilities(required(workerReadDeadlineExecutor));
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(required(workerReadDeadlineExecutor), "await new Promise(() => {});");
+  });
+
+  it("[L3, W9, INV-9] the final gate refuses a write its auth step ran out of time, unsent", async () => {
+    await checkDispatchGateAfterAuth(required(workerReadDeadlineExecutor));
+  }, 60_000);
+
+  it("[L3, W9, INV-9] the final gate refuses a read its catalog ran out of time, unsent", async () => {
+    await checkDispatchGateAfterCatalog(required(workerReadDeadlineExecutor));
+  }, 60_000);
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(required(workerExecutor).deadlineMs).toBe(50_000);
+    expect(required(workerExecutor).deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
+  });
+
+  it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {
+    await checkReadDeadlineCancels(required(workerReadDeadlineExecutor));
+  }, 60_000);
 
   it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
     const outcome = await contractHarness().run(required(workerExecutor), CAPABILITY_PROBE_CODE);

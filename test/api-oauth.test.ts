@@ -1712,7 +1712,12 @@ describe("api() oauth replay is for reads only", () => {
         retryable: error.retryable,
         writeOutcome: error.writeOutcome,
         reconciliationRequired: error.reconciliationRequired,
-        handoff: error.nextAction && "tool" in error.nextAction ? error.nextAction.tool : undefined,
+        handoff:
+          error.nextAction && "url" in error.nextAction
+            ? "link"
+            : error.nextAction && "tool" in error.nextAction
+              ? error.nextAction.tool
+              : undefined,
         retry: error.retry,
         reconciles: error.instructions?.includes("re-read the target of the write that failed") === true,
         retriesOriginal: error.instructions?.includes("retry the original call") === true,
@@ -1723,7 +1728,7 @@ describe("api() oauth replay is for reads only", () => {
         retryable: false,
         writeOutcome: "unknown",
         reconciliationRequired: true,
-        handoff: "authorize_connector",
+        handoff: "link",
         retry:
           "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
         reconciles: true,

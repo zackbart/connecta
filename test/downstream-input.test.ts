@@ -343,7 +343,7 @@ function setup(
 describe("native downstream input", { tags: ["workers"] }, () => {
   it("INV-4 INV-9: native form and URL continuations preserve wire identity and send each read or write once", async () => {
     for (const url of [undefined, "https://input.test/continue"]) {
-      for (const name of ["service__read", "service__write"]) {
+      for (const name of ["service__read", "service__WRITE__write"]) {
         const flow = setup({ native: true, ...(url ? { url } : {}) });
         const capabilities = { elicitation: url ? { url: {} } : { form: {} } };
         const first = (await flow.rpc({ name, capabilities })).result;
@@ -354,7 +354,7 @@ describe("native downstream input", { tags: ["workers"] }, () => {
         const responses = {
           "downstream/service/0": { action: "accept", ...(!url ? { content: { name: "Alice" } } : {}) },
         };
-        const other = name === "service__read" ? "service__write" : "service__read";
+        const other = name === "service__read" ? "service__WRITE__write" : "service__read";
         expect((await flow.rpc({ name: other, state, responses, capabilities })).error.data.reason).toBe(
           "invalid_request_state",
         );
@@ -1018,11 +1018,7 @@ describe("downstream input relay", { tags: ["node"] }, () => {
         expect(result.structuredContent.error).toMatchObject({
           code: "downstream_oauth_required",
           reconciliationRequired: true,
-          nextAction: {
-            tool: "authorize_connector",
-            arguments: { connector: "service" },
-            operatorHandoff: "Give the URL and instructions it returns to the operator.",
-          },
+          nextAction: { url: expect.stringContaining("/connect/service"), purpose: expect.stringContaining("re-read") },
           retry:
             "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
         });
@@ -1146,11 +1142,7 @@ describe("downstream input relay", { tags: ["node"] }, () => {
     expect(result.structuredContent.error).toMatchObject({
       code: "auth_required",
       retryable: false,
-      nextAction: {
-        tool: "authorize_connector",
-        arguments: { connector: "service" },
-        operatorHandoff: "Give the URL and instructions it returns to the operator.",
-      },
+      nextAction: { action: "contact_operator", purpose: expect.stringContaining("Retry after") },
       retry: "Retry service.read after the operator completes recovery.",
     });
     expect(flow.continuationSend).toHaveBeenCalledOnce();

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { schemaExample } from "../src/validate.js";
 import { CatalogService } from "../src/catalog-service.js";
-import { ConnectorCallError } from "../src/errors.js";
+import { boundedEchoText, clipSerialized, clipText, ConnectorCallError, tokenPrefix } from "../src/errors.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { connectorWith } from "./fixtures/connectors.js";
@@ -8,6 +9,56 @@ import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./
 import { machineAuth } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
+
+describe("clipping a tool's words", () => {
+  it("keeps what fits exactly, and cuts only between tokens with the cut marked", () => {
+    expect(clipText("short", 5)).toBe("short");
+    const clipped = clipText("see https://vendor.example/approve?sig=abc now", 30);
+    expect(clipped).toBe("see … [truncated]");
+    expect(clipText(`{"url":"https://vendor.example/a","next":"https://vendor.example/b"}`, 60)).toBe(
+      `{"url":"https://vendor.example/a","next": … [truncated]`,
+    );
+  });
+
+  it("withholds a token with no boundary rather than leave a prefix of it, and splits no codepoint", () => {
+    expect(clipText("x".repeat(100), 50)).toBe("… [truncated]");
+    const clipped = clipText(`é ${"é".repeat(60)}`, 40);
+    expect(clipped).toBe("é … [truncated]");
+    expect(clipped).not.toContain("\ufffd");
+  });
+});
+
+describe("every clip of text output redaction reads later", () => {
+  const open = "aaa bbb credential-with-no-boundary tail";
+
+  it.each([
+    ["tokenPrefix", (text: string) => tokenPrefix(text, 20)],
+    ["boundedEchoText", (text: string) => boundedEchoText(text, 20)],
+    ["clipSerialized", (text: string) => clipSerialized(text, 30)],
+    ["clipText", (text: string) => clipText(text, 30)],
+  ])("%s removes the unfinished tail", (_name, clip) => {
+    const clipped = clip(open);
+    expect(clipped).toMatch(/^aaa bbb/);
+    expect(clipped).not.toContain("cred");
+  });
+
+  it("returns text that fits exactly and keeps a finished token at the bound", () => {
+    expect(tokenPrefix("abc def", 7)).toBe("abc def");
+    expect(tokenPrefix("abc def", 3)).toBe("abc");
+    expect(tokenPrefix("abcdef", 3)).toBe("");
+    expect(boundedEchoText("abc def", 7)).toBe("abc def");
+    expect(clipSerialized("abc def", 9)).toBe("abc def");
+  });
+
+  it("counts JSON escapes and quotes against a serialized bound and splits no surrogate pair", () => {
+    const quoted = clipSerialized(`${'"'.repeat(50)} ${"x".repeat(20)}`, 40);
+    expect(JSON.stringify(quoted).length).toBeLessThanOrEqual(40);
+    expect(quoted).not.toContain("x");
+    const emoji = clipSerialized(`😀 ${"😀".repeat(50)}`, 30);
+    expect(emoji).toBe("😀 … [truncated]");
+    expect(tokenPrefix(`😀 ${"😀".repeat(50)}`, 11)).toBe("😀");
+  });
+});
 
 describe("repairing error envelopes", () => {
   it("INV-5: unresolved catalog recovery requires original arguments without echoing them", async () => {
@@ -200,6 +251,7 @@ describe("repairing error envelopes", () => {
           await mt.callDestructiveTool({ address: "notes.create", args: { title: "argument-sentinel" }, ...mode }),
           {
             code: "write_outcome_unknown",
+            message: expect.stringContaining("It was sent once; its outcome is unknown."),
             retryable: false,
             uncertainCall: { address: "notes.create", args: { title: "argument-sentinel" } },
             retry: expect.stringContaining("Do not retry automatically"),
@@ -257,10 +309,31 @@ describe("repairing error envelopes", () => {
     // A connector's own copy of the call is replaced by the schema's synthesized example.
     for (const supplied of [{}, { example: args }]) {
       const error = await invoke(supplied, args);
-      expect(error.validation).toMatchObject({ example: { query: "x" } });
+      expect(error.validation).toMatchObject({ example: { query: "<query>" } });
+      // Without accepted keys the findings may not be enough, so discovery stays as the fallback.
+      expect(error.nextAction).toMatchObject({
+        purpose: "Only if the validation above is not enough: inspect the schema.",
+      });
       expect(error.retry).toContain("notes.find");
       expect(JSON.stringify(error)).not.toMatch(/sentinel/);
     }
+    // A placeholder must stay valid, so a schema that refuses it keeps its plain sample,
+    // and a secret position never echoes even its own name.
+    expect(schemaExample({ type: "object", required: ["id"], properties: { id: { type: "string" } } }).example).toEqual(
+      { id: "<id>" },
+    );
+    expect(
+      schemaExample({
+        type: "object",
+        required: ["id", "code", "token", "pin"],
+        properties: {
+          id: { type: "string", pattern: "^[a-z]*$" },
+          code: { type: "string", maxLength: 3 },
+          token: { type: "string", writeOnly: true },
+          pin: { type: "string", minLength: 8 },
+        },
+      }).example,
+    ).toEqual({ id: "", code: "", token: "", pin: "xxxxxxxx" });
     // A stated reason stands, and no example rides beside it.
     const withheld = await invoke({ exampleUnavailable: "Read notes_api_details." }, args);
     expect(withheld.validation).not.toHaveProperty("example");
