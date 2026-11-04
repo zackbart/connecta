@@ -10,6 +10,9 @@ import {
   reliability,
   trialEfficiency,
 } from "../eval/report/efficiency.js";
+import { signTest, trialSteps } from "../eval/report/steps.js";
+import { compare, compareStepArms, crossTarget } from "../eval/compare.js";
+import { STEP_BATCH, STEP_CONTROL_TASKS, STEP_EXPERIMENTS, STEP_TRIAL_COUNT } from "../eval/step-reduction-plan.js";
 
 type Use = { tool: string; input?: Record<string, unknown>; resultText?: string; isError?: boolean };
 
@@ -289,4 +292,127 @@ it("records first-request cache input once, permits host search, and preserves u
   expect([e.firstTurnInputTokens, e.hostSearchCalls, e.toolErrorsBeforeFirstSuccess]).toEqual([60, 1, 2]);
   expect(efficiencyLines(batchEfficiency([t], 1).models).join("\n")).toContain("first request 60");
   expect(trialEfficiency(trial({ legacy: true })).firstTurnInputTokens).toBeUndefined();
+});
+
+describe("step metrics", () => {
+  const replies = (code: string) => JSON.stringify({ ok: false, error: { code } });
+  const flow = (uses: Use[], programs: unknown[] = []) => {
+    const built = trial({ uses });
+    (built.saved!.world as { programs: unknown[] }).programs = programs;
+    return trialSteps(built);
+  };
+
+  it("counts every step before the first successful vendor call, across both routes", () => {
+    const steps = flow([
+      { tool: "skills", input: { name: "connector:ccb" }, resultText: "guide" },
+      { tool: "search_tools", input: { query: "campus" }, resultText: "{}" },
+      { tool: "call_tool", input: { address: "ccb.ccb_api_search" }, resultText: "{}" },
+      { tool: "call_tool", input: { address: "ccb.ccb_api_read" }, resultText: replies("invalid_args"), isError: true },
+      { tool: "call_tool", input: { address: "ccb.ccb_api_details" }, resultText: "{}" },
+      { tool: "call_tool", input: { address: "ccb.ccb_api_read" }, resultText: "{}" },
+    ]);
+    expect(steps.stepsToFirstVendorOk).toBe(5);
+    expect(steps.topStepsToFirstVendorOk).toBe(6);
+    expect(steps.discoverySteps).toBe(3);
+    expect(steps.guideFetches).toBe(1);
+    expect(steps.invalidArgs).toBe(1);
+    expect(steps.wrongPathErrors).toBe(1);
+    expect(steps.retriesToSuccess).toBe(0);
+    expect(steps.unresolvedErrors).toBe(0);
+  });
+
+  it("separates a retry from an unresolved wrong guess", () => {
+    const guess = {
+      tool: "call_tool",
+      input: { address: "stripe.list" },
+      resultText: replies("invalid_args"),
+      isError: true,
+    };
+    expect(
+      flow([guess, guess, { tool: "call_tool", input: { address: "stripe.list" }, resultText: "{}" }]),
+    ).toMatchObject({
+      retriesToSuccess: 1,
+      unresolvedErrors: 0,
+    });
+    expect(flow([guess, guess])).toMatchObject({ retriesToSuccess: 1, unresolvedErrors: 2 });
+  });
+
+  it("expands programs in call order and matches them by source", () => {
+    const steps = flow(
+      [{ tool: "execute_code", input: { code: "b" }, resultText: "{}" }],
+      [
+        { code: "a", calls: [{ name: "connecta.call", args: ["ccb.get_me"], outcome: "ok" }] },
+        {
+          code: "b",
+          calls: [
+            { name: "connecta.search", args: [{}], outcome: "ok" },
+            { name: "connecta.call", args: ["ccb.get_person"], outcome: "error", errorCode: "unknown_tool" },
+            { name: "connecta.call", args: ["ccb.get_individual"], outcome: "ok" },
+          ],
+        },
+      ],
+    );
+    expect(steps.stepsToFirstVendorOk).toBe(2);
+    expect(steps.topLevelSteps).toBe(1);
+    expect(steps.nestedCalls).toBe(2);
+    expect(steps.unknownTool).toBe(1);
+  });
+
+  it("counts discovery between a hinted list and the next vendor call", () => {
+    const steps = flow([
+      { tool: "call_tool", input: { address: "ccb.list_families" }, resultText: "{}" },
+      { tool: "search_tools", input: { query: "family" }, resultText: "{}" },
+      { tool: "call_tool", input: { address: "ccb.ccb_api_details" }, resultText: "{}" },
+      { tool: "call_tool", input: { address: "ccb.get_family" }, resultText: "{}" },
+      { tool: "search_tools", input: { query: "later" }, resultText: "{}" },
+    ]);
+    expect(steps.searchesBetweenListAndDetail).toBe(2);
+  });
+
+  it("counts a failed overlapping tool followed by its sibling as a wrong tool", () => {
+    const update = { tool: "call_destructive_tool", input: { address: "vercel_rest.update_project_env_var" } };
+    const upsert = { tool: "call_destructive_tool", input: { address: "vercel_rest.upsert_project_env_var" } };
+    expect(
+      flow([
+        { ...update, resultText: replies("not_found"), isError: true },
+        { ...upsert, resultText: "{}" },
+      ]).wrongToolCalls,
+    ).toBe(1);
+    expect(
+      flow([
+        { ...update, resultText: replies("not_found"), isError: true },
+        { ...update, resultText: "{}" },
+      ]).wrongToolCalls,
+    ).toBe(0);
+  });
+
+  it("reports how many decisive pairs would separate arms, never a verdict", () => {
+    expect(signTest([-1, -1, 1, 0])).toMatchObject({ better: 2, worse: 1, tied: 1 });
+    expect(signTest([-1, -1, -1, -1, -1, -1]).pairsNeeded).toBe(6);
+    expect(signTest([-1, 1]).pairsNeeded).toBeUndefined();
+    expect(signTest([0, 0]).pairsNeeded).toBeUndefined();
+  });
+
+  it("registers a plan inside the owner's trial cap, on the worker surface it was fixed for", () => {
+    expect(STEP_TRIAL_COUNT).toBeLessThanOrEqual(STEP_BATCH.trialCap);
+    expect(STEP_BATCH).toMatchObject({
+      target: "worker",
+      catalogTools: 300,
+      grading: "outcome",
+      repeats: 2,
+      concurrency: 2,
+    });
+    for (const tasks of Object.values(STEP_EXPERIMENTS))
+      for (const task of tasks) expect(STEP_CONTROL_TASKS).toContain(task);
+  });
+
+  it("refuses to pair a step arm through the ordinary comparators, with or without the override", () => {
+    const file = (stepArm?: string) =>
+      ({ config: { stepArm, surface: "six", injection: undefined, target: "worker" }, trials: [] }) as never;
+    expect(() => compare(file("teach-errors"), file())).toThrow(/step-reduction arms/);
+    expect(() => compare(file(), file("control"), { allowMismatch: true })).toThrow(/step-reduction arms/);
+    expect(() => crossTarget(file("control"), file("control"))).toThrow(/step-reduction arms/);
+    expect(() => compareStepArms(file("control"), file("control"))).toThrow(/must be a step-reduction arm/);
+    expect(() => compareStepArms(file("control"), file())).toThrow(/must be a step-reduction arm/);
+  });
 });

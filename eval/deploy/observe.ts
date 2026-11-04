@@ -6,6 +6,7 @@ import { guidanceValue } from "./guidance.js";
  */
 import { codeError, codeSkill, codeValue } from "./code-surface.js";
 import type { Surface } from "../agent/surface.js";
+import type { StepRuntime } from "./step-arms.js";
 import type { ExecutorProvider, ExecutorLease } from "@zackbart/connecta";
 
 interface ExecutorLike {
@@ -30,6 +31,7 @@ export interface ProgramObservation {
 export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["acquire"]> }>(
   executor: T,
   surface: Surface = "six",
+  step?: StepRuntime,
 ) {
   const programs: ProgramObservation[] = [];
   const acquire = executor.acquire.bind(executor);
@@ -50,9 +52,10 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
               program.calls.push(call);
               if (call.name === "connecta.call") program.peakCalls = Math.max(program.peakCalls, ++pendingCalls);
               try {
-                const original = guidanceValue(await fn(...args));
-                const result =
-                  surface !== "code" && surface !== "five"
+                const original = guidanceValue(await fn(...(step ? step.guestArgs(call.name, args) : args)));
+                const result = step
+                  ? await step.guestResult(call.name, args, original)
+                  : surface !== "code" && surface !== "five"
                     ? original
                     : call.name === "connecta.skill" && surface === "code"
                       ? codeSkill(args[0], original)
@@ -61,7 +64,11 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
                 call.result = result;
                 return result;
               } catch (original) {
-                const error = surface !== "code" && surface !== "five" ? original : codeError(original, surface);
+                const error = step
+                  ? await step.guestError(call.name, args, original)
+                  : surface !== "code" && surface !== "five"
+                    ? original
+                    : codeError(original, surface);
                 call.outcome = "error";
                 if (error && typeof error === "object" && "code" in error) call.errorCode = String(error.code);
                 throw error;

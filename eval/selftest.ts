@@ -73,6 +73,11 @@ if (process.argv.includes("--native-only")) {
   process.exit(0);
 }
 
+if (process.argv.includes("--step-arms-only")) {
+  await import("./step-arm-controls.js");
+  process.exit(0);
+}
+
 if (process.argv.includes("--worker-references-only")) {
   const only = flags(process.argv.slice(2)).get("tasks")?.split(",");
   const selected = only ? ACTIVE_TASKS.filter((task) => only.includes(task.id)) : ACTIVE_TASKS;

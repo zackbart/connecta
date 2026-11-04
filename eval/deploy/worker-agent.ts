@@ -15,6 +15,7 @@
  * `/__eval/*` are local process controls, never product routes.
  */
 import { forSurface } from "./code-surface.js";
+import { forStepArm, stepRuntime } from "./step-arms.js";
 import { workerExecutor } from "@zackbart/connecta/worker";
 import { createConnecta } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
@@ -51,6 +52,7 @@ interface Live {
   programs(): ProgramObservation[];
   observeNext(): void;
   setReadOnly(value: boolean): void;
+  step: ReturnType<typeof stepRuntime>;
 }
 
 let live: Promise<Live> | undefined;
@@ -71,7 +73,8 @@ async function setup(env: Env): Promise<Live> {
   );
   await presetCredentials(vault, composition.connectors);
   const previous: ProgramObservation[] = [];
-  let observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface);
+  const step = stepRuntime(composition.stepArm);
+  let observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface, step);
   let readOnly = composition.readOnly;
   const build = () =>
     createConnecta(
@@ -97,8 +100,9 @@ async function setup(env: Env): Promise<Live> {
     programs: () => [...previous, ...observed.programs],
     observeNext: () => {
       previous.push(...observed.programs);
-      observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface);
+      observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface, step);
     },
+    step,
     setReadOnly: (value) => {
       readOnly = value;
     },
@@ -131,6 +135,9 @@ export default withAccess({
       state.connecta = state.build();
       return new Response(null, { status: 204 });
     }
-    return forSurface(state.connecta, JSON.parse(bindings.EVAL_COMPOSITION).surface ?? "six").fetch(request, env, ctx);
+    return forStepArm(
+      forSurface(state.connecta, JSON.parse(bindings.EVAL_COMPOSITION).surface ?? "six"),
+      state.step,
+    ).fetch(request, env, ctx);
   },
 });

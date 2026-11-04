@@ -12,6 +12,9 @@ import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
 import { downstreamMetrics } from "./agent/trace.js";
 import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
+import { STEP_ARMS } from "./deploy/step-arms.js";
+import { STEP_DECISION_RULE, STEP_EXPERIMENTS, STEP_PRIMARY_METRIC } from "./step-reduction-plan.js";
+import { signTest, trialSteps, type TrialSteps } from "./report/steps.js";
 import { describeInjection, injectionOf, sameInjection } from "./fakes/injection.js";
 import {
   efficiencyLines,
@@ -76,6 +79,7 @@ const trialSchema = z
     runner: z.enum(["codex", "claude"]),
     target: z.enum(["node", "worker"]).optional(),
     surface: z.enum(["six", "five", "code", "native", "native-no-code"]),
+    stepArm: z.enum(STEP_ARMS).optional(),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
     status: z.enum(["pass", "fail", "error", "skipped"]),
@@ -323,6 +327,11 @@ function provenance(a: AgentResultFile, b: AgentResultFile): string[] {
 }
 
 export function compare(a: AgentResultFile, b: AgentResultFile, options: { allowMismatch?: boolean } = {}): string {
+  // A step arm changes served replies: only --step-arms pairs it, and no override does here.
+  if (a.config.stepArm !== undefined || b.config.stepArm !== undefined)
+    throw new Error(
+      `Comparison refused: step-reduction arms (${a.config.stepArm ?? "none"}, ${b.config.stepArm ?? "none"}) pair only through --step-arms`,
+    );
   // Injected latency or faults change what is measured: no override pairs them.
   if (!sameInjection(a.config.injection, b.config.injection))
     throw new Error(
@@ -484,12 +493,115 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
   return lines.join("\n");
 }
 
+const STEP_METRICS: readonly (keyof TrialSteps)[] = [
+  "stepsToFirstVendorOk",
+  "topStepsToFirstVendorOk",
+  "topLevelSteps",
+  "nestedCalls",
+  "discoverySteps",
+  "wrongPathErrors",
+  "invalidArgs",
+  "unknownTool",
+  "retriesToSuccess",
+  "unresolvedErrors",
+  "searchesBetweenListAndDetail",
+  "wrongToolCalls",
+  "guideFetches",
+];
+
+/** Lower is better. Pass counts decide nothing here without the registered safety vetoes. */
+function primaryMetric(arm: keyof typeof STEP_EXPERIMENTS, steps: TrialSteps, totalTokens: number): number | undefined {
+  if (arm === "teach-errors") return steps.retriesToSuccess * 1_000_000 + totalTokens;
+  if (arm === "ready-rows") return steps.stepsToFirstVendorOk;
+  if (arm === "next-hints") return steps.searchesBetweenListAndDetail;
+  return steps.wrongToolCalls + steps.invalidArgs;
+}
+
+/**
+ * A control batch against one eval-only arm, restricted to the arm's fixed
+ * tasks. Every other batch setting must match, so a control's other tasks are
+ * the only permitted difference. Prints the registered rule's inputs; a person
+ * applies it across both runners.
+ */
+export function compareStepArms(control: AgentResultFile, armFile: AgentResultFile): string {
+  const arm = armFile.config.stepArm;
+  const reasons: string[] = [];
+  if (control.config.stepArm !== "control") reasons.push("--a must be a --step-arm control batch");
+  if (arm === undefined || arm === "control") throw new Error("Comparison refused: --b must be a step-reduction arm");
+  const planned = STEP_EXPERIMENTS[arm];
+  if (JSON.stringify([...armFile.config.tasks].sort()) !== JSON.stringify([...planned].sort()))
+    reasons.push(`--b must run exactly ${arm}'s registered tasks`);
+  if (planned.some((task) => !control.config.tasks.includes(task)))
+    reasons.push("--a must cover every task of the arm");
+  for (const [label, file] of [
+    ["control", control],
+    [arm, armFile],
+  ] as const) {
+    if (file.config.surface !== "six") reasons.push(`${label}: step arms run on the six surface`);
+    reasons.push(...measuredProvenance(label, "six", file));
+    for (const trial of file.trials)
+      if (trial.stepArm !== file.config.stepArm) reasons.push(`${label}: trial ${key(trial)} contradicts its step arm`);
+  }
+  reasons.push(
+    ...settingMismatches(control, armFile, ["stepArm", "tasks"]).map((label) => `Arms must use the same ${label}`),
+  );
+  if (reasons.length) throw new Error(`Comparison refused:\n${[...new Set(reasons)].map((r) => `- ${r}`).join("\n")}`);
+  const runner = control.config.runner === "claude" ? "claude" : "codex";
+  const left = new Map(control.trials.filter((t) => planned.includes(t.task)).map((t) => [key(t), t]));
+  const right = new Map(armFile.trials.map((t) => [key(t), t]));
+  if (left.size !== right.size || [...left.keys()].some((id) => !right.has(id)))
+    throw new Error("Comparison refused: arms must have identical model/task/repeat pairs");
+  const lines = [
+    `STEP ARM ${arm} vs control; ${runner}; paired ${control.protocol!.pairId}; registered metric ${STEP_PRIMARY_METRIC[arm]}`,
+    `Rule: ${STEP_DECISION_RULE}`,
+  ];
+  for (const model of control.config.models) {
+    const pairs = [...left.entries()]
+      .filter(([, trial]) => trial.model === model)
+      .map(([id, trial]) => [trial, right.get(id)!] as const);
+    const outcome = (trial: TrialResult) => trialOutcome(trial, runner);
+    const infrastructure = pairs.filter(([x, y]) => outcome(x).infrastructure || outcome(y).infrastructure).length;
+    const passed = (side: 0 | 1) => pairs.filter((pair) => outcome(pair[side]).pass).length;
+    const deltas = pairs.flatMap(([x, y]) => {
+      const a = primaryMetric(arm, trialSteps(x), trialEfficiency(x).totalTokens);
+      const b = primaryMetric(arm, trialSteps(y), trialEfficiency(y).totalTokens);
+      return a === undefined || b === undefined ? [] : [b - a];
+    });
+    const test = signTest(deltas);
+    lines.push(
+      `${model}: outcome ${passed(0)}/${pairs.length} control, ${passed(1)}/${pairs.length} arm; infrastructure-invalid pairs ${infrastructure}; duplicate writes ${safety(pairs.map((p) => p[0])).duplicates} control, ${safety(pairs.map((p) => p[1])).duplicates} arm`,
+      `  primary: arm better ${test.better}, worse ${test.worse}, tied ${test.tied}, unmeasured ${pairs.length - deltas.length}; decisive pairs a sign test needs at this rate: ${test.pairsNeeded ?? "not separable"}`,
+    );
+    for (const [label, side] of [
+      ["control", 0],
+      ["arm", 1],
+    ] as const) {
+      const steps = pairs.map((pair) => trialSteps(pair[side]));
+      const efficiency = pairs.map((pair) => trialEfficiency(pair[side]));
+      lines.push(
+        `  ${label.padEnd(7)} median ${STEP_METRICS.map((metric) => `${metric} ${median(steps.flatMap((s) => (s[metric] === undefined ? [] : [s[metric] as number]))) ?? "N/A"}`).join(", ")}, totalTokens ${median(efficiency.map((e) => e.totalTokens))}, responseBytes ${median(efficiency.flatMap((e) => (e.responseBytes === undefined ? [] : [e.responseBytes])))}`,
+      );
+    }
+    for (const task of planned) {
+      const row = pairs.filter(([x]) => x.task === task);
+      const cell = (side: 0 | 1) => {
+        const steps = row.map((pair) => trialSteps(pair[side]));
+        return `${row.filter((pair) => outcome(pair[side]).pass).length}/${row.length} pass, first-ok ${steps.map((s) => s.stepsToFirstVendorOk ?? "-").join("/")}, errors ${steps.map((s) => s.invalidArgs + s.unknownTool).join("/")}, tokens ${row.map((pair) => trialEfficiency(pair[side]).totalTokens).join("/")}`;
+      };
+      lines.push(`  ${task}: control ${cell(0)}; arm ${cell(1)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 /**
  * Node against workerd for the same surface, tasks, models and runner. A
  * diagnostic only: it reports outcomes and efficiency side by side and never
  * reaches a decision.
  */
 export function crossTarget(node: AgentResultFile, worker: AgentResultFile): string {
+  if (node.config.stepArm !== undefined || worker.config.stepArm !== undefined)
+    throw new Error("Cross-target diagnostic refused: step-reduction arms pair only through --step-arms");
   const surface = node.config.surface ?? "six";
   const reasons: string[] = [
     ...measuredProvenance("node", surface, node),
@@ -555,12 +667,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const args = flags(process.argv.slice(2));
   if (!args.has("a") || !args.has("b"))
     throw new Error(
-      "Usage: eval:compare --a <six.json> --b <code.json> [--allow-mismatch] | --cross-target --a <node.json> --b <worker.json>",
+      "Usage: eval:compare --a <six.json> --b <code.json> [--allow-mismatch] | --cross-target --a <node.json> --b <worker.json> | --step-arms --a <control.json> --b <arm.json>",
     );
   const [a, b] = await Promise.all(
     [args.get("a")!, args.get("b")!].map(async (p) => JSON.parse(await readFile(p, "utf8")) as AgentResultFile),
   );
   console.log(
-    args.has("cross-target") ? crossTarget(a!, b!) : compare(a!, b!, { allowMismatch: args.has("allow-mismatch") }),
+    args.has("step-arms")
+      ? compareStepArms(a!, b!)
+      : args.has("cross-target")
+        ? crossTarget(a!, b!)
+        : compare(a!, b!, { allowMismatch: args.has("allow-mismatch") }),
   );
 }

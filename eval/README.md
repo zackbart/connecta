@@ -614,6 +614,30 @@ actor/requester distinction. Without that mapping both runners would lose two
 export trials to redaction. Other redactions and unavailable legacy observations
 retain the existing partial-evidence rules.
 
+## Step-reduction arms
+
+[deploy/step-arms.ts](deploy/step-arms.ts) holds four eval-only arms for measuring how many calls an agent needs to reach a correct vendor call. `--step-arm control|teach-errors|ready-rows|next-hints|merged-tools` selects one on the six surface, on either target. No package entry exports the module and no configuration key reaches it: the harness wraps a deployment's `fetch` and guest bridge after Connecta's own dispatch, admission, refusal and value-safety boundaries. Lookups use the caller's endpoint and token, so they keep its pool scope and reach no vendor. `control` serves unchanged replies.
+
+| Arm            | What it changes                                                                                                                                                                                | Must stay intact                                                                                                  |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `teach-errors` | `invalid_args` and `unknown_tool` gain `error.teach`: the compact schema or hatch contract, and the connector guide paragraph naming the tool. Rows that require no guide lose guide pointers. | `guideRequired`, shipped recovery fields, no submitted value in teaching, no teaching on an unknown write outcome |
+| `ready-rows`   | `*_api_search` rows gain `accepts` and a `call` example, inside 0014's 16 KiB budget.                                                                                                          | Refused rows gain nothing, a write stays on the write route, value safety still refuses a copied marker           |
+| `next-hints`   | Reviewed list tools in CCB, Planning Center, Breeze and Cloudflare gain `nextStep`: the tool reading one record and the id field.                                                              | No hint without rows, after selecting the id away, or for a withheld id                                           |
+| `merged-tools` | Vercel's `upsert_project_env_var` and `update_project_env_var` become `upsert_project_env`; its build and runtime log tools become `get_logs` with `kind`.                                     | One merged write is one physical write, the destructive route is still required, originals are absent             |
+
+[step-reduction-plan.ts](step-reduction-plan.ts) fixes the tasks, batch settings, trial cap, primary metrics and decision rule before any paid trial. Experiments share one control batch per runner.
+
+```sh
+pnpm run eval:selftest --step-arms-only --target worker
+pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --target worker --catalog-tools 300 --grading outcome --repeats 2 --concurrency 2 --step-arm control --tasks <STEP_CONTROL_TASKS> --pair-id <id> --out eval/results/step-claude-control.json
+pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --target worker --catalog-tools 300 --grading outcome --repeats 2 --concurrency 2 --no-build --step-arm ready-rows --tasks <STEP_EXPERIMENTS["ready-rows"]> --pair-id <id> --out eval/results/step-claude-ready-rows.json
+pnpm run eval:compare --step-arms --a eval/results/step-claude-control.json --b eval/results/step-claude-ready-rows.json
+```
+
+The result config and every trial record `stepArm`. The six/code, native and cross-target comparators refuse any file that has one, even with `--allow-mismatch`. Only `--step-arms` pairs them: `--a` must be a control batch, `--b` an arm running exactly its registered tasks, and every other setting, hash and source must match, apart from the control's additional tasks. Its report gives the rule's inputs per model: pass counts, duplicate writes, paired primary-metric wins and losses, how many decisive pairs a sign test would need at that rate, and per-task evidence. A person applies the registered rule across both runners. These figures never change a grade.
+
+[report/steps.ts](report/steps.ts) derives step metrics from saved grading inputs, so no trial field is added: steps to the first successful vendor call, discovery and guide steps, `invalid_args`, `unknown_tool`, retries before success, unresolved errors, discovery between a hinted list and the next vendor call, and a failed overlapping tool followed by its sibling.
+
 ## Provider-local eval wiring
 
 A maintained provider keeps its eval wiring in its own folder, never shipped

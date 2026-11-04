@@ -10,6 +10,8 @@ import { World } from "../fakes/world.js";
 import type { Injection } from "../fakes/injection.js";
 import { connectMcp, type McpSession } from "../support/mcp.js";
 import type { ActiveTask } from "../tasks/types.js";
+import { taskForStepArm } from "../tasks/surface.js";
+import type { StepArm } from "../deploy/step-arms.js";
 import { startAuthHost } from "./auth-host.js";
 import { assertSurface, type Surface } from "./surface.js";
 import { parseTrace, type AgentTrace, type StreamEvent, type ToolUse, type TranscriptEntry } from "./trace.js";
@@ -54,6 +56,7 @@ interface PlayOptions {
   /** Opt-in latency and fault injection; none by default. */
   injection?: Injection;
   surface?: Surface;
+  stepArm?: StepArm;
   /** Runs after the surface check and before the reference, on the same session. */
   before?(ctx: { session: McpSession; world: World; toolUses: ToolUse[] }): Promise<void>;
 }
@@ -65,6 +68,7 @@ export async function playReference<T>(
   inspect: (played: Played) => T | Promise<T>,
 ): Promise<T> {
   const surface = options.surface ?? "six";
+  task = taskForStepArm(task, options.stepArm);
   const world = new World(task.world, options.injection);
   let deployment: Deployment | undefined;
   let host: Awaited<ReturnType<typeof startAuthHost>> | undefined;
@@ -74,7 +78,7 @@ export async function playReference<T>(
     for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
     deployment = options.deploy
       ? await options.deploy(world)
-      : await startDeployment(options.target ?? "node", world, task, surface);
+      : await startDeployment(options.target ?? "node", world, task, surface, options.stepArm);
     const hostEvents: StreamEvent[] = [];
     host = task.host
       ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))

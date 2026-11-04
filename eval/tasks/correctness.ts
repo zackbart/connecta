@@ -30,6 +30,35 @@ export function deliveredValues(trace: AgentTrace): any[] {
   return values;
 }
 
+/**
+ * Numbers an agent's own result delivered. Page and host-call bookkeeping can
+ * coincide with a count without delivering it, so neither establishes a fact.
+ */
+export function deliveredNumbers(trace: AgentTrace): number[] {
+  const numbers: number[] = [];
+  const visit = (value: unknown) => {
+    if (typeof value === "number") numbers.push(value);
+    else if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === "object")
+      for (const [key, item] of Object.entries(value)) if (key !== "page" && key !== "hostCalls") visit(item);
+  };
+  for (const use of trace.toolUses) {
+    if (use.isError || !["call_tool", "call_destructive_tool", "execute_code", "read_result"].includes(use.tool))
+      continue;
+    const texts = use.resultBlocks?.flatMap((block) =>
+      block.type === "text" && typeof block.text === "string" ? [block.text] : [],
+    );
+    for (const text of texts?.length ? texts : [use.resultText ?? ""]) {
+      try {
+        visit(JSON.parse(text));
+      } catch {
+        // Prose or a partial preview cannot establish record facts.
+      }
+    }
+  }
+  return numbers;
+}
+
 export interface Correctness {
   destination(world: World, trace: AgentTrace): boolean;
   /** Every expression must match the final answer, never the tool output. */

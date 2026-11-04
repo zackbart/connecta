@@ -18,6 +18,7 @@ export interface AgentResultFile {
   config: {
     guidanceArm?: string;
     surface?: import("../agent/surface.js").Surface;
+    stepArm?: import("../deploy/step-arms.js").StepArm;
     grading?: import("../tasks/grading.js").Grading;
     models: string[];
     repeats: number;

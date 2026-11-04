@@ -1,6 +1,33 @@
 /** Only route-specific task wording/references change; outcome facts stay fixed. */
 import type { Surface } from "../agent/surface.js";
+import type { StepArm } from "../deploy/step-arms.js";
 import type { ActiveTask, ReferenceContext } from "./types.js";
+
+/** An arm never changes a prompt or grader; only a reference names merged tools. */
+export function taskForStepArm(task: ActiveTask, arm: StepArm | undefined): ActiveTask {
+  if (arm !== "merged-tools") return task;
+  const original = task.reference;
+  const merged = (args: Record<string, any>) => {
+    const tool = String(args.address ?? "");
+    const input = (args.args ?? {}) as Record<string, unknown>;
+    if (tool === "vercel_rest.upsert_project_env_var" || tool === "vercel_rest.update_project_env_var")
+      return { ...args, address: "vercel_rest.upsert_project_env" };
+    if (tool === "vercel_rest.get_deployment_build_logs")
+      return { ...args, address: "vercel_rest.get_logs", args: { ...input, kind: "build" } };
+    if (tool === "vercel_rest.get_runtime_logs")
+      return { ...args, address: "vercel_rest.get_logs", args: { ...input, kind: "runtime" } };
+    return args;
+  };
+  return {
+    ...task,
+    reference: (ctx) =>
+      original({
+        ...ctx,
+        call: (tool, args) =>
+          ctx.call(tool, tool === "call_tool" || tool === "call_destructive_tool" ? merged(args) : args),
+      }),
+  };
+}
 
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   if (surface === "six") return task;

@@ -16,6 +16,8 @@ import { guidanceArm } from "./deploy/guidance.js";
  *   --concurrency  parallel trials (default 1)
  *   --timeout-min  per-trial wall budget in minutes (default 8)
  *   --effort       Codex reasoning effort (default model setting)
+ *   --step-arm     eval-only step-reduction arm (control records the comparator);
+ *                  see eval/step-reduction-plan.ts
  *   --out          result JSON path (default eval/results/agent-<time>.json)
  *   --report       also write an HTML report
  *   --baseline     previous result file for that report
@@ -26,6 +28,7 @@ import { guidanceArm } from "./deploy/guidance.js";
  * trial ran once, completed normally and passed.
  */
 import { parseSurface } from "./agent/surface.js";
+import { parseStepArm, stepArmRefusal } from "./deploy/step-arms.js";
 import { parseTarget, workerRefusal } from "./deploy/targets.js";
 import { describeInjection, parseInjection } from "./fakes/injection.js";
 import { killAllProcesses } from "./support/workerd.js";
@@ -45,6 +48,11 @@ import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
 
 const args = flags(process.argv.slice(2));
 const surface = parseSurface(args.get("surface"));
+const stepArm = parseStepArm(args.get("step-arm"));
+{
+  const refused = stepArmRefusal(stepArm, surface);
+  if (refused) throw new Error(refused);
+}
 const grading = parseGrading(args.get("grading"));
 const target = parseTarget(args.get("target"));
 const guidance = guidanceArm();
@@ -126,6 +134,7 @@ const file: AgentResultFile = {
     // Always recorded, zeros included, so a comparison can prove it matched.
     injection,
     surface,
+    ...(stepArm ? { stepArm } : {}),
     ...(guidance ? { guidanceArm: guidance } : {}),
     grading,
     models,
@@ -173,6 +182,7 @@ const { trials, stopped } = await runBatch(tasks, models, repeats, {
   target,
   injection,
   surface,
+  ...(stepArm ? { stepArm } : {}),
   grading,
   concurrency,
   timeoutMs,

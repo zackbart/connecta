@@ -13,6 +13,7 @@ import { connectCcb, evalConfig, evalMcpPath, presetCredentials } from "./compos
  * changes, this adapter changes; the tasks and graders do not.
  */
 import { codeConfig, forSurface } from "./code-surface.js";
+import { forStepArm, stepRuntime, type StepArm } from "./step-arms.js";
 import type { Surface } from "../agent/surface.js";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
@@ -60,7 +61,9 @@ export async function startNodeDeployment(
   oauth?: FakeOAuth,
   surface: Surface = "six",
   everyPool: string[] = [],
+  stepArm?: StepArm,
 ): Promise<Deployment> {
+  const step = stepRuntime(stepArm);
   let endpointReadOnly = false;
   const dir = await mkdtemp(join(tmpdir(), "connecta-eval-"));
   let database: ReturnType<typeof openSqlite> | undefined;
@@ -98,7 +101,7 @@ export async function startNodeDeployment(
       {
         fetch: (...args) =>
           connecta
-            ? forSurface(connecta, surface).fetch(...args)
+            ? forStepArm(forSurface(connecta, surface), step).fetch(...args)
             : Promise.resolve(new Response(null, { status: 503 })),
         close: async () => {
           await connecta?.close();
@@ -116,7 +119,7 @@ export async function startNodeDeployment(
       "eval-provisioning",
     );
     const vault = encryptedCredentialVault(storage, randomBytes(32).toString("base64"));
-    let observed = (cleanupExecutor = observedExecutor(surface));
+    let observed = (cleanupExecutor = observedExecutor(surface, step));
     const previousPrograms: ProgramObservation[] = [];
     // The fakes route their own credentials; see eval/fakes/transport.ts.
     const qb = connectors.find((s) => s.quickbooks);
@@ -162,7 +165,7 @@ export async function startNodeDeployment(
               endpointReadOnly = readOnly ?? endpointReadOnly;
               await connecta!.close();
               previousPrograms.push(...observed.programs);
-              observed = cleanupExecutor = observedExecutor(surface);
+              observed = cleanupExecutor = observedExecutor(surface, step);
               connecta = guidanceSurface(build());
             },
           }

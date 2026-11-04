@@ -4,7 +4,7 @@ import type { World } from "../fakes/world.js";
 import type { AgentTrace } from "../agent/trace.js";
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import { check } from "./baseline.js";
-import { deliveredValues } from "./correctness.js";
+import { deliveredNumbers, deliveredValues } from "./correctness.js";
 import {
   CAMP,
   LOC,
@@ -75,7 +75,7 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
       "delivered-data",
       seed.donors.every((donor) => delivered.some((row) => row?.id === donor.id && row.email === donor.email)) ||
         // A program's reduced count is delivered however it names the field.
-        delivered.includes(seed.donors.filter((d) => d.email.endsWith("@care.example")).length),
+        deliveredNumbers(trace).includes(seed.donors.filter((d) => d.email.endsWith("@care.example")).length),
     );
   } else if (id === ids[3]) {
     destination = reached(`/deposits/${DEPOSIT}`) && reached(`/deposits/${DEPOSIT}/summary`) && reached("/deposits");
