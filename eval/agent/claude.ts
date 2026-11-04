@@ -72,6 +72,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
           "cc-plugin-agents-md@builtin": false,
           "cc-plugin-telemetry@builtin": false,
           "cc-plugin-plugin-authoring@builtin": false,
+          "cc-plugin-privacy@builtin": false,
         },
       }),
       "--strict-mcp-config",

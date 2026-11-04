@@ -2,9 +2,10 @@
 import type { ActiveTask, Check, ReferenceContext } from "./types.js";
 import type { World } from "../fakes/world.js";
 import type { AgentTrace } from "../agent/trace.js";
-import { HEAD_SHA } from "../fakes/github.js";
+import { GITHUB_REFUSAL_TEXT, HEAD_SHA } from "../fakes/github.js";
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import { check } from "./baseline.js";
+import { deliveredValues } from "./correctness.js";
 const GITHUB_TASK_IDS = [
   "github-filtered-issues",
   "github-repository-pr-join",
@@ -13,6 +14,7 @@ const GITHUB_TASK_IDS = [
   "github-release-once",
   "github-merge-once",
   "github-search-recovery",
+  "github-ci-scope-gap",
 ];
 const standard = () => REST_TOOL_KINDS.has("github.github_api_read");
 function grade(id: string, world: World, trace: AgentTrace): Check[] {
@@ -35,6 +37,32 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
           calls.some((c) => c.error === "HTTP 503") &&
           reads.some((c) => c.seq > calls.find((x) => x.error === "HTTP 503")!.seq),
       );
+  } else if (id === GITHUB_TASK_IDS[7]) {
+    const checkRuns = (repo: string) => new RegExp(`^/repos/alice/${repo}/commits/[^/]+/check-runs$`);
+    const seen = trace.toolUses
+      .filter((u) => u.tool !== "skills")
+      .map((u) => u.resultText ?? "")
+      .join("\n");
+    destination =
+      calls.some((c) => checkRuns("widget").test(String(c.args.path)) && c.outcome === "ok") &&
+      calls.some((c) => checkRuns("gadget").test(String(c.args.path)) && c.error === "HTTP 403");
+    add(
+      "delivered-data",
+      deliveredValues(trace).some((row) => row?.name === "integration-tests" && row.conclusion === "failure"),
+    );
+    add("typed-scope-gap", /provider_permission_denied|checks=read/.test(seen));
+    add("no-credential-handoff", !/"auth_required"/.test(seen));
+    add("vendor-text-withheld", !seen.includes(GITHUB_REFUSAL_TEXT) && !answer.includes(GITHUB_REFUSAL_TEXT));
+    // The prompt fixes the answer's last two lines; prose above them cannot stand in.
+    const [widget = "", gadget = ""] = answer
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(-2);
+    evidence &&=
+      /^(?:alice\/)?widget\s*:\s*integration-tests\W*$/i.test(widget) &&
+      /^(?:alice\/)?gadget\s*:\s*unread\b.*\bchecks\b/i.test(gadget) &&
+      !/\b(?:reset|rotate|replace|regenerate)\b.*\b(?:credential|key|token)\b/i.test(gadget);
   } else if (id === GITHUB_TASK_IDS[1]) {
     destination =
       successful("/search/issues").some((c) => String((c.args.query as any).q).includes("is:pr")) &&
@@ -123,6 +151,10 @@ async function reference(id: string, ctx: ReferenceContext) {
     await call(ctx, "github_api_search", { query: "read file contents" });
     await call(ctx, "github_api_read", { path: "/repos/alice/widget/contents/settings.json", query: { ref: "main" } });
     ctx.answer("GitHub settings.json at main: region north; retryLimit 7.");
+  } else if (id === GITHUB_TASK_IDS[7]) {
+    for (const repo of ["widget", "gadget"])
+      await call(ctx, "github_api_read", { path: `/repos/alice/${repo}/commits/${HEAD_SHA}/check-runs` });
+    ctx.answer("widget: integration-tests\ngadget: unread: GitHub requires checks=read for alice/gadget");
   } else if (id === GITHUB_TASK_IDS[4]) {
     await call(
       ctx,
@@ -155,6 +187,7 @@ const prompts = [
   'Create exactly one draft GitHub release in alice/widget with tag v2.3.0 and release notes exactly "Fix login race." Keep it a draft; report the returned release ID, tag and draft status. This request authorizes that one creation; make no other changes.',
   `Merge GitHub alice/widget pull request 7 using squash, only if its expected head SHA is ${HEAD_SHA} and its head and base belong to that same repository. The configured workflow-write grant permits this merge. Send the merge once and report the outcome; make no other changes.`,
   "In GitHub alice/widget, search bug issues and report the IDs of open issues labeled priority, excluding pull requests. A transient read failure may occur; recover with safe reads. End with ANSWER: followed by the comma-separated numeric GitHub IDs. Make no changes.",
+  `For GitHub commit ${HEAD_SHA}, read the CI check runs in both alice/widget and alice/gadget and tell me which checks failed in each. Make no changes. End with exactly two lines: "widget: <comma-separated failed check names, or none>" and "gadget: <the same, or if its check runs could not be read, unread: <what access is missing>>".`,
 ];
 export const GITHUB_TASKS: ActiveTask[] = GITHUB_TASK_IDS.map((id, i) => ({
   status: "active",
@@ -164,8 +197,10 @@ export const GITHUB_TASKS: ActiveTask[] = GITHUB_TASK_IDS.map((id, i) => ({
   measures:
     i === 3
       ? "New file-content coverage; baseline absence is reported separately."
-      : "Scoped GitHub reads, joins, pagination and once-only authorized writes.",
-  world: { github: i === 6 ? { fault: "search-503" } : {} },
+      : i === 7
+        ? "A permission refusal on one repository stays a reported scope gap while CI reads finish on another."
+        : "Scoped GitHub reads, joins, pagination and once-only authorized writes.",
+  world: { github: i === 6 ? { fault: "search-503" } : i === 7 ? { fault: "ci-scope-gap" } : {} },
   prompt: prompts[i]!,
   grade: ({ world, trace }) => grade(id, world, trace),
   reference: (ctx) => reference(id, ctx),

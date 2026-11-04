@@ -32,6 +32,14 @@ export const READ_PERMISSIONS: Readonly<Record<string, Readonly<Record<string, "
   "GET /repos/{owner}/{repo}/actions/runs/{run_id}": { actions: "read" },
   "GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs": { actions: "read" },
   "GET /repos/{owner}/{repo}/actions/jobs/{job_id}": { actions: "read" },
+  "GET /repos/{owner}/{repo}/commits/{ref}/check-runs": { checks: "read" },
+  "GET /repos/{owner}/{repo}/commits/{ref}/check-suites": { checks: "read" },
+  "GET /repos/{owner}/{repo}/check-runs/{check_run_id}": { checks: "read" },
+  "GET /repos/{owner}/{repo}/check-runs/{check_run_id}/annotations": { checks: "read" },
+  "GET /repos/{owner}/{repo}/check-suites/{check_suite_id}": { checks: "read" },
+  "GET /repos/{owner}/{repo}/check-suites/{check_suite_id}/check-runs": { checks: "read" },
+  "GET /repos/{owner}/{repo}/commits/{ref}/status": { statuses: "read" },
+  "GET /repos/{owner}/{repo}/commits/{ref}/statuses": { statuses: "read" },
 };
 export const RELEASE_PERMISSIONS: Readonly<Record<string, Readonly<Record<string, "write">>>> = {
   "POST /repos/{owner}/{repo}/releases": { contents: "write" },

@@ -49,6 +49,7 @@ const SCENARIOS: Record<string, string> = {
   "google-slides-7": "report a saved deck separately from an unconfirmed comment",
   "tithely-cancel-recovery": "reconcile a cancelled recurring gift without repeating the cancellation",
   "github-release-once": "create one draft release with the requested repository, tag and body",
+  "github-ci-scope-gap": "report one repository's permission gap and finish a CI read on another",
   "cloudflare-step2-dns-recovery": "reconcile a committed DNS update after a failed acknowledgement",
   "vercel-step2-env-recovery": "reconcile a committed environment update without exposing the secret",
   "google-drive-2": "distinguish direct permissions from inherited shared-drive access",
@@ -231,6 +232,31 @@ async function run() {
     const grade = regradeTrial(task(id), duplicated, "codex", "outcome");
     record(`${id}: duplicate physical mutation fails`, !passed(grade), failedChecks(grade), grade);
   }
+  const ciGap = references.find((t) => t.task === "github-ci-scope-gap");
+  if (ciGap) {
+    const regressed = structuredClone(ciGap);
+    for (const use of regressed.saved!.trace.toolUses)
+      if (use.isError) {
+        use.resultText = JSON.stringify({ error: { code: "auth_required" } });
+        use.resultBlocks = [{ type: "text", text: use.resultText }];
+      }
+    const handoff = regradeTrial(task(ciGap.task), regressed, "codex", "outcome");
+    record(
+      "control: github-ci-scope-gap refusal surfaced as auth_required fails",
+      !passed(handoff) && handoff.checks.some((c) => c.id === "no-credential-handoff" && !c.pass),
+      failedChecks(handoff),
+      handoff,
+    );
+    const clean = structuredClone(ciGap);
+    clean.saved!.trace.finalAnswer = clean.saved!.trace.finalAnswer!.replace(/^gadget:.*$/m, "gadget: none");
+    const falsePass = regradeTrial(task(ciGap.task), clean, "codex", "outcome");
+    record(
+      "control: github-ci-scope-gap unread repository reported clean fails",
+      !passed(falsePass) && falsePass.checks.some((c) => c.id === "answer-evidence" && !c.pass),
+      failedChecks(falsePass),
+      falsePass,
+    );
+  }
   const tithely = references.find((t) => t.task === "tithely-cancel-recovery");
   if (tithely) {
     for (const mode of ["failed-read", "empty-object", "empty-list", "malformed", "incomplete-page"] as const) {
@@ -278,6 +304,7 @@ async function run() {
     "google-sheets-3",
     "google-drive-2",
     "google-docs-7",
+    "github-ci-scope-gap",
   ]) {
     const lost = structuredClone(references.find((reference) => reference.task === id)!);
     for (const use of lost.saved!.trace.toolUses) {

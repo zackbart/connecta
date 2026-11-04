@@ -941,10 +941,14 @@ Enable only vendor permissions needed by the workflows: Metadata read for
 repository lookup; Issues read for issues/comments/labels; Pull requests read
 for PRs/reviews/review comments/changed files/PR commits; Contents read for
 repository commits/comparisons/contents/releases; Actions read for workflows,
-runs and jobs. Release writes require Contents write. The guarded merge retains
+runs and jobs; Checks read for check runs, suites and annotations; Commit statuses
+read for commit statuses. Release writes require Contents write. The guarded merge retains
 Contents, Pull requests and Workflows write. Code search retains Contents read
 and GitHub's own search restrictions. Each operation token is narrowed to its
 reviewed permission and repository IDs; an org grant does not permit org admin.
+An App or installation without a permission fails that read alone with
+`provider_permission_denied`, naming the repository and permission, and no credential
+handoff; other reads keep working. Only a 401 or an unusable key is `auth_required`.
 
 The four github_api tools cover a pinned operation index with a bounded reviewed
 repository read and release-write allowlist. All other operations are refused.
@@ -963,8 +967,8 @@ File contents retain base64 encoding; the character bound applies after decoding
 Use `/repos/alice/widget/contents/src/index.ts` for a nested file and
 `/repos/alice/widget/contents` for the root directory. Contents paths must be
 canonical relative paths, without dot/empty segments, backslashes or encoded
-traversal. Encode branch-name slashes as `%2F` in `commits/{ref}` and
-`compare/{basehead}`. Owner-prefixed object refs and cross-repository compares are
+traversal. Encode branch-name slashes as `%2F` in `commits/{ref}`, its check and
+status reads, and `compare/{basehead}`. Owner-prefixed object refs and cross-repository compares are
 refused before authentication. PR-list head filters require `login:branch`, for
 example `head:"alice:feature/x"`; they filter the selected repository's PRs.
 Bare head branches are refused because GitHub silently ignores them. The base

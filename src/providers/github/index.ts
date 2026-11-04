@@ -46,7 +46,7 @@ export const github = defineProvider<GitHubOptions>({
       context: [
         `Act as the GitHub App. Reachable configuration: ${policy.summary()}.`,
         `Purpose: ${options.purpose}`,
-        "The App identity is already configured. Installation access is resolved on use; ask the operator to repair configuration only after an auth failure.",
+        "The App identity is already configured. Installation access is resolved on use; ask the operator to repair configuration only after an auth or permission failure.",
         ...(options.readOnly === true ? ["This connection is read-only; every write is refused."] : []),
       ],
       summary: "Load for GitHub repository searches, releases and guarded merges.",
