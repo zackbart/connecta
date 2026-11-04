@@ -130,7 +130,7 @@ function efficiency(file: AgentResultFile): string {
       <td>${fmtPct(r?.passAtK)} / ${fmtPct(r?.passHatK)}<div class="sub">${r?.cells ?? 0} cell(s)${r?.unestimated ? `, ${r.unestimated} short of ${k}` : ""}</div></td>
       <td>${stat(fmtNum(m.calls.value), m.calls.n, summary.passing)} · ${stat(fmtNum(m.modelTurns.value), m.modelTurns.n, summary.passing)}</td>
       <td>${stat(fmtNum(m.promptTokens.value, 0), m.promptTokens.n, summary.passing)} / ${fmtNum(m.outputTokens.value, 0)}</td>
-      <td>${fmtMs(m.wallMs.value)}</td>
+      <td>${fmtMs(m.wallMs.value)}<div class="sub">first input ${fmtNum(m.firstTurnInputTokens.value, 0)}; host search ${fmtNum(m.hostSearchCalls.value)}; errors before success ${fmtNum(m.toolErrorsBeforeFirstSuccess.value)}</div></td>
       <td>${stat(fmtNum(m.toolErrors.value), m.toolErrors.n, summary.passing)} · ${stat(fmtNum(m.guideFetches.value), m.guideFetches.n, summary.passing)}</td>
       <td>${m.responseBytes.value === undefined ? "–" : stat(fmtBytes(Math.round(m.responseBytes.value)), m.responseBytes.n, summary.passing)}<div class="sub">${tools}</div></td>
       <td><ul class="checks">${expensive || `<li class="muted">none</li>`}</ul></td></tr>`;

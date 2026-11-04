@@ -75,7 +75,7 @@ const trialSchema = z
     model: knownString,
     runner: z.enum(["codex", "claude"]),
     target: z.enum(["node", "worker"]).optional(),
-    surface: z.enum(["six", "code", "native", "native-no-code"]),
+    surface: z.enum(["six", "five", "code", "native", "native-no-code"]),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
     status: z.enum(["pass", "fail", "error", "skipped"]),
@@ -333,7 +333,11 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     throw new Error(
       `Comparison refused: arms ran on different targets (${targetOf(a)}, ${targetOf(b)}); use --cross-target for a diagnostic`,
     );
-  if ([a.config.surface, b.config.surface].some((surface) => surface === "native" || surface === "native-no-code")) {
+  if (
+    [a.config.surface, b.config.surface].some(
+      (surface) => surface === "five" || surface === "native" || surface === "native-no-code",
+    )
+  ) {
     const arms = [a.config.surface!, b.config.surface!] as const;
     if (arms[0] === arms[1]) throw new Error("Expected distinct surface arms");
     const reasons = [

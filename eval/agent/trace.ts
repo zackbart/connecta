@@ -40,6 +40,8 @@ export interface Tokens {
 }
 
 export interface AgentTrace {
+  firstTurnInputTokens?: number | undefined;
+  hostSearchCalls?: number | undefined;
   finalAnswer?: string;
   urlElicitations?: { connector: string; url: string; action: string }[];
   transcript: TranscriptEntry[];
@@ -79,6 +81,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   const transcript: TranscriptEntry[] = [];
   const toolUses = new Map<string, ToolUse>();
   let turn = 0;
+  let firstTurnInputTokens: number | undefined;
+  let hostSearchCalls = 0;
   let costUsd: number | undefined;
   let apiMs: number | undefined;
   let modelTurns: number | undefined;
@@ -127,15 +131,18 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       });
       return;
     }
+    if (event.type === "host_exec") hostSearchCalls++;
     if (event.type === "codex_usage") {
       const total = event.total as Record<string, number> | undefined;
-      if (total)
+      if (total) {
+        firstTurnInputTokens ??= total.inputTokens;
         tokens = {
           input: Math.max(0, (total.inputTokens ?? 0) - (total.cachedInputTokens ?? 0)),
           output: total.outputTokens ?? 0,
           cacheRead: total.cachedInputTokens ?? 0,
           cacheCreation: total.cacheWriteInputTokens ?? 0,
         };
+      }
       return;
     }
     if (event.type === "codex_denial") {
@@ -143,9 +150,16 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       return;
     }
     if (event.type === "assistant" || event.type === "user") {
-      const message = event.message as { content?: unknown; phase?: string } | undefined;
+      const message = event.message as
+        | { content?: unknown; phase?: string; usage?: Record<string, number> }
+        | undefined;
       const blocks = Array.isArray(message?.content) ? message.content : [];
       if (event.type === "assistant") {
+        if (message?.usage && firstTurnInputTokens === undefined) {
+          const u = message.usage;
+          firstTurnInputTokens =
+            (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
+        }
         // One completed message is the answer; earlier commentary is display-only.
         finalAnswer =
           message?.phase === "commentary"
@@ -163,6 +177,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
         } else if (block.type === "tool_use") {
           finalAnswer = "";
           const name = String(block.name ?? "");
+          if (name === "ToolSearch") hostSearchCalls++;
           const input = (block.input ?? {}) as Record<string, unknown>;
           const serialized = JSON.stringify(input);
           const tool = name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : name;
@@ -240,6 +255,9 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     }
   });
   return {
+    firstTurnInputTokens,
+    hostSearchCalls:
+      version || events.some((event) => event.type === "host_raw_observed") ? hostSearchCalls : undefined,
     finalAnswer: finalAnswer.trim(),
     urlElicitations,
     transcript,

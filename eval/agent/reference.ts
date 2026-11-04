@@ -116,7 +116,7 @@ export async function playReference<T>(
               });
               probe.on("error", reject);
             });
-}
+          }
           let native;
           if (
             (surface === "native" || surface === "native-no-code") &&

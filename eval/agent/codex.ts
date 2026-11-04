@@ -158,6 +158,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     "skip_host_skill_discovery = true",
     "daemon_auto_start = false",
     "shell_tool = false",
+    "code_mode = true",
     "unified_exec = false",
     "[apps._default]",
     "enabled = false",
@@ -282,10 +283,42 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       child.kill("SIGTERM");
       return;
     }
+    if (message.method === "rawResponseItem/completed") {
+      const item = message.params?.item;
+      push({ type: "host_raw_observed" });
+      if (item?.type === "custom_tool_call" && /(^|[._])exec$/.test(String(item.name))) {
+        push({ type: "host_exec" });
+        push({
+          type: "assistant",
+          message: {
+            content: [{ type: "tool_use", id: item.call_id, name: "host_exec", input: { code: item.input } }],
+          },
+        });
+      }
+      if (item?.type === "custom_tool_call_output") {
+        push({
+          type: "user",
+          message: {
+            content: [
+              {
+                type: "tool_result",
+                tool_use_id: item.call_id,
+                content: [{ type: "text", text: mcpResultText(item.output) }],
+              },
+            ],
+          },
+        });
+      }
+    }
     if (message.method === "thread/tokenUsage/updated") {
       const total = message.params?.tokenUsage?.total;
       if (total) push({ type: "codex_usage", total });
     }
+    if (
+      ["item/started", "item/completed"].includes(String(message.method)) &&
+      !["mcpToolCall", "agentMessage", "reasoning"].includes(String(message.params?.item?.type))
+    )
+      push({ type: "codex_item", method: message.method, item: message.params?.item });
     for (const event of codexEvent(message)) push(event);
     if (message.method === "turn/completed") {
       const done = turnDone;

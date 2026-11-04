@@ -123,3 +123,73 @@ for (const surface of ["native", "native-no-code"] as const) {
     });
   }
 }
+
+for (const target of ["node", "worker"] as const) {
+  for (const arm of ["six", "five", "native", "native-no-code"] as const) {
+    const task = ACTIVE_TASKS.find((task) => task.id === "p5-known-read-routing")!;
+    const world = new World(task.world, {
+      latencyMs: 0,
+      d1LatencyMs: 0,
+      hungConnector: false,
+      unauthorizedConnector: false,
+      catalogTools: 132,
+    });
+    await world.start();
+    let deployment;
+    let mcp;
+    try {
+      deployment = await startDeployment(target, world, task, arm);
+      mcp = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+      const tools = await mcp.listTools();
+      assertSurface(
+        tools.map((tool) => tool.name),
+        arm,
+      );
+      if (arm === "five") {
+        assert.doesNotMatch(JSON.stringify([mcp.instructions, tools]), /search_tools/);
+        const guide = await mcp.call("skills", { name: "usage" });
+        assert.doesNotMatch(guide.text, /search_tools/);
+        assert.doesNotMatch(JSON.stringify(await mcp.readResource("skill://connecta/usage")), /search_tools/);
+        const before = world.ledger.calls.length;
+        await assert.rejects(() => mcp!.call("search_tools", { query: "issues" }), /eval_unavailable_tool/);
+        assert.equal(world.ledger.calls.length, before);
+        const recovery = await mcp.call("call_tool", { address: "ci.nonexistent", args: {} });
+        assert.doesNotMatch(recovery.text, /search_tools/);
+        const guest = await mcp.call("execute_code", {
+          code: 'async () => { try { await connecta.call("ci.nonexistent", {}); } catch (e) { return e; } }',
+        });
+        assert.doesNotMatch(guest.text, /search_tools/);
+      }
+      const ids = new Set(world.injected.ids());
+      if (arm.startsWith("native")) {
+        const padding = tools.filter((tool) => ids.has(tool.address?.split(".")[0] ?? ""));
+        assert.equal(padding.length, 132);
+        const before = world.ledger.calls.length;
+        assert.equal((await mcp.call(padding[0]!.name, {})).isError, false);
+        assert.equal(world.ledger.calls.length, before);
+      } else {
+        let found = 0;
+        for (const connector of ids) {
+          const code = `async () => await connecta.search({ connector: ${JSON.stringify(connector)}, query: "", limit: 100, includeSchemas: "compact" })`;
+          const result = await mcp.call("execute_code", { code });
+          assert.equal(result.isError, false);
+          const data = JSON.parse(result.text);
+          // execute_code's value envelope is intentionally not a downstream result.
+          const wire = JSON.stringify(data);
+          assert.match(wire, new RegExp(connector));
+          assert.equal(data.result.tools.length, 22);
+          found += data.result.tools.length;
+        }
+        assert.equal(found, 132);
+        const before = world.ledger.calls.length;
+        assert.equal((await mcp.call("call_tool", { address: "billing_ops.list_issues_1", args: {} })).isError, false);
+        assert.equal(world.ledger.calls.length, before);
+      }
+      console.log(`ok ${target} ${arm}: padded catalog, private ledger and surface refusal/text`);
+    } finally {
+      await mcp?.close();
+      await deployment?.close();
+      await world.stop();
+    }
+  }
+}

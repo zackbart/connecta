@@ -28,7 +28,7 @@ export function infraError(events: StreamEvent[], exitCode: number | null, loade
     return `authentication failure: ${failureText.slice(0, 300)}`;
   }
   if (failed) return `Agent turn failed: ${String(failed.result ?? failed.subtype)}`;
-  if (results.length && !loadedTools.includes(toolId("execute_code"))) {
+  if (results.length && !loadedTools.includes(toolId("skills"))) {
     return "the connecta MCP server was not connected when the session started";
   }
   const apiError = results.find((event) => event.api_error_status != null);

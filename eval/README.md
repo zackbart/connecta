@@ -197,13 +197,13 @@ Claude uses the owner's signed-in `claude` CLI subscription login. The runner
 defaults to `claude-sonnet-5-5`, also accepts `claude-haiku-5-5`, and preserves the real home for login/keychain
 access without reading credentials.
 Each trial runs in an empty temporary workspace with
-`--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ""`,
+`--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ToolSearch`,
 and `--strict-mcp-config --mcp-config <fake-only config>`. Empty setting sources
 omit user/project/local settings. Built-in plugins still load with empty setting
 sources in Claude Code 2.1.292. Explicit `--settings` disables hooks, automatic
 memory, and the known built-ins by setting `enabledPlugins` entries
 `cc-plugin-agents-md@builtin`, `cc-plugin-telemetry@builtin`, and
-`cc-plugin-plugin-authoring@builtin` to `false`. `--disable-slash-commands`
+`cc-plugin-plugin-authoring@builtin`, and `cc-plugin-privacy@builtin` to `false`. `--disable-slash-commands`
 removes their skills. The installed CLI's
 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`
 controls suppress instructions and bundled skills; Claude.ai MCP servers are
@@ -1180,6 +1180,7 @@ skills-tool or guest skill requests. Guide fetch rate is trials with at least
 one fetch divided by completed trials. Missing trials, interrupted conversations,
 fabricated answers and duplicate writes retain the existing fail-closed controls;
 never count an unavailable trial as a pass.
+
 ### Worker native/code experiment
 
 `--surface native` configures every trial pool with `surface: "native"` and
@@ -1222,3 +1223,62 @@ a local rejecting model endpoint and records model-request bodies. Its fake
 API key is not a real credential. An inventory alone does not establish model
 context, deferred search or definition-token cost; a failed capture must be
 reported as a fidelity limitation, not interpreted as zero cost.
+
+### Host search and catalog scale
+
+`--surface five` serves the normal meta tools except top-level `search_tools`.
+Discovery uses `connecta.search` inside `execute_code`; known direct reads and
+writes remain available. Both Node and Worker targets serve this arm. Its
+inventory, usage guide, route wording and error recovery agree, and hidden
+`search_tools` requests are refused before dispatch. `six` remains the default.
+The existing `code` arm is Node-only; `native` and `native-no-code` run on both
+targets with the product's native pool configuration. Native tool inventories
+include every padded tool; the Codex `enabled_tools` list is generated from
+that actual inventory, rather than from the six meta-tool names.
+
+`--catalog-tools <n>` adds exactly n deterministic distractor tools (default 0,
+integer 0–60000) across up to six neutral operational connectors. They include
+read/write classifications, nested schemas, enums and varied descriptions,
+including task-domain lookalikes. Every pool includes the injected connectors.
+Codex explicitly enables its host `code_mode` feature while disabling shell tools.
+Their MCP servers have separate ledgers, so calling one cannot count as task
+vendor evidence. Both targets serialize the same connector specs. Results
+record `config.injection.catalogTools`; `eval:compare` refuses unequal injection
+settings even with a mismatch override. Missing historical settings mean zero.
+
+Each trial also records `firstTurnInputTokens`, `hostSearchCalls` and
+`toolErrorsBeforeFirstSuccess` in metrics. The first is first-request input
+including cache reads/writes: Claude's first assistant usage, or Codex's first
+token-usage update (whose input already includes cached input). Host search
+counts Claude `ToolSearch` calls and observable Codex host `exec` calls; this is
+an exec-call upper bound, not a claim every exec only reads `ALL_TOOLS`.
+Unobservable host events report N/A. Errors before success count failed Connecta
+top-level calls preceding the first successful Connecta call, or all failed
+calls if none succeeds. These fields appear in the report efficiency data and
+end-of-batch passing medians. Historical absent telemetry remains N/A.
+Claude ToolSearch is retained in `otherTools` and is permitted by the isolation
+guard; shell, filesystem and unrelated MCP services remain disabled.
+
+`pnpm run eval:selftest --native-only` covers native inventories and graders,
+five-arm refusal and served text, and padded discovery/calls on both targets.
+These deterministic controls use no model allowance.
+
+Worker trials freeze their serving module graph into a temporary bundle before
+booting Wrangler. Later source edits or generated-file writes cannot reload a
+running trial and rotate its fixture agent token. Each trial still owns its
+own ports, D1 directory, gateway and cleanup.
+
+Codex fidelity can be checked without a paid model using
+`pnpm exec tsx eval/codex-fidelity.ts --events`: a local scripted Responses
+endpoint requests host `exec` to list `ALL_TOOLS`, then completes. This checks
+model-facing definitions without confusing generic examples in tool descriptions
+with enabled shell tools. On CLI 0.166.0 the capture also exposes a host `collaboration` namespace
+despite `multi_agent=false`; the diagnostic deliberately fails that isolation
+check. The scripted exec completes without hitting the `commandExecution`
+guard. CLI 0.166.0 can execute the host call without emitting
+an app-server item for it; in that case `hostSearchCalls` remains N/A. Raw
+custom-call events, when emitted by a supporting host, count total exec calls
+and retain them in `otherTools`. Shell `commandExecution` items still fail the
+isolation guard. The eight initial paid probes were interrupted by development
+reloads and are diagnostics, not a valid arm comparison; no paid retries were
+run.

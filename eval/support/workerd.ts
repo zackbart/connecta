@@ -4,6 +4,7 @@
  * process group. Every group still running when the harness exits, or when it
  * receives SIGINT/SIGTERM, is killed, so no workerd outlives the run.
  */
+import { build } from "esbuild";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -236,11 +237,32 @@ export async function wranglerDev(options: {
     proxyPort = await unclaimedPort();
     origin = `http://127.0.0.1:${port}`;
   };
+  // Freeze the trial's serving graph. Wrangler must never rebuild it in
+  // response to another check regenerating version/UI sources in this checkout.
+  const snapshot = join(persist, "snapshot", "worker.mjs");
+  try {
+    await build({
+      entryPoints: [options.main],
+      outfile: snapshot,
+      bundle: true,
+      format: "esm",
+      platform: "neutral",
+      conditions: ["workerd", "worker", "browser"],
+      mainFields: ["module", "main"],
+      external: ["cloudflare:*", "node:*"],
+      tsconfig: join(ROOT, "tsconfig.json"),
+      logLevel: "silent",
+    });
+  } catch (error) {
+    await rm(persist, { recursive: true, force: true });
+    throw error;
+  }
   await writeFile(
     config,
     JSON.stringify({
       name: options.name,
-      main: options.main,
+      main: snapshot,
+      no_bundle: true,
       compatibility_date: example.compatibility_date,
       compatibility_flags: example.compatibility_flags,
       d1_databases: example.d1_databases,

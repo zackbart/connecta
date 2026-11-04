@@ -4,6 +4,18 @@ import type { ActiveTask, ReferenceContext } from "./types.js";
 
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   if (surface === "six") return task;
+  if (surface === "five")
+    return {
+      ...task,
+      reference: async (ctx) =>
+        task.reference({
+          ...ctx,
+          call: (tool, args) =>
+            tool === "search_tools"
+              ? ctx.call("execute_code", { code: `async () => await connecta.search(${JSON.stringify(args)})` })
+              : ctx.call(tool, args),
+        }),
+    };
   if (surface === "native" || surface === "native-no-code") {
     let prompt = task.prompt;
     if (task.id === "p5-result-paging")

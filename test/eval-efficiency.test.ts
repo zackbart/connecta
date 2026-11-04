@@ -240,9 +240,53 @@ describe("eval efficiency aggregates", () => {
     expect(models[1]!.medians.calls).toEqual({ value: undefined, n: 0 });
     const text = efficiencyLines(models, rel).join("\n");
     expect(text).toContain("m1: 2/3 passing/ran; pass@1 66.7%, pass^1 66.7% over 3 cell(s)");
-    expect(text).toContain("expensive: c #1 fail 9100 tokens 1s: largest response 50 B from execute_code");
+    expect(text).toContain(
+      "expensive: c #1 fail 9100 tokens 1s: first request N/A tokens, host searches N/A, errors before success N/A, largest response 50 B from execute_code",
+    );
     expect(text).toContain("1 guide fetch(es), 1 tool error(s)");
     expect(text).toContain("call_tool median 2.0 KB, max 2.0 KB (1 calls)");
     expect(text).toContain("m2: 0/1 passing/ran");
   });
+});
+
+it("records first-request cache input once, permits host search, and preserves unknown telemetry", async () => {
+  const { parseTrace } = await import("../eval/agent/trace.js");
+  const { infraError } = await import("../eval/agent/infra.js");
+  const trace = parseTrace(
+    [
+      { type: "system", subtype: "init", claude_code_version: "test", tools: ["ToolSearch", "mcp__connecta__skills"] },
+      {
+        type: "assistant",
+        message: {
+          usage: { input_tokens: 10, cache_read_input_tokens: 20, cache_creation_input_tokens: 30 },
+          content: [{ type: "tool_use", id: "search", name: "ToolSearch", input: { query: "tools" } }],
+        },
+      },
+      { type: "assistant", message: { usage: { input_tokens: 999 }, content: [] } },
+      { type: "result", subtype: "success" },
+    ],
+    [0],
+    ["task"],
+  );
+  expect(trace.firstTurnInputTokens).toBe(60);
+  expect(trace.hostSearchCalls).toBe(1);
+  expect(trace.toolUses[0]?.tool).toBe("ToolSearch");
+  expect(infraError([{ type: "result", subtype: "success" }], 0, trace.loadedTools)).toBeUndefined();
+  const codex = parseTrace(
+    [
+      { type: "codex_usage", total: { inputTokens: 100, cachedInputTokens: 80 } },
+      { type: "codex_usage", total: { inputTokens: 500 } },
+    ],
+    [],
+    [],
+  );
+  expect(codex.firstTurnInputTokens).toBe(100);
+  expect(codex.hostSearchCalls).toBeUndefined();
+  expect(parseTrace([], [], []).firstTurnInputTokens).toBeUndefined();
+  const t = trial();
+  Object.assign(t.metrics, { firstTurnInputTokens: 60, hostSearchCalls: 1, toolErrorsBeforeFirstSuccess: 2 });
+  const e = trialEfficiency(t);
+  expect([e.firstTurnInputTokens, e.hostSearchCalls, e.toolErrorsBeforeFirstSuccess]).toEqual([60, 1, 2]);
+  expect(efficiencyLines(batchEfficiency([t], 1).models).join("\n")).toContain("first request 60");
+  expect(trialEfficiency(trial({ legacy: true })).firstTurnInputTokens).toBeUndefined();
 });

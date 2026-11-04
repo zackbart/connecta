@@ -6,7 +6,7 @@
  */
 import type { Connecta, ConnectaConfig } from "@zackbart/connecta";
 import { renderRoutesAsPrograms } from "../../src/agent-routes.js";
-import { CODE_TOOLS, type Surface } from "../agent/surface.js";
+import { CODE_TOOLS, FIVE_TOOLS, type Surface } from "../agent/surface.js";
 
 export const CODE_INSTRUCTIONS =
   'Use execute_code for every operation: known reads, discovery, reductions and writes. Pass async () => { ... } with the connecta global and no arguments. Discover with connecta.search, inspect schemas with connecta.describe, call with connecta.call, page retained results with connecta.result, and deliver text/images/audio with connecta.emit. Keep discovery and calls together when schemas suffice. Programs write only on a writable endpoint. On a read-only endpoint search omits write tools, guides may still name them, and read_only_endpoint is a terminal refusal with no retry. Never repeat a write for its output. After auth_required or downstream_oauth_required use authorize_connector, give its handoff to the operator, and wait before retrying. host_auth_required needs host connection repair. Fetch skills({ name: "usage" }) when instructions are insufficient or a program needs repair.';
@@ -38,26 +38,26 @@ async () => {
 
 /** Mark a deployment's configuration so Connecta renders its route text in program form. */
 export function codeConfig<T extends ConnectaConfig>(config: T, surface: Surface): T {
-  if (surface === "code") renderRoutesAsPrograms(config);
+  if (surface === "code" || surface === "five") renderRoutesAsPrograms(config, surface === "five");
   return config;
 }
 
 /** Recovery actions a program can follow. Also used before the QuickJS bridge, for caught errors. */
-export function codeValue(value: unknown): unknown {
+export function codeValue(value: unknown, surface: Surface = "code"): unknown {
   if (typeof value === "string") {
     if (/^\s*[[{]/.test(value)) {
       try {
-        return JSON.stringify(codeValue(JSON.parse(value)));
+        return JSON.stringify(codeValue(JSON.parse(value), surface));
       } catch {
         /* Plain text, not a JSON envelope. */
       }
     }
     return value;
   }
-  if (Array.isArray(value)) return value.map(codeValue);
+  if (Array.isArray(value)) return value.map((item) => codeValue(item, surface));
   if (!value || typeof value !== "object") return value;
   const object = value as Record<string, unknown>;
-  const result = Object.fromEntries(Object.entries(object).map(([key, item]) => [key, codeValue(item)]));
+  const result = Object.fromEntries(Object.entries(object).map(([key, item]) => [key, codeValue(item, surface)]));
   if (object.nextAction && typeof object.nextAction === "object") {
     const action = object.nextAction as Record<string, unknown>;
     if (action.tool === "search_tools") {
@@ -66,7 +66,7 @@ export function codeValue(value: unknown): unknown {
         arguments: { code: `async () => await connecta.search(${JSON.stringify(action.arguments ?? {})})` },
         purpose: "Inspect the current tool schema inside a program.",
       };
-    } else if (action.tool === "call_tool" || action.tool === "call_destructive_tool") {
+    } else if (surface === "code" && (action.tool === "call_tool" || action.tool === "call_destructive_tool")) {
       delete result.nextAction;
       result.retryable = false;
       result.retry = "This operation is unavailable through programs on this endpoint.";
@@ -75,13 +75,13 @@ export function codeValue(value: unknown): unknown {
   return result;
 }
 
-export function codeError(error: unknown): unknown {
-  if (!(error instanceof Error)) return codeValue(error);
+export function codeError(error: unknown, surface: Surface = "code"): unknown {
+  if (!(error instanceof Error)) return codeValue(error, surface);
   // Keep InvocationFailure's prototype: QuickJS transports typed details only
   // for that instance. This changes eval-owned request errors, never core code.
   const fields = error as unknown as Record<string, unknown>;
-  const details = codeValue(fields.details ?? { code: fields.code, message: error.message });
-  Object.assign(error, codeValue({ ...fields }), details, { details });
+  const details = codeValue(fields.details ?? { code: fields.code, message: error.message }, surface);
+  Object.assign(error, codeValue({ ...fields }, surface), details, { details });
   if (!(details as Record<string, unknown>).nextAction) delete fields.nextAction;
   return error;
 }
@@ -95,11 +95,11 @@ function isUsage(name: unknown): boolean {
 }
 
 export function forSurface(connecta: Connecta, surface: Surface): Connecta {
-  return surface === "code" ? withCodeSurface(connecta) : connecta;
+  return surface === "code" || surface === "five" ? withCodeSurface(connecta, surface) : connecta;
 }
 
 /** Preserve authentication, transport and execution; change only eval replies. */
-function withCodeSurface(connecta: Connecta): Connecta {
+function withCodeSurface(connecta: Connecta, surface: Surface): Connecta {
   return {
     ...connecta,
     async fetch(request, env, ctx) {
@@ -127,7 +127,9 @@ function withCodeSurface(connecta: Connecta): Connecta {
       let forwarded = request;
       if (
         body?.method === "tools/call" &&
-        ["call_tool", "call_destructive_tool", "search_tools"].includes(body.params?.name)
+        (surface === "five" ? ["search_tools"] : ["call_tool", "call_destructive_tool", "search_tools"]).includes(
+          body.params?.name,
+        )
       ) {
         // Let the real MCP boundary authenticate and refuse an unknown tool.
         // Never dispatch a hidden call and then discard its response.
@@ -142,6 +144,7 @@ function withCodeSurface(connecta: Connecta): Connecta {
       const type = response.headers.get("content-type") ?? "";
       if (!type.includes("application/json") && !type.includes("text/event-stream")) return response;
       // Hash the exact served resource bytes. Never retain the original manifest.
+      const usage = surface === "five" ? undefined : CODE_USAGE;
       const files = new Map<string, Promise<{ digest: string; size: number }>>();
       const fileMetadata = (uri: string) => {
         let pending = files.get(uri);
@@ -185,9 +188,8 @@ function withCodeSurface(connecta: Connecta): Connecta {
             const content = payload?.result?.contents;
             if (!read.ok || payload?.error || content?.length !== 1)
               throw new Error(`Cannot establish eval skill integrity for ${uri}`);
-            const served: { text?: string; blob?: string } = isUsage(uri)
-              ? { ...content[0], text: CODE_USAGE }
-              : content[0];
+            const served: { text?: string; blob?: string } =
+              isUsage(uri) && usage ? { ...content[0], text: usage } : content[0];
             const bytes =
               typeof served.text === "string"
                 ? new TextEncoder().encode(served.text)
@@ -206,7 +208,7 @@ function withCodeSurface(connecta: Connecta): Connecta {
       };
       const manifest = async (skill: Record<string, any>) => ({
         ...skill,
-        ...(isUsage(skill.uri) ? { frontmatter: CODE_USAGE_FRONTMATTER } : {}),
+        ...(isUsage(skill.uri) && usage ? { frontmatter: CODE_USAGE_FRONTMATTER } : {}),
         resources: Array.isArray(skill.resources)
           ? await Promise.all(
               skill.resources.map(async (file: { uri: string }) => ({ ...file, ...(await fileMetadata(file.uri)) })),
@@ -214,25 +216,27 @@ function withCodeSurface(connecta: Connecta): Connecta {
           : skill.resources,
       });
       const transform = async (reply: Record<string, any>) => {
-        if (body?.method === "initialize" && reply.result) reply.result.instructions = CODE_INSTRUCTIONS;
+        if (surface === "code" && body?.method === "initialize" && reply.result)
+          reply.result.instructions = CODE_INSTRUCTIONS;
         if (body?.method === "tools/list" && reply.result?.tools) {
           reply.result.tools = reply.result.tools.filter((t: { name: string }) =>
-            CODE_TOOLS.includes(t.name as (typeof CODE_TOOLS)[number]),
+            (surface === "five" ? FIVE_TOOLS : CODE_TOOLS).some((name) => name === t.name),
           );
         }
         // Resolve the skill identity from the request, before rewriting either
         // host representation. Resource aliases and guest skills use this guide too.
         if (
+          usage &&
           body?.method === "tools/call" &&
           body.params?.name === "skills" &&
           isUsage(body.params.arguments?.name) &&
           reply.result &&
           !reply.result.isError
         ) {
-          reply.result.content = [{ type: "text", text: CODE_USAGE }];
+          reply.result.content = [{ type: "text", text: usage }];
           reply.result.structuredContent = codeSkill(body.params.arguments.name, reply.result.structuredContent);
         }
-        if (body?.method === "resources/read" && isUsage(body.params?.uri) && reply.result?.contents) {
+        if (usage && body?.method === "resources/read" && isUsage(body.params?.uri) && reply.result?.contents) {
           reply.result.contents = reply.result.contents.map((item: Record<string, unknown>) => ({
             ...item,
             text: CODE_USAGE,
@@ -250,7 +254,7 @@ function withCodeSurface(connecta: Connecta): Connecta {
               ...(isUsage(file.uri) ? { description: CODE_USAGE_FRONTMATTER.description } : {}),
             })),
           );
-        return codeValue(reply);
+        return codeValue(reply, surface);
       };
       const text = await response.text();
       const changed = type.includes("application/json")

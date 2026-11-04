@@ -41,6 +41,9 @@ interface ApprovalUse {
 }
 
 interface TrialMetrics {
+  firstTurnInputTokens?: number | undefined;
+  hostSearchCalls?: number | undefined;
+  toolErrorsBeforeFirstSuccess?: number;
   guidanceArm?: string;
   guideFetches?: number;
   wallMs: number;
@@ -288,6 +291,13 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
               ),
           }
         : {}),
+      firstTurnInputTokens: trace.firstTurnInputTokens,
+      hostSearchCalls: trace.hostSearchCalls,
+      toolErrorsBeforeFirstSuccess: (() => {
+        const uses = trace.toolUses.filter((use) => surfaceNames.has(use.tool));
+        const first = uses.findIndex((use) => use.isError === false);
+        return (first < 0 ? uses : uses.slice(0, first)).filter((use) => use.isError === true).length;
+      })(),
       wallMs: run.wallMs,
       apiMs: trace.apiMs,
       modelTurns: trace.modelTurns,

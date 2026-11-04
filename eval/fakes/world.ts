@@ -258,7 +258,10 @@ export class World {
 
   /** The task's connectors, then any injected fault connectors. */
   connectorSpecs(): ConnectorSpec[] {
-    return [...this.taskSpecs(), ...this.injected.specs()];
+    const specs = [...this.taskSpecs(), ...this.injected.specs()];
+    if (new Set(specs.map((spec) => spec.id)).size !== specs.length)
+      throw new Error("Injected connector id collides with a task connector");
+    return specs;
   }
 
   private taskSpecs(): ConnectorSpec[] {

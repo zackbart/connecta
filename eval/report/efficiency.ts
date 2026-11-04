@@ -32,6 +32,9 @@ interface ResponseSizes {
 }
 
 export interface TrialEfficiency {
+  toolErrorsBeforeFirstSuccess: number | undefined;
+  hostSearchCalls: number | undefined;
+  firstTurnInputTokens: number | undefined;
   /** Top-level tool calls: meta-tools plus any other tool the runner exposed. */
   calls: number;
   modelTurns: number | undefined;
@@ -83,6 +86,9 @@ export function trialEfficiency(trial: TrialResult): TrialEfficiency {
       guideFetches += program.calls.filter((call) => call.name === "connecta.skill").length;
   }
   return {
+    firstTurnInputTokens: metrics.firstTurnInputTokens,
+    hostSearchCalls: metrics.hostSearchCalls,
+    toolErrorsBeforeFirstSuccess: metrics.toolErrorsBeforeFirstSuccess,
     calls: count(metrics.metaTools) + count(metrics.otherTools),
     modelTurns: metrics.modelTurns,
     promptTokens,
@@ -184,6 +190,9 @@ export function reliability(trials: TrialResult[], k: number, grade: (trial: Tri
 }
 
 export interface ExpensiveTrial {
+  firstTurnInputTokens?: number | undefined;
+  hostSearchCalls?: number | undefined;
+  toolErrorsBeforeFirstSuccess?: number | undefined;
   task: string;
   repeat: number;
   status: TrialResult["status"];
@@ -204,6 +213,9 @@ export interface ModelEfficiency {
   withoutSizes: number;
   /** Per-trial medians over passing trials, each with its sample size. */
   medians: Record<
+    | "firstTurnInputTokens"
+    | "hostSearchCalls"
+    | "toolErrorsBeforeFirstSuccess"
     | "calls"
     | "modelTurns"
     | "promptTokens"
@@ -255,6 +267,9 @@ export function modelEfficiency(
         task: trial.task,
         repeat: trial.repeat,
         status: trial.status,
+        firstTurnInputTokens: e.firstTurnInputTokens,
+        hostSearchCalls: e.hostSearchCalls,
+        toolErrorsBeforeFirstSuccess: e.toolErrorsBeforeFirstSuccess,
         totalTokens: e.totalTokens,
         wallMs: e.wallMs,
         costUsd: e.costUsd,
@@ -268,6 +283,9 @@ export function modelEfficiency(
       passing: passing.length,
       withoutSizes: measured.filter(({ e }) => e.responses === undefined).length,
       medians: {
+        firstTurnInputTokens: stat((e) => e.firstTurnInputTokens),
+        hostSearchCalls: stat((e) => e.hostSearchCalls),
+        toolErrorsBeforeFirstSuccess: stat((e) => e.toolErrorsBeforeFirstSuccess),
         calls: stat((e) => e.calls),
         modelTurns: stat((e) => e.modelTurns),
         promptTokens: stat((e) => e.promptTokens),
@@ -316,6 +334,9 @@ const fmtRate = (value: number | undefined) => (value === undefined ? "N/A" : `$
 /** Why a trial was expensive, in a few words. */
 export function expenseReason(trial: ExpensiveTrial): string {
   const parts = [
+    `first request ${fmtCount(trial.firstTurnInputTokens, 0)} tokens`,
+    `host searches ${fmtCount(trial.hostSearchCalls)}`,
+    `errors before success ${fmtCount(trial.toolErrorsBeforeFirstSuccess)}`,
     trial.largestResponse
       ? `largest response ${fmtSize(trial.largestResponse.bytes)} from ${trial.largestResponse.tool}`
       : "largest response N/A",
@@ -340,7 +361,7 @@ export function efficiencyLines(models: ModelEfficiency[], rel?: Reliability): s
     );
     lines.push(
       `  passing medians: calls ${fmtCount(m.calls.value)}, model turns ${fmtCount(m.modelTurns.value)}${n(m.modelTurns)}, ` +
-        `input tokens ${fmtCount(m.promptTokens.value, 0)} incl. cache, output ${fmtCount(m.outputTokens.value, 0)}, ` +
+        `first request ${fmtCount(m.firstTurnInputTokens.value, 0)}${n(m.firstTurnInputTokens)}, host searches ${fmtCount(m.hostSearchCalls.value)}${n(m.hostSearchCalls)}, errors before success ${fmtCount(m.toolErrorsBeforeFirstSuccess.value)}${n(m.toolErrorsBeforeFirstSuccess)}, input tokens ${fmtCount(m.promptTokens.value, 0)} incl. cache, output ${fmtCount(m.outputTokens.value, 0)}, ` +
         `wall ${m.wallMs.value === undefined ? "N/A" : `${(m.wallMs.value / 1000).toFixed(1)}s`}, tool errors ${fmtCount(m.toolErrors.value)}${n(m.toolErrors)}, ` +
         `guide fetches ${fmtCount(m.guideFetches.value)}${n(m.guideFetches)}, response ${fmtSize(m.responseBytes.value)}${n(m.responseBytes)}`,
     );
