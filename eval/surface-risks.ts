@@ -8,7 +8,7 @@
  * timeouts, and skips any batch whose result file already holds every trial.
  */
 import { spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, renameSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { loadavg } from "node:os";
 import { join, resolve } from "node:path";
@@ -116,6 +116,8 @@ async function run() {
         console.error(`[surface-risks] load ${loadavg()[0]!.toFixed(0)} over ${maxLoad}; holding ${batch.id}`);
         await sleep(180_000);
       }
+      // eval:agent replaces its result file; keep trials an interrupted batch already paid for.
+      if (savedTrials(batch).length) renameSync(resultPath(batch), `${resultPath(batch)}.partial-${Date.now()}`);
       console.error(`[surface-risks] start ${batch.id} at load ${loadavg()[0]!.toFixed(0)}`);
       const code = await new Promise<number | null>((done) => {
         const child = spawn("pnpm", argv(batch), { cwd: ROOT, stdio: ["ignore", "ignore", "pipe"] });

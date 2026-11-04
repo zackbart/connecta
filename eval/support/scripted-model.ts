@@ -157,14 +157,14 @@ export async function scriptedCodexModel(
 }
 
 /** A launcher that runs the real Claude Code against a scripted model, with an empty home and a fake key. */
-export async function claudeWrapper(root: string, modelUrl: string): Promise<string> {
+export async function claudeWrapper(root: string, modelUrl: string, toolSearch = false): Promise<string> {
   const path = join(root, "claude-wrapper.cjs");
   await writeFile(
     path,
     `#!/usr/bin/env node
 const child = require("node:child_process").spawn("claude", process.argv.slice(2), {
   stdio: "inherit",
-  env: { ...process.env, HOME: ${JSON.stringify(root)}, ANTHROPIC_API_KEY: "sk-fake-local-only", ANTHROPIC_BASE_URL: ${JSON.stringify(modelUrl)}, ENABLE_TOOL_SEARCH: "false" },
+  env: { ...process.env, HOME: ${JSON.stringify(root)}, ANTHROPIC_API_KEY: "sk-fake-local-only", ANTHROPIC_BASE_URL: ${JSON.stringify(modelUrl)}, ENABLE_TOOL_SEARCH: ${JSON.stringify(String(toolSearch))} },
 });
 process.on("SIGTERM", () => child.kill("SIGTERM"));
 child.on("exit", (code) => process.exit(code ?? 1));

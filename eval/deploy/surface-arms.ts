@@ -23,7 +23,7 @@ const NATIVE_POOL_SUFFIX = "-native";
 export const PINNED_TOOLS = 30;
 const LOCAL_NATIVE_TOOLS = new Set(["authorize_connector", "execute_code", "read_result", "skills"]);
 
-export function isReadRoute(surface: Surface): boolean {
+function isReadRoute(surface: Surface): boolean {
   return surface === "read-six" || surface === "read-five";
 }
 
@@ -147,18 +147,27 @@ function withBoundNames(connecta: Connecta): Connecta {
             ctx,
           );
         }
+        const headers = new Headers(request.headers);
+        headers.delete("content-length");
+        headers.delete("Mcp-Name");
+        headers.set("Mcp-Method", "tools/list");
         const listing = await connecta.fetch(
-          forward(request, new URL(request.url).pathname, {
-            jsonrpc: "2.0",
-            id: body.id,
-            method: "tools/list",
-            params: { _meta: body.params?._meta },
+          new Request(request.url, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: body.id,
+              method: "tools/list",
+              params: body.params?._meta ? { _meta: body.params._meta } : {},
+            }),
           }),
           env,
           ctx,
         );
         const tools = ((await replyOf(listing)).payload?.result?.tools ?? []) as Record<string, any>[];
-        if (tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint === false)
+        // Fail closed: only a name the current listing shows as read may run.
+        if (tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint !== true)
           return new Response(
             JSON.stringify({
               jsonrpc: "2.0",
@@ -170,7 +179,7 @@ function withBoundNames(connecta: Connecta): Connecta {
                     type: "text",
                     text: JSON.stringify({
                       code: "tool_classification_changed",
-                      message: `${name} is now a write. Nothing was sent. Refresh the tool list and use ${name}${WRITE_NAME_SUFFIX} if the write is still wanted.`,
+                      message: `${name} is not a read now. Nothing was sent. Refresh the tool list and use ${name}${WRITE_NAME_SUFFIX} if the write is still wanted.`,
                       retryable: false,
                     }),
                   },

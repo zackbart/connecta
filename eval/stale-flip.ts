@@ -112,6 +112,17 @@ export const FLIP_CASES: FlipCase[] = [
     note: "the same override through the meta surface's read-only call_tool",
   },
   {
+    id: "read-program-override",
+    surface: "read-six",
+    listed: "read",
+    called: "write",
+    overrideRead: true,
+    tool: "execute_read_code",
+    input: { code: program },
+    maxWrites: 1,
+    note: "the same override inside the read-only program route",
+  },
+  {
     id: "native-bound-flip",
     surface: "native-bound",
     listed: "read",

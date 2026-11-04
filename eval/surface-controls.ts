@@ -2,7 +2,7 @@
  * No paid model: the prototype arms against a real Worker deployment, and the
  * approval modes against real host processes with a scripted model.
  *
- *   pnpm run build && pnpm exec tsx eval/surface-controls.ts [--only read,hints,pinned,approval]
+ *   pnpm run build && pnpm exec tsx eval/surface-controls.ts [--only read,bound,hints,pinned,approval]
  */
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -232,12 +232,31 @@ async function approvalControls() {
   }
 }
 
+/** The stale-flip mitigation must not cost the write itself: the new name still works, once. */
+async function boundNameControls() {
+  await withArm("native-bound", 0, async (world, session) => {
+    const names = (await session.listTools()).map((tool) => tool.name);
+    assert.ok(names.includes("chat__post_message_w") && !names.includes("chat__post_message"));
+    assert.ok(names.includes("ci__get_run"), "a read keeps its name");
+    const stale = await session.call("chat__post_message", { channel: "eng", text: "stale" });
+    assert.equal(stale.isError, true);
+    assert.equal(writes(world).length, 0);
+    const write = await session.call("chat__post_message_w", { channel: "eng", text: "bound" });
+    assert.equal(write.isError, false, write.text);
+    assert.equal(writes(world).length, 1);
+    const read = await session.call("ci__get_run", { runId: 4812 });
+    assert.equal(read.isError, false, read.text);
+  });
+  console.log("ok native-bound: stale plain name refused, write reachable by its bound name, reads unchanged");
+}
+
 const only = flags(process.argv.slice(2)).get("only")?.split(",");
 const wanted = (name: string) => !only || only.includes(name);
 if (wanted("read")) {
   await readRouteControls("read-six");
   await readRouteControls("read-five");
 }
+if (wanted("bound")) await boundNameControls();
 if (wanted("hints")) await hintControls();
 if (wanted("pinned")) await pinnedControls();
 if (wanted("approval")) await approvalControls();

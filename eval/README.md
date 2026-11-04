@@ -1330,3 +1330,53 @@ runner reads its raw custom-call events: the scripted run reports
 `commandExecution` items still fail the isolation guard. The eight initial paid probes were interrupted by development
 reloads and are diagnostics, not a valid arm comparison; no paid retries were
 run.
+
+### Surface risks
+
+`eval/surface-risks-plan.ts` freezes the batches, tasks and budget for the
+approval, hint, deferral and catalog-size experiments before any score. Run
+them with `pnpm exec tsx eval/surface-risks.ts run`, which waits while the
+1-minute load is over `--max-load` and skips complete batches, and read them
+with `pnpm exec tsx eval/surface-risks.ts summary`. Results go to
+`eval/results/surface-risks/`.
+
+`--approval auto|prompt-allow|prompt-deny` chooses what happens when a real host
+would prompt. `auto` is the historical setup, where nothing prompts. The other
+two leave each host's approval on, then answer every prompt that way, count it
+in `metrics.approvalPrompts` and report the answer. Claude Code pre-approves
+tools annotated read-only, approximating a user who allowed direct reads, and
+answers the rest over its SDK control channel. Codex uses its own default:
+read-only tools run, and everything else prompts, including inside `exec`.
+`prompt-deny` is a batch of refusals, so tasks that must write cannot pass; the
+graders are unchanged. `--no-tool-search` runs Claude Code without deferred
+tools.
+
+Prototype arms live in `eval/deploy/surface-arms.ts`, on the fetch edge of a
+real deployment, and no public option enables them:
+
+| Arm                     | What it serves                                                                                                                                      |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `read-six`, `read-five` | `execute_read_code`, annotated read-only: `execute_code` on a sibling `readOnly: true` pool, with and without `search_tools`.                       |
+| `pinned`                | The six meta-tools plus the first 30 native tools, for a host that does not defer.                                                                  |
+| `native-hints`          | The native list with `anthropic/searchHint` and synonym-leading descriptions. `eval/fakes/search-hints.ts` was written without seeing task prompts. |
+| `native-bound`          | Stale-flip mitigation: a write's wire name ends `_w`, so a name a host cached as read is refused before dispatch once the tool is a write.          |
+
+Two prototype limits follow from using a sibling pool. Read-route discovery omits
+write tools, as any read-only endpoint does. Result handles bind to their pool, so
+`call_tool` also runs on the sibling, and a handle minted there does not page from
+`execute_code`.
+
+`pnpm exec tsx eval/surface-controls.ts` needs no paid model. It proves on a real
+Worker that a read program cannot write through read-then-write, a swallowed
+refusal, `Promise.allSettled` or repeated attempts, with a positive control that
+the same write lands once through `execute_code`. It also checks the other arms'
+inventories, and runs real Claude Code and Codex against a scripted local model to
+check which tools prompt and what each answer does.
+
+`pnpm exec tsx eval/stale-flip.ts` reproduces a host replaying a write it cached
+as read-only, with no paid model: a real host, a real Worker deployment, a
+scripted local model and a fake vendor that counts physical writes. `--modes`
+chooses how the connection fails after Connecta has answered; `parallel` holds one
+call and resets three, tripping Claude Code's terminal-error close. `--hosts`
+selects Claude Code or Codex. See
+[the notes](baselines/notes-surface-risks.md) for measured results.
