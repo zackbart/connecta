@@ -28,7 +28,8 @@ export const GUEST_FUNCTIONS = [
     name: "call",
     budget: "hostCall",
     wrapped: true,
-    declaration: "call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<Result>;",
+    declaration:
+      "call(address: string, args?: unknown, options?: { timeoutMs?: number; allPages?: boolean | number }): Promise<Result>;",
   },
   /** Reads one advertised resource URI. */
   {

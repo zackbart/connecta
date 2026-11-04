@@ -5,8 +5,8 @@ import type { CallErrorDetails } from "./errors.js";
 export interface GuestApi {
   search(args?: CatalogSearchArgs): Promise<CatalogSearchResult>;
   describe(args?: CatalogDescribeArgs): Promise<{ tools: CatalogDescription[] }>;
-  call(address: string, args?: unknown, options?: { timeoutMs?: number }): Promise<GuestResult>;
-  call(request: { address: string; args?: unknown; timeoutMs?: number }): Promise<GuestResult>;
+  call(address: string, args?: unknown, options?: GuestCallOptions): Promise<GuestResult>;
+  call(request: { address: string; args?: unknown } & GuestCallOptions): Promise<GuestResult>;
   read(uri: string): Promise<GuestResourceResult>;
   /** Reads a retained result whole, for one host call; a larger one throws `result_too_large`. */
   result(id: string | GuestResultHandle, options: { all: true }): Promise<Exclude<GuestResult, GuestResultHandle>>;
@@ -17,6 +17,15 @@ export interface GuestApi {
   skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
   /** Forwards an authored block, a block from result.content, or an inline result; a paged handle is refused. */
   emit(block: GuestNativeBlock | Exclude<GuestResult, GuestResultHandle>): PromiseLike<void>;
+}
+
+interface GuestCallOptions {
+  timeoutMs?: number;
+  /**
+   * On a read, follow `page.nextCursor` and concatenate the list: all pages, or
+   * at most this many. Each page spends a host call; one is always left over.
+   */
+  allPages?: boolean | number;
 }
 
 export interface GuestResourceResult {
@@ -40,6 +49,8 @@ export type GuestResult = ({ data: unknown; format: "json" } | { data: string; f
   content?: GuestNativeBlock[];
   /** Paging handle when native content exceeds the inline cap or transfer fails. */
   contentResult?: GuestResultHandle;
+  /** allPages only: why a later page failed. The pages before it are in `data`. */
+  error?: { code: string; message: string; retryable: boolean; details?: unknown };
 };
 /** Native call blocks can be forwarded unchanged, including annotations and metadata. */
 export type GuestNativeBlock = (

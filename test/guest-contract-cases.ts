@@ -1093,12 +1093,32 @@ function contractConnectors(state: ContractState): Connector[] {
     id: "shapes",
     kind: "api",
     async listTools() {
-      return ["rows", "list", "colliding", "scalar", "nothing", "empty", "rowsOfBytes", "textOfBytes"].map((name) =>
-        readOnly(name),
-      );
+      return [
+        ...["rows", "list", "colliding", "scalar", "nothing", "empty", "rowsOfBytes", "textOfBytes"].map((name) =>
+          readOnly(name),
+        ),
+        ...["pagedItems", "pagedData", "pagedNested", "pagedOther", "failsLater", "changesShape", "pagedBytes"].map(
+          (name) => readOnly(name),
+        ),
+        { name: "pagedWrite", annotations: { readOnlyHint: false, destructiveHint: true } },
+      ];
     },
     async callTool(name, args) {
       count(`shapes.${name}`);
+      if (name.startsWith("paged") || name === "failsLater" || name === "changesShape") {
+        const { cursor, last = 30, size = 2 } = args as { cursor?: string; last?: number; size?: number };
+        const at = cursor === undefined ? 0 : Number(cursor);
+        const page = at + 1 < last ? { hasMore: true, nextCursor: String(at + 1) } : { hasMore: false };
+        if (name === "failsLater" && at === 2)
+          throw new ConnectorCallError("unavailable", "Page 2 is down", { retryable: true });
+        if (name === "changesShape" && at === 1) return "text now";
+        const rows = Array.from({ length: size }, (_, i) => ({ id: at * size + i }));
+        if (name === "pagedBytes") return { items: rows.map((row) => ({ ...row, pad: "x".repeat(10_000) })), page };
+        if (name === "pagedData") return { status: 200, data: rows, page };
+        if (name === "pagedNested") return { status: 200, data: { object: "list", data: rows }, page };
+        if (name === "pagedOther") return { messages: rows, page };
+        return { items: rows, title: `page ${at}`, page };
+      }
       if (name === "rows") return [{ id: "b" }, { id: "a" }];
       if (name === "list") return { object: "list", data: [{ id: 1 }], has_more: false };
       if (name === "colliding") return { content: "body", contentResult: "other", format: "shadow", error: null };
@@ -3834,6 +3854,196 @@ return fs;
       expect(outcome.result).toEqual({ formats: Array(8).fill("json"), small: "text" });
       // Reclaiming spends no host call beyond the reads themselves.
       expect(outcome.value.hostCalls).toMatchObject({ attempted: 9 });
+    },
+  },
+  {
+    clauses: "S5b, L4",
+    name: "allPages concatenates a list, keeps the shape and stops one host call short of the budget",
+    code: `async () => {
+      const r = await connecta.call("shapes.pagedItems", {}, { allPages: true });
+      return { count: r.items.length, last: r.items.at(-1).id, title: r.title, page: r.page, keys: Object.keys(r), dataKeys: Object.keys(r.data) };
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        count: 38,
+        last: 37,
+        title: "page 0",
+        page: { hasMore: true, nextCursor: "19" },
+        keys: ["data", "format"],
+        dataKeys: ["items", "title", "page"],
+      });
+      expect(state.calls["shapes.pagedItems"]).toBe(19);
+      expect(outcome.value.hostCalls).toMatchObject({ attempted: 19, succeeded: 19, failed: 0 });
+    },
+  },
+  {
+    clauses: "S5b, L4",
+    name: "page.nextCursor from a stopped allPages continues in the next program, and the spare call still runs",
+    code: `async () => {
+      const first = await connecta.call("shapes.pagedItems", {}, { allPages: true });
+      await connecta.search({ query: "spare" });
+      return first.page.nextCursor;
+    }`,
+    follows: `async () => {
+      const r = await connecta.call("shapes.pagedItems", { cursor: "19" }, { allPages: true });
+      return { first: r.items[0].id, count: r.items.length, page: r.page };
+    }`,
+    check(outcome, state, follow) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toBe("19");
+      expect(required(follow).result).toEqual({ first: 38, count: 22, page: { hasMore: false } });
+      expect(state.calls["shapes.pagedItems"]).toBe(19 + 11);
+    },
+  },
+  {
+    clauses: "S5b",
+    name: "allPages takes a page limit, the object form and a timeout, and allPages: false is a plain call",
+    code: `async () => {
+      const limited = await connecta.call("shapes.pagedItems", {}, { allPages: 3, timeoutMs: 5000 });
+      const named = await connecta.call({ address: "shapes.pagedItems", args: { last: 2 }, allPages: true });
+      const one = await connecta.call("shapes.pagedItems", {}, { allPages: 1 });
+      const off = await connecta.call("shapes.pagedItems", {}, { allPages: false });
+      return {
+        limited: limited.items.length, limitedPage: limited.page, named: named.items.length,
+        one: one.items.length, oneMore: one.page.hasMore, off: off.items.length,
+      };
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        limited: 6,
+        limitedPage: { hasMore: true, nextCursor: "3" },
+        named: 4,
+        one: 2,
+        oneMore: true,
+        off: 2,
+      });
+      expect(state.calls["shapes.pagedItems"]).toBe(3 + 2 + 1 + 1);
+    },
+  },
+  {
+    clauses: "S5b",
+    name: "allPages follows data lists, nested or not, and other shapes behave like a plain call",
+    code: `async () => {
+      const data = await connecta.call("shapes.pagedData", { last: 3 }, { allPages: true });
+      const nested = await connecta.call("shapes.pagedNested", { last: 3 }, { allPages: true });
+      const other = await connecta.call("shapes.pagedOther", { last: 3 }, { allPages: true });
+      const flat = await connecta.call("shapes.rows", {}, { allPages: true });
+      const text = await connecta.call("reader.text", {}, { allPages: true });
+      return {
+        data: data.data.data.length, dataPage: data.page, nested: nested.data.data.data.length, object: nested.data.data.object,
+        other: other.messages.length, otherPage: other.page, flat: flat.length, text: text.length,
+      };
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        data: 6,
+        dataPage: { hasMore: false },
+        nested: 6,
+        object: "list",
+        other: 2,
+        otherPage: { hasMore: true, nextCursor: "1" },
+        flat: 2,
+        text: 26,
+      });
+      expect(state.calls["shapes.pagedOther"]).toBe(1);
+    },
+  },
+  {
+    clauses: "S5b, E2, W9",
+    name: "allPages on a write is refused before dispatch and sends nothing",
+    code: `async () => {
+      let refused;
+      try { await connecta.call("shapes.pagedWrite", {}, { allPages: true }); }
+      catch (err) { refused = { code: err.code, retryable: err.retryable, message: err.message }; }
+      let unannotated;
+      try { await connecta.call("reader.unannotated", {}, { allPages: true }); } catch (err) { unannotated = err.code; }
+      return { refused, unannotated };
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({
+        refused: { code: "invalid_args", retryable: false, message: expect.stringContaining("nothing was sent") },
+        unannotated: "invalid_args",
+      });
+      expect(state.calls["shapes.pagedWrite"]).toBeUndefined();
+      expect(state.calls["reader.unannotated"]).toBeUndefined();
+      expect(outcome.value.writes).toBeUndefined();
+      expect(outcome.value.hostCalls).toMatchObject({ attempted: 2, failed: 2 });
+    },
+  },
+  {
+    clauses: "S5b, E4",
+    name: "allPages on a read-only endpoint keeps the read-only refusal",
+    readOnly: true,
+    code: `async () => {
+      try { await connecta.call("shapes.pagedWrite", {}, { allPages: true }); return "sent"; }
+      catch (err) { return err.code; }
+    }`,
+    check(outcome, state) {
+      expect(outcome.result, outcome.text).toBe("read_only_endpoint");
+      expect(state.calls["shapes.pagedWrite"]).toBeUndefined();
+    },
+  },
+  {
+    clauses: "S5b, E1",
+    name: "a later page's failure returns the pages so far plus error, and a first page's failure throws",
+    code: `async () => {
+      const r = await connecta.call("shapes.failsLater", {}, { allPages: true });
+      const changed = await connecta.call("shapes.changesShape", {}, { allPages: true });
+      let thrown;
+      try { await connecta.call("reader.flaky", {}, { allPages: true }); } catch (err) { thrown = err.code; }
+      return {
+        count: r.items.length, error: r.error, page: r.page, keys: Object.keys(r), thrown,
+        changed: changed.items.length, changedError: changed.error.code,
+      };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({
+        count: 4,
+        error: { code: "unavailable", retryable: true, message: expect.stringContaining("Page 2 is down") },
+        page: { hasMore: true, nextCursor: "2" },
+        keys: ["data", "format", "error"],
+        thrown: "unavailable",
+        changed: 2,
+        changedError: "result_too_large",
+      });
+    },
+  },
+  {
+    clauses: "S5b, S5",
+    name: "allPages rejects anything but true, false or a whole page count",
+    code: `async () => {
+      const capture = async (value) => {
+        try { await connecta.call("shapes.pagedItems", {}, { allPages: value }); return "accepted"; }
+        catch (err) { return err.code; }
+      };
+      return [await capture(0), await capture(1.5), await capture("all"), await capture(null)];
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual(Array(4).fill("invalid_args"));
+      expect(state.calls["shapes.pagedItems"]).toBeUndefined();
+    },
+  },
+  {
+    clauses: "S5b, S11",
+    name: "allPages stops at the read ceiling so the program keeps budget to use the list",
+    code: `async () => {
+      const r = await connecta.call("shapes.pagedBytes", { size: 40, last: 19 }, { allPages: true });
+      return { rows: r.items.length, more: r.page.hasMore, cursor: typeof r.page.nextCursor };
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      const { rows, more, cursor } = outcome.result as { rows: number; more: boolean; cursor: string };
+      // Every executor's ceiling here is at least 1.5 MiB; 40 rows are about 400 KB a page.
+      expect(rows).toBeGreaterThanOrEqual(160);
+      expect(more).toBe(true);
+      expect(cursor).toBe("string");
+      expect(state.calls["shapes.pagedBytes"]).toBeLessThan(18);
     },
   },
   {

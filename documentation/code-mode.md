@@ -386,7 +386,7 @@ const { data: run, format } = await connecta.call("ci.get_run", { runId: 42 });
 ```
 
 **S5.** Takes a canonical address, optional arguments, and optional
-`{ timeoutMs }`; the object form is `{ address, args?, timeoutMs? }`. A malformed
+`{ timeoutMs, allPages }` (`S5b`); the object form is `{ address, args?, timeoutMs?, allPages? }`. A malformed
 signature fails with `invalid_args` and both exact signatures, before discovery.
 Normally returns `{ data, format: "json" | "text" }`. Oversized values may return
 a `format: "paged"` handle for `connecta.result`, as described in `L6` below.
@@ -430,6 +430,44 @@ A program that tested a result's fields for absence sees the difference:
 `r.items === undefined` and `"items" in r` were always the envelope's answer and
 now report `data`'s. `for...in` over a result visits more keys. `r.content` keeps
 its meaning, so `for (const b of r.content ?? [])` never iterates a data field.
+
+**S5b.** `connecta.call(address, args, { allPages: true })` follows
+`page.nextCursor`, passing it as `args.cursor`, and returns the first page's shape
+with the later pages' lists concatenated and `page` from the last page read. A
+number is the most pages to read. The list is `items` or an array `data`, or
+either of those inside `data`. A tool with no such list and a `page` behaves like
+a plain call, so a program still sees `page.nextCursor` and can page it by hand.
+
+```js
+const r = await connecta.call("crm.list_projects", {}, { allPages: true });
+const ids = r.items.map(project => project.id);
+if (r.page.hasMore) return { ids, nextCursor: r.page.nextCursor };
+```
+
+It is for reads. On a write, including an unannotated tool (`INV-1`), the call is
+refused with `invalid_args` before dispatch and sends nothing (`W9`); on a
+read-only endpoint the refusal stays `read_only_endpoint` (`E4`). Each page spends
+a host call (`L4`). Before a later page, the host stops the loop if it would leave
+the program no host call, or if this run's `allPages` calls have delivered the read
+ceiling (`S11`). `page.hasMore` then stays true, and `page.nextCursor` continues in
+the next program, which may use `allPages` again. A later page's failure returns
+the pages so far plus `error: { code, message, retryable, details? }` on the
+envelope, with `page.nextCursor` at the page that failed, so check `r.error` before
+treating the list as complete; a first page's failure throws as usual. A later page
+that is not an inline page of the list sets `error` to `result_too_large`. Native
+`content` stays the first page's. Start other calls after `allPages` returns: it
+leaves one host call, not room for calls running beside it.
+
+Coverage of the maintained providers' 113 paged reads: 61 named lists return
+`{ items, page }` and take `cursor`. The 12 `*_api_read` hatches with a `page`
+return `{ status, data, page }` with the vendor's body. `allPages` follows one whose
+body is an array or has `items` or `data`, when the hatch takes a top-level
+`cursor`: GitHub and Stripe, for example. A hatch that takes its cursor in `query`
+(Planning Center, Overflow) returns the first page plus `error: invalid_args`, and a
+body that names its list differently (Drive's `files`, Gmail's `messages`) behaves
+like a plain call. So do the 34 `*_api_search` and `*_api_details` discovery pages
+and the bespoke reads Gmail `get_thread`, Docs `get_document`, Sheets `get_values`,
+Slides `get_presentation` and `get_page`, whose pages each carry their own field.
 
 An inline MCP result containing image, audio, resource, or resource_link blocks
 also exposes `content?: GuestNativeBlock[]`, even when `data` comes from
@@ -1055,10 +1093,11 @@ because connecta enforces them above the sandbox:
 | Result                                                                                               | 24,000 serialized characters by default, `execute.maxResultChars` (4,000–1,000,000)                                                                                                                                                                               |
 | Logs presented to the model                                                                          | 4,000 characters                                                                                                                                                                                                                                                  |
 
-For any tool whose output declares `page`, continue while `page.hasMore` is true.
+For any tool whose output declares `page`, continue while `page.hasMore` is true,
+with `allPages` (`S5b`) or by hand.
 When approaching the program's host-call limit, return `page.nextCursor` before
 the call that would exceed it and continue in the next program with the same
-arguments and that cursor; don't restart.
+arguments and that cursor; don't restart. `allPages` stops there for you.
 For example, return `{ nextCursor: result.page.nextCursor }` after reducing the
 current page, then pass that cursor to the tool in the next program.
 
@@ -1454,6 +1493,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `S1`, `S1a`, `S2`      | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling)                                                                                                                                         |
 | `S3`                   | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `S4`                   | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds)                                                                                                                                                                                                                                                                                                                                     |
+| `S5b`                  | both guest-contract executors (shapes, stop short of budget and ceiling, write refusal, later-page failure)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `S11`                  | both guest-contract executors (whole reads, ceiling refusal, stash reclaim), `test/guest-api-contract-quickjs.node.test.ts` (ceiling scaling), `test/program-result-cases.ts`                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `S5`, `S5a`, `S6`      | both guest-contract executors (read-through by shape, unchanged envelope), `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `S7`                   | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |

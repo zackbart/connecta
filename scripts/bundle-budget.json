@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-04: allPages (programs/call-all-pages). CI measures the root at 425,081 B and examples/worker at 809,419 B, +991 B and +1,060 B on programs/result-all, from the prelude's page loop and the host's stop rule. The caps move to 425,200 B and 809,550 B. Across the stack, +2,906 B and +3,302 B on origin/main 25e9e940.",
     "2026-11-04: Whole result reads and stash reclaim (programs/result-all). CI measures the root at 424,090 B and examples/worker at 808,359 B, +1,027 B and +1,253 B on programs/read-through-results, from the prelude's whole read, stash release and the oversized-return action. The caps move to 424,200 B and 808,500 B.",
     "2026-11-04: Programs read through to data (programs/read-through-results). CI measures the root at 423,116 B and examples/worker at 807,169 B against origin/main 25e9e940's 422,175 B and 806,117 B (+941 B and +1,052 B), which is the guest prelude's read-through and return normalization, not drift. The caps move to 423,200 B and 807,250 B.",
     "2026-11-03: The performance, security and guidance batch has landed, so its temporary headroom ends. CI at 0d89ea9c measures the root at 422,175 B and examples/worker at 806,117 B, up from 415,751 B and 796,900 B at Release 0.40.0 (+6,424 B and +9,217 B). The caps move to 422,500 B and 806,500 B, leaving 325 B and 383 B for later changes.",
@@ -59,7 +60,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 424200
+      "maxGzip": 425200
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -142,7 +143,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 808500
+      "maxGzip": 809550
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

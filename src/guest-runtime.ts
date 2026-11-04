@@ -196,8 +196,46 @@ export function guestInitializer(): string {
     }
     return value;
   }
+  // The list a page carries: { items }, { data: [...] }, or either inside data.
+  function listIn(value, nested) {
+    if (!value || isArray(value)) return undefined;
+    if (isArray(value.items)) return value.items;
+    if (isArray(value.data)) return value.data;
+    return nested ? undefined : listIn(value.data, true);
+  }
   async function call() {
-    return readThrough(await apply(rawCall, undefined, arguments));
+    const first = await apply(rawCall, undefined, arguments);
+    const named = typeof arguments[0] !== "string";
+    const request = named ? arguments[0] : arguments[2];
+    // The host refused any other value, and any write, on that first call.
+    const limit = request && request.allPages === true ? Infinity : request && request.allPages;
+    const list = limit >= 2 && first.format === "json" ? listIn(first.data) : undefined;
+    if (!list || !first.data.page) return readThrough(first);
+    const timeout = request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs };
+    const address = named ? request.address : arguments[0];
+    const args = named ? request.args : arguments[1];
+    let page = first.data.page, pages = 1;
+    while (page.hasMore && page.nextCursor && pages < limit) {
+      let next;
+      // A later page's failure keeps what arrived; page.nextCursor still resumes it.
+      try { next = await rawCall(address, { ...args, cursor: page.nextCursor }, { ...timeout, allPages: "next" }); }
+      catch (failure) {
+        first.error = { code: failure.code, message: failure.message, retryable: failure.retryable, details: failure.details };
+        break;
+      }
+      // The host's answer: this page would leave the program no host call, or too much to use.
+      if (next.stopped) break;
+      const more = next.format === "json" ? listIn(next.data) : undefined;
+      if (!more || !next.data.page) {
+        first.error = { code: "result_too_large", message: "A later page was not an inline page of this list. Read it with its cursor.", retryable: false };
+        break;
+      }
+      for (let i = 0; i < more.length; i++) push(list, more[i]);
+      page = next.data.page;
+      pages++;
+    }
+    first.data.page = page;
+    return readThrough(first);
   }
   async function rawCall() {
     const reply = await apply(hostCall, undefined, arguments);

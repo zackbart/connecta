@@ -97,7 +97,9 @@ export const CONNECTOR_INVENTORY_MAX_BYTES = 1_024;
 export const EXECUTE_MAX_EMITTED_BYTES = CONFIG_DEFAULTS.execute.maxEmittedBytes;
 export const EXECUTE_MAX_EMITTED_BLOCKS = CONFIG_DEFAULTS.execute.maxEmittedBlocks;
 const CALL_SIGNATURE =
-  "Use connecta.call(address, args?, { timeoutMs? }) or connecta.call({ address, args?, timeoutMs? }). address must be a canonical connector.tool string.";
+  "Use connecta.call(address, args?, { timeoutMs?, allPages? }) or connecta.call({ address, args?, timeoutMs?, allPages? }). address must be a canonical connector.tool string; allPages is true or a whole page count.";
+/** How the prelude marks allPages' later pages. A program sending it gains nothing: a read, or a refused write. */
+const NEXT_PAGE = "next";
 const diagnosticsEncoder = new TextEncoder();
 
 type ExecuteDiagnosticOperation = "search" | "describe" | "call" | "read";
@@ -626,6 +628,8 @@ function sandboxProvider(
   // `owned` marks a stash only this transfer can name, because the guest never saw
   // its handle. A guest-supplied id stays readable until it expires.
   const readBytes = limits.readBytes ?? PROGRAM_RESULT_READ_BYTES;
+  // Bytes allPages has delivered this run; the guest parses them on the same CPU budget.
+  let followedBytes = 0;
   const transfers = new Map<
     string,
     { id: string; offset: number; owned?: { totalBytes: number; write: boolean }; finished?: boolean }
@@ -647,7 +651,7 @@ function sandboxProvider(
     return value;
   };
   /** Budget and account for writes a writable endpoint admits. */
-  const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number) => ({
+  const invocationContext = (sending: { settle?: SettleWrite; readsOnly?: boolean }, timeoutMs: number) => ({
     source: "execute_code" as const,
     sentSecrets,
     timeoutMs,
@@ -763,6 +767,17 @@ function sandboxProvider(
     ),
     beforeWrite: (target: ResolvedCatalogTool): Effect.Effect<WriteDecision> =>
       Effect.sync((): WriteDecision => {
+        if (sending.readsOnly && target.definition.classification !== "read") {
+          return {
+            kind: "refuse",
+            error: {
+              code: "invalid_args",
+              message:
+                "allPages follows reads only, and this tool is a write; nothing was sent. Call it once without allPages.",
+              retryable: false,
+            },
+          };
+        }
         if (programWrites?.isClosed) {
           return {
             kind: "refuse",
@@ -797,32 +812,41 @@ function sandboxProvider(
   const call = (address: unknown, args: unknown, options?: unknown) =>
     Effect.gen(function* () {
       let timeout: unknown;
+      let allPages: unknown;
       if (address !== null && typeof address === "object" && !Array.isArray(address)) {
         const request = address as Record<string, unknown>;
         if (
           args !== undefined ||
           options !== undefined ||
-          Object.keys(request).some((key) => !["address", "args", "timeoutMs"].includes(key))
+          Object.keys(request).some((key) => !["address", "args", "timeoutMs", "allPages"].includes(key))
         ) {
           return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
         }
         address = request.address;
         args = request.args;
         timeout = request.timeoutMs;
+        allPages = request.allPages;
       } else if (options !== undefined) {
         if (
           !options ||
           typeof options !== "object" ||
           Array.isArray(options) ||
-          Object.keys(options).some((key) => key !== "timeoutMs")
+          Object.keys(options).some((key) => key !== "timeoutMs" && key !== "allPages")
         ) {
           return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
         }
         timeout = (options as { timeoutMs?: unknown }).timeoutMs;
+        allPages = (options as { allPages?: unknown }).allPages;
       }
       if (
         typeof address !== "string" ||
-        (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1))
+        (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1)) ||
+        !(
+          allPages === undefined ||
+          typeof allPages === "boolean" ||
+          allPages === NEXT_PAGE ||
+          (Number.isSafeInteger(allPages) && (allPages as number) >= 1)
+        )
       ) {
         return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
       }
@@ -833,7 +857,8 @@ function sandboxProvider(
       const timeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A program write settles here — unknown if the call never returned an
       // outcome. Credentials are filtered from arguments; submitted private values are not.
-      const sending: { settle?: SettleWrite } = {};
+      const following = allPages !== undefined && allPages !== false;
+      const sending: { settle?: SettleWrite; readsOnly?: boolean } = { readsOnly: following };
       const outcome = yield* invocation
         .pipeline(address, sentSecrets.redactCredentials(args ?? {}), invocationContext(sending, timeoutMs))
         .pipe(
@@ -860,6 +885,10 @@ function sandboxProvider(
       }
       diagnostics?.recordCall(outcome);
       if (!outcome.ok) return yield* Effect.fail(new InvocationFailure(outcome.error));
+      if (following) {
+        const paged = outcome.value as { handle?: { totalBytes: number }; totalBytes?: number };
+        followedBytes += paged.handle?.totalBytes ?? paged.totalBytes ?? serializedDiagnosticBytes(outcome.value);
+      }
       return outcome.value;
     });
 
@@ -1222,6 +1251,13 @@ function sandboxProvider(
             // L4/M7: spend on entry, before even invalid arguments are checked;
             // emission has a separate budget and never spends this one.
             // Transparent transfer pages consume the already-admitted call, not guest host calls.
+            // allPages leaves the program one host call, and stops at the read ceiling.
+            if (
+              name === "call" &&
+              (args[2] as { allPages?: unknown } | undefined)?.allPages === NEXT_PAGE &&
+              (hostCalls.attempted + 1 >= maxHostCalls || followedBytes >= readBytes)
+            )
+              return Promise.resolve({ stopped: true });
             const counted =
               budget === "hostCall" && !(name === "result" && typeof args[0] === "string" && transfers.has(args[0]));
             if (counted && ++hostCalls.attempted > maxHostCalls) {
