@@ -614,6 +614,58 @@ actor/requester distinction. Without that mapping both runners would lose two
 export trials to redaction. Other redactions and unavailable legacy observations
 retain the existing partial-evidence rules.
 
+## Catalog presentation arms
+
+[deploy/presentation.ts](deploy/presentation.ts) measures how Connecta presents
+catalog information without changing the product. It wraps the published fetch
+and the program observer's guest bridge; no package entry exports it and no
+configuration key selects it. `--presentation <arm>` selects an arm, on the six
+surface with outcome grading only. `control`, the default, wraps nothing.
+Result config and every trial record the arm, absent meaning `control`.
+`eval:compare` and `--cross-target` refuse to pair different arms, even with
+`--allow-mismatch`.
+
+| Arm                                                  | What the agent sees                                                                                                                          |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `schema-compact`, `schema-typescript`, `schema-json` | `connecta.search`, `connecta.describe` and `search_tools` default to this format, and their text says so. Explicit formats still win.        |
+| `output-slim`, `output-none`                         | `tools/list` advertises open top-level schemas, or none, on the four tools with one. Results keep `structuredContent` and their text.        |
+| `connectors-id`, `connectors-purpose`                | Instructions and the `execute_code` inventory carry connector ids alone, or ids and a one-line purpose, within the 1,024-byte inventory cap. |
+| `clones-collapsed`                                   | Unscoped search folds rows identical but for their address into one, with `alsoAt`. Scoped search, describe and calls are unchanged.         |
+
+World option `presentationFake` adds the look-alike `payments` and `crm` pairs,
+or `clones`: four tenants with 43 identical tools each, 172 rows. With
+`--catalog-tools 300` that is the size and clone count of a real pool. The five
+[tasks](tasks/presentation.ts) never name a connector id. Their graders read
+the ledger and final answer, and an advisory check records wrong-connector
+reads. Prompts stay solvable without a purpose line: `get_account_info` and
+`get_workspace_info` say which connector is which.
+
+[presentation-plan.ts](presentation-plan.ts) fixes each experiment's arms and
+tasks before any trial is scored, including `discovery-*` tasks whose twins are
+real look-alikes.
+
+```sh
+pnpm run build
+pnpm run eval:selftest --presentation-only # Model-free, on Node and Worker.
+pnpm exec tsx eval/presentation-measure.ts # Exact sizes per arm; Codex first request and discovery.
+pnpm run eval:presentation --run --runner claude --pair-id <window> # Waits while load > --max-load.
+pnpm run eval:presentation --run --runner codex --pair-id <window>
+pnpm run eval:presentation # Report from eval/results/presentation.
+```
+
+The run skips complete batches and refuses a plan past `--budget`, 150 trials by
+default. The report requires the comparator's measured provenance on every file
+and refuses files that differ in anything but arm and task set. It prints, per
+experiment and model, passes, first-attempt `invalid_args` per address called,
+errors before the first success, discovery and response bytes, total and
+first-request tokens, wrong-target calls, and rows against distinct tools on
+unscoped pages. Infrastructure errors and timeouts leave the rates and are
+counted as invalid. It reaches no decision: it says how many trials separate an
+arm from its control.
+
+The usage guide's skill resource keeps product text, so its integrity digest
+stays valid. The `skills` tool and `connecta.skill` carry the arm's wording.
+
 ## Provider-local eval wiring
 
 A maintained provider keeps its eval wiring in its own folder, never shipped

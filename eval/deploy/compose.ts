@@ -7,6 +7,7 @@
  */
 import { codeConfig } from "./code-surface.js";
 import type { Surface } from "../agent/surface.js";
+import type { PresentationArm } from "./presentation.js";
 import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
 import { PROVIDER_DEPLOYS } from "./providers.generated.js";
 import { gmail } from "@zackbart/connecta/providers/gmail";
@@ -44,6 +45,7 @@ const QUIET = { debug() {}, info() {}, warn() {}, error() {} };
 
 export interface EvalComposition {
   surface?: Surface;
+  presentation?: PresentationArm;
   connectors: ConnectorSpec[];
   /** The task's untyped `deployment` passthrough. */
   extra: Record<string, unknown>;

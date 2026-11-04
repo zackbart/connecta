@@ -68,6 +68,11 @@ import {
   restTransportControls,
 } from "./tasks/rest-controls.js";
 
+if (process.argv.includes("--presentation-only")) {
+  await import("./presentation-controls.js");
+  process.exit(0);
+}
+
 if (process.argv.includes("--native-only")) {
   await import("./native-controls.js");
   process.exit(0);

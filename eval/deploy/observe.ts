@@ -5,6 +5,7 @@ import { guidanceValue } from "./guidance.js";
  * executor with the same observer.
  */
 import { codeError, codeSkill, codeValue } from "./code-surface.js";
+import { presentedGuestCall, type Presentation } from "./presentation.js";
 import type { Surface } from "../agent/surface.js";
 import type { ExecutorProvider, ExecutorLease } from "@zackbart/connecta";
 
@@ -30,6 +31,7 @@ export interface ProgramObservation {
 export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["acquire"]> }>(
   executor: T,
   surface: Surface = "six",
+  presentation?: Presentation,
 ) {
   const programs: ProgramObservation[] = [];
   const acquire = executor.acquire.bind(executor);
@@ -50,7 +52,7 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
               program.calls.push(call);
               if (call.name === "connecta.call") program.peakCalls = Math.max(program.peakCalls, ++pendingCalls);
               try {
-                const original = guidanceValue(await fn(...args));
+                const original = guidanceValue(await presentedGuestCall(presentation, call.name, fn, args));
                 const result =
                   surface !== "code" && surface !== "five"
                     ? original

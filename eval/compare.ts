@@ -76,6 +76,7 @@ const trialSchema = z
     runner: z.enum(["codex", "claude"]),
     target: z.enum(["node", "worker"]).optional(),
     surface: z.enum(["six", "five", "code", "native", "native-no-code"]),
+    presentation: z.string().optional(),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
     status: z.enum(["pass", "fail", "error", "skipped"]),
@@ -197,13 +198,15 @@ function safety(trials: TrialResult[]) {
 
 /** Results written before the worker target existed ran on node. */
 const targetOf = (file: AgentResultFile) => file.config.target ?? "node";
+/** Results written before the presentation arms existed served the unmodified product. */
+const presentationOf = (file: AgentResultFile) => file.config.presentation ?? "control";
 
 /**
  * The measured-batch provenance one result file must carry before it enters
  * any comparison: fresh, unregraded, on the current protocol and a clean known
  * source, with every trial consistent with its batch, target included.
  */
-function measuredProvenance(label: string, surface: Surface, file: AgentResultFile): string[] {
+export function measuredProvenance(label: string, surface: Surface, file: AgentResultFile): string[] {
   const reasons: string[] = [];
   const current = runProtocol();
   const known = (value: unknown) =>
@@ -244,6 +247,8 @@ function measuredProvenance(label: string, surface: Surface, file: AgentResultFi
     if (trial.surface !== surface || trial.grading !== "outcome" || trial.runner !== file.config.runner)
       reasons.push(`${row} must record its arm, outcome grading and runner`);
     if ((trial.target ?? "node") !== targetOf(file)) reasons.push(`${row} target contradicts batch`);
+    if ((trial.presentation ?? "control") !== presentationOf(file))
+      reasons.push(`${row} presentation contradicts batch`);
     if (trial.taskDefinitionsHash !== file.protocol?.taskDefinitionsHash)
       reasons.push(`${row} taskDefinitionsHash contradicts batch`);
     const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
@@ -275,6 +280,7 @@ const SETTINGS: Record<string, { label: string; value?: (file: AgentResultFile) 
   mcpOutputTokens: { label: "MCP output limit", value: (f) => f.config.mcpOutputTokens ?? "host default" },
   target: { label: "deployment target", value: targetOf },
   injection: { label: "latency and fault injection", value: (f) => injectionOf(f.config.injection) },
+  presentation: { label: "presentation arm", value: presentationOf },
 };
 
 /**
@@ -283,7 +289,7 @@ const SETTINGS: Record<string, { label: string; value?: (file: AgentResultFile) 
  * runtime and the served model of every paired trial. One list serves the
  * six/code comparison and the cross-target diagnostic.
  */
-function settingMismatches(a: AgentResultFile, b: AgentResultFile, except: string[]): string[] {
+export function settingMismatches(a: AgentResultFile, b: AgentResultFile, except: string[]): string[] {
   const out: string[] = [];
   const differ = (x: unknown, y: unknown) => JSON.stringify(x ?? null) !== JSON.stringify(y ?? null);
   const keys = [...new Set([...Object.keys(a.config), ...Object.keys(b.config), ...Object.keys(SETTINGS)])];
@@ -327,6 +333,11 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
   if (!sameInjection(a.config.injection, b.config.injection))
     throw new Error(
       `Comparison refused: arms ran with different injection (${describeInjection(injectionOf(a.config.injection))}; ${describeInjection(injectionOf(b.config.injection))})`,
+    );
+  // Presentation arms serve different bytes: no override pairs them as the same product.
+  if (presentationOf(a) !== presentationOf(b))
+    throw new Error(
+      `Comparison refused: arms served different presentations (${presentationOf(a)}, ${presentationOf(b)}); use eval:presentation`,
     );
   // Node and workerd are different deployments: no override pairs them here.
   if (targetOf(a) !== targetOf(b))

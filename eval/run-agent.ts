@@ -6,6 +6,8 @@ import { guidanceArm } from "./deploy/guidance.js";
  *   --target       node (default) or worker: the deployment shape each trial
  *                  boots; worker runs workerd under wrangler dev
  *   --no-build     skip `pnpm run build` before a worker batch
+ *   --presentation an eval-only catalog presentation arm (default control);
+ *                  see eval/deploy/presentation.ts
  *   --latency-ms   delay every downstream fake response by this many ms
  *   --hung-connector          add connector `stalled`, which never answers
  *   --unauthorized-connector  add connector `revoked`, which answers 401
@@ -27,6 +29,7 @@ import { guidanceArm } from "./deploy/guidance.js";
  */
 import { parseSurface } from "./agent/surface.js";
 import { parseTarget, workerRefusal } from "./deploy/targets.js";
+import { parsePresentation, presentationRefusal } from "./deploy/presentation.js";
 import { describeInjection, parseInjection } from "./fakes/injection.js";
 import { killAllProcesses } from "./support/workerd.js";
 import { spawnSync } from "node:child_process";
@@ -50,6 +53,11 @@ const target = parseTarget(args.get("target"));
 const guidance = guidanceArm();
 if (guidance && (target !== "node" || surface !== "six" || grading !== "outcome"))
   throw new Error("Guidance comparison requires node, six, outcome grading");
+const presentation = parsePresentation(args.get("presentation"));
+{
+  const refusal = presentationRefusal(presentation, surface, grading);
+  if (refusal) throw new Error(refusal);
+}
 const injection = parseInjection(args);
 if (injection.d1LatencyMs && target !== "worker") throw new Error("--d1-latency-ms needs --target worker");
 const runner = args.get("runner") ?? "codex";
@@ -126,6 +134,7 @@ const file: AgentResultFile = {
     // Always recorded, zeros included, so a comparison can prove it matched.
     injection,
     surface,
+    presentation,
     ...(guidance ? { guidanceArm: guidance } : {}),
     grading,
     models,
@@ -173,6 +182,7 @@ const { trials, stopped } = await runBatch(tasks, models, repeats, {
   target,
   injection,
   surface,
+  presentation,
   grading,
   concurrency,
   timeoutMs,

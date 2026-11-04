@@ -7,6 +7,7 @@
  * reason, never run, skipped or passed.
  */
 import type { Surface } from "../agent/surface.js";
+import type { PresentationArm } from "./presentation.js";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "../tasks/types.js";
 import { startNodeDeployment, type Deployment } from "./node.js";
@@ -44,6 +45,7 @@ export async function startDeployment(
   world: World,
   task: ActiveTask,
   surface: Surface,
+  presentation: PresentationArm = "control",
 ): Promise<Deployment> {
   const everyPool = world.injected.ids();
   if (target === "node") {
@@ -55,6 +57,7 @@ export async function startDeployment(
       task.world?.oauth ? world.oauth : undefined,
       surface,
       everyPool,
+      presentation,
     );
   }
   const refusal = workerRefusal(task, surface);
@@ -65,6 +68,7 @@ export async function startDeployment(
     everyPool,
     world.injection.d1LatencyMs,
     surface,
+    presentation,
   );
 }
 

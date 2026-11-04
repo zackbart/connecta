@@ -15,6 +15,7 @@
  * `/__eval/*` are local process controls, never product routes.
  */
 import { forSurface } from "./code-surface.js";
+import { forPresentation, presentationOf, type Presentation } from "./presentation.js";
 import { workerExecutor } from "@zackbart/connecta/worker";
 import { createConnecta } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
@@ -48,6 +49,7 @@ interface Live {
   build(): ReturnType<typeof createConnecta>;
   token: string;
   vault: ReturnType<typeof encryptedCredentialVault>;
+  presentation: Presentation;
   programs(): ProgramObservation[];
   observeNext(): void;
   setReadOnly(value: boolean): void;
@@ -71,7 +73,8 @@ async function setup(env: Env): Promise<Live> {
   );
   await presetCredentials(vault, composition.connectors);
   const previous: ProgramObservation[] = [];
-  let observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface);
+  const presentation = presentationOf(composition.presentation ?? "control", composition.connectors);
+  let observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface, presentation);
   let readOnly = composition.readOnly;
   const build = () =>
     createConnecta(
@@ -94,10 +97,11 @@ async function setup(env: Env): Promise<Live> {
     build,
     token,
     vault,
+    presentation,
     programs: () => [...previous, ...observed.programs],
     observeNext: () => {
       previous.push(...observed.programs);
-      observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface);
+      observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface, presentation);
     },
     setReadOnly: (value) => {
       readOnly = value;
@@ -131,6 +135,9 @@ export default withAccess({
       state.connecta = state.build();
       return new Response(null, { status: 204 });
     }
-    return forSurface(state.connecta, JSON.parse(bindings.EVAL_COMPOSITION).surface ?? "six").fetch(request, env, ctx);
+    return forPresentation(
+      forSurface(state.connecta, JSON.parse(bindings.EVAL_COMPOSITION).surface ?? "six"),
+      state.presentation,
+    ).fetch(request, env, ctx);
   },
 });

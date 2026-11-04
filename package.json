@@ -218,6 +218,7 @@
     "precheck:bundle": "pnpm run build:operator-ui",
     "eval:regrade": "tsx eval/regrade.ts",
     "eval:compare": "tsx eval/compare.ts",
+    "eval:presentation": "tsx eval/presentation-report.ts",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
     "providers:spec": "tsx scripts/generate-openapi.mjs",

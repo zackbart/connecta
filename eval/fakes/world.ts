@@ -21,6 +21,7 @@ import { attributeServed, delayServed } from "../support/serve.js";
 import { DiscoveryCatalog, discoveryState, type DiscoveryWorldOptions } from "./discovery.js";
 import { assetTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
 import { FakeService, Ledger } from "./service.js";
+import { presentationServices, type PresentationFake, type PresentationService } from "./presentation.js";
 import {
   analyticsTools,
   auditTools,
@@ -69,6 +70,8 @@ export interface ConnectorSpec {
   githubApp?: { appId: string; privateKey: string };
   /** A credential the operator manages; absent means the fake is open. */
   credential?: { label: string; value?: string };
+  /** The one-line "when to use it" the connector-purpose arm serves. */
+  purpose?: string;
 }
 
 type ProviderFakes = typeof PROVIDER_FAKES;
@@ -101,6 +104,8 @@ export interface WorldOptions extends Partial<Record<ProviderFakeName, boolean>>
   oauth?: boolean;
   /** Whether the billing API key is already saved when the trial starts. */
   billingCredential?: "preset" | "missing";
+  /** Look-alike or cloned connectors for the presentation arms, first in registry order. */
+  presentationFake?: PresentationFake;
 }
 
 const BILLING_TOKEN = "sk_eval_7f3a91c82d6049e5";
@@ -153,6 +158,7 @@ export class World {
 
   /** Opt-in latency and fault connectors for this run; none by default. */
   readonly injected: InjectedConnectors;
+  readonly presentation: PresentationService[];
   private releaseLatency: (() => void)[] = [];
 
   constructor(
@@ -160,6 +166,7 @@ export class World {
     readonly injection: Injection = NO_INJECTION,
   ) {
     this.injected = new InjectedConnectors(injection);
+    this.presentation = options.presentationFake ? presentationServices(options.presentationFake, this.ledger) : [];
     if (options.cloudflareStep2) this.rest.dns.push(...cloudflareStep2Dns());
     if (options.restVendor) {
       const vendor = options.restVendor;
@@ -236,11 +243,11 @@ export class World {
     for (const { fake } of this.providerFakes()) await fake.start();
     if (this.options.quickbooks) await this.quickbooks.start();
     if (this.options.google) await this.google.start();
-    await Promise.all([...this.services.values(), ...this.restServices].map((service) => service.start()));
+    await Promise.all(this.fakeServices().map((service) => service.start()));
     await this.discoveryCatalog?.start();
     await this.injected.start();
     for (const url of [
-      ...[...this.services.values(), ...this.restServices].map((service) => service.url),
+      ...this.fakeServices().map((service) => service.url),
       ...this.discoveryUrls,
       ...this.providerFakes().map(({ fake }) => fake.url),
       ...(this.options.quickbooks ? [this.quickbooks.url] : []),
@@ -248,7 +255,7 @@ export class World {
       this.traffic.push(attributeServed(url));
     if (this.injection.latencyMs) {
       const served = [
-        ...[...this.services.values(), ...this.restServices].map((service) => service.url),
+        ...this.fakeServices().map((service) => service.url),
         ...this.discoveryUrls,
         ...this.providerFakes().map(({ fake }) => fake.url),
         ...(this.options.quickbooks ? [this.quickbooks.url] : []),
@@ -267,7 +274,11 @@ export class World {
     for (const { fake } of this.providerFakes()) await fake.stop();
     if (this.options.quickbooks) await this.quickbooks.stop();
     if (this.options.google) await this.google.stop();
-    await Promise.allSettled([...this.services.values(), ...this.restServices].map((service) => service.stop()));
+    await Promise.allSettled(this.fakeServices().map((service) => service.stop()));
+  }
+
+  private fakeServices() {
+    return [...this.services.values(), ...this.restServices, ...this.presentation.map(({ service }) => service)];
   }
 
   /** The task's connectors, then any injected fault connectors. */
@@ -320,7 +331,14 @@ export class World {
           ? {}
           : { credential: { label: "Fake vendor credential", value: service.credential } }),
       }));
-    return [...this.services.values()].map((service) => {
+    const presented = this.presentation.map(({ service, title, description, purpose }) => ({
+      id: service.name,
+      title,
+      description,
+      purpose,
+      url: service.url,
+    }));
+    const base = [...this.services.values()].map((service) => {
       const id = service.name as ServiceId;
       return {
         id,
@@ -339,6 +357,7 @@ export class World {
           : {}),
       };
     });
+    return [...presented, ...base];
   }
 
   /** Messages the agent posted, in order. */

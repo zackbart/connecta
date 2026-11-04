@@ -1,6 +1,7 @@
 import { GOOGLE_EXPECTED } from "./google.js";
 import { GOOGLE_PRODUCTS } from "../fakes/google.js";
 import { PROVIDER_EVALS } from "./providers.generated.js";
+import { PRESENTATION_CHECK_KINDS } from "./presentation.js";
 /** Every task check is classified here. Unknown or missing entries fail closed. */
 import type { ActiveTask, Check } from "./types.js";
 import type { AgentTrace } from "../agent/trace.js";
@@ -17,6 +18,7 @@ export function parseGrading(value = "route"): Grading {
 const common = { route: [], outcome: ["correct-destination", "answer-evidence"] };
 export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }> = {
   ...Object.assign({}, ...PROVIDER_EVALS.map(({ tasks }) => tasks.checkKinds)),
+  ...PRESENTATION_CHECK_KINDS,
   "quickbooks-write-journey": {
     route: [],
     outcome: [
