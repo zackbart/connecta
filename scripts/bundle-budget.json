@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-04: Endpoint facts for the Eve helper, from the discovery extension and shared inventory title. Official Node 22.23.4 measures the root at 434,488 B on main at ec3a61f6, up 110 B on that main's 434,378 B and 8 B past its 434,480 B cap. The root cap moves to 434,600 B; examples/worker stays within its cap at 818,280 B.",
     "2026-11-04: Retained results stay unreadable until they pass the run's final secret set: the seal ledger, work tracking, a read-back with no rewriting and the typed refusal live in the root, api() registers a token request's credentials before its refresh claim, and serialization records binary evidence on the held entry. Official Node 22.23.4, which reproduced CI's sizes exactly at this PR's earlier heads, measures it at 434,376 B and 818,229 B, up 1,958 B and 1,741 B on CI's 432,418 B and 816,488 B for 7f355804. The caps move to 434,480 B and 818,330 B.",
     "2026-11-04: Merging main at 52eb543f (#1347) into the program failure reporting PR, with declared public identifier headers replacing the name rule. The official Node 22.23.4 binary measures the root at 432,528 B and examples/worker at 816,495 B. The caps move from main's 431,500 B and 815,600 B to 432,650 B and 816,650 B, pending owner approval.",
     "2026-11-04: Combined branch: program failure reporting, token-safe clips and identifier parameters merged with #1326. The official Node 22.23.4 binary measures the root at 426,232 B and examples/worker at 811,101 B, up 1,139 B and 1,515 B from #1326's 425,093 B and 809,586 B. The caps move to 426,400 B and 811,300 B.",
@@ -75,7 +76,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 434480
+      "maxGzip": 434600
     },
     "./json-schema": {
       "baselineGzip": 5870,
