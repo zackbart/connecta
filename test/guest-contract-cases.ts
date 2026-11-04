@@ -8,6 +8,7 @@ import { expect, vi } from "vitest";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
+import { registerInvocationAuth } from "../src/invocation-auth.js";
 import { GUEST_FUNCTIONS } from "../src/guest-functions.js";
 import { createMetaTools, type ToolResult } from "../src/meta-tools.js";
 import { downstreamSkillUri } from "../src/skills.js";
@@ -792,6 +793,328 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
 }
 
 /** Review regression: a write passed its gate but is still in admission. */
+/** Reads other than connecta.call end before the run does too. */
+/**
+ * The final gate (INV-9). Runs on the 2 s executor, whose reads stop at 1.8 s; a
+ * program write's own deadline runs on past that, so its auth step can cross the
+ * time with no timer to stop it. The hung read's deadline releases that step, so
+ * the crossing needs no sleep sized to the sandbox's startup.
+ */
+export async function checkDispatchGateAfterAuth(executor: Executor): Promise<void> {
+  const calls: Record<string, number> = {};
+  const count = (name: string) => {
+    calls[name] = (calls[name] ?? 0) + 1;
+  };
+  const world = () => {
+    let readsStopped = () => {};
+    const stopped = new Promise<void>((resolve) => {
+      readsStopped = resolve;
+    });
+    const first: Connector = {
+      id: "first",
+      kind: "api",
+      async listTools() {
+        return [{ name: "write", annotations: { readOnlyHint: false } }];
+      },
+      async callTool(name) {
+        count(`first.${name}`);
+        return { ok: true };
+      },
+    };
+    const clock: Connector = {
+      id: "clock",
+      kind: "api",
+      async listTools() {
+        return [readOnly("hung")];
+      },
+      callTool: async (_name, _args, ctx) =>
+        new Promise<never>((_resolve, reject) => {
+          ctx.signal!.addEventListener("abort", () => {
+            // Timers may round either way: clear the gate's time for certain.
+            setTimeout(readsStopped, 20);
+            reject(ctx.signal!.reason);
+          });
+        }),
+    };
+    const held: Connector = {
+      id: "held",
+      kind: "api",
+      async listTools() {
+        return [{ name: "write", annotations: { readOnlyHint: false } }];
+      },
+      async callTool(name) {
+        count(`held.${name}`);
+        return { ok: true };
+      },
+    };
+    registerInvocationAuth(held, () => stopped);
+    return makeRegistry([first, clock, held]);
+  };
+  const run = (code: string) => createExecuteTool(world(), CONTRACT_BASE, executor, silentLogger)({ code });
+  const crossing = `connecta.call("clock.hung", {}, { timeoutMs: 600000 }).catch(() => {});
+      await connecta.call("held.write", {});`;
+
+  // With no write landed, the refusal stays retryable and proven unsent. Past its
+  // budget gate, the write counts as one that failed: nothing applied.
+  const alone = await run(`async () => {
+    ${crossing}
+    return "sent";
+  }`);
+  expect(alone.isError).toBe(true);
+  const refused = required(alone.structuredContent).error as Record<string, unknown>;
+  expect(refused).toMatchObject({
+    code: "timeout",
+    retryable: true,
+    details: { operation: "held.write", stage: "dispatch gate" },
+    writes: { succeeded: 0, failed: 1, unknown: 0 },
+  });
+  expect(refused["message"]).toContain("not sent");
+  expect(calls["held.write"]).toBeUndefined();
+
+  // After a write landed: running the program again would repeat that write.
+  const composed = await run(`async () => {
+    await connecta.call("first.write", {});
+    ${crossing}
+    return "sent";
+  }`);
+  expect(composed.isError).toBe(true);
+  const structured = required(composed.structuredContent);
+  expect(structured.error).toMatchObject({
+    code: "timeout",
+    retryable: false,
+    details: { operation: "held.write", stage: "dispatch gate" },
+    writes: { succeeded: 1, failed: 1, unknown: 0 },
+  });
+  expect(structured.error).not.toHaveProperty("retryAfterMs");
+  expect((structured.error as { note: string }).note).toContain("would repeat them");
+  expect(calls["first.write"]).toBe(1);
+  expect(calls["held.write"]).toBeUndefined();
+}
+
+/**
+ * The final gate after catalog resolution crosses the time. Only a jump in the
+ * clock models it on every runtime: workerd's clock stands still through synchronous
+ * work, the case the timers cannot see. The write's earlier gate catches the same
+ * crossing, so the read is what this gate adds.
+ */
+export async function checkDispatchGateAfterCatalog(executor: Executor): Promise<void> {
+  const calls: string[] = [];
+  const now = Date.now.bind(Date);
+  const clockJump = vi.spyOn(Date, "now");
+  try {
+    const stalled: Connector = {
+      id: "stalled",
+      kind: "api",
+      async listTools() {
+        clockJump.mockImplementation(() => now() + 1_800);
+        return [readOnly("read"), { name: "write", annotations: { readOnlyHint: false } }];
+      },
+      async callTool(name) {
+        calls.push(name);
+        return { ok: true };
+      },
+    };
+    const out = await createExecuteTool(
+      makeRegistry([stalled]),
+      CONTRACT_BASE,
+      executor,
+      silentLogger,
+    )({
+      code: `async () => {
+        const failure = async (address) => {
+          try {
+            await connecta.call(address, {});
+            return "sent";
+          } catch (error) {
+            return { retryable: error.retryable, details: error.details.details };
+          }
+        };
+        return { read: await failure("stalled.read"), write: await failure("stalled.write") };
+      }`,
+    });
+    expect(out.isError, required(out.content[0]).text).toBeFalsy();
+    expect(required(out.structuredContent).result).toMatchObject({
+      read: { retryable: true, details: { operation: "stalled.read", stage: "dispatch gate" } },
+      write: { retryable: true, details: { operation: "stalled.write", stage: "write gate" } },
+    });
+    expect(calls).toEqual([]);
+  } finally {
+    clockJump.mockRestore();
+  }
+}
+
+/**
+ * A program that stalls past the response ceiling (`stall`: guest source). Nothing
+ * wrote: running it again is safe. A write landed first: running it again repeats
+ * that write, so no failure may invite it (INV-9). `stall` differs per executor:
+ * QuickJS fails an unsettleable await fast, as documented, so it spins instead.
+ */
+export async function checkStallAtCeiling(executor: Executor, stall: string): Promise<void> {
+  let writes = 0;
+  const tracker: Connector = {
+    id: "tracker",
+    kind: "api",
+    async listTools() {
+      return [readOnly("read"), { name: "write", annotations: { readOnlyHint: false } }];
+    },
+    async callTool(name) {
+      if (name === "write") writes++;
+      return { ok: true };
+    },
+  };
+  const run = async (first: string) => {
+    const out = await createExecuteTool(makeRegistry([tracker]), CONTRACT_BASE, executor, silentLogger, undefined, {
+      watchdogMs: 1_500,
+    })({ code: `async () => { await connecta.call(${JSON.stringify(first)}, {}); ${stall} }` });
+    expect(out.isError).toBe(true);
+    return required(out.structuredContent).error as Record<string, unknown>;
+  };
+  expect(await run("tracker.read")).toMatchObject({
+    code: "timeout",
+    retryable: true,
+    details: { stage: "response ceiling" },
+  });
+  expect(writes).toBe(0);
+  const wrote = await run("tracker.write");
+  expect(wrote).toMatchObject({
+    code: "timeout",
+    retryable: false,
+    details: { stage: "response ceiling" },
+    writes: { succeeded: 1, failed: 0, unknown: 0 },
+  });
+  expect(wrote["note"]).toContain("would repeat them");
+  expect(writes).toBe(1);
+}
+
+export async function checkReadDeadlineUtilities(executor: Executor): Promise<void> {
+  let listing: "hang" | "ready" = "ready";
+  const slow: Connector = {
+    id: "slow",
+    kind: "api",
+    async listTools() {
+      if (listing === "hang") await new Promise<never>(() => {});
+      return [readOnly("read")];
+    },
+    async readResource() {
+      return new Promise<never>(() => {});
+    },
+    async callTool() {
+      return true;
+    },
+  };
+  const execute = createExecuteTool(makeRegistry([slow]), CONTRACT_BASE, executor, silentLogger);
+  const started = Date.now();
+  const read = await execute({
+    code: `async () => {
+      const failed = await connecta.read("resource://slow/" + encodeURIComponent("docs://hanging")).catch((error) => error);
+      return { code: failed.code, retryable: failed.retryable };
+    }`,
+  });
+  expect(read.isError, read.content[0]?.text).toBeFalsy();
+  expect(required(read.structuredContent).result).toEqual({ code: "timeout", retryable: true });
+  listing = "hang";
+  const discovery = await execute({
+    code: `async () => {
+      const settled = await Promise.allSettled([
+        connecta.search({ connector: "slow" }),
+        connecta.describe({ address: "slow.read" }),
+      ]);
+      return settled.map(({ status, reason }) => ({ status, code: reason?.code, retryable: reason?.retryable }));
+    }`,
+  });
+  expect(discovery.isError, discovery.content[0]?.text).toBeFalsy();
+  expect(required(discovery.structuredContent).result).toEqual([
+    { status: "rejected", code: "timeout", retryable: true },
+    { status: "rejected", code: "timeout", retryable: true },
+  ]);
+  expect(Date.now() - started).toBeGreaterThan(1_000);
+}
+
+/**
+ * The cap ends the work, not only the wait: the downstream signal aborts before
+ * the program hears `timeout`, on every read path it covers, and the run is still
+ * going when that happens, so teardown is not what aborted it.
+ */
+export async function checkReadDeadlineCancels(executor: Executor): Promise<void> {
+  const operations = [
+    { name: "search", code: `connecta.search({ connector: "slow" })` },
+    { name: "describe", code: `connecta.describe({ address: "slow.read" })` },
+    { name: "call", code: `connecta.call("slow.read", {}, { timeoutMs: 600000 })` },
+    { name: "read", code: `connecta.read("resource://slow/" + encodeURIComponent("docs://hanging"))` },
+    { name: "skill", code: `connecta.skill(${JSON.stringify(downstreamSkillUri("slow", "skill://guide/SKILL.md"))})` },
+    { name: "result", code: `connecta.result(RESULT_ID)` },
+  ];
+  for (const { name, code } of operations) {
+    let hang = false;
+    let aborts = 0;
+    let startedWork = 0;
+    let settledAfterAborts: number | undefined;
+    const hanging = (signal: AbortSignal | undefined) => {
+      startedWork++;
+      signal?.addEventListener("abort", () => aborts++, { once: true });
+      return new Promise<never>(() => {});
+    };
+    const slow: Connector = {
+      id: "slow",
+      kind: "api",
+      async listTools(ctx) {
+        return hang ? hanging(ctx.signal) : [readOnly("read")];
+      },
+      async readResource(_uri, ctx) {
+        return hanging(ctx.signal);
+      },
+      downstreamSkills: {
+        list: (ctx) => hanging(ctx.signal),
+        read: (_uri, ctx) => hanging(ctx.signal),
+      },
+      async callTool() {
+        return { padding: "x".repeat(30_000) };
+      },
+    };
+    const observed = customExecutor(
+      {
+        deadlineMs: required(executor.deadlineMs),
+        execute: (program, providers) =>
+          executor.execute(
+            program,
+            providers.map((provider) => ({
+              ...provider,
+              fns: Object.fromEntries(
+                Object.entries(provider.fns).map(([fn, call]) => [
+                  fn,
+                  (...args: unknown[]) =>
+                    call(...args).finally(() => {
+                      if (fn === name) settledAfterAborts = aborts;
+                    }),
+                ]),
+              ),
+            })),
+          ),
+      },
+      { lifecycle: "self-managed" },
+    );
+    const execute = createExecuteTool(makeRegistry([slow]), CONTRACT_BASE, observed, silentLogger);
+    let program = code;
+    if (name === "result") {
+      // An id from a run with a working catalog; reading it rechecks access.
+      const stored = await execute({ code: `async () => (await connecta.call("slow.read")).data` });
+      const { resultId } = required(stored.structuredContent).result as { resultId: string };
+      program = code.replace("RESULT_ID", JSON.stringify(resultId));
+    }
+    hang = true;
+    const outcome = await execute({
+      code: `async () => {
+        const failed = await ${program}.catch((error) => error);
+        return { code: failed.code, retryable: failed.retryable };
+      }`,
+    });
+    expect(outcome.isError, `${name}: ${outcome.content[0]?.text}`).toBeFalsy();
+    expect(required(outcome.structuredContent).result, name).toEqual({ code: "timeout", retryable: true });
+    expect(startedWork, `${name} reached downstream work`).toBeGreaterThan(0);
+    expect(settledAfterAborts, `${name}'s downstream signal aborted before the program heard`).toBe(startedWork);
+  }
+}
+
 export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {
   let releaseRead!: () => void;
   const blocked = new Promise<void>((resolve) => {
@@ -902,8 +1225,10 @@ export interface ContractCase {
   code: string;
   /** A second program run on the same executor, for cross-run clauses. */
   follows?: string;
-  /** Set for the cases that need a short-deadline executor. */
-  deadline?: true;
+  /** Set for the cases that need a read cap and a run deadline apart: a 2 s executor. */
+  runDeadline?: true;
+  /** `execute.watchdogMs`, the response ceiling, for cases that reach it. */
+  watchdogMs?: number;
   /** Small output budget for utility-budget contract cases. */
   maxEmittedBytes?: number;
   /** Bounded stash capacity for native result transfer cases. */
@@ -1260,10 +1585,22 @@ function contractConnectors(state: ContractState): Connector[] {
     kind: "api",
     description: "Never answers",
     async listTools() {
-      return [readOnly("read")];
+      return [
+        readOnly("read"),
+        { name: "write", annotations: { readOnlyHint: false } },
+        { name: "slow_write", annotations: { readOnlyHint: false } },
+        { name: "hung_write", annotations: { readOnlyHint: false } },
+      ];
     },
-    async callTool() {
-      count("hang.read");
+    async callTool(name, args) {
+      count(`hang.${name}`);
+      // Outlasts the case's run deadline and its read cap, and then answers.
+      if (name === "slow_write") {
+        await new Promise((resolve) => setTimeout(resolve, (args as { ms: number }).ms));
+        return { written: "slow-write-output" };
+      }
+      if (name === "write") return { written: "write-output" };
+      // Every other tool never answers, past any deadline a case can set.
       return new Promise<never>(() => {});
     },
   };
@@ -1311,6 +1648,7 @@ function contractConnectors(state: ContractState): Connector[] {
 interface CaseConfig {
   maxEmittedBytes?: number;
   readOnly?: boolean;
+  watchdogMs?: number;
 }
 
 /** The execute_code configuration a case asks for, the same on every arm. */
@@ -1318,6 +1656,7 @@ export function caseConfig(contractCase: ContractCase): CaseConfig {
   return {
     ...(contractCase.maxEmittedBytes !== undefined ? { maxEmittedBytes: contractCase.maxEmittedBytes } : {}),
     ...(contractCase.readOnly ? { readOnly: true } : {}),
+    ...(contractCase.watchdogMs !== undefined ? { watchdogMs: contractCase.watchdogMs } : {}),
   };
 }
 
@@ -3587,20 +3926,183 @@ return fs;
     },
   },
   {
-    clauses: "L3, X1",
-    name: "an execution that outruns its deadline ends as an error",
-    deadline: true,
+    clauses: "L3, X1, W9",
+    name: "an execution that outruns its deadline ends as an error, and the drain learns its write's outcome",
+    runDeadline: true,
+    // Past the read cap and the run deadline: only a write still runs this long.
     code: `async () => {
-      await connecta.call("hang.read", {}).then(({ data }) => data);
+      await connecta.call("hang.slow_write", { ms: 2500 }, { timeoutMs: 600000 });
       return "never";
     }`,
-    check(outcome) {
+    check(outcome, state) {
       expect(outcome.isError).toBe(true);
       // Either side of the QuickJS deadline may end it: the child reports its
       // own timeout, or, when a loaded host delays that report past the
       // parent's grace, the parent terminates the child at its wall budget.
       // Both are this clause; a hang or an unrelated error is not.
       expect(outcome.text.toLowerCase()).toMatch(/timed out|timeout|wall budget/);
+      expect(outcome.value.error).toMatchObject({
+        code: "timeout",
+        retryable: false,
+        details: { operation: "execute_code" },
+        writes: { succeeded: 1, failed: 0, unknown: 0 },
+      });
+      expect(state.calls["hang.slow_write"]).toBe(1);
+    },
+  },
+  {
+    clauses: "L3, Y2",
+    name: "a hanging read becomes a catchable timeout, and fast results survive under allSettled",
+    runDeadline: true,
+    code: `async () => {
+      const settled = await Promise.allSettled([
+        connecta.call("reader.read", { value: "fast" }),
+        // A request longer than the run does not buy time past it.
+        connecta.call("hang.read", {}, { timeoutMs: 600000 }),
+      ]);
+      return {
+        fast: settled[0].value.data.echo,
+        code: settled[1].reason.code,
+        retryable: settled[1].reason.retryable,
+        operation: settled[1].reason.details.details.operation,
+        deadlineMs: settled[1].reason.details.details.deadlineMs,
+      };
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({
+        fast: "fast",
+        code: "timeout",
+        retryable: true,
+        operation: "hang.read",
+      });
+      // Capped below the 2 s run deadline, by its margin of a tenth.
+      expect((outcome.result as { deadlineMs: number }).deadlineMs).toBeLessThanOrEqual(1_800);
+      expect(state.calls["hang.read"]).toBe(1);
+    },
+  },
+  {
+    clauses: "L3, E2",
+    name: "an uncaught hanging read fails the run as its own retryable timeout",
+    runDeadline: true,
+    code: `async () => {
+      await connecta.call("hang.read", {}, { timeoutMs: 600000 });
+      return "never";
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "timeout",
+        retryable: true,
+        details: { operation: "hang.read" },
+      });
+    },
+  },
+  {
+    clauses: "L3, W9, W10",
+    name: "a write too close to the run deadline is refused unsent",
+    runDeadline: true,
+    code: `async () => {
+      await connecta.call("hang.read", {}, { timeoutMs: 600000 }).catch(() => {});
+      try {
+        await connecta.call("hang.write", {});
+        return "sent";
+      } catch (error) {
+        return { code: error.code, retryable: error.retryable, message: error.message };
+      }
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({ code: "timeout", retryable: true });
+      expect(state.calls["hang.write"]).toBeUndefined();
+      expect(outcome.value.writes).toBeUndefined();
+    },
+  },
+  {
+    clauses: "L3, W9, INV-9",
+    name: "a write still on the wire at the response ceiling is reported unknown, once, in the response",
+    runDeadline: true,
+    watchdogMs: 2_500,
+    code: `async () => {
+      await connecta.call("reader.read", { value: "first" });
+      await connecta.call("hang.hung_write", {}, { timeoutMs: 600000 });
+      return "never";
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "write_outcome_unknown",
+        retryable: false,
+        writes: { succeeded: 0, failed: 0, unknown: 1 },
+        details: { operation: "hang.hung_write" },
+      });
+      // A request for ten minutes buys nothing past the ceiling.
+      const { deadlineMs } = (outcome.value.error as { details: { deadlineMs: number } }).details;
+      expect(deadlineMs).toBeLessThanOrEqual(2_500);
+      expect(outcome.value.hostCalls).toMatchObject({ attempted: 2, succeeded: 1 });
+      expect(state.calls["hang.hung_write"]).toBe(1);
+    },
+  },
+  {
+    clauses: "L3, E2",
+    name: "a hanging read at the run deadline still reports the program's host calls",
+    runDeadline: true,
+    watchdogMs: 2_500,
+    code: `async () => {
+      await connecta.call("reader.read", { value: "first" });
+      await connecta.call("hang.read", {}, { timeoutMs: 600000 });
+      return "never";
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      // The read's own timeout or, on a loaded host, the sandbox's: both keep the counts.
+      expect(outcome.value.error).toMatchObject({ code: "timeout" });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 2, admitted: 2, succeeded: 1, failed: 1 });
+    },
+  },
+  {
+    clauses: "L3, INV-9",
+    name: "a read's retryable timeout ending a program after a successful write leaves it not retryable",
+    runDeadline: true,
+    watchdogMs: 1_500,
+    code: `async () => {
+      await connecta.call("hang.write", {});
+      await connecta.call("hang.read", {}, { timeoutMs: 600000 });
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "timeout",
+        retryable: false,
+        details: { operation: "hang.read" },
+        writes: { succeeded: 1, failed: 0, unknown: 0 },
+      });
+      expect(state.calls["hang.write"]).toBe(1);
+    },
+  },
+  {
+    clauses: "L3, W9, INV-9",
+    name: "the write gate's retryable refusal ending a program after a successful write leaves it not retryable",
+    runDeadline: true,
+    watchdogMs: 1_500,
+    code: `async () => {
+      await connecta.call("hang.write", {});
+      try {
+        await connecta.call("hang.read", {}, { timeoutMs: 600000 });
+      } catch {}
+      await connecta.call("hang.write", {});
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "timeout",
+        retryable: false,
+        details: { stage: "write gate" },
+        writes: { succeeded: 1, failed: 0, unknown: 0 },
+      });
+      expect((outcome.value.error as { message: string }).message).toContain("not sent");
+      // The refused write stayed home: replaying the first would be the only way to double it.
+      expect(state.calls["hang.write"]).toBe(1);
     },
   },
 ];
