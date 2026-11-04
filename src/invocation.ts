@@ -12,6 +12,7 @@ import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } fr
 import { CatalogService, type ResolvedCatalogTool } from "./catalog-service.js";
 import {
   boundedEchoText,
+  clipText,
   classificationCode,
   classifyCallError,
   classifyWithoutAdvice,
@@ -33,6 +34,7 @@ import {
   failureRecord,
   logFailure,
   recordedToolName,
+  labelErrorClass,
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { causeError, runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -166,7 +168,19 @@ function isCallerCancellation(error: unknown, signal: AbortSignal | undefined): 
  * plain `Error`: untyped and non-retryable. It is a read's answer; for a
  * write it is a 2xx reply after which the handler may have applied it.
  */
-class DownstreamToolError extends Error {}
+class DownstreamToolError extends Error {
+  /** Everything it said, kept for a program's report; the message is what fits a result. */
+  readonly #text: string;
+  constructor(text: string) {
+    super(clipText(text));
+    this.#text = text;
+  }
+  fullText(): string {
+    return this.#text;
+  }
+}
+// Records tell the tool's own answer from a transport or runtime failure.
+labelErrorClass(DownstreamToolError, "DownstreamToolError");
 
 function isTimeoutFailure(error: CallErrorDetails): boolean {
   const code = error.details?.code;
@@ -185,12 +199,10 @@ function assertRawMcpSuccess(kind: ResolvedCatalogTool["connector"]["kind"], res
   };
   if (!mcpResult.isError) return;
   throw new DownstreamToolError(
-    boundedEchoText(
-      mcpResult.content
-        ?.filter((block) => block.type === "text")
-        .map((block) => block.text ?? "")
-        .join("") || "Downstream tool call failed",
-    ),
+    mcpResult.content
+      ?.filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("\n") || "Downstream tool call failed",
   );
 }
 
@@ -239,6 +251,12 @@ export type InvocationOutcome<T> =
        * (an MCP `isError`). Absent when nothing was dispatched.
        */
       answered?: boolean;
+      /**
+       * A tool's complete `isError` text when `error.message` holds what fit. A
+       * program's write report redacts it again at the end of the run; it stays in
+       * memory for this request and never reaches activity or a log.
+       */
+      failureText?: string;
     });
 
 /**
@@ -363,6 +381,7 @@ export class InvocationService {
       const recoveryState = recoveryRecord();
       let preInvocationAuthFailure = false;
       let answered = false;
+      let failureText: string | undefined;
       // A dispatched failure's advice to send it again, composed by enrich
       // only once the outcome allows it (resendAdvice), and its advice to
       // reuse an idempotency key, only where that key protects the whole
@@ -497,7 +516,9 @@ export class InvocationService {
             writeOutcome: "unknown",
             ...(!recovery && error.retry === undefined
               ? {
-                  retry: "No safe replay action exists. Re-read the target to reconcile whether the write took effect.",
+                  retry: error.toolAnswered
+                    ? "Its outcome is unknown: its handler ran before it answered, so check its target before acting. Give the user any approval link or request id in the message. Connecta will not resend it; a call the tool's words ask for is a new call."
+                    : "No safe replay action exists. Re-read the target to reconcile whether the write took effect.",
                 }
               : {}),
           };
@@ -743,6 +764,7 @@ export class InvocationService {
           ...defined({ resolved }),
           dispatched: dispatchedToConnector,
           ...(dispatchedToConnector ? { answered } : {}),
+          ...defined({ failureText }),
           error: details,
         });
         // A write refused only because its program had already returned
@@ -1068,6 +1090,11 @@ export class InvocationService {
             const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
             // An inner call's verdict that does not hold for this one is withdrawn.
             if (failureWrite && !answered) forgetProviderFailure(details);
+            // The tool's own words, which a program's write accounting keeps.
+            if (failureWrite && attemptError === thrown && thrown instanceof DownstreamToolError) {
+              details.toolAnswered = true;
+              failureText = thrown.fullText();
+            }
             return details;
           }
           if ("pastDeadline" in attempt.value) return attempt.value.pastDeadline;

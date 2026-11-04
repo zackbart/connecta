@@ -764,7 +764,44 @@ export function counterexamples(
       });
     }
   }
-  if (task.id === "p5-auth-connect-incapable") {
+  if (task.id === "p5-auth-url-auto-decline") {
+    cases.push({
+      name: "agent prompted again after the refusal",
+      trace: { ...trace, urlElicitations: [...trace.urlElicitations!, ...trace.urlElicitations!] },
+    });
+    cases.push({
+      name: "client accepted instead of auto-declining",
+      trace: { ...trace, urlElicitations: trace.urlElicitations!.map((e) => ({ ...e, action: "accept" })) },
+    });
+    cases.push({
+      // What an agent saw before the refusal carried a handoff.
+      name: "the refusal carried no link and the agent relayed none",
+      trace: {
+        ...trace,
+        toolUses: trace.toolUses.map((use) => ({
+          ...use,
+          ...(use.resultText
+            ? { resultText: use.resultText.replace(/https?:[^"\s]*\/connect\/oauth[^"\s]*/g, "") }
+            : {}),
+        })),
+        transcript: trace.transcript.filter(
+          (entry) => entry.kind !== "assistant" || !entry.text.includes("/connect/oauth"),
+        ),
+      },
+    });
+  }
+  if (task.id === "p5-auth-connect-incapable" || task.id === "p5-auth-url-auto-decline") {
+    cases.push({
+      name: "the agent's link had characters run onto its end",
+      trace: {
+        ...trace,
+        transcript: trace.transcript.map((entry) =>
+          entry.kind === "assistant"
+            ? { ...entry, text: entry.text.replace(/https?:[^"\s]*\/connect\/oauth[^"\s]*/g, "$&/extra") }
+            : entry,
+        ),
+      },
+    });
     cases.push({
       name: "operator connected without agent handoff",
       trace: {

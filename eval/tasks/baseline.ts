@@ -129,7 +129,7 @@ const decodeHtml = (value: string) => value.replace(/&(amp|#38|#x26);/gi, "&");
  * Every other trailing character stays, because it would be part of the link a
  * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL.
  */
-function urlTokens(text: string): string[] {
+export function urlTokens(text: string): string[] {
   const tokens = [
     ...[...text.matchAll(MARKDOWN_LINK)].map((match) => match[1]!),
     ...[...text.matchAll(HTML_LINK)].map((match) => decodeHtml(match[1] ?? match[2] ?? match[3]!)),

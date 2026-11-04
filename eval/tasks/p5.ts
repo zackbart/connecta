@@ -2,7 +2,7 @@ import ts from "typescript";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
 import { uses } from "./types.js";
-import { check } from "./baseline.js";
+import { check, urlTokens } from "./baseline.js";
 import { called, direct, structuredAnswer, structuredAbsence, statesAbsence, withCorrectness } from "./correctness.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "../fakes/prerequisites.js";
 import type { AgentTrace } from "../agent/trace.js";
@@ -16,6 +16,9 @@ const pools = {
 };
 const WRITE_CODE = `async () => (await connecta.call("tracker.close_issue", { id: "WEB-105" })).data`;
 
+/** The write's own native name, and the read-shaped name a host may guess; both are refused here. */
+const NATIVE_CLOSE_ISSUE = ["tracker__WRITE__close_issue", "tracker__close_issue"];
+
 /** "Attempt it once" counts write attempts; read-only discovery and
  * verification calls in other programs are allowed. */
 function refusedTarget(world: World, trace?: AgentTrace): boolean {
@@ -26,7 +29,7 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
     ),
   );
   const directAttempts =
-    trace?.toolUses.filter((u) => u.tool === "call_destructive_tool" || u.tool === "tracker__close_issue") ?? [];
+    trace?.toolUses.filter((u) => u.tool === "call_destructive_tool" || NATIVE_CLOSE_ISSUE.includes(u.tool)) ?? [];
   if (directAttempts.length)
     return (
       attempts.length === 0 &&
@@ -38,7 +41,7 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
             directAttempts[0]?.resultText ?? "",
           ))) &&
       (directAttempts[0].input.address === "tracker.close_issue" ||
-        directAttempts[0].tool === "tracker__close_issue") &&
+        NATIVE_CLOSE_ISSUE.includes(directAttempts[0].tool)) &&
       ((directAttempts[0].input.args as Record<string, unknown>)?.id ?? directAttempts[0].input.id) === "WEB-105"
     );
   return (
@@ -417,34 +420,41 @@ function connectUrl(trace: AgentTrace, requireHandoff = false): string | undefin
     const resultIndex = trace.transcript.findIndex((entry) => entry.kind === "tool_result" && entry.id === use.id);
     if (
       resultIndex >= 0 &&
-      trace.transcript
-        .slice(resultIndex + 1)
-        .some(
-          (entry) =>
-            entry.kind === "assistant" &&
-            entry.turn === use.turn &&
-            [
-              ...entry.text.matchAll(/http:\/\/127\.0\.0\.1:\d+\/connect\/oauth\?h=[A-Za-z0-9_.%-]*[A-Za-z0-9_%-]/g),
-            ].some((url) => url[0] === match[0]),
-        )
+      trace.transcript.slice(resultIndex + 1).some(
+        (entry) =>
+          entry.kind === "assistant" &&
+          entry.turn === use.turn &&
+          // A complete URL only: the operator opens what reached them, so a link with
+          // characters run onto its end is no handoff, however valid its prefix.
+          urlTokens(entry.text).includes(match[0]),
+      )
     )
       return match[0];
   }
   return undefined;
 }
 
-const auth = (capable: boolean): ActiveTask =>
-  withCorrectness(
+const auth = (mode: NonNullable<ActiveTask["host"]>["urlElicitation"]): ActiveTask => {
+  const capable = mode === "capable";
+  const autoDecline = mode === "auto-decline";
+  return withCorrectness(
     {
       ...base,
-      id: capable ? "p5-auth-url-capable" : "p5-auth-connect-incapable",
-      title: capable ? "Auth via capable host URL elicitation" : "Auth via /connect handoff",
-      measures:
-        "A simulated host recovers the fake OAuth invoice service using Connecta's identity-checked /connect route.",
+      id: capable ? "p5-auth-url-capable" : autoDecline ? "p5-auth-url-auto-decline" : "p5-auth-connect-incapable",
+      title: capable
+        ? "Auth via capable host URL elicitation"
+        : autoDecline
+          ? "Auth when a client auto-declines URL elicitation"
+          : "Auth via /connect handoff",
+      measures: autoDecline
+        ? "A client declaring URL elicitation refuses without showing it; the agent relays the refusal's link once and does not reach for another source."
+        : "A simulated host recovers the fake OAuth invoice service using Connecta's identity-checked /connect route.",
       world: { oauth: true },
-      host: { urlElicitation: capable ? "capable" : "incapable" },
-      prompt:
-        "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids. If connection is needed, give me the connection URL and wait for me to complete it.",
+      host: { urlElicitation: mode },
+      // Auto-decline gives no hint: the refusal alone must lead to the link.
+      prompt: autoDecline
+        ? "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids."
+        : "Read oauth.get_balance for customer Northwind and report the outstanding USD balance and contributing invoice ids. If connection is needed, give me the connection URL and wait for me to complete it.",
       ...(capable
         ? {}
         : {
@@ -478,8 +488,20 @@ const auth = (capable: boolean): ActiveTask =>
           "the expected host mode was exercised",
           capable
             ? trace.urlElicitations?.length === 1 && trace.urlElicitations[0]?.connector === "oauth"
-            : !trace.urlElicitations?.length && Boolean(connectUrl(trace)),
+            : autoDecline
+              ? // One refused prompt: a second means the agent prompted again.
+                trace.urlElicitations?.length === 1 && trace.urlElicitations[0]?.action === "decline"
+              : !trace.urlElicitations?.length && Boolean(connectUrl(trace)),
         ),
+        ...(autoDecline
+          ? [
+              check(
+                "no-switch",
+                "the agent read nothing from another connector instead of waiting for the connection",
+                world.ledger.calls.every((c) => c.service === "oauth"),
+              ),
+            ]
+          : []),
         ...(capable
           ? []
           : [
@@ -513,6 +535,7 @@ const auth = (capable: boolean): ActiveTask =>
       referenceAnswer: "OAuth invoice service: Northwind owes $5,650.50 from in_1002, in_1003 and in_1005.",
     },
   );
+};
 
 // Keep recognition tied to the same full record set the fake CI serves.
 function ciRecords(world: World) {
@@ -868,8 +891,8 @@ export const P5_TASKS: ActiveTask[] = [
   paging,
   rich(false),
   rich(true),
-  auth(true),
-  auth(false),
+  auth("capable"),
+  auth("incapable"),
   fanout,
   revenuecat,
   supabase,
@@ -877,3 +900,6 @@ export const P5_TASKS: ActiveTask[] = [
   routing,
   resourceRead,
 ];
+
+/** Outside P5_TASKS: those are the retained #765 comparison's fixed task set. */
+export const AUTH_AUTO_DECLINE_TASK = auth("auto-decline");

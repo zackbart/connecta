@@ -109,7 +109,7 @@ async () => {
 }
 \`\`\`
 
-Oversized returns lead with nextAction. Never rerun writes for output. write_outcome_unknown or writeOutcome forbids retry, even if caught.
+Oversized returns lead with nextAction. Never rerun writes for output. write_outcome_unknown or writeOutcome forbids retry, even if caught. Give the user any approval link in the tool's words; a call after approval is new.
 Recovery args may be partial (argsRedacted) or absent (argsOmitted). Reconcile
 before retrying with the original args or repeating a program that sent writes.
 Non-retryable errors need repair.
