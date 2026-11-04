@@ -234,6 +234,7 @@ let providePoolProgram: (pool: QuickJsChildPool) => void;
 class QuickJsChildPool implements AdmittingExecutor {
   /** What `/health` and `connecta doctor` call this sandbox. */
   readonly name = "QuickJS";
+  readonly deadlineMs: number;
   private readonly admission: AdmissionController;
   private readonly slots: ChildSlot[];
   private readonly available: ChildSlot[];
@@ -259,6 +260,7 @@ class QuickJsChildPool implements AdmittingExecutor {
       memoryLimitBytes: positiveWhole(options.memoryLimitBytes, DEFAULT_MEMORY_LIMIT_BYTES, "memoryLimitBytes"),
       maxStackSizeBytes: positiveWhole(options.maxStackSizeBytes, DEFAULT_STACK_LIMIT_BYTES, "maxStackSizeBytes"),
     };
+    this.deadlineMs = this.runtimeOptions.timeoutMs;
     this.slots = Array.from({ length: concurrency }, () => ({
       crashes: [],
       notBefore: 0,
