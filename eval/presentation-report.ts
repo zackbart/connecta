@@ -9,9 +9,12 @@
  *   --max-load            wait before a batch while the 1-minute load is above this (default 30)
  *   --budget              refuse to plan past this many trials across --dir (default 150)
  *
+ * The run spends only what is missing: it counts valid trials per arm and task,
+ * so an interrupted batch resumes without repeating a paid trial.
+ *
  * The report refuses files that fail the comparator's measured provenance or
- * that differ in anything but the arm and task set. It reaches no decision: it
- * prints how many trials separate each arm from its control.
+ * that differ in anything but the arm, task set and repeat count. It reaches no
+ * decision: it prints how many trials separate each arm from its control.
  */
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -202,7 +205,11 @@ function table(summaries: ArmSummary[]): string[] {
 
 const armOf = (file: AgentResultFile) => file.config.presentation ?? "control";
 
-/** Every file must be a fresh measured batch; files may differ only in arm and task set. */
+/**
+ * Every file must be a fresh measured batch; files may differ only in arm, task
+ * set and repeat count. An early stop leaves its finished trials valid: the
+ * report counts each cell against the plan, so a missing trial still shows.
+ */
 export function presentationProvenance(files: AgentResultFile[]): string[] {
   const reasons: string[] = [];
   for (const file of files) {
@@ -211,12 +218,12 @@ export function presentationProvenance(files: AgentResultFile[]): string[] {
     if (file.config.target !== PRESENTATION_PLAN.target) reasons.push(`${label}: must run on the worker target`);
     if (file.config.injection?.catalogTools !== PRESENTATION_PLAN.catalogTools)
       reasons.push(`${label}: must pad the catalog with ${PRESENTATION_PLAN.catalogTools} tools`);
-    if (file.stopped) reasons.push(`${label}: stopped early: ${file.stopped}`);
   }
   for (const runner of new Set(files.map((file) => file.config.runner))) {
     const same = files.filter((file) => file.config.runner === runner);
     for (const other of same.slice(1))
-      for (const label of settingMismatches(same[0]!, other, ["presentation", "tasks"]))
+      // A top-up file holds only the trials an interrupted batch lacked.
+      for (const label of settingMismatches(same[0]!, other, ["presentation", "tasks", "repeats"]))
         reasons.push(`${runner}: arms must share ${label}`);
   }
   return [...new Set(reasons)];
@@ -269,6 +276,9 @@ export function readPresentationFiles(dir: string): AgentResultFile[] {
     .map((name) => JSON.parse(readFileSync(join(dir, name), "utf8")) as AgentResultFile);
 }
 
+const ACCOUNT_LIMIT = /auth|rate.?limit|usage limit|quota/i;
+const MAX_ATTEMPTS = 3;
+
 async function runPlan(args: Map<string, string>, dir: string): Promise<void> {
   const runner = args.get("runner");
   const pairId = args.get("pair-id");
@@ -277,72 +287,76 @@ async function runPlan(args: Map<string, string>, dir: string): Promise<void> {
   const maxLoad = Number(args.get("max-load") ?? 30);
   const budget = Number(args.get("budget") ?? 150);
   const only = args.get("experiments")?.split(",") as ExperimentId[] | undefined;
-  const batches = plannedBatches(runner === "codex", only);
   await mkdir(dir, { recursive: true });
-  const outOf = (id: string) => join(dir, `${id}-${runner}.json`);
-  const done = (id: string, count: number) => {
-    const out = outOf(id);
-    if (!existsSync(out)) return false;
-    const file = JSON.parse(readFileSync(out, "utf8")) as AgentResultFile;
-    return !file.stopped && file.trials.length === count;
-  };
-  const trialsOf = (tasks: string[]) => tasks.length * PRESENTATION_PLAN.repeats;
-  const already = existsSync(dir) ? readPresentationFiles(dir).reduce((n, file) => n + file.trials.length, 0) : 0;
-  const planned = batches
-    .filter((batch) => !done(batch.id, trialsOf(batch.tasks)))
-    .reduce((n, batch) => n + trialsOf(batch.tasks), 0);
-  console.error(`[presentation] ${already} trial(s) on disk, ${planned} planned for ${runner}, budget ${budget}`);
-  if (already + planned > budget) throw new Error(`Plan exceeds the budget of ${budget} trials`);
-  for (const batch of batches) {
-    if (done(batch.id, trialsOf(batch.tasks))) continue;
-    for (let load = loadavg()[0]!; load > maxLoad; load = loadavg()[0]!) {
-      console.error(
-        `[presentation] ${new Date().toISOString()} 1-minute load ${load.toFixed(1)} > ${maxLoad}; waiting`,
-      );
-      await delay(180_000);
+  const validTrials = (arm: string, task: string) =>
+    readPresentationFiles(dir)
+      .filter((file) => file.config.runner === runner && armOf(file) === arm)
+      .flatMap((file) => file.trials)
+      .filter((trial) => trial.task === task && !trialOutcome(trial, runner).infrastructure).length;
+  for (const batch of plannedBatches(runner === "codex", only)) {
+    for (let attempt = 0; ; attempt++) {
+      const missing = batch.tasks
+        .map((task) => ({ task, count: PRESENTATION_PLAN.repeats - validTrials(batch.arm, task) }))
+        .filter(({ count }) => count > 0);
+      if (!missing.length) break;
+      if (attempt === MAX_ATTEMPTS) throw new Error(`Batch ${batch.id} still lacks trials`);
+      for (const count of new Set(missing.map((entry) => entry.count))) {
+        const tasks = missing.filter((entry) => entry.count === count).map((entry) => entry.task);
+        for (let load = loadavg()[0]!; load > maxLoad; load = loadavg()[0]!) {
+          console.error(`[presentation] 1-minute load ${load.toFixed(1)} > ${maxLoad}; waiting`);
+          await delay(120_000);
+        }
+        const spent = readPresentationFiles(dir).reduce((n, file) => n + file.trials.length, 0);
+        if (spent + tasks.length * count > budget)
+          throw new Error(`${spent} trials on disk plus ${tasks.length * count} would pass the budget of ${budget}`);
+        let out = join(dir, `${batch.id}-${runner}.json`);
+        for (let part = 1; existsSync(out); part++) out = join(dir, `${batch.id}-${runner}-part${part}.json`);
+        console.error(`[presentation] load ${loadavg()[0]!.toFixed(1)}: ${batch.id} ${tasks.join(",")} x${count}`);
+        await new Promise<void>((resolved, reject) => {
+          const child = spawn(
+            "pnpm",
+            [
+              "run",
+              "eval:agent",
+              "--runner",
+              runner,
+              "--models",
+              PRESENTATION_PLAN.models[runner],
+              "--target",
+              PRESENTATION_PLAN.target,
+              "--no-build",
+              "--surface",
+              PRESENTATION_PLAN.surface,
+              "--grading",
+              PRESENTATION_PLAN.grading,
+              "--catalog-tools",
+              String(PRESENTATION_PLAN.catalogTools),
+              "--presentation",
+              batch.arm,
+              "--tasks",
+              tasks.join(","),
+              "--repeats",
+              String(count),
+              "--concurrency",
+              String(PRESENTATION_PLAN.concurrency),
+              "--pair-id",
+              pairId,
+              "--out",
+              out,
+            ],
+            { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"] },
+          );
+          child.once("error", reject);
+          // A failed trial is data, and eval:agent exits nonzero for it.
+          child.once("exit", () => resolved());
+        });
+        const { stopped, trials } = JSON.parse(readFileSync(out, "utf8")) as AgentResultFile;
+        console.error(`[presentation] ${out}: ${trials.length} trial(s)${stopped ? ", stopped early" : ""}`);
+        if (stopped && ACCOUNT_LIMIT.test(String(stopped).slice(0, 300)))
+          throw new Error(`Stopped on an account limit: ${String(stopped).slice(0, 300)}`);
+        if (stopped) await delay(60_000);
+      }
     }
-    console.error(`[presentation] ${new Date().toISOString()} load ${loadavg()[0]!.toFixed(1)} starting ${batch.id}`);
-    const code = await new Promise<number>((resolved, reject) => {
-      const child = spawn(
-        "pnpm",
-        [
-          "run",
-          "eval:agent",
-          "--runner",
-          runner,
-          "--models",
-          PRESENTATION_PLAN.models[runner],
-          "--target",
-          PRESENTATION_PLAN.target,
-          "--no-build",
-          "--surface",
-          PRESENTATION_PLAN.surface,
-          "--grading",
-          PRESENTATION_PLAN.grading,
-          "--catalog-tools",
-          String(PRESENTATION_PLAN.catalogTools),
-          "--presentation",
-          batch.arm,
-          "--tasks",
-          batch.tasks.join(","),
-          "--repeats",
-          String(PRESENTATION_PLAN.repeats),
-          "--concurrency",
-          String(PRESENTATION_PLAN.concurrency),
-          "--pair-id",
-          pairId,
-          "--out",
-          outOf(batch.id),
-        ],
-        { cwd: ROOT, stdio: ["ignore", "inherit", "inherit"] },
-      );
-      child.once("error", reject);
-      child.once("exit", (status) => resolved(status ?? 1));
-    });
-    const file = JSON.parse(readFileSync(outOf(batch.id), "utf8")) as AgentResultFile;
-    console.error(`[presentation] finished ${batch.id}: exit ${code}, ${file.trials.length} trial(s)`);
-    // A failed trial is data. An authentication or rate-limit stop is not.
-    if (file.stopped) throw new Error(`Batch ${batch.id} stopped early: ${file.stopped}`);
   }
 }
 

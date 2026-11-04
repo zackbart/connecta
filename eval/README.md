@@ -653,9 +653,11 @@ pnpm run eval:presentation --run --runner codex --pair-id <window>
 pnpm run eval:presentation # Report from eval/results/presentation.
 ```
 
-The run skips complete batches and refuses a plan past `--budget`, 150 trials by
-default. The report requires the comparator's measured provenance on every file
-and refuses files that differ in anything but arm and task set. It prints, per
+The run counts valid trials per arm and task and spends only what is missing, so
+an interrupted batch resumes in a `-partN` file. It refuses to pass `--budget`,
+150 trials by default. The report requires the comparator's measured provenance
+on every file and refuses files that differ in anything but arm, task set and
+repeat count. It prints, per
 experiment and model, passes, first-attempt `invalid_args` per address called,
 errors before the first success, discovery and response bytes, total and
 first-request tokens, wrong-target calls, and rows against distinct tools on

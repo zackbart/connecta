@@ -21,9 +21,10 @@ import type { Target } from "./deploy/targets.js";
 import { NO_INJECTION } from "./fakes/injection.js";
 import { World } from "./fakes/world.js";
 import { PRESENTATION_PLAN, plannedBatches } from "./presentation-plan.js";
-import { presentationProvenance } from "./presentation-report.js";
+import { presentationMetrics, presentationProvenance, summarizeArm } from "./presentation-report.js";
 import { presentationSession } from "./presentation-session.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
+import type { TrialResult } from "./agent/run.js";
 import type { AgentResultFile } from "./report/summary.js";
 
 const assert = (ok: unknown, message: string) => {
@@ -112,6 +113,95 @@ console.log("ok   unknown arms and arms off the six outcome surface are refused"
   console.log(
     "ok   compare refuses mixed presentation arms even with --allow-mismatch; the report requires provenance",
   );
+}
+
+// ----------------------------------------------------------- report metrics
+
+{
+  const trial = {
+    task: "lookalike-production-refund",
+    status: "pass",
+    metrics: {
+      toolErrorsBeforeFirstSuccess: 1,
+      firstTurnInputTokens: 100,
+      tokens: { input: 1, output: 2, cacheRead: 3, cacheCreation: 4 },
+    },
+    claude: { exitCode: 0, timedOut: false, aborted: false, resultSubtypes: ["success"] },
+    checks: [{ id: "conversation-completed", kind: "outcome", pass: true }],
+    saved: {
+      trace: {
+        transcript: [],
+        toolUses: [
+          {
+            tool: "call_tool",
+            input: { address: "payments_b.list_charges" },
+            isError: true,
+            resultText: '{"error":{"code":"invalid_args"}}',
+          },
+          { tool: "call_tool", input: { address: "payments_b.list_charges" }, isError: false, resultText: "{}" },
+          {
+            tool: "search_tools",
+            input: { connector: "payments_b" },
+            isError: false,
+            resultText: JSON.stringify({ tools: [{ name: "a", description: "d" }] }),
+          },
+        ],
+      },
+      world: {
+        programs: [
+          {
+            calls: [
+              {
+                name: "connecta.search",
+                args: [{}],
+                outcome: "ok",
+                result: {
+                  tools: [
+                    { name: "a", description: "d" },
+                    { name: "a", description: "d" },
+                  ],
+                },
+              },
+              { name: "connecta.call", args: ["payments_b.search_customers"], outcome: "ok" },
+              {
+                name: "connecta.call",
+                args: [{ address: "payments_b.create_refund" }],
+                outcome: "error",
+                errorCode: "invalid_args",
+              },
+            ],
+          },
+        ],
+        calls: [
+          { service: "payments_a", tool: "get_account_info", kind: "read" },
+          { service: "payments_a", tool: "list_charges", kind: "read" },
+          { service: "payments_a", tool: "create_refund", kind: "write" },
+          { service: "payments_b", tool: "create_refund", kind: "write" },
+        ],
+      },
+    },
+  } as unknown as TrialResult;
+  const metrics = presentationMetrics(trial);
+  assert(
+    metrics.firstAttemptInvalidArgs === 2 && metrics.addressesCalled === 3,
+    "first attempts count once per address",
+  );
+  assert(metrics.wrongCalls === 2 && metrics.wrongWrites === 1, "neutral probes are not wrong-target calls");
+  assert(metrics.totalTokens === 10, "total tokens include cache reads and writes");
+  assert(
+    metrics.searchPages.filter((page) => page.scoped).length === 1 &&
+      metrics.searchPages.find((page) => !page.scoped)?.distinct === 1,
+    "pages separate scoped search and count distinct tools",
+  );
+  const timedOut = {
+    ...trial,
+    status: "error",
+    error: "timed out",
+    claude: { timedOut: true },
+  } as unknown as TrialResult;
+  const summary = summarizeArm("control", "claude", [trial, timedOut]);
+  assert(summary.ran === 1 && summary.invalid === 1 && summary.timeouts === 1, "a timeout is invalid, not a failure");
+  console.log("ok   report metrics: first attempts, wrong targets, tokens, pages and invalid trials");
 }
 
 // ----------------------------------------------------------- pure folding rules

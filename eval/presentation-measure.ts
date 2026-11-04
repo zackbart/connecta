@@ -62,14 +62,16 @@ for (const arm of OUTPUT_ARMS) {
 }
 
 console.log("\n## Codex, by output arm (local scripted model, no paid model)\n");
-console.log("| Arm | First request bytes | First discovery bytes (ALL_TOOLS output) |");
-console.log("|---|---|---|");
+console.log("| Arm | First request bytes | First discovery bytes (ALL_TOOLS output) | Purpose lines in discovery |");
+console.log("|---|---|---|---|");
 const root = await mkdtemp(join(tmpdir(), "connecta-presentation-"));
 try {
   const authFile = join(root, "auth.json");
   await writeFile(authFile, JSON.stringify({ OPENAI_API_KEY: "sk-fake-local-measure-only" }));
-  for (const arm of OUTPUT_ARMS) {
-    const world = new World({}, { ...NO_INJECTION, catalogTools: CATALOG });
+  const CONNECTOR_ARMS: PresentationArm[] = ["connectors-id", "connectors-purpose"];
+  for (const arm of [...OUTPUT_ARMS, ...CONNECTOR_ARMS]) {
+    const worldOptions = CONNECTOR_ARMS.includes(arm) ? { presentationFake: "crm" as const } : {};
+    const world = new World(worldOptions, { ...NO_INJECTION, catalogTools: CATALOG });
     await world.start();
     const requests: { input?: { type?: string }[] }[] = [];
     const model = await serveFetch(async (request) => {
@@ -115,7 +117,13 @@ try {
         { headers: { "content-type": "text/event-stream" } },
       );
     });
-    const deployment = await startDeployment("worker", world, { id: "measure", world: {} } as ActiveTask, "six", arm);
+    const deployment = await startDeployment(
+      "worker",
+      world,
+      { id: "measure", world: worldOptions } as ActiveTask,
+      "six",
+      arm,
+    );
     const mcp = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
     try {
       const tools = await mcp.listTools();
@@ -139,7 +147,8 @@ try {
         testHost: { executable: wrapper, args: [], authFile, version: "codex-cli 0.166.0" },
       });
       const outputs = (requests[1]?.input ?? []).filter((item) => /output/.test(item.type ?? ""));
-      console.log(`| ${arm} | ${size(requests[0] ?? {})} | ${size(outputs)} |`);
+      const lines = JSON.stringify(outputs).split("Self-serve small-business").length - 1;
+      console.log(`| ${arm} | ${size(requests[0] ?? {})} | ${size(outputs)} | ${lines} |`);
     } finally {
       await mcp.close();
       await deployment.close();
