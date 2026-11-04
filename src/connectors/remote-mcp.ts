@@ -40,6 +40,7 @@ import type {
   CredentialTestResult,
   Logger,
   ToolDef,
+  ConnectorCatalogPeek,
 } from "../types.js";
 import { downstreamCallError, hasSdkPayload, payloadFree, remoteMcpErrors } from "./remote-mcp/errors.js";
 import { LOCAL_CLOSE_BUDGET_MS, REDIRECT_STATUSES, remoteMcpTransport } from "./remote-mcp/transport.js";
@@ -368,6 +369,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     readSkill,
     liveListings,
     listToolsOperation,
+    peekCatalogOperation,
     callToolOperation,
     readResourceOperation,
     entryFor,
@@ -508,6 +510,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       : {}),
 
     listTools: listToolsOperation,
+
+    peekCatalog: peekCatalogOperation,
 
     callTool: callToolOperation,
 
@@ -684,6 +688,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authMethod(() => authCall(listTools, [ctx]) as Effect.Effect<ToolDef[], unknown>),
       ]) as Effect.Effect<ToolDef[], unknown>,
   );
+  const peekCatalog = connector.peekCatalog!;
+  connector.peekCatalog = authMethod(
+    (ctx: ConnectorContext) =>
+      authCall(withActiveSecrets, [
+        ctx,
+        authMethod(() => authCall(peekCatalog, [ctx]) as Effect.Effect<ConnectorCatalogPeek | undefined, unknown>),
+      ]) as Effect.Effect<ConnectorCatalogPeek | undefined, unknown>,
+  );
   const readResource = connector.readResource!;
   connector.readResource = authMethod(
     (uri: string, ctx: ConnectorContext) =>
@@ -749,6 +761,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }),
     );
   connector.listTools = settlingOperation(connector.listTools, 0);
+  connector.peekCatalog = settlingOperation(connector.peekCatalog!, 0);
   connector.readResource = settlingOperation(connector.readResource!, 1);
   if (connector.downstreamSkills) {
     connector.downstreamSkills.list = settlingOperation(connector.downstreamSkills.list, 0);
@@ -776,6 +789,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // a refresh flight exists. These operations do not take call admission.
     const retain = retainOperation;
     connector.listTools = retain(connector.listTools, 0);
+    connector.peekCatalog = retain(connector.peekCatalog!, 0);
     connector.callTool = retain(connector.callTool, 2);
     connector.readResource = retain(connector.readResource, 1);
     if (connector.downstreamSkills) {
@@ -791,6 +805,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     connector.finishAuth = retain(connector.finishAuth!, 1);
   }
   connector.listTools = payloadFree(connector.listTools);
+  connector.peekCatalog = payloadFree(connector.peekCatalog!);
   connector.callTool = payloadFree(connector.callTool);
   connector.readResource = payloadFree(connector.readResource);
   if (connector.downstreamSkills) {

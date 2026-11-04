@@ -257,6 +257,11 @@ async function doctor() {
       throw new Error(
         `Native catalogs unavailable: ${surface.catalogErrors.join(", ")}. Inspect connector status and authentication.`,
       );
+    // Tools are listed, from an older catalog, so nothing above notices that the connector did not answer.
+    if (native && surface.staleCatalogs?.length)
+      throw new Error(
+        `Native discovery degraded: ${surface.staleCatalogs.join(", ")} did not answer and listed from an older catalog. Inspect connector status.`,
+      );
     const expected = native
       ? ["authorize_connector", "skills", executeCode ? "execute_code" : "read_result"].sort()
       : [...META_TOOL_NAMES].sort();

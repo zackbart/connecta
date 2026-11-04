@@ -1697,7 +1697,7 @@ export function registerMetaTools(
      * A native pool: register `authorize_connector` and `skills`, plus `read_result` when the pool
      * has no execute_code, and return the route native tool calls take.
      */
-    native?: { executeCode: boolean; catalogErrors: string[] } | undefined;
+    native?: { executeCode: boolean; catalogErrors: string[]; staleCatalogs: string[] } | undefined;
     /** Route names this request's text uses; meta by default. */
     routes?: AgentRouteNames | undefined;
   },

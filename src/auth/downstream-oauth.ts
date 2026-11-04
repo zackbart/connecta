@@ -135,6 +135,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
   observed:
     | { epoch: string; revision: number; accessToken: string; refreshable: boolean; expiresAt?: number }
     | undefined;
+  /** The same grant's tokens, which a catalog's identity digests. Memory only, like the grant they came from. */
+  observedTokens: OAuthTokens | undefined;
 
   constructor(
     readonly connectorId: string,
@@ -204,6 +206,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   observe(grant: Grant): void {
     const { tokens, expiresAt } = grant.body;
+    this.observedTokens = tokens;
     this.observed = tokens
       ? {
           epoch: grant.epoch,

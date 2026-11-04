@@ -547,6 +547,46 @@ describe("discovery health across requests", () => {
     expect(await storage.list("connector-health:v1:hung2:")).toEqual([]);
   });
 
+  it("an authored catalog answers without a probe slot, beside a connector that spends the whole budget", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: false, listings: 0 };
+    const authored = connectorWith({
+      id: "authored",
+      staticTools: [{ name: "read_authored", annotations: { readOnlyHint: true } }],
+      tools: [{ name: "read_authored", annotations: { readOnlyHint: true } }],
+    });
+    const registry = makeRegistry([hangingConnector("hung", state), authored], { storage });
+    const { page } = await searchOnce(
+      registry,
+      { query: "read" },
+      { probeTimeoutMs: 150, discoveryBudgetMs: 100, concurrency: 1 },
+    );
+    expect(page.entries.map((entry) => entry.tool.address)).toEqual(["authored.read_authored"]);
+    expect(page.catalogErrors.map((error) => error.connector)).toEqual(["hung"]);
+  });
+
+  it("INV-5 INV-8: a custom connector keeps its catalog stale only for the authenticated owner who listed it", async () => {
+    const storage = memoryStorage();
+    const state = { healthy: true, listings: 0 };
+    const root = makeRegistry([hangingConnector("hung", state)], { storage });
+    const caller = (id: string) => ({
+      identity: { actor: { kind: "human" as const, id, namespace: "test" }, interactive: true },
+      authenticated: true,
+    });
+    const view = (id: string) => root.scoped({ connectorIds: ["hung"], principalKey: id, caller: caller(id) });
+    expect((await searchOnce(view("alice"), { query: "read" })).page.catalogErrors).toEqual([]);
+    state.healthy = false;
+    const stale = await searchOnce(view("alice"), { query: "read" }, { probeTimeoutMs: 50 });
+    expect(stale.page.entries.map((entry) => entry.tool.address)).toEqual(["hung.read_hung"]);
+    expect(stale.page.catalogErrors[0]).toMatchObject({ code: "timeout", stale: true });
+    const other = await searchOnce(view("bob"), { query: "read" }, { probeTimeoutMs: 50 });
+    expect(other.page.entries).toEqual([]);
+    expect(other.page.catalogErrors[0]?.stale).toBeUndefined();
+    // An unauthenticated caller retains nothing, so it finds nothing.
+    const anonymous = await searchOnce(root, { query: "read" }, { probeTimeoutMs: 50 });
+    expect(anonymous.page.entries).toEqual([]);
+  });
+
   it("lets exactly one of many concurrent searches probe once a record's retry time passes", async () => {
     const storage = memoryStorage();
     const state: { healthy: boolean; listings: number; answerMs?: number } = { healthy: false, listings: 0 };

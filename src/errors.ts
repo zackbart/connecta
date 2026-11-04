@@ -596,6 +596,16 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   connector_call_failed: false,
 };
 
+/** The downstream said this caller has no access: affirmative evidence, unlike a failure to answer. */
+export function isAccessRefusal(error: unknown): boolean {
+  return (
+    error instanceof ConnectorCallError &&
+    (error.code === "auth_required" ||
+      error.code === "downstream_oauth_required" ||
+      error.code === "provider_permission_denied")
+  );
+}
+
 /** Runtime membership in the closed connector taxonomy, checked against its exhaustive table. */
 export function isConnectorCallErrorCode(value: unknown): value is ConnectorCallErrorCode {
   return typeof value === "string" && Object.hasOwn(RETRYABLE_BY_CODE, value);
