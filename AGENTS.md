@@ -113,7 +113,7 @@ concrete jobs with `actions: read` and requires exactly one completed,
 successful job in the latest attempt for each expected build and Node matrix
 leg (retaining successful legs when only failures are rerun). A rolled-up job
 result alone is insufficient evidence that every leg completed; the API check
-also covers cancellation after a leg's last successful step. Superseded PR runs are cancelled; each main
+also covers cancellation after a leg's last successful step. It rereads the jobs API for up to about a minute, because that API can trail `needs` results; each read must prove every leg. Superseded PR runs are cancelled; each main
 push retains a full run. Branch protection should require `check` and an
 up-to-date branch. Repository settings are managed separately.
 
