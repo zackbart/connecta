@@ -93,32 +93,17 @@ const GOLDEN: Record<string, unknown> = {
       code: {
         type: "string",
         description:
-          "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
+          "Source text of one zero-argument JavaScript async arrow: async () => { ...; return answer; }. Pass a string, even from a JavaScript host. Use the connecta global. At most 65,536 UTF-8 bytes.",
       },
       diagnostics: {
-        description: "Add request-local, payload-free timing and result-size summaries.",
-        type: "boolean",
-      },
-    },
-    required: ["code"],
-  },
-  execute_read_code: {
-    type: "object",
-    $schema: DRAFT,
-    properties: {
-      code: {
-        type: "string",
-        description:
-          "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
-      },
-      diagnostics: {
-        description: "Add request-local, payload-free timing and result-size summaries.",
+        description: "Add timing and result-size summaries.",
         type: "boolean",
       },
     },
     required: ["code"],
   },
 };
+GOLDEN.execute_read_code = GOLDEN.execute_code;
 
 describe("meta-tool input schemas", () => {
   it("renders all seven exactly as the golden records", async () => {
@@ -194,7 +179,7 @@ describe("meta-tool output schemas", () => {
       expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(false);
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
       // The paging rule no guide repeats: stop before the limit and resume in the next program.
-      expect(execute.description).toContain("Near it, return page.nextCursor; resume next program.");
+      expect(execute.description).toContain("Near the host-call limit, return page.nextCursor to resume next program.");
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
       expect(
         new Validator(execute.outputSchema).validate({
@@ -214,16 +199,22 @@ describe("meta-tool output schemas", () => {
 // execute_code description varies with connector count, so the fixture below
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
-  total: 14_900,
+  total: 14_200,
   // A writable endpoint's execute_read_code: description, shared input and output schemas.
   readRouteTotal: 3_000,
-  instructions: 1_050,
+  readRouteInstructions: 550,
+  readRouteInstructionsPeak: 1_130,
+  // The pinned fixture's instructions, then the most a pool can serve: a
+  // 500-unit description plus a connector list at its 120-byte cap.
+  instructions: 460,
+  instructionsPeak: 1_040,
   description: {
-    skills: 220,
-    search_tools: 650,
-    call_tool: 260,
+    skills: 150,
+    search_tools: 480,
+    call_tool: 240,
     call_destructive_tool: 300,
-    authorize_connector: 460,
+    // Grew to say when no call is needed: an auth error that already carries its link.
+    authorize_connector: 510,
     execute_code: 2_900,
     execute_read_code: 700,
   },
@@ -237,7 +228,7 @@ const BUDGETS = {
     execute_code: 1_070,
     execute_read_code: 1_070,
   },
-  usage: 5_900,
+  usage: 5_600,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
   searchPage: { default: 470, compact: 730 },
@@ -356,8 +347,10 @@ describe("always-loaded agent surface budgets", () => {
           sizes[`${tool.name}.description`] = tool.description.length;
           if (tool.outputSchema) sizes[`${tool.name}.outputSchema`] = JSON.stringify(tool.outputSchema).length;
         }
-        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
         const readRoute = tools.find((tool) => tool.name === "execute_read_code");
+        expect(instructions.length).toBeLessThanOrEqual(
+          readRoute ? BUDGETS.readRouteInstructions : BUDGETS.instructions,
+        );
         expect(total, JSON.stringify(sizes)).toBeLessThanOrEqual(
           BUDGETS.total + (readRoute ? BUDGETS.readRouteTotal : 0),
         );
@@ -455,8 +448,9 @@ it("names the right call shape when a direct call uses MCP's own argument names,
 });
 
 it("front-loads configured scope and guidance within the instructions budget", async () => {
-  const { endpointInstructions, CONNECTA_INSTRUCTIONS } = await import("../src/skills.js");
-  expect(endpointInstructions()).toBe(CONNECTA_INSTRUCTIONS);
+  const { endpointInstructions } = await import("../src/skills.js");
+  // The largest id list the cap admits, so this is the peak a pool can serve.
+  const connectorIds = Array.from({ length: 40 }, (_, index) => `service_${String(index).padStart(2, "0")}`);
   for (const native of [undefined, { executeCode: true }, { executeCode: false }]) {
     for (const description of ["x".repeat(500), "😀".repeat(250), "a😀".repeat(166) + "ab"]) {
       const app = makeDeployment({
@@ -466,11 +460,14 @@ it("front-loads configured scope and guidance within the instructions budget", a
       });
       await app.close();
       for (const readOnly of [false, true]) {
-        const instructions = endpointInstructions(description, native, readOnly);
-        expect(instructions.slice(0, 512)).toContain(description);
-        expect(instructions.slice(0, 512)).toContain("Use skills.");
-        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
-        expect(endpointInstructions(description, native, readOnly)).toBe(instructions);
+        const instructions = endpointInstructions(description, native, readOnly, connectorIds);
+        expect(instructions.startsWith(`${description} `)).toBe(true);
+        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructionsPeak);
+        expect(endpointInstructions(description, native, readOnly, connectorIds)).toBe(instructions);
+        if (!native && !readOnly)
+          expect(endpointInstructions(description, native, readOnly, connectorIds, true).length).toBeLessThanOrEqual(
+            BUDGETS.readRouteInstructionsPeak,
+          );
       }
     }
   }

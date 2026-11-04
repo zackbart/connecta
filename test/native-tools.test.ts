@@ -13,7 +13,7 @@ import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { nativeRecovery } from "../src/native-recovery.js";
 import { NATIVE_NAME_MAX, nativeToolName } from "../src/native-tools.js";
-import { CONNECTA_INSTRUCTIONS, nativeInstructions } from "../src/skills.js";
+import { endpointInstructions, nativeInstructions } from "../src/skills.js";
 import type { JsonSchema } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
@@ -382,8 +382,8 @@ describe("native tool surface", () => {
           );
           const instructions = init.result.instructions;
           expect(instructions).toContain(mixed ? "subject to connector restrictions" : "can't perform writes");
-          expect(instructions).not.toContain("notes.");
-          expect(instructions).not.toContain("crm.");
+          // No catalog reaches instructions: connector ids may, tool addresses may not.
+          expect(instructions).not.toMatch(/\b(?:notes|crm)\.\w/);
           expect(
             (
               await rpc(
@@ -778,11 +778,11 @@ describe("native tool surface", () => {
       clientInfo: { name: "native-test", version: "0" },
     };
     const native = await rpc(connecta, token, "native", "initialize", initialize, false);
-    expect(native.result.instructions).toBe(`Use skills. Team tier. ${nativeInstructions(true)}`);
+    expect(native.result.instructions).toBe(`Team tier. ${nativeInstructions(true)}`);
     const nocode = await rpc(connecta, token, "nocode", "initialize", initialize, false);
     expect(nocode.result.instructions).toBe(nativeInstructions(false));
     const meta = await rpc(connecta, token, "meta", "initialize", initialize, false);
-    expect(meta.result.instructions).toBe(CONNECTA_INSTRUCTIONS);
+    expect(meta.result.instructions).toBe(endpointInstructions(undefined, undefined, false, ["crm"]));
   });
 
   it("refuses a pool over the 1,000-tool native cap with a JSON-RPC error", async () => {

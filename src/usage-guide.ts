@@ -16,8 +16,7 @@ Route as the server instructions and ${META_ROUTES.program}'s first sentence say
 Read one account with ${META_ROUTES.read}: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
 On a read-only endpoint search omits writes (guides may name them) and each
 fails read_only_endpoint; tell the user. Unannotated tools fail closed to writes.
-Where listed, ${READ_PROGRAM_SOURCE} takes read-only programs with no write approval:
-it refuses writes before dispatch, and its search marks them \`callable: false\`.
+Where listed, ${READ_PROGRAM_SOURCE} runs read-only programs and marks writes \`callable: false\`.
 Connecta classifies and routes a requested write; the host owns approval.
 
 ## The global and the envelopes
@@ -95,7 +94,7 @@ returned id in place of result-id below; this example assumes documented JSON.
 
 Calls reconstruct up to 1 MiB through stash pages. Larger values return
 \`{ format: "paged", valueFormat, resultId?, totalBytes, hint }\`. Follow its hint.
-No resultId means no paging. IDs expire after 15 minutes; only explicit paging
+IDs expire after 15 minutes; only explicit paging
 spends extra host calls.
 Use zero-based \`{ page: 0 }\` or UTF-8 \`{ offset }\`, never both. Keep maxBytes
 fixed across pages; connector caps and the 32 KiB bridge ceiling apply.
@@ -117,8 +116,8 @@ Recovery args may be partial (argsRedacted) or absent (argsOmitted). Reconcile
 before retrying with the original args or repeating a program that sent writes.
 Non-retryable errors need repair.
 host_auth_required needs host connection repair; provider_permission_denied needs
-resource-owner access. Auth failures carry the handoff in error.data. When an auth
-error includes a handoff, give it to the user or operator.
+resource-owner access. Auth failures carry the handoff in error.data; give it to the
+user or operator.
 
 ## Output
 

@@ -386,9 +386,12 @@ The `execute_code` description declares a compact subset of it inline: argument
 shapes that match what `GuestApi` accepts, result fields it returns, and no
 others. Authored emit blocks are the exact variants `M1` accepts;
 forwarded blocks are the native variants from `result.content`. It also
-states that search and describe return objects rather than arrays, that a call
-result over 1 MiB returns a paged handle, and that every function except `emit`
-spends a host call (`M7`). `GuestApi`'s `emit` takes no paged handle, which the
+states that search and describe return objects rather than arrays, that a row with
+`guideRequired` needs its connector guide first (only when a visible connector has
+a guide), that a call result over 1 MiB returns a paged handle to loop with
+`connecta.result`, and that every function except `emit` spends a host call and
+that passing the limit ends the program with nothing returned, even under
+`Promise.allSettled` (`M7`). `GuestApi`'s `emit` takes no paged handle, which the
 host refuses. Programs still use plain JavaScript.
 
 ```js
@@ -453,8 +456,9 @@ connector id as top-level `skills`, within the admitted connector view; built-in
 names stay reserved (see
 [meta-tools](./meta-tools.md#connector-guides-and-skills)). It reads the
 registry behind native `skills/get` and `resources/read`, including opted-in
-downstream skills. It returns
-`{ name, format: "text", text }`; an unknown name is `not_found`. It also
+downstream skills. It returns `{ name, format: "text", text }`, where a local
+guide's `text` omits the frontmatter native readers receive; an unknown name is
+`not_found`. It also
 accepts the top-level tool's `{ name }` object, and `connecta.skills` is an
 undeclared alias of `connecta.skill` with the same host-call accounting, because
 models copy the `skills` tool's shape into programs. Any other argument is

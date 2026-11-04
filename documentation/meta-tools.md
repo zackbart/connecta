@@ -199,16 +199,16 @@ inventory before any catalog search — registry order and each canonical id,
 with no second name minted for programs. An entry adds the configured title
 only when it says more than the id: a title whose words the id already spells,
 such as `Google Calendar` for `google_calendar`, is dropped. Titles normalize
-whitespace and cap at 48 UTF-8 bytes. A connector with a guide says how to
-fetch it: `read first: skills({name:"connector:<id>"})` for a required guide,
-`guide: skills({name:"connector:<id>"})` otherwise. For example:
-`Connectors: crm (Customer CRM; read first: skills({name:"connector:crm"})), tickets.`
+whitespace and cap at 48 UTF-8 bytes. A connector whose guide is required
+carries a `*`, and one legend follows when an entry shown has the mark. Optional
+guides are not named here; search and describe name them. For example:
+`Connectors: crm* (Customer CRM), tickets. *Read connecta.skill("connector:<id>") before its first call.`
 
-The complete line caps at 1,024 UTF-8 bytes, which names every connector of a
-typical deployment. Past the cap, detail degrades before names do: titles are
-dropped first, then optional guide pointers. Only when bare ids and required
-guide pointers still exceed it do whole entries give way, in registry order, to
-an exact `+N more` count. The inventory reads only the configured registry: no
+The complete line, legend included, caps at 1,024 UTF-8 bytes, which names every
+connector of a typical deployment. Past the cap, detail degrades before names do:
+titles are dropped first. Only when bare ids still exceed it do whole entries
+give way, in registry order, to an exact `+N more` count. The inventory reads
+only the configured registry: no
 catalog load, no credential probe, no live status, no capability, and no
 replacement for canonical discovery or addressing. Search pages carry the same
 bounded title once per connector in `connectors[<id>].title`, so choosing an
@@ -394,7 +394,11 @@ A connector may attach a deployment-owned guide as markdown, keeping the
 original `usageGuide: string` configuration, or as
 `{ content, summary?, required? }` — which registers no connector and creates no
 shared runtime template. The skills catalog prepends Agent Skills frontmatter to
-`content` and preserves the guide body, including its whitespace.
+`content` for native `skills/get` and `resources/read`, and preserves the guide
+body, including its whitespace. The `skills` tool and `connecta.skill` return that
+body without the frontmatter; a downstream skill's file keeps its exact bytes on
+every reader. One read-only notice leads a guide: the endpoint's on a read-only
+endpoint, otherwise the connection's on a read-only connector.
 `summary` is normalized and refuses construction over 120 characters; absent,
 Connecta derives the same bounded fallback the skills listing uses from the
 guide's first meaningful body paragraph. `required: true` is reserved for
@@ -474,16 +478,28 @@ or other live status reaches `tools/list` or the instructions, so the
 always-loaded surface stays byte-stable for a client's prompt cache.
 Instructions reflect the surface and endpoint write policy, subject to connector
 restrictions. When all admitted connectors are read-only, instructions state that
-writes are unavailable. They also include pool scope: at
-`/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
-[`description`](./auth.md#pools) has it placed first after `Use skills. `, so
-the model learns that endpoint's scope, for example
-`Use skills. Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
-The guide pointer precedes the scope so both appear in the first 512 characters
-for a description of up to 500 characters. The routing rules follow. Meta instructions use compact equivalent routing rules
-when a scope is present. Plain `/mcp` never carries one. The description changes no tool or tool
-description, and `initialize` and `server/discover` stay `cacheScope: "private"`,
-so a client keeps what it learned per endpoint. Connector
+writes are unavailable. On the meta surface they open by saying what the endpoint
+reaches, for example `Gateway to connected services: crm, tickets.`, and then give
+the routes, the write policy and recovery through `nextAction`. A native pool omits
+the ids, because its tool names show them.
+
+The ids come only from the caller's admitted view, the same view the `execute_code`
+inventory reads: configured ids in registry order, never a value from the request,
+a catalog or a credential. A maintainer at plain `/mcp` sees every id; a person
+routed there sees only their pool's, and an id outside the admitted view never
+appears. Past 120 UTF-8 bytes, ids give way, in registry order, to an exact
+`+N more` count, and the inventory carries the fuller list.
+
+They also include pool scope: a pool that sets a
+[`description`](./auth.md#pools) has it placed first at `/mcp/<pool>` and
+`/agent/<pool>`, and for a person routed to that pool at plain `/mcp`, so the model
+learns that endpoint's scope, for example
+`Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
+A maintainer at plain `/mcp` receives none. The description changes no tool or tool
+description. Plain `/mcp` can serve different ids and scope to different callers at
+one URL, as its tool list and inventory already do, so `initialize` and
+`server/discover` stay `cacheScope: "private"`: a client keeps what it learned per
+caller and endpoint and never shares it. Connector
 guides stay scoped to the deployment that listed them even when two deployments
 use identical content, and a deployment with no connector guides receives none of
 the short conditional guide pointers in its tool definitions.
@@ -1902,10 +1918,10 @@ same metadata; its tools return with the next listing that loads it. Listing nev
 starts authorization. The server still declares `tools.listChanged: false`.
 
 **Instructions** replace the meta routing text: call one known operation
-directly; with `execute_code`, use one program for several, dependent, or
-reduced calls; write tools are absent and refused on a read-only endpoint;
-never repeat a write; page a truncated result as its notice says. A pool
-`description` is appended as on meta endpoints.
+directly; with `execute_code`, combine several using each tool's `Program address`;
+state the endpoint's write policy; on a writable endpoint, never resend a write to
+see its output; follow `nextAction` on errors and truncated results. A pool
+`description` is placed first, as on meta endpoints.
 
 **Recovery.** `authorize_connector` remains listed even when a catalog fails.
 Its description lists all granted connector ids independently of catalog health.
