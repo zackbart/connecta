@@ -582,10 +582,10 @@ const catalogFailureProperties = {
 const FAILURE_REF = { $ref: "#/$defs/failure" } as const;
 
 /**
- * The outputSchema contract for either search adapter. Guest API registration
- * can reuse this value instead of maintaining a second page definition.
- * Every failure field references one local `$defs` entry, so the typed auth
- * handoff is advertised once instead of once per field.
+ * The full page contract for either search adapter, which the server validates
+ * every page against. `tools/list` advertises the open summary in `meta-output.ts`
+ * instead. Every failure field references one local `$defs` entry, so the typed
+ * auth handoff is stated once.
  */
 export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
   type: "object",

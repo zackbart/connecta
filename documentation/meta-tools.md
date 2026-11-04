@@ -49,12 +49,18 @@ write tools from `search_tools` results and describe, and refuses every write
 call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
 `resources/read`) are documentation and may name tools the endpoint refuses. The three tools with structured-only success results
-(`execute_code`, `search_tools`, `authorize_connector`) advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
-including every authorization-handoff field, once under `$defs.failure`;
-`catalogErrors[]` references it through `allOf` with `connector` required, and
-`queryAnalysis.catalogError` references it directly. The schema declares no
-`$schema`, and validators for drafts 4, 7, 2019-09 and 2020-12 accept the same
-pages. The two direct-call tools omit it because their default
+(`execute_code`, `search_tools`, `authorize_connector`) advertise an open
+`outputSchema`: required keys and top-level types, with every other field open.
+The schemas declare no `$schema`, and validators for drafts 4, 7, 2019-09 and
+2020-12 accept the same results. The server checks each result against its full
+contract before sending it, so the shapes this guide states hold though
+`tools/list` omits them. `search_tools` failures are one such shape: each
+`catalogErrors[]` entry and `queryAnalysis.catalogError` requires `code`, `message`
+and `retryable`, may carry `retryAfterMs`, `retry`, `nextAction` and the
+authorization-handoff fields (`recovery`, `status`, `authorizationUrl`,
+`operatorUrl`, `instructions`, `credential`), and has no others; a `catalogErrors[]`
+entry also requires `connector`, which `queryAnalysis.catalogError` may carry.
+The two direct-call tools omit `outputSchema` because their default
 mode returns native `content`. Default-mode successes declare
 `_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
 `data` and declares `format` in its complete result envelope.
@@ -128,7 +134,8 @@ The agent reports the limitation and can ask the operator for a writable connect
 never pauses, replays, or approves a program.
 
 Both search routes return the flat page specified under
-[lexical discovery](#lexical-discovery), using the catalog's shared output schema.
+[lexical discovery](#lexical-discovery), which the server validates against one
+catalog page contract.
 Describe returns an ordered tool list without pagination. Optional row metadata
 is omitted in this example:
 
@@ -1282,7 +1289,7 @@ Unsupported task, Skills, and resource capabilities use the non-retryable
 Unknown skill names and connectors without a guide retain their local lookup
 diagnostic with `code: not_found` and a `nextAction` calling `skills` with no
 name to discover available names. They do not request service restoration.
-The search output schema describes action discriminators compactly; action
+The server's search page contract states action discriminators compactly; action
 advice is additive, while catalog error and authorization handoff fields retain
 their detailed contracts.
 A spent read continuation's fresh-call action takes precedence over generic

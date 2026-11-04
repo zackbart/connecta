@@ -1,7 +1,7 @@
 import { CATALOG_SEARCH_RESULT_SCHEMA, CatalogService, flatSearchResult } from "../src/catalog-service.js";
 import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
 import { makeRegistry } from "./helpers.js";
-import { SEARCH_OUTPUT } from "../src/meta-output.js";
+import { EXECUTE_OUTPUT, SEARCH_OUTPUT } from "../src/meta-output.js";
 // Golden: the input schema of every meta-tool exactly as `tools/list` renders
 // it today, from the zod definitions in meta-tools.ts and execute.ts.
 //
@@ -158,9 +158,19 @@ describe("meta-tool output schemas", () => {
           );
         }
       }
+      // Advertised schemas state required keys and top-level types and leave every other field open.
+      const advertised = list.result.tools.flatMap((tool: { outputSchema?: object }) =>
+        tool.outputSchema ? [JSON.stringify(tool.outputSchema)] : [],
+      );
+      expect(advertised).toHaveLength(3);
+      for (const schema of advertised) {
+        expect(schema).not.toContain("additionalProperties");
+        expect(schema).not.toContain("$ref");
+        expect(schema).not.toContain("$defs");
+      }
       const search = list.result.tools.find((tool: { name: string }) => tool.name === "search_tools");
-      expect(search.outputSchema).toEqual(CATALOG_SEARCH_RESULT_SCHEMA);
       const searchValidator = new Validator(search.outputSchema);
+      const accepts = (page: object) => !("issues" in SEARCH_OUTPUT["~standard"].validate(page));
       const flat = { catalogErrors: [], tools: [], total: 0, offset: 0, limit: 8, hasMore: false };
       expect(searchValidator.validate(flat).valid).toBe(true);
       expect(searchValidator.validate({ connectors: [], total: 0 }).valid).toBe(false);
@@ -168,22 +178,26 @@ describe("meta-tool output schemas", () => {
         const incomplete = { ...flat } as Record<string, unknown>;
         delete incomplete[key];
         expect(searchValidator.validate(incomplete).valid, key).toBe(false);
-        expect(SEARCH_OUTPUT["~standard"].validate(incomplete)).toHaveProperty("issues");
+        expect(accepts(incomplete), key).toBe(false);
       }
+      expect(searchValidator.validate({ ...flat, tools: [{ name: "add" }] }).valid).toBe(false);
+      // The typed failure stays closed on the server, which checks every page it sends.
       const failure = { connector: "calc", code: "unavailable", message: "Down", retryable: true };
-      expect(searchValidator.validate({ ...flat, catalogErrors: [failure] }).valid).toBe(true);
+      expect(accepts(flat)).toBe(true);
+      expect(accepts({ ...flat, catalogErrors: [failure] })).toBe(true);
       const { connector: _connector, ...unscoped } = failure;
-      expect(searchValidator.validate({ ...flat, catalogErrors: [unscoped] }).valid).toBe(false);
-      expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(false);
+      expect(accepts({ ...flat, catalogErrors: [unscoped] })).toBe(false);
+      expect(accepts({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] })).toBe(false);
+      expect(accepts({ ...flat, tools: [{ name: "add", address: "calc.add", extra: 1 }] })).toBe(false);
+      // A client's copy stays open to the same pages.
+      expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(true);
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
       // The paging rule no guide repeats: stop before the limit and resume in the next program.
       expect(execute.description).toContain("Near the host-call limit, return page.nextCursor to resume next program.");
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
-      expect(
-        new Validator(execute.outputSchema).validate({
-          hostCalls: { attempted: -1, admitted: 0, succeeded: 0, failed: 0 },
-        }).valid,
-      ).toBe(false);
+      const hostCalls = { attempted: -1, admitted: 0, succeeded: 0, failed: 0 };
+      expect(new Validator(execute.outputSchema).validate({ hostCalls }).valid).toBe(true);
+      expect(await EXECUTE_OUTPUT["~standard"].validate({ hostCalls })).toHaveProperty("issues");
     } finally {
       await app.close();
     }
@@ -197,7 +211,7 @@ describe("meta-tool output schemas", () => {
 // execute_code description varies with connector count, so the fixture below
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
-  total: 14_200,
+  total: 8_800,
   // The pinned fixture's instructions, then the most a pool can serve: a
   // 500-unit description plus a connector list at its 120-byte cap.
   instructions: 460,
@@ -211,10 +225,8 @@ const BUDGETS = {
     authorize_connector: 510,
     execute_code: 2_850,
   },
-  // search_tools grew for readyCalls, the complete reads that save the
-  // details and operation-search host calls; its reasons enum is now shared.
-  // Declaring descriptionTruncated adds 37 bytes.
-  outputSchema: { search_tools: 4_190, authorize_connector: 420, execute_code: 1_070 },
+  // Open summaries: the full contracts stay on the server, in meta-output.ts.
+  outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170 },
   usage: 5_500,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
@@ -306,13 +318,18 @@ describe("search_tools output schema", () => {
       ];
       expect(pages[0].catalogErrors[0]).toMatchObject({ connector: "service", recovery: expect.any(String) });
       expect(pages[1].queryAnalysis.catalogError).toMatchObject({ recovery: expect.any(String) });
-      // Typed handoff fields stay typed through the shared definition.
+      // Typed handoff fields stay typed on the server, through the shared definition.
       const mistyped = structuredClone(pages[0]);
       mistyped.catalogErrors[0].recovery = "anything";
+      expect(SEARCH_OUTPUT["~standard"].validate(mistyped)).toHaveProperty("issues");
       for (const draft of ["2020-12", "2019-09", "7", "4"] as const) {
-        const validator = new Validator(schema, draft);
-        for (const page of pages) expect(validator.validate(page).errors, draft).toEqual([]);
-        expect(validator.validate(mistyped).valid, draft).toBe(false);
+        const advertised = new Validator(schema, draft);
+        const full = new Validator(CATALOG_SEARCH_RESULT_SCHEMA as never, draft);
+        for (const page of pages) {
+          expect(advertised.validate(page).errors, draft).toEqual([]);
+          expect(full.validate(page).errors, draft).toEqual([]);
+        }
+        expect(full.validate(mistyped).valid, draft).toBe(false);
       }
     } finally {
       await flow.app.close();
