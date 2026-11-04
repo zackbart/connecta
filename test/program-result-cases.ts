@@ -1,4 +1,7 @@
-import { expect } from "vitest";
+import { expect, onTestFinished, vi } from "vitest";
+import { z } from "zod";
+import { api } from "../src/connectors/api.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -7,6 +10,9 @@ import { sentSecretsFor } from "../src/sent-secrets.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resultKeys, scopes } from "../src/storage/keys.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { seedGrant } from "./fixtures/oauth.js";
+import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { activitySink, silentLogger } from "./helpers.js";
 import type { Connector, ConnectorContext, Executor, KVStorage } from "../src/types.js";
 
@@ -868,8 +874,286 @@ const expectNothingReadable = async (built: ReturnType<typeof sealingHarness>, i
   }
 };
 
+const OAUTH_ISSUER = "https://authorization.test";
+const OAUTH_MCP_URL = "https://downstream.test/mcp";
+
+/** Answers discovery and the token endpoint, and calls `sent` when a token request goes out. */
+function stubOAuthFetch(sent: () => void, downstream?: { fetch: typeof fetch }) {
+  installOwnedTransport();
+  vi.stubGlobal("fetch", (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/.well-known/oauth-protected-resource"))
+      return Response.json({ resource: OAUTH_MCP_URL, authorization_servers: [OAUTH_ISSUER] });
+    if (url.includes("/.well-known/"))
+      return Response.json({
+        issuer: OAUTH_ISSUER,
+        authorization_endpoint: `${OAUTH_ISSUER}/authorize`,
+        token_endpoint: `${OAUTH_ISSUER}/token`,
+        response_types_supported: ["code"],
+        grant_types_supported: ["authorization_code", "refresh_token"],
+        code_challenge_methods_supported: ["S256"],
+        token_endpoint_auth_methods_supported: ["none", "client_secret_post"],
+      });
+    if (url === `${OAUTH_ISSUER}/token`) {
+      sent();
+      return Response.json({
+        access_token: "new-access-token-value",
+        refresh_token: "new-refresh-token-value",
+        token_type: "Bearer",
+        expires_in: 3600,
+      });
+    }
+    if (downstream) return downstream.fetch(input, init);
+    return Response.json({ ok: true });
+  }) as typeof fetch);
+  onTestFinished(() => {
+    vi.unstubAllGlobals();
+  });
+}
+
+/**
+ * A result retained before an OAuth refresh starts, in a run that ends while the refresh waits
+ * on its claim. Whatever the token request will carry already counts when the run seals.
+ */
+async function checkRefreshCredentialCounts(
+  executor: Executor,
+  setup: (
+    secret: string,
+    namespace: string,
+    storage: KVStorage,
+  ) => Promise<{ connector: Connector; address: string; downstream?: { fetch: typeof fetch } }>,
+): Promise<void> {
+  const secret = "synthetic-oauth-credential-0123456";
+  const inner = memoryStorage();
+  let claimed = () => {};
+  const claim = new Promise<void>((resolve) => (claimed = resolve));
+  let release = () => {};
+  const released = new Promise<void>((resolve) => (release = resolve));
+  let sent = () => {};
+  const tokenRequest = new Promise<void>((resolve) => (sent = resolve));
+  const storage: KVStorage = {
+    ...inner,
+    async compareAndSet(key, expected, value, options) {
+      if (key.includes("oauth:refresh:") && expected === null) {
+        claimed();
+        await released;
+      }
+      return inner.compareAndSet(key, expected, value, options);
+    },
+  };
+  const source: Connector = {
+    id: "source",
+    kind: "api",
+    async listTools() {
+      return ["read", "wait"].map((name) => ({ name, annotations: { readOnlyHint: true } }));
+    },
+    async callTool(name) {
+      if (name === "wait") {
+        await claim;
+        return "claimed";
+      }
+      return { value: secret, PAD };
+    },
+  };
+  const { connector, address, downstream } = await setup(secret, scopes.connector("oauth"), inner);
+  stubOAuthFetch(() => sent(), downstream);
+  const registry = new Registry([source, connector], { storage, logger: silentLogger });
+  const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
+    readOnly: false,
+    hostCallTimeoutMs: 2000,
+  })({
+    code: `async () => {
+      const handle = await connecta.call("source.read");
+      connecta.call(${JSON.stringify(address)}).catch(() => {});
+      await connecta.call("source.wait");
+      return handle.resultId;
+    }`,
+  });
+  const id = outcome.structuredContent!.result as string;
+  expect(await refusalOf(registry, id)).toMatchObject({ code: "result_not_retained", retryable: false });
+  expect(outcome.structuredContent?.note).toContain("Rerun the read");
+  release();
+  await tokenRequest;
+  expect(await refusalOf(registry, id)).toMatchObject({ code: "result_not_retained" });
+}
+
+const dueGrant = (secret: string, mode: string) => ({
+  issuer: mode === "remote" ? OAUTH_ISSUER : `${OAUTH_ISSUER}/token`,
+  client: {
+    value: {
+      client_id: "client-identifier-123456",
+      redirect_uris: ["https://program-results.test/connect/callback"],
+      token_endpoint_auth_method: "none",
+    },
+  },
+  tokens: {
+    access_token: "old-access-token-value",
+    refresh_token: mode === "refresh-token" ? secret : "old-refresh-token-value",
+    token_type: "Bearer",
+  },
+  expiresAt: Date.now() - 10_000,
+});
+
+/** `api()`: the configured client secret and token-request headers are part of what counts. */
+const apiRefreshCase = (mode: "refresh-token" | "client-secret" | "token-header") => (executor: Executor) =>
+  checkRefreshCredentialCounts(executor, async (secret, namespace, storage) => {
+    await seedGrant(storage, dueGrant(secret, mode), "v3:seeded", namespace);
+    return {
+      address: "oauth.read",
+      connector: api("oauth", {
+        oauth: {
+          authorizationEndpoint: `${OAUTH_ISSUER}/authorize`,
+          tokenEndpoint: `${OAUTH_ISSUER}/token`,
+          clientId: "client-identifier-123456",
+          clientSecret: mode === "client-secret" ? secret : "synthetic-client-secret-value",
+          apiOrigins: [OAUTH_ISSUER],
+          ...(mode === "token-header" ? { tokenRequestHeaders: { "X-Secret": secret } } : {}),
+        },
+        tools: [
+          {
+            name: "read",
+            description: "Read a resource",
+            annotations: { readOnlyHint: true },
+            async handler(_args, ctx) {
+              return (await ctx.oauth!.fetch(`${OAUTH_ISSUER}/me`)).json();
+            },
+          },
+        ],
+      }),
+    };
+  });
+
+/** `remoteMcp()`: a renewal before a write carries the stored grant's credentials the same way. */
+const remoteRefreshCase = (mode: "refresh-token" | "client-secret") => (executor: Executor) =>
+  checkRefreshCredentialCounts(executor, async (secret, namespace, storage) => {
+    const downstream = httpDownstream(
+      (server) =>
+        server.registerTool("write", { description: "Write", inputSchema: z.object({}) }, async () => ({
+          content: [{ type: "text", text: "done" }],
+        })),
+      { url: OAUTH_MCP_URL },
+    );
+    const grant = dueGrant(secret, mode === "refresh-token" ? "refresh-token" : "remote");
+    await seedGrant(
+      storage,
+      {
+        ...grant,
+        issuer: OAUTH_ISSUER,
+        client: {
+          value: {
+            ...grant.client.value,
+            ...(mode === "client-secret"
+              ? { client_secret: secret, token_endpoint_auth_method: "client_secret_post" }
+              : {}),
+          },
+        },
+        tokens: { ...grant.tokens, expires_in: 30 },
+      },
+      "v3:seeded",
+      namespace,
+    );
+    return {
+      address: "oauth.write",
+      connector: remoteMcp("oauth", { url: OAUTH_MCP_URL, auth: { type: "oauth" } }),
+      downstream: downstream as { fetch: typeof fetch },
+    };
+  });
+
 /** A run publishes nothing until its secret set is final; every other outcome leaves ids refused. */
 export const retainedSealingCases: Record<string, (executor: Executor) => Promise<void>> = {
+  "a refresh's stored refresh token counts when the run seals (api)": apiRefreshCase("refresh-token"),
+  "a refresh's client secret counts when the run seals (api)": apiRefreshCase("client-secret"),
+  "a refresh's configured token-request header counts when the run seals (api)": apiRefreshCase("token-header"),
+  "a refresh's stored refresh token counts when the run seals (remote)": remoteRefreshCase("refresh-token"),
+  "a refresh's client secret counts when the run seals (remote)": remoteRefreshCase("client-secret"),
+  "a typed array from an api() handler is refused once a second connector grows the set": async (executor) => {
+    const original = { bytes: new TextEncoder().encode(LATE_SECRET), PAD };
+    const vault = new CredentialVault(memoryStorage(), btoa("k".repeat(32)));
+    vault.getAll = async () => ({ value: LATE_SECRET });
+    const registry = new Registry(
+      [
+        api("download", {
+          tools: [
+            {
+              name: "read",
+              description: "Read bytes",
+              annotations: { readOnlyHint: true },
+              async handler() {
+                return original;
+              },
+            },
+          ],
+        }),
+        api("authenticated", {
+          credential: { label: "Token" },
+          tools: [
+            {
+              name: "use",
+              description: "Use a credential",
+              annotations: { readOnlyHint: true },
+              async handler(_args, ctx) {
+                await ctx.credential!.getAll();
+                return "used";
+              },
+            },
+          ],
+        }),
+      ],
+      { storage: memoryStorage(), logger: silentLogger, credentialVault: vault },
+    );
+    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: `async () => {
+        const handle = await connecta.call("download.read");
+        await connecta.call("authenticated.use");
+        return handle.resultId;
+      }`,
+    });
+    expect(await refusalOf(registry, outcome.structuredContent!.result as string)).toMatchObject({
+      code: "result_not_retained",
+      retryable: false,
+    });
+    expect(outcome.structuredContent?.note).toContain("Rerun the read");
+  },
+  "values JSON stores as numbers are refused after growth, and values it erases store nothing": async (executor) => {
+    const bytes = new TextEncoder().encode(RETAINED_SECRET);
+    const units = Array.from(RETAINED_SECRET, (char) => char.charCodeAt(0));
+    const refused: Record<string, unknown> = {
+      Uint8Array: bytes,
+      Uint16Array: Uint16Array.from(units),
+      Float32Array: Float32Array.from(units),
+      toJSON: { toJSON: () => RETAINED_SECRET },
+      ...(typeof Buffer === "function" ? { Buffer: Buffer.from(bytes) } : {}),
+    };
+    const erased: Record<string, unknown> = {
+      ArrayBuffer: bytes.slice().buffer,
+      DataView: new DataView(bytes.slice().buffer),
+      Blob: new Blob([bytes]),
+      Map: new Map([[RETAINED_SECRET, RETAINED_SECRET]]),
+      Set: new Set([RETAINED_SECRET]),
+    };
+    const run = async (value: unknown) => {
+      const { registry } = retainedRegistry(memoryStorage(), { echoed: () => ({ value, PAD }) });
+      const outcome = await createExecuteTool(
+        registry,
+        BASE,
+        executor,
+        silentLogger,
+      )({ code: RETAINED_PROGRAM("read") });
+      return { registry, id: outcome.structuredContent!.result as string };
+    };
+    for (const [label, value] of Object.entries(refused)) {
+      const { registry, id } = await run(value);
+      expect(await refusalOf(registry, id), label).toMatchObject({ code: "result_not_retained" });
+    }
+    for (const [label, value] of Object.entries(erased)) {
+      const { registry, id } = await run(value);
+      expect(JSON.parse(await pageFromLaterRun(registry, id)), label).toEqual({ value: {}, PAD });
+    }
+    // A date keeps its text, and the same set finds nothing in it to refuse.
+    const when = new Date(0);
+    const dated = await run(when);
+    expect(JSON.parse(await pageFromLaterRun(dated.registry, dated.id)).value).toBe(when.toISOString());
+  },
   "an offset issued during the run finds the same bytes, or an explicit refusal": async (executor) => {
     const continued = `async () => {
     const handle = await connecta.call("vault.read");

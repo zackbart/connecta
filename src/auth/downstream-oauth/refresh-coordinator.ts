@@ -248,7 +248,7 @@ export class OAuthRefreshCoordinator {
     requestSignal?: AbortSignal,
     defer?: ConnectorContext["defer"],
     resourceFetch: FetchLike = baseFetch,
-    prepareCredentialRequest?: () => void,
+    prepareCredentialRequest?: (input: string | URL, init: RequestInit | undefined) => void,
   ): FetchLike {
     return authMethod((input: string | URL, init: RequestInit | undefined) => {
       return authFlow<Response>(
@@ -263,7 +263,10 @@ export class OAuthRefreshCoordinator {
           // Production adapters resolve the required host policy before a code or
           // refresh claim can consume its single-use credential. Custom SDK leaves
           // may supply their own policy; this hook performs no I/O and owns no data.
-          if (isOAuthCredentialRequest(init)) prepareCredentialRequest?.();
+          // Each also registers the request's credentials before this point, as `api()`
+          // does in this hook: a refresh outlives its caller once claimed, and a sealing
+          // run must not publish ahead of that. `remoteMcp()` does so around its SDK flows.
+          if (isOAuthCredentialRequest(init)) prepareCredentialRequest?.(input, init);
           if (isRefreshTokenRequest(init)) {
             const signal =
               requestSignal && init?.signal

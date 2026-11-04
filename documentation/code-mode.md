@@ -814,8 +814,10 @@ write first chunks. An entry the set has not grown past is written with no other
 storage work. After growth, its stored bytes are read back and checked, in stored
 form and structurally, so JSON-escaped, URL-encoded and base64 forms and a form split
 across text blocks are found. An entry with no match is written unchanged. Stored
-bytes are never rewritten, so `totalBytes` and any offset issued during the run stay
-valid in later runs.
+JSON that can hold a typed array's or Buffer's bytes as numbers, meaning a `"0"` key
+holding a number or a `Buffer` shape, counts as a match after growth, since those
+bytes are checked only while still binary. Stored bytes are never rewritten, so
+`totalBytes` and any offset issued during the run stay valid in later runs.
 
 An entry that was not written stays unreadable: it matched the final set, a read-back
 or write failed, or work was still pending at the response's answer-by time, which

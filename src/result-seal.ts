@@ -99,19 +99,25 @@ function bytesOf(encoded: readonly string[], total: number): Uint8Array {
   return bytes;
 }
 
+/**
+ * What JSON makes of a typed array or Buffer: numbers a stored page can turn back into the
+ * bytes, which redaction checks only while they are still binary. A key "0" holding a number
+ * counts too, since the stored form cannot tell them apart. Other binary values and
+ * collections (ArrayBuffer, DataView, Blob, Map, Set) serialize to `{}` and store nothing.
+ */
+const ERASED_BYTES = /"0":(?:-?\d|null)|"type":"Buffer"/;
+
 /** The checks a result takes on its way into the stash, repeated over the whole stored value.
  * Structured redaction joins text blocks, so a form split across two of them is found. */
-function checkedAgainst(secrets: SentSecrets, text: string, format: "json" | "text"): string {
-  let checked = text;
+function passesSet(secrets: SentSecrets, text: string, format: "json" | "text"): boolean {
   if (format === "json") {
     try {
-      const value: unknown = JSON.parse(text);
-      if (secrets.changes(value)) checked = JSON.stringify(secrets.redact(value));
+      if (ERASED_BYTES.test(text) || secrets.changes(JSON.parse(text))) return false;
     } catch {
       // A value JSON renders as text, such as `undefined`, takes the text check alone.
     }
   }
-  return secrets.text(checked);
+  return secrets.text(text) === text;
 }
 
 export interface SealOutcome {
@@ -152,7 +158,7 @@ export function sealHeldResults(
           parts.push(chunk);
         }
         const text = dec.decode(bytesOf(parts, entry.total));
-        return checkedAgainst(secrets, text, entry.format) === text;
+        return passesSet(secrets, text, entry.format);
       });
 
     const seal = Effect.gen(function* () {
@@ -172,6 +178,8 @@ export function sealHeldResults(
       );
     });
 
+    // A header write that commits after its timeout can replace a marker, so a marker is no
+    // publication fence. That write only ever carries bytes this seal already checked.
     const refuse = (entry: HeldResult) =>
       Effect.gen(function* () {
         yield* authStorage(storage, "set", [
