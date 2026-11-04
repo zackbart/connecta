@@ -333,6 +333,16 @@ it("counts errors up to the first downstream success and reports distractor call
     ),
   ).toBe(1);
   expect(errorsBeforeFirstDownstreamSuccess([use("skills", false), use("call_tool", true)], [])).toBe(1);
+  // A retry of identical code: the later success must not credit the earlier failure.
+  expect(
+    errorsBeforeFirstDownstreamSuccess(
+      [code("async () => 1", true), code("async () => 1", false)],
+      [
+        { code: "async () => 1", calls: [{ name: "connecta.call", outcome: "error" }] },
+        { code: "async () => 1", calls: [{ name: "connecta.call", outcome: "ok" }] },
+      ],
+    ),
+  ).toBe(1);
 
   const t = trial();
   Object.assign(t.metrics, {

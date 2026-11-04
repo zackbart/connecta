@@ -539,6 +539,21 @@ async function run() {
       Object.keys(NO_CODE_CAPABILITY_MISMATCHES).every((id) => rule.includes(`- ${id}: `)),
     rule.slice(0, 300),
   );
+  // A task outside the roster may run in the same batch, but it never enters the score.
+  const withExtra = [...allIds, "ccb-advanced-search"];
+  const extra = noCodeDecisionLines(
+    planBatch("native", withExtra),
+    planBatch("native-no-code", withExtra),
+    () => true,
+    (t) => t.task !== "ccb-advanced-search",
+  ).join("\n");
+  record(
+    "control: a task outside the roster never enters the decision score",
+    !roster.has("ccb-advanced-search") &&
+      extra.includes(`native: ${comparable}/${comparable} passing`) &&
+      extra.includes(`native-no-code: ${comparable}/${comparable} passing`),
+    extra.slice(0, 300),
+  );
   const partial = noCodeDecisionLines(
     planBatch("native", allIds.slice(1)),
     planBatch("native-no-code", allIds.slice(1)),

@@ -49,7 +49,9 @@ export function noCodeDecisionLines(
   const reductions = new Set(
     comparable.filter((row) => row.category === "reduction/join" || row.category === "paging").map((row) => row.id),
   );
-  const included = (trial: TrialResult) => ran.has(trial.task) && !NO_CODE_CAPABILITY_MISMATCHES[trial.task];
+  // Tasks outside the preregistered roster stay in ordinary arm reporting, never in this score.
+  const roster = new Set(comparable.map((row) => row.id));
+  const included = (trial: TrialResult) => ran.has(trial.task) && roster.has(trial.task);
   const arm = (label: string, file: AgentResultFile, passed: (trial: TrialResult) => boolean) => {
     const trials = file.trials.filter((trial) => included(trial) && trial.status !== "skipped");
     const passing = trials.filter(passed);
