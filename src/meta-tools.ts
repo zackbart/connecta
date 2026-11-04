@@ -660,6 +660,67 @@ const guardText = function (text: string, results: ResultStash, cap: number) {
   });
 };
 
+/**
+ * EVAL ONLY, NOT FOR MERGE (result-shaping study). Reads a per-isolate global the
+ * Worker eval composition installs (eval/result-shaping/shape.ts); no package
+ * entry or configuration reaches it. Direct reads only: writes keep their only
+ * copy untouched, value mode and programs never come here, and the text is
+ * already redacted. Undefined means the ordinary guard handles the result.
+ */
+interface EvalPresenter {
+  lean?: (text: string) => { text: string; note: string; dropped: number } | undefined;
+  preview?: (
+    text: string,
+  ) => { hint: string; fields: Record<string, unknown>; body: string; program(id: string): string } | undefined;
+}
+
+const presentEvalRead = function (raw: string, results: ResultStash, cap: number) {
+  return authFlow<GuardedResult<ToolResult> | undefined>(function* () {
+    const presenter = (globalThis as Record<symbol, unknown>)[Symbol.for("connecta.eval.resultPresenter")] as
+      | EvalPresenter
+      | undefined;
+    // A surface without programs cannot run the reduction a preview offers.
+    if (!presenter || results.write || results.pagingTool) return undefined;
+    const text = results.secrets?.text(raw) ?? raw;
+    if (!isWellFormedText(text)) return undefined;
+    const preview = presenter.preview?.(text);
+    if (preview) {
+      const notice = yield* upwardStep(stashResult(enc.encode(text), results, { kind: "none" }, text));
+      // No retained copy, no preview: the ordinary guard still shows the data.
+      if (notice.resultId) {
+        const { nextAction, nextOffset, ...rest } = notice;
+        return {
+          result: noticeFirst(
+            {
+              ...rest,
+              ...preview.fields,
+              hint: preview.hint,
+              nextOffset,
+              nextAction: {
+                tool: "execute_code",
+                arguments: { code: preview.program(notice.resultId) },
+              },
+            },
+            preview.body,
+          ),
+          truncated: true,
+        };
+      }
+    }
+    const lean = presenter.lean?.(text);
+    if (!lean || enc.encode(lean.text).length > cap) return undefined;
+    return {
+      result: {
+        content: [
+          { type: "text", text: lean.text },
+          { type: "text", text: lean.note },
+        ],
+      },
+      truncated: false,
+    };
+  });
+};
+
 /** Store an oversized JSON value and replace it with a page handle. */
 
 const guardValue = function (value: unknown, results: ResultStash, cap: number) {
@@ -1038,6 +1099,14 @@ function metaToolsForRequest(
                         },
                       ];
                     }
+                    const presented =
+                      content.length === 1 && content[0]?.type === "text" && typeof content[0].text === "string"
+                        ? yield* upwardStep(presentEvalRead(content[0].text, results, cap))
+                        : undefined;
+                    if (presented) {
+                      presented.result._meta = { "dev.connecta/format": format };
+                      return processed(presented.result, presented.truncated);
+                    }
                     const guarded = yield* upwardStep(guardContent(content, results, cap));
                     // Native blocks and bounded previews are the result. A format-only
                     // structuredContent hides them in clients that prefer that field.
@@ -1045,6 +1114,11 @@ function metaToolsForRequest(
                     return processed(guarded.result, guarded.truncated);
                   }
                   const value = result;
+                  const presented = yield* upwardStep(presentEvalRead(serializeResultText(value), results, cap));
+                  if (presented) {
+                    presented.result._meta = { "dev.connecta/format": format };
+                    return processed(presented.result, presented.truncated, { value });
+                  }
                   const guarded = yield* upwardStep(guardText(serializeResultText(value), results, cap));
                   guarded.result._meta = { "dev.connecta/format": format };
                   return processed(guarded.result, guarded.truncated, { value });

@@ -15,6 +15,7 @@
  * `/__eval/*` are local process controls, never product routes.
  */
 import { forSurface } from "./code-surface.js";
+import { installResultPresenter } from "../result-shaping/shape.js";
 import { workerExecutor } from "@zackbart/connecta/worker";
 import { createConnecta } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
@@ -63,6 +64,7 @@ async function setup(env: Env): Promise<Live> {
     JSON.parse(env.EVAL_TRANSPORT_MARKERS),
   );
   const composition = JSON.parse(env.EVAL_COMPOSITION) as EvalComposition;
+  installResultPresenter(composition.resultArm ?? "control");
   const storage = d1Storage(injectedD1(env.CONNECTA_DB, env));
   const vault = encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY);
   const { token } = await new AccessTokenManager(storage, { agents: ["eval-machine"] }).rotate(

@@ -16,6 +16,7 @@ export interface AgentResultFile {
   codexVersion?: string;
   claudeVersion?: string;
   config: {
+    resultArm?: string;
     guidanceArm?: string;
     surface?: import("../agent/surface.js").Surface;
     grading?: import("../tasks/grading.js").Grading;

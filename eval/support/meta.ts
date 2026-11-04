@@ -104,6 +104,7 @@ export function runProtocol(pairId?: string) {
       "eval/agent",
       "eval/deploy",
       "eval/fakes",
+      "eval/result-shaping",
       "eval/support",
       "eval/run-agent.ts",
       "pnpm-lock.yaml",

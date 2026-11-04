@@ -16,6 +16,7 @@ import { runClaude } from "./claude.js";
 import { gradeTask, classifyChecks, passes, type Grading } from "../tasks/grading.js";
 import { taskForSurface } from "../tasks/surface.js";
 import { assertSurface, type Surface } from "./surface.js";
+import type { ResultArm } from "../result-shaping/shape.js";
 import { startAuthHost } from "./auth-host.js";
 import { infraError, stopsBatch } from "./infra.js";
 import { saveGradeInputs, type SavedGradeInputs } from "./saved.js";
@@ -68,6 +69,7 @@ export interface TrialResult {
   /** Absent in results written before the worker target existed: node. */
   target?: Target;
   surface?: Surface;
+  resultArm?: ResultArm;
   grading?: Grading;
   model: string;
   repeat: number;
@@ -114,6 +116,7 @@ interface TrialOptions {
   /** Opt-in latency and fault injection; none by default. */
   injection?: Injection;
   surface?: Surface;
+  resultArm?: ResultArm;
   grading?: Grading;
   runner?: "codex" | "claude";
   maxBudgetUsd?: number;
@@ -197,7 +200,13 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
   try {
     await world.start();
     for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-    const deployment = (cleanupDeployment = await startDeployment(target, world, task, surfaceArm));
+    const deployment = (cleanupDeployment = await startDeployment(
+      target,
+      world,
+      task,
+      surfaceArm,
+      options.resultArm ?? "control",
+    ));
     const hostEvents: StreamEvent[] = [];
     const host = (cleanupHost = task.host
       ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))

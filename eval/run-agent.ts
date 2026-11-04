@@ -17,6 +17,8 @@ import { guidanceArm } from "./deploy/guidance.js";
  *   --timeout-min  per-trial wall budget in minutes (default 8)
  *   --effort       Codex reasoning effort (default model setting)
  *   --out          result JSON path (default eval/results/agent-<time>.json)
+ *   --result-arm   control (default), lean, preview or lean-preview: eval-only direct-read
+ *                  presentation, worker target only (eval/result-shaping/shape.ts)
  *   --report       also write an HTML report
  *   --baseline     previous result file for that report
  *
@@ -26,6 +28,7 @@ import { guidanceArm } from "./deploy/guidance.js";
  * trial ran once, completed normally and passed.
  */
 import { parseSurface } from "./agent/surface.js";
+import { parseResultArm } from "./result-shaping/shape.js";
 import { parseTarget, workerRefusal } from "./deploy/targets.js";
 import { describeInjection, parseInjection } from "./fakes/injection.js";
 import { killAllProcesses } from "./support/workerd.js";
@@ -47,6 +50,8 @@ const args = flags(process.argv.slice(2));
 const surface = parseSurface(args.get("surface"));
 const grading = parseGrading(args.get("grading"));
 const target = parseTarget(args.get("target"));
+const resultArm = parseResultArm(args.get("result-arm"));
+if (resultArm !== "control" && target !== "worker") throw new Error("--result-arm needs --target worker");
 const guidance = guidanceArm();
 if (guidance && (target !== "node" || surface !== "six" || grading !== "outcome"))
   throw new Error("Guidance comparison requires node, six, outcome grading");
@@ -126,6 +131,8 @@ const file: AgentResultFile = {
     // Always recorded, zeros included, so a comparison can prove it matched.
     injection,
     surface,
+    // Eval-only result presentation; recorded so a comparison can prove the arm.
+    resultArm,
     ...(guidance ? { guidanceArm: guidance } : {}),
     grading,
     models,
@@ -173,6 +180,7 @@ const { trials, stopped } = await runBatch(tasks, models, repeats, {
   target,
   injection,
   surface,
+  resultArm,
   grading,
   concurrency,
   timeoutMs,

@@ -7,6 +7,7 @@
  * reason, never run, skipped or passed.
  */
 import type { Surface } from "../agent/surface.js";
+import type { ResultArm } from "../result-shaping/shape.js";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "../tasks/types.js";
 import { startNodeDeployment, type Deployment } from "./node.js";
@@ -44,9 +45,11 @@ export async function startDeployment(
   world: World,
   task: ActiveTask,
   surface: Surface,
+  resultArm: ResultArm = "control",
 ): Promise<Deployment> {
   const everyPool = world.injected.ids();
   if (target === "node") {
+    if (resultArm !== "control") throw new Error("--result-arm applies only to the worker target.");
     if (world.injection.d1LatencyMs)
       throw new Error("D1 latency injection applies only to the worker target; the node target stores in SQLite.");
     return startNodeDeployment(
@@ -65,6 +68,7 @@ export async function startDeployment(
     everyPool,
     world.injection.d1LatencyMs,
     surface,
+    resultArm,
   );
 }
 

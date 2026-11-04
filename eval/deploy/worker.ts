@@ -12,6 +12,7 @@
  * back through the gateway.
  */
 import type { Surface } from "../agent/surface.js";
+import type { ResultArm } from "../result-shaping/shape.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -148,6 +149,7 @@ export async function startWorkerDeployment(
   everyPool: string[] = [],
   d1LatencyMs = 0,
   surface: Surface = "six",
+  resultArm: ResultArm = "control",
 ): Promise<Deployment> {
   const gateway = await startVendorGateway();
   const since = Date.now();
@@ -170,6 +172,7 @@ export async function startWorkerDeployment(
     const composition: EvalComposition = {
       connectors,
       surface,
+      resultArm,
       extra,
       fixtures: { alice: ALICE, accountA: ACCOUNT_A, shopZone: SHOP_ZONE },
       readOnly: false,
