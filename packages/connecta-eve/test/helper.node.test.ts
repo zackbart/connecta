@@ -478,7 +478,9 @@ it("prefixes the server's text with the guide for each surface, from a real endp
   const [renamed] = await guide({}, "workspace");
   expect(renamed).toBe(META_GUIDE("workspace", "crm, billing, tickets"));
   expect(renamed).not.toContain("connecta__");
-  const [native] = await guide({ surface: "native" });
+  const [native, nativeServer] = await guide({ surface: "native" });
+  // The guide comes first because it answers this server sentence for Eve, which refreshes its list.
+  expect(nativeServer).toContain("Tools missing: ask the operator to repair, then reconnect.");
   expect(native).toBe(
     `Connecta tools are deferred: call eve__tool({ name: "connecta__<connector>__<tool>", input }), with writes named "connecta__<connector>__WRITE__<tool>". Find them with eve__search; scope one connector with "connecta__<connector>__", not "<connector>__". Names in this guidance and in nextAction omit "connecta__". For several, dependent or reduced calls, go straight to connecta__execute_code with { code: "async () => { ... }" }, using each tool's Program address. Tools missing: connecta__authorize_connector returns a link; give it to the user or operator once and stop. Eve lists tools again every step, so a repair needs no reconnect. Connectors: crm, billing, tickets.`,
   );
