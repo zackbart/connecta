@@ -221,6 +221,10 @@ describe("request admission", () => {
           });
           if (route === "execute_code") {
             expect(response.rpc.result.structuredContent.error.writes).toEqual({ succeeded: 1, failed: 0, unknown: 0 });
+            // Storage already stalled this run: the response does not wait on it twice.
+            expect(response.rpc.result.structuredContent.error.completed).toMatchObject({
+              calls: [{ address: "notes.save", write: true, dropped: true }],
+            });
           }
           expect(response.rpc.result.structuredContent.error.writeOutcome).toBeUndefined();
           expect(response.rpc.result.structuredContent.error.message).toContain("completed");

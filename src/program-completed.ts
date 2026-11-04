@@ -32,10 +32,23 @@ function ownResultId(value: unknown): string | undefined {
   return ownResultId(shape.handle ?? shape.value ?? (shape.native as { value?: unknown } | undefined)?.value);
 }
 
+interface CompletedRun {
+  dependencies: ProgramResultDependency[];
+  stashed: unknown;
+  storageStalled: boolean;
+  report: (resultId?: string) => object;
+}
+
 export class CompletedCalls {
   private readonly calls: CompletedCall[] = [];
   private held = 0;
   private closed = false;
+  private stalled = false;
+
+  /** A result could not be presented in this run; the stash may not answer now either. */
+  storageStalled(): void {
+    this.stalled = true;
+  }
 
   /**
    * A dispatch answered. Call this as soon as it does, before presentation can
@@ -103,9 +116,7 @@ export class CompletedCalls {
   }
 
   /** The run is over: hold nothing more, and hand back what a failure may keep. */
-  close():
-    | { dependencies: ProgramResultDependency[]; stashed: unknown; report: (resultId?: string) => object }
-    | undefined {
+  close(): CompletedRun | undefined {
     this.closed = true;
     const calls = this.calls.splice(0);
     this.held = 0;
@@ -113,6 +124,7 @@ export class CompletedCalls {
     const kept = calls.filter((call) => call.output !== undefined);
     return {
       dependencies: calls.map((call) => call.dependency),
+      storageStalled: this.stalled,
       stashed:
         kept.length === 0
           ? undefined

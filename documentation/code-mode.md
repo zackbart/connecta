@@ -855,7 +855,8 @@ displace the oldest write. A read never displaces a write, and an output over
 1 MiB displaces nothing. Memory ends with the run, and a run that succeeds writes
 nothing to the stash. A failure writes once, after the executor has finished,
 bounded by `execute.hostCallTimeoutMs`. A cancelled caller starts no storage
-work, so it receives addresses only.
+work, and neither does a run in which result processing already failed on a live
+request, because storage may not answer now either. Both receive addresses only.
 
 The entry is an ordinary program-return stash (`R4`): the same redaction, using
 every secret the run sent, even one sent after the output arrived; the same

@@ -897,6 +897,10 @@ function sandboxProvider(
         if (!outcome.ok) for (const connector of outcome.error.configuredConnectors ?? []) catalogDependency(connector);
       }
       diagnostics?.recordCall(outcome);
+      // Presentation ran out its deadline with the run still live, so do not make a
+      // failing response wait on the same storage.
+      if (!outcome.ok && outcome.error.code === "result_processing_failed" && !signal?.aborted)
+        limits.completedCalls?.storageStalled();
       if (!outcome.ok) return yield* Effect.fail(new InvocationFailure(outcome.error));
       limits.completedCalls?.presented(sending.completed, outcome.value);
       return outcome.value;
@@ -1750,7 +1754,7 @@ export function createExecuteTool(
             const error = result.structuredContent?.error;
             if (!kept || !result.isError || error === null || typeof error !== "object") return Effect.succeed(result);
             const stashed: Effect.Effect<unknown, unknown> =
-              kept.stashed === undefined || options.signal?.aborted
+              kept.stashed === undefined || kept.storageStalled || options.signal?.aborted
                 ? Effect.void
                 : withDeadlineEffect(
                     () =>
@@ -1782,17 +1786,14 @@ export function createExecuteTool(
               Effect.catchCause(() => Effect.void),
               Effect.map((notice) => {
                 const resultId = (notice as { resultId?: unknown } | undefined)?.resultId;
-                const structured = result.structuredContent!;
-                return {
-                  ...result,
-                  structuredContent: {
-                    ...structured,
-                    error: {
-                      ...(error as object),
-                      completed: kept.report(typeof resultId === "string" ? resultId : undefined),
-                    },
+                result.structuredContent = {
+                  ...result.structuredContent,
+                  error: {
+                    ...(error as object),
+                    completed: kept.report(typeof resultId === "string" ? resultId : undefined),
                   },
                 };
+                return result;
               }),
             );
           });
