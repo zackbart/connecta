@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-04: Reporting a tool's own words on every surface, bounding and re-redacting a program's unknown writes, and the outbound credential view. CI at b7b16a5a, on main with #1330, measures the root at 424,826 B and examples/worker at 809,238 B. The root cap moves 423,700 to 425,000 B and the examples/worker cap 808,000 to 809,500 B, leaving 174 B and 262 B; baselineGzip and every other cap are unchanged.",
     "2026-11-04: Failure-recovery text (agent-text/failure-recovery) adds about 1,398 B to the root and 1,809 B to examples/worker against main's CI measures of 422,175 B and 806,117 B, past their 325 B and 383 B of headroom. This is new agent-facing text, not drift; the root cap moves to 423,700 B and the examples/worker cap to 808,000 B.",
     "2026-11-03: The performance, security and guidance batch has landed, so its temporary headroom ends. CI at 0d89ea9c measures the root at 422,175 B and examples/worker at 806,117 B, up from 415,751 B and 796,900 B at Release 0.40.0 (+6,424 B and +9,217 B). The caps move to 422,500 B and 806,500 B, leaving 325 B and 383 B for later changes.",
     "2026-11-03: More temporary batch headroom. CI measured root at 419,015 B and examples/worker at 801,303 B on #1280, with more of the batch still open. The root cap moves to 425,000 B and the examples/worker cap to 808,000 B. These get tightened to measured sizes plus normal headroom when the batch lands.",
@@ -58,7 +59,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 423700
+      "maxGzip": 425000
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -141,7 +142,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 808000
+      "maxGzip": 809500
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
