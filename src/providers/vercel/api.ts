@@ -1,7 +1,7 @@
 import { isRecord } from "../_shared/json.js";
 // Vercel's pinned contract, authentication, failures and value-safety boundary.
 import { Effect, Schema } from "effect";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, tokenPrefix } from "../../errors.js";
 import type { ConnectorUsageGuide } from "../../types.js";
 import { Refusal, StatusFailure, UnreadableBody, type VendorErrors } from "../../http/errors.js";
 import { restSafety } from "../../http/safety.js";
@@ -118,7 +118,8 @@ export const vercelErrors: VendorErrors = {
     const message =
       text(error["message"])?.trim() ?? text(root["message"])?.trim() ?? `Vercel returned HTTP ${status}.`;
     const reviewed = withheld ? facts["code"] : reviewedCode(code);
-    const detail = (code ? `Vercel ${code}: ${message}` : message).slice(0, 1_000);
+    const detail =
+      tokenPrefix(code ? `Vercel ${code}: ${message}` : message, 1_000) || `Vercel returned HTTP ${status}.`;
     if (status >= 200 && status <= 299 && facts["envRejected"] === true)
       return `Vercel rejected the environment-variable write${reviewed ? ` (${reviewed})` : ""}; its message is withheld because this operation handles secret values.`;
     return withheld
