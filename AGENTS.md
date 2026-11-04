@@ -96,8 +96,8 @@ every PR, main push, nightly and manual run:
   does not filter membership in Vitest 5.0.4.
   `workers` runs the binding-backed `WORKERS_SUITES` in `vitest.config.ts`
   with four Vitest workers on the four-core CI runner.
-- `behavior` runs `eval:outcomes` and `eval:smoke`, retaining `eval/results/`
-  on failure.
+- `behavior` runs `eval:outcomes`, `eval:smoke` and
+  `eval:selftest --native-only`, retaining `eval/results/` on failure.
 - `browser` runs Playwright. Visual comparisons never retry; behavior tests
   keep two CI retries. Any failed attempt retains the HTML report, diffs and
   traces as `playwright-report`.
