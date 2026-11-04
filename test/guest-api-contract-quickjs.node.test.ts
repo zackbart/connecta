@@ -14,6 +14,7 @@ import {
   checkProgramReadDependencies,
   checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
+  checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
   checkSharedPreludes,
   checkStashAuthority,
@@ -169,6 +170,10 @@ describe("guest API contract (QuickJS executor)", () => {
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(readDeadlineExecutor);
   });
+
+  it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {
+    await checkReadDeadlineCancels(readDeadlineExecutor);
+  }, 60_000);
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
     const outcome = await contractHarness().run(

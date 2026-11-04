@@ -978,6 +978,10 @@ early rather than late. A read that reaches its cap fails with a retryable
 `timeout` the program can catch, so `Promise.allSettled` keeps every result that
 finished. Caught or not, it is the read's failure, not a sandbox timeout. A
 later read gets the one-tick deadline that is left, and fails the same way.
+The cap ends the work as well as the wait: the read's downstream signal aborts
+before the program hears `timeout`, and a listing other callers still wait on is
+cancelled once the last of them leaves. Storage operations cannot be withdrawn
+once sent, so one in flight runs to its end, and no further one starts.
 
 Writes are exempt, because a write ended early is a write with an unknown
 outcome. A write-like call (`W9`), a source write overridden to read included,
