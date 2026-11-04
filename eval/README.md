@@ -1282,3 +1282,61 @@ and retain them in `otherTools`. Shell `commandExecution` items still fail the
 isolation guard. The eight initial paid probes were interrupted by development
 reloads and are diagnostics, not a valid arm comparison; no paid retries were
 run.
+
+### Description arms
+
+`--description-arm <control|terse|disambiguation|example>` serves different tool
+text for six providers: Stripe, GitHub, Cloudflare, CCB, QuickBooks and Google
+Sheets. It exists only in the eval: [deploy/description-arms/](deploy/description-arms/)
+is not shipped, and no `src/` module, template, public option or configuration
+key can reach it. The default is `control`, which serves each provider's own text.
+
+Tool descriptions are hand-written per tool and arm. Property text follows the
+written rules in [properties.ts](deploy/description-arms/properties.ts), with
+per-tool additions. An arm replaces `staticTools` entries, so every surface
+serves it; only description strings change. Names, types, enums, bounds, required
+lists, annotations and handlers stay the same, and lexical search indexes the
+arm's text. `control` is today's text. The candidates are:
+
+- `terse`: one purpose sentence, then only protected clauses. Property text only
+  where name and type do not suffice.
+- `disambiguation`: what the tool is for, then when to use a named sibling
+  instead, inside search's 160-byte cut where possible, then protected clauses.
+- `example`: a short purpose, one schema-valid example call, then protected clauses.
+
+[protected.ts](deploy/description-arms/protected.ts) lists each tool's safety
+rules and required prerequisites. A variant that drops one is invalid, so
+`test/eval-description-arms.test.ts` fails. It also refuses structural schema
+changes, meta-tool names in static text, and examples their own schema refuses.
+
+[description-plan.ts](description-plan.ts) fixes the tasks, budget, stages and
+decision rule before any trial. Results record `config.descriptionArm`, and
+each trial records its arm. `eval:compare` refuses arms across different
+surfaces, targets, injections, commits or pair ids, with no override. Arms print
+a diagnostic and no decision.
+
+```sh
+pnpm run eval:selftest --description-arms-only
+pnpm exec tsx eval/measure-descriptions.ts --out eval/results/description-bytes.json
+tasks=$(node --import tsx --input-type=module -e 'import { DESCRIPTION_PLAN as p } from "./eval/description-plan.ts"; console.log(p.stageA.tasks.map(t => t.id).join(","))')
+pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --target worker --catalog-tools 300 --surface six --grading outcome --repeats 2 --concurrency 3 --no-build --tasks "$tasks" --description-arm terse --pair-id <id> --out eval/results/description-terse-claude-six.json
+pnpm run eval:compare --a eval/results/description-control-claude-six.json --b eval/results/description-terse-claude-six.json
+pnpm exec tsx eval/description-report.ts eval/results/description-*.json
+```
+
+The selftest proves every planned reference still passes on every arm, a no-op
+still fails, and the arm's text is what Node and workerd serve. `measure-descriptions`
+reads the same wire a host reads, and calls `<prefix>_api_details` on each hatch
+example to prove it names a real operation. QuickBooks examples need operator
+consent, so they were checked against the pinned index by hand.
+
+[report/descriptions.ts](report/descriptions.ts) derives these from saved traces:
+
+- **First-attempt `invalid_args`:** distinct provider tools whose first call in
+  the trial failed `invalid_args`, across direct, native and program calls.
+- **Hatch misuse:** failed `_api_read`, `_api_write` or `_api_upload` calls, plus
+  hatch calls reaching an operation a named tool serves.
+- **Searches:** `search_tools`, `connecta.search` and observable host searches.
+  Codex reports no host search, so its count is a lower bound.
+- **Invalid trials:** a timeout, interruption or runner error is reported and
+  removes its pair from pass comparisons. It is never rerun or scored as a failure.

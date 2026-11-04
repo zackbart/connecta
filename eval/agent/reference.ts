@@ -12,6 +12,7 @@ import { connectMcp, type McpSession } from "../support/mcp.js";
 import type { ActiveTask } from "../tasks/types.js";
 import { startAuthHost } from "./auth-host.js";
 import { assertSurface, type Surface } from "./surface.js";
+import type { DescriptionArm } from "../deploy/description-arms/index.js";
 import { parseTrace, type AgentTrace, type StreamEvent, type ToolUse, type TranscriptEntry } from "./trace.js";
 
 /** A completed scripted conversation: one successful turn end per turn. */
@@ -54,6 +55,7 @@ interface PlayOptions {
   /** Opt-in latency and fault injection; none by default. */
   injection?: Injection;
   surface?: Surface;
+  descriptionArm?: DescriptionArm;
   /** Runs after the surface check and before the reference, on the same session. */
   before?(ctx: { session: McpSession; world: World; toolUses: ToolUse[] }): Promise<void>;
 }
@@ -74,7 +76,7 @@ export async function playReference<T>(
     for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
     deployment = options.deploy
       ? await options.deploy(world)
-      : await startDeployment(options.target ?? "node", world, task, surface);
+      : await startDeployment(options.target ?? "node", world, task, surface, options.descriptionArm);
     const hostEvents: StreamEvent[] = [];
     host = task.host
       ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))

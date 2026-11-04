@@ -13,6 +13,8 @@ import { downstreamMetrics } from "./agent/trace.js";
 import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
 import { describeInjection, injectionOf, sameInjection } from "./fakes/injection.js";
+import { descriptionArmOf } from "./deploy/description-arms/index.js";
+import { descriptionComparison } from "./report/descriptions.js";
 import {
   efficiencyLines,
   fmtSize,
@@ -76,6 +78,7 @@ const trialSchema = z
     runner: z.enum(["codex", "claude"]),
     target: z.enum(["node", "worker"]).optional(),
     surface: z.enum(["six", "five", "code", "native", "native-no-code"]),
+    descriptionArm: z.enum(["control", "terse", "disambiguation", "example"]).optional(),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
     status: z.enum(["pass", "fail", "error", "skipped"]),
@@ -275,6 +278,7 @@ const SETTINGS: Record<string, { label: string; value?: (file: AgentResultFile) 
   mcpOutputTokens: { label: "MCP output limit", value: (f) => f.config.mcpOutputTokens ?? "host default" },
   target: { label: "deployment target", value: targetOf },
   injection: { label: "latency and fault injection", value: (f) => injectionOf(f.config.injection) },
+  descriptionArm: { label: "description arm", value: (f) => descriptionArmOf(f.config.descriptionArm) },
 };
 
 /**
@@ -333,6 +337,38 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     throw new Error(
       `Comparison refused: arms ran on different targets (${targetOf(a)}, ${targetOf(b)}); use --cross-target for a diagnostic`,
     );
+  // Tool text is the one variable a description comparison changes, and it is
+  // never compared across surfaces. No override pairs them.
+  const textArms = [descriptionArmOf(a.config.descriptionArm), descriptionArmOf(b.config.descriptionArm)] as const;
+  if (textArms[0] !== textArms[1]) {
+    if (a.config.surface !== b.config.surface)
+      throw new Error(
+        `Comparison refused: description arms ${textArms.join(" and ")} ran on different surfaces (${a.config.surface}, ${b.config.surface})`,
+      );
+    const surface = a.config.surface!;
+    const reasons = [
+      ...measuredProvenance(textArms[0], surface, a),
+      ...measuredProvenance(textArms[1], surface, b),
+      ...settingMismatches(a, b, ["descriptionArm"]).map((label) => `Arms must use the same ${label}`),
+    ];
+    for (const [arm, file] of [
+      [textArms[0], a],
+      [textArms[1], b],
+    ] as const)
+      for (const trial of file.trials)
+        if (descriptionArmOf(trial.descriptionArm) !== arm)
+          reasons.push(`${arm}: trial ${key(trial)} contradicts its arm`);
+    if (reasons.length)
+      throw new Error(`Comparison refused:\n${[...new Set(reasons)].map((r) => `- ${r}`).join("\n")}`);
+    const left = validate(a, surface),
+      right = validate(b, surface);
+    if (left.size !== right.size || [...left.keys()].some((k) => !right.has(k)))
+      throw new Error("Arms must have identical model/task/repeat pairs");
+    return descriptionComparison(
+      { arm: textArms[0], file: a, trials: [...left.values()] },
+      { arm: textArms[1], file: b, trials: [...right.values()] },
+    );
+  }
   if (
     [a.config.surface, b.config.surface].some(
       (surface) => surface === "five" || surface === "native" || surface === "native-no-code",

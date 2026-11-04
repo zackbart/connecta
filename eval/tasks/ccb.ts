@@ -49,9 +49,7 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
     const delivered = deliveredValues(trace);
     add(
       "delivered-data",
-      seed.people
-        .filter((p) => !p.active)
-        .every((p) => delivered.some((row) => row?.id === p.id)) ||
+      seed.people.filter((p) => !p.active).every((p) => delivered.some((row) => row?.id === p.id)) ||
         // A program's reduced count is delivered however it names the field.
         delivered.includes(inactive),
     );

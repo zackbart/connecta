@@ -14,6 +14,7 @@ import { connectCcb, evalConfig, evalMcpPath, presetCredentials } from "./compos
  */
 import { codeConfig, forSurface } from "./code-surface.js";
 import type { Surface } from "../agent/surface.js";
+import type { DescriptionArm } from "./description-arms/index.js";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -60,6 +61,7 @@ export async function startNodeDeployment(
   oauth?: FakeOAuth,
   surface: Surface = "six",
   everyPool: string[] = [],
+  descriptionArm?: DescriptionArm,
 ): Promise<Deployment> {
   let endpointReadOnly = false;
   const dir = await mkdtemp(join(tmpdir(), "connecta-eval-"));
@@ -128,6 +130,7 @@ export async function startNodeDeployment(
             {
               connectors,
               surface,
+              ...(descriptionArm ? { descriptionArm } : {}),
               extra,
               fixtures: { alice: ALICE, accountA: ACCOUNT_A, shopZone: SHOP_ZONE },
               readOnly: endpointReadOnly,

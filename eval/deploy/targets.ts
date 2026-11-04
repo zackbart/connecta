@@ -9,6 +9,7 @@
 import type { Surface } from "../agent/surface.js";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "../tasks/types.js";
+import type { DescriptionArm } from "./description-arms/index.js";
 import { startNodeDeployment, type Deployment } from "./node.js";
 import { startWorkerDeployment } from "./worker.js";
 
@@ -44,6 +45,7 @@ export async function startDeployment(
   world: World,
   task: ActiveTask,
   surface: Surface,
+  descriptionArm?: DescriptionArm,
 ): Promise<Deployment> {
   const everyPool = world.injected.ids();
   if (target === "node") {
@@ -55,6 +57,7 @@ export async function startDeployment(
       task.world?.oauth ? world.oauth : undefined,
       surface,
       everyPool,
+      descriptionArm,
     );
   }
   const refusal = workerRefusal(task, surface);
@@ -65,6 +68,7 @@ export async function startDeployment(
     everyPool,
     world.injection.d1LatencyMs,
     surface,
+    descriptionArm,
   );
 }
 

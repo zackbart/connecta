@@ -16,6 +16,7 @@ import { runClaude } from "./claude.js";
 import { gradeTask, classifyChecks, passes, type Grading } from "../tasks/grading.js";
 import { taskForSurface } from "../tasks/surface.js";
 import { assertSurface, type Surface } from "./surface.js";
+import type { DescriptionArm } from "../deploy/description-arms/index.js";
 import { startAuthHost } from "./auth-host.js";
 import { infraError, stopsBatch } from "./infra.js";
 import { saveGradeInputs, type SavedGradeInputs } from "./saved.js";
@@ -68,6 +69,8 @@ export interface TrialResult {
   /** Absent in results written before the worker target existed: node. */
   target?: Target;
   surface?: Surface;
+  /** Eval-only tool text; absent in results written before these arms existed. */
+  descriptionArm?: DescriptionArm;
   grading?: Grading;
   model: string;
   repeat: number;
@@ -114,6 +117,7 @@ interface TrialOptions {
   /** Opt-in latency and fault injection; none by default. */
   injection?: Injection;
   surface?: Surface;
+  descriptionArm?: DescriptionArm;
   grading?: Grading;
   runner?: "codex" | "claude";
   maxBudgetUsd?: number;
@@ -151,6 +155,7 @@ function clipArgs(args: unknown): string {
 
 async function runTrial(task: ActiveTask, model: string, repeat: number, options: TrialOptions): Promise<TrialResult> {
   const surfaceArm = options.surface ?? "six";
+  const descriptionArm = options.descriptionArm ? { descriptionArm: options.descriptionArm } : {};
   const grading = options.grading ?? "route";
   task = taskForSurface(task, surfaceArm);
   const protocol = {
@@ -167,6 +172,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       runner: options.runner ?? "codex",
       target,
       surface: surfaceArm,
+      ...descriptionArm,
       grading,
       model,
       repeat,
@@ -197,7 +203,13 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
   try {
     await world.start();
     for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-    const deployment = (cleanupDeployment = await startDeployment(target, world, task, surfaceArm));
+    const deployment = (cleanupDeployment = await startDeployment(
+      target,
+      world,
+      task,
+      surfaceArm,
+      options.descriptionArm,
+    ));
     const hostEvents: StreamEvent[] = [];
     const host = (cleanupHost = task.host
       ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
@@ -339,6 +351,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       runner: options.runner ?? "codex",
       target,
       surface: surfaceArm,
+      ...descriptionArm,
       grading,
       model,
       repeat,

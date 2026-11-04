@@ -18,6 +18,8 @@ export interface AgentResultFile {
   config: {
     guidanceArm?: string;
     surface?: import("../agent/surface.js").Surface;
+    /** Absent in results written before description arms existed: control. */
+    descriptionArm?: import("../deploy/description-arms/index.js").DescriptionArm;
     grading?: import("../tasks/grading.js").Grading;
     models: string[];
     repeats: number;

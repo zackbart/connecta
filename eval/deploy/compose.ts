@@ -9,6 +9,7 @@ import { codeConfig } from "./code-surface.js";
 import type { Surface } from "../agent/surface.js";
 import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
 import { PROVIDER_DEPLOYS } from "./providers.generated.js";
+import { withDescriptionArm, type DescriptionArm } from "./description-arms/index.js";
 import { gmail } from "@zackbart/connecta/providers/gmail";
 import { drive } from "@zackbart/connecta/providers/drive";
 import { docs } from "@zackbart/connecta/providers/docs";
@@ -44,6 +45,8 @@ const QUIET = { debug() {}, info() {}, warn() {}, error() {} };
 
 export interface EvalComposition {
   surface?: Surface;
+  /** Eval-only tool text; absent or "control" serves each provider's own. */
+  descriptionArm?: DescriptionArm;
   connectors: ConnectorSpec[];
   /** The task's untyped `deployment` passthrough. */
   extra: Record<string, unknown>;
@@ -66,7 +69,7 @@ export function evalConfig(
     oauthConnector?: Config["connectors"][number];
   },
 ): Config {
-  const { connectors, fixtures, everyPool = [] } = composition;
+  const { connectors, fixtures, everyPool = [], descriptionArm } = composition;
   const { pool: _pool, pools: taskPools, quickbooksWrites, ...passthrough } = composition.extra;
   const ids = [...(slots.oauthConnector ? ["oauth"] : []), ...connectors.map((spec) => spec.id)];
   const qb = connectors.find((spec) => spec.quickbooks);
@@ -96,7 +99,7 @@ export function evalConfig(
     logger: QUIET,
     connectors: [
       ...(slots.oauthConnector ? [slots.oauthConnector] : []),
-      ...connectors.map((spec) => evalConnector(spec, fixtures)),
+      ...connectors.map((spec) => evalConnector(spec, fixtures, descriptionArm)),
     ],
     ...(qb
       ? {
@@ -104,8 +107,12 @@ export function evalConfig(
           maintainers: ["alice", "bob"],
           pools: withEvery(quickbooksPools(quickbooksWrites === true))!,
           connectors: [
-            ...quickbooksConnectors(quickbooksWrites === true, qb.quickbooks!.clientId),
-            ...connectors.filter((spec) => everyPool.includes(spec.id)).map((spec) => evalConnector(spec, fixtures)),
+            ...quickbooksConnectors(quickbooksWrites === true, qb.quickbooks!.clientId).map((connector) =>
+              withDescriptionArm(connector, "quickbooks", descriptionArm),
+            ),
+            ...connectors
+              .filter((spec) => everyPool.includes(spec.id))
+              .map((spec) => evalConnector(spec, fixtures, descriptionArm)),
           ],
         }
       : {}),
@@ -126,7 +133,11 @@ export function evalConfig(
   return codeConfig(config, composition.surface ?? "six");
 }
 
-function evalConnector(spec: ConnectorSpec, fixtures: EvalFixtures) {
+function evalConnector(spec: ConnectorSpec, fixtures: EvalFixtures, arm?: DescriptionArm) {
+  return withDescriptionArm(providerConnector(spec, fixtures), spec.rest ?? spec.google?.product ?? spec.provider, arm);
+}
+
+function providerConnector(spec: ConnectorSpec, fixtures: EvalFixtures) {
   const options = { purpose: spec.description };
   if (spec.provider) {
     const deploy = PROVIDER_DEPLOYS[spec.provider];
