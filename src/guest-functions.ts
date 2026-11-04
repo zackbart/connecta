@@ -14,7 +14,7 @@ export const GUEST_FUNCTIONS = [
     name: "search",
     budget: "hostCall",
     declaration:
-      "search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string }[]; hasMore: boolean; nextOffset?: number }>;",
+      "search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string }[]; absence?: { message: string }; readyCalls?: { address: string; args: { path: string } }[]; hasMore: boolean; nextOffset?: number }>;",
   },
   /** Describes exact addresses, one entry per address in order. */
   {
@@ -127,7 +127,7 @@ export const GUEST_API_DECLARATION = `declare const connecta: {
 ${GUEST_FUNCTIONS.flatMap((fn) => ("declaration" in fn ? [fn.declaration] : [])).join("\n")}
 };
 type Schemas = "json" | "compact" | "typescript";
-type Tool = { address: string; description?: string; inputSchema?: unknown; outputSchema?: unknown; signature?: string };
+type Tool = { address: string; name?: string; description?: string; inputSchema?: unknown; outputSchema?: unknown; signature?: string; guideRequired?: true };
 type Paged = { format: "paged"; valueFormat: "json" | "text"; resultId?: string; totalBytes: number; truncated: true; hint: string };
 type Result = ({ format: "json"; data: unknown } | { format: "text"; data: string } | Paged) & { content?: Native[] };
 type Block = { type: "text"; text: string } | { type: "image" | "audio"; data: string; mimeType: string };

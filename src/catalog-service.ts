@@ -76,7 +76,7 @@ class DiscoverySkipped extends Error {
   }
 }
 
-export const DEFAULT_SEARCH_LIMIT = 8;
+const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;

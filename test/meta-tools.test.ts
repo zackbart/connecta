@@ -73,14 +73,43 @@ Prefer \`notes.search\` over listing databases.
 
   it("states one actual write policy on every serving surface", () => {
     for (const native of [undefined, { executeCode: false }, { executeCode: true }]) {
-      const reads = endpointInstructions(undefined, native, true);
-      expect(reads).toContain("No write route exists on this endpoint");
+      const reads = endpointInstructions(undefined, native, true, ["crm"]);
+      expect(reads).toContain("This endpoint can't perform writes; no write route exists here.");
       expect(reads).not.toContain("call_destructive_tool");
       expect(reads).not.toContain("permits writes");
-      const writes = endpointInstructions(undefined, native, false);
-      expect(writes).toContain("permits writes");
+      expect(reads).not.toContain("resend a write");
+      const writes = endpointInstructions(undefined, native, false, ["crm"]);
+      expect(writes).toContain("permits writes, subject to connector restrictions; the host owns approval.");
+      expect(writes).toContain("Never resend a write to see its output.");
       expect(writes).not.toContain("can't perform writes");
       if (native) expect(writes).not.toContain("call_destructive_tool");
+      for (const text of [reads, writes]) {
+        expect(text).toContain("follow nextAction; give auth links to the user or operator.");
+        if (native) expect(text).toContain("Tools missing: ask the operator to repair, then reconnect.");
+      }
+    }
+  });
+
+  it("names the admitted connectors on the meta surface, capped with an exact count", () => {
+    const opening = (ids: string[]) =>
+      endpointInstructions(undefined, undefined, false, ids).match(
+        /^Gateway to connected services: (.*?)\. One known read: call_tool\. One known write: call_destructive_tool\. Everything else: one execute_code program/,
+      )?.[1];
+    expect(opening([])).toBe("none");
+    expect(opening(["crm", "tickets"])).toBe("crm, tickets");
+    const ids = Array.from({ length: 40 }, (_, index) => `service_${String(index).padStart(2, "0")}`);
+    const capped = opening(ids)!;
+    expect(capped.length).toBeLessThanOrEqual(120);
+    const shown = capped.split(", ").slice(0, -1);
+    expect(shown).toEqual(ids.slice(0, shown.length));
+    expect(capped.endsWith(`, +${40 - shown.length} more`)).toBe(true);
+    expect(opening(["x".repeat(200), "crm"])).toBe("+2 more");
+    expect(endpointInstructions(undefined, undefined, true, ["crm"])).toMatch(
+      /^Gateway to connected services: crm\. One known read: call_tool\. Everything else: /,
+    );
+    // Tool names already show them on a native pool.
+    for (const executeCode of [false, true]) {
+      expect(endpointInstructions(undefined, { executeCode }, false, ["crm"])).not.toContain("crm");
     }
   });
 
@@ -92,11 +121,13 @@ Prefer \`notes.search\` over listing databases.
     expect(listed).not.toContain("connector:plain");
   });
 
-  it("preserves a connector guide body behind skill frontmatter", async () => {
+  it("returns only the guide body from the skills tool", async () => {
     const mt = createMetaTools(makeRegistry([guided("notes", NOTES_GUIDE)]), BASE);
     const fetched = await mt.skills({ name: "connector:notes" });
     expect(fetched.isError).toBeFalsy();
-    expect(textFrom(fetched)).toContain(NOTES_GUIDE);
+    expect(textFrom(fetched)).toBe(NOTES_GUIDE);
+    const usage = textFrom(await mt.skills({ name: "usage" }));
+    expect(usage.startsWith("# Connecta usage\n")).toBe(true);
   });
 
   it("states the effective read-only endpoint policy without editing guide procedures", async () => {
@@ -106,6 +137,19 @@ Prefer \`notes.search\` over listing databases.
     expect(fetched).toContain("No write route exists on this endpoint.");
     expect(fetched).toContain(NOTES_GUIDE);
     expect(fetched).not.toContain("call_destructive_tool");
+    // A read-only connection on a read-only endpoint gets one notice, not two.
+    const both = createMetaTools(makeRegistry([{ ...guided("notes", NOTES_GUIDE), readOnly: true }]), BASE, {
+      readOnly: true,
+    });
+    const once = textFrom(await both.skills({ name: "connector:notes" }));
+    expect(once.match(/can't perform writes/g)).toHaveLength(1);
+    expect(once).toContain("This endpoint can't perform writes; guide steps that change data will be refused.");
+    expect(once.endsWith(NOTES_GUIDE)).toBe(true);
+    // On a writable endpoint the connection's own restriction still shows.
+    const connection = createMetaTools(makeRegistry([{ ...guided("notes", NOTES_GUIDE), readOnly: true }]), BASE);
+    expect(textFrom(await connection.skills({ name: "connector:notes" }))).toContain(
+      "No write route exists for this connection.",
+    );
   });
 
   it("rejects an explicit summary over budget at registry construction", () => {

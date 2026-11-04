@@ -355,7 +355,7 @@ describe("server /mcp end-to-end", () => {
 
     expect(await inventory([])).toBe("Connectors: none.");
     expect(await inventory(["calc", "my-service", "email_api"])).toBe("Connectors: calc, my-service, email_api.");
-    // Titles appear only where they say more than the id; guides say how to fetch them.
+    // Titles appear only where they say more than the id; only a required guide is marked.
     expect(
       await inventory([
         { id: "granola", title: "Granola", guide: "required" },
@@ -365,8 +365,11 @@ describe("server /mcp end-to-end", () => {
         { id: "crm", title: "Customer CRM" },
       ]),
     ).toBe(
-      'Connectors: granola (read first: skills({name:"connector:granola"})), google_calendar, github, ' +
-        'notes_alice (guide: skills({name:"connector:notes_alice"})), crm (Customer CRM).',
+      'Connectors: granola*, google_calendar, github, notes_alice, crm (Customer CRM). *Read connecta.skill("connector:<id>") before its first call.',
+    );
+    // An optional guide alone needs no mark and no legend.
+    expect(await inventory([{ id: "notes_alice", title: "notes alice", guide: "optional" }])).toBe(
+      "Connectors: notes_alice.",
     );
     // A ten-connector deployment with titles and guides is named in full.
     const ten: Spec[] = Array.from({ length: 10 }, (_, index) => ({
@@ -377,27 +380,34 @@ describe("server /mcp end-to-end", () => {
     const full = await inventory(ten);
     expect(full).not.toContain("more");
     for (let index = 0; index < 10; index++) {
-      expect(full).toContain(`service_${index} (Workspace ${index} production account`);
+      expect(full).toContain(`service_${index}${index % 3 === 0 ? "*" : ""} (Workspace ${index} production account)`);
     }
-    expect(full).toContain(
-      'service_0 (Workspace 0 production account; read first: skills({name:"connector:service_0"}))',
-    );
-    expect(full).toContain('service_1 (Workspace 1 production account; guide: skills({name:"connector:service_1"}))');
-    // Past the cap, titles go first, then optional guide pointers, then whole entries.
+    expect(full).toContain("service_0* (Workspace 0 production account), service_1 (Workspace 1 production account),");
+    expect(full).toMatch(/ \*Read connecta\.skill\("connector:<id>"\) before its first call\.$/);
+    // Past the cap, titles go first, then whole entries.
     const guided = (length: number): Spec[] =>
       Array.from({ length }, (_, index) => ({
         id: `connector_${String(index).padStart(2, "0")}`,
         title: `Long descriptive title number ${index}`,
         guide: index === 0 ? "required" : "optional",
       }));
-    const untitled = await inventory(guided(12));
+    const untitled = await inventory(guided(30));
     expect(untitled).not.toContain("Long descriptive");
     expect(untitled).not.toContain("more");
-    expect(untitled).toContain('connector_11 (guide: skills({name:"connector:connector_11"})).');
-    const required = await inventory(guided(30));
-    expect(required).toContain('connector_00 (read first: skills({name:"connector:connector_00"})), connector_01,');
-    expect(required).not.toContain("guide:");
-    expect(required).toMatch(/connector_29\.$/);
+    expect(untitled).toContain("connector_00*, connector_01,");
+    expect(untitled).toMatch(/connector_29\. \*Read /);
+    // The legend counts against the cap and follows only a mark still shown.
+    const marked = (at: number): Spec[] =>
+      Array.from({ length: 104 }, (_, index) => ({
+        id: `connector-${String(index).padStart(3, "0")}-xxxxxxxx`,
+        guide: index === at ? "required" : undefined,
+      }));
+    const hiddenMark = await inventory(marked(103));
+    expect(hiddenMark).toMatch(/; \+\d+ more\.$/);
+    expect(hiddenMark).not.toContain("*");
+    const markedFirst = await inventory(marked(0));
+    expect(markedFirst).toMatch(/^Connectors: connector-000-xxxxxxxx\*, .*; \+\d+ more\. \*Read /);
+    expect(bytes(markedFirst)).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
     const ids = Array.from({ length: 104 }, (_, index) => `connector-${String(index).padStart(3, "0")}-xxxxxxxx`);
     ids[2] = `${ids[2]}y`;
     const first = await inventory(ids);
@@ -408,7 +418,7 @@ describe("server /mcp end-to-end", () => {
     expect(shown.length).toBeGreaterThan(40);
     expect(first).toContain(`; +${104 - shown.length} more.`);
     expect(shown).toEqual(ids.slice(0, shown.length));
-    for (const line of [full, untitled, required, first]) {
+    for (const line of [full, untitled, first]) {
       expect(bytes(line)).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
     }
     expect((await executeDescription(ids)).length).toBeLessThan(3_700);
@@ -793,7 +803,7 @@ describe("execute_code registration (code mode)", () => {
       );
     }
     const description = await executeDescription();
-    expect(description).toContain("Writable endpoint: programs may read and write; the client approves.");
+    expect(description).toContain("Writable endpoint: programs may read and write; the host approves.");
     expect(description).not.toContain("resume_execution");
   });
 
