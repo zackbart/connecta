@@ -1813,7 +1813,9 @@ address, which never changes.
 **Annotations** come from the served classification only: a read is
 `{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
 write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
-whatever hints the downstream declared. A read-only endpoint or connector
+whatever hints the downstream declared. A deployment `"read"` override never
+produces read annotations for a tool whose source explicitly declares a write; see
+[deployment overrides](./integrating.md#another-remote-mcp-server). A read-only endpoint or connector
 leaves write tools out of the list, by the same rule search and describe use.
 
 **Calls take the existing paths.** A name selects its route: a read's name is the
@@ -1853,6 +1855,14 @@ Connecta's catalog next loads it. A tool whose source declares a write and whose
 deployment classification overrides it to read has a read's name and takes the
 `call_tool` route, and a host may resend it; do not override a write to read unless
 repeating it is harmless. This also applies to `call_tool` on the meta surface.
+
+**Known limit: a change Connecta has not seen.** Connecta enforces the catalog it
+holds. A vendor can change a tool from read to write before Connecta's catalog
+refreshes, and until then every read-annotated route treats that tool as a read:
+`call_tool`, a read-annotated native tool and programs on a read-only endpoint. A
+host may also resend such a call after a connection failure, so the vendor can
+receive it more than once. The catalog refresh closes this window, and nothing
+closes it sooner.
 
 **Listing.** `tools/list` is one page with no cursor (Eve's MCP client reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
