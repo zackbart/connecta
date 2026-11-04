@@ -92,7 +92,7 @@ returned id in place of result-id below; this example assumes documented JSON.
 
 Calls reconstruct up to 1 MiB through stash pages. Larger values return
 \`{ format: "paged", valueFormat, resultId?, totalBytes, hint }\`. Follow its hint.
-No resultId means no paging. IDs expire after 15 minutes; only explicit paging
+IDs expire after 15 minutes; only explicit paging
 spends extra host calls.
 Use zero-based \`{ page: 0 }\` or UTF-8 \`{ offset }\`, never both. Keep maxBytes
 fixed across pages; connector caps and the 32 KiB bridge ceiling apply.
@@ -109,13 +109,13 @@ async () => {
 }
 \`\`\`
 
-Oversized returns lead with nextAction. Never rerun writes for output. write_outcome_unknown or writeOutcome forbids retry, even if caught.
+Oversized returns lead with nextAction. Never rerun writes for output. write_outcome_unknown or writeOutcome forbids retry, even if caught. Give the user any approval link in the tool's words; a call after approval is new.
 Recovery args may be partial (argsRedacted) or absent (argsOmitted). Reconcile
 before retrying with the original args or repeating a program that sent writes.
 Non-retryable errors need repair.
 host_auth_required needs host connection repair; provider_permission_denied needs
-resource-owner access. Auth failures carry the handoff in error.data. When an auth
-error includes a handoff, give it to the user or operator.
+resource-owner access. Auth failures carry the handoff in error.data; give it to the
+user or operator.
 
 ## Output
 

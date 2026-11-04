@@ -15,9 +15,13 @@ const worker = await (async () => {
   }
 })();
 
+async function fixtureOrigin(): Promise<string> {
+  return ((await (await worker!.fetch("http://localhost/origin")).json()) as { origin: string }).origin;
+}
+
 interface ToolResult {
   isError?: boolean;
-  structuredContent: { result?: { data: { id: string } }[]; error?: Record<string, unknown> };
+  structuredContent: { result?: { data: Record<string, unknown> }[]; error?: Record<string, unknown> };
 }
 
 async function run(program: string, code: string, path = "/mcp"): Promise<ToolResult> {
@@ -54,7 +58,91 @@ async function status(): Promise<{ standard: Snapshot; tight: Snapshot; failures
   return (await worker!.fetch("http://localhost/status")).json();
 }
 
+const sequentialWrites = (connector: string, ids: string[]) =>
+  `async () => { const out = []; for (const id of ${JSON.stringify(ids)}) out.push(await connecta.call("${connector}.create", { id })); return out; }`;
+
 describe.skipIf(!worker)("execute_code across separate Worker requests", () => {
+  it("INV-9: sequential program writes each reach a stateful remote MCP downstream once over one connection", async () => {
+    const result = await run("writes", sequentialWrites("sequential", ["a", "b", "c"]), "/writer/mcp");
+    expect(result.structuredContent.error).toBeUndefined();
+    expect(result.structuredContent.result?.map((entry) => entry.data.created)).toEqual(["a", "b", "c"]);
+    expect(await (await fetch(`${await fixtureOrigin()}/executor/mcp/sequential/writes`)).json()).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  }, 30_000);
+
+  it("INV-9: a later program write its tool refuses reports the tool's words, stays unknown and stops the program", async () => {
+    const result = await run("refused", sequentialWrites("iserror", ["first", "refused", "never"]), "/writer/mcp");
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent.error).toMatchObject({
+      code: "write_outcome_unknown",
+      retryable: false,
+      writes: { succeeded: 1, failed: 0, unknown: 1 },
+      message: expect.stringMatching(/^iserror\.create answered: Vendor refused this request\n/),
+      unknownWrites: [{ address: "iserror.create", code: "connector_call_failed", toolAnswered: true }],
+    });
+    expect(await (await fetch(`${await fixtureOrigin()}/executor/mcp/iserror/writes`)).json()).toEqual([
+      "first",
+      "refused",
+    ]);
+    // The operator's record tells this from any transport failure, which names a step.
+    const failures = (await (await worker!.fetch("http://localhost/call-failures")).json()) as Record<
+      string,
+      unknown
+    >[];
+    const logged = failures.find((record) => record.connector === "iserror");
+    expect(logged).toMatchObject({ code: "connector_call_failed", errorClass: "DownstreamToolError" });
+    expect(logged).not.toHaveProperty("step");
+    expect(logged).not.toHaveProperty("httpStatus");
+  }, 30_000);
+
+  it("INV-6: a long tool error's approval link reaches a Worker program's result whole and no operator record", async () => {
+    const result = await run("approval", sequentialWrites("iserror", ["approval", "never"]), "/writer/mcp");
+    expect(result.structuredContent.error).toMatchObject({
+      code: "write_outcome_unknown",
+      message: expect.stringContaining("Request apr_7Hq2: https://vendor.example/approve/apr_7Hq2?sig=c0ffee\n"),
+      writes: { succeeded: 0, failed: 0, unknown: 1 },
+    });
+    expect(await (await worker!.fetch("http://localhost/call-failures")).text()).not.toContain("apr_7Hq2");
+  }, 30_000);
+
+  it("INV-5: the bridge's clip leaves no opening of a credential a later call registers", async () => {
+    const result = await run(
+      "late-clip",
+      `async () => {
+        let held;
+        try { await connecta.call("source.read", {}); } catch (error) { held = error.message; }
+        await connecta.call("vault.read", {});
+        return held;
+      }`,
+      "/writer/mcp",
+    );
+    const held = result.structuredContent.result as unknown as string;
+    expect(held).toMatch(/^a a .* a … \[truncated\]$/);
+    expect(JSON.stringify(held).length).toBeLessThanOrEqual(2_000);
+    expect(JSON.stringify(result)).not.toContain("Zqx7");
+  }, 30_000);
+
+  it.each([
+    ["an Error", 'throw new Error("a ".repeat(496) + "x" + "Zqx79UVW_LATE_SECRET" + " tail")'],
+    ["a string", 'throw "a ".repeat(496) + "x" + "Zqx79UVW_LATE_SECRET" + " tail"'],
+  ])(
+    "INV-5: %s a Worker program throws, clipped at 1,000 characters, leaves no opening of a credential",
+    async (_label, thrown) => {
+      const result = await run(
+        `late-throw-${_label}`,
+        `async () => { await connecta.call("vault.read", {}); ${thrown}; }`,
+        "/writer/mcp",
+      );
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result)).toContain("a a a");
+      expect(JSON.stringify(result)).not.toContain("Zqx");
+    },
+    30_000,
+  );
+
   it("INV-7: the fixture's request binding refuses another request's entry with or without its token, as workerd does", async () => {
     const outcome = async (path: string) =>
       ((await (await worker!.fetch(`http://localhost${path}`)).json()) as { outcome: string }).outcome;

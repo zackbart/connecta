@@ -1,7 +1,7 @@
 import { META_ROUTES } from "./route-names.js";
 import type { ExecuteResult } from "./types.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
-import { msg } from "./errors.js";
+import { msg, tokenPrefix } from "./errors.js";
 
 /** ~6k tokens. Sandbox code should filter data down before returning. */
 export const MAX_EXECUTE_RESULT_CHARS: number = CONFIG_DEFAULTS.execute.maxResultChars;
@@ -84,7 +84,7 @@ export function guardExecuteResultValue(
 
 export function truncateExecuteText(text: string, max: number): string {
   if (text.length <= max) return text;
-  return `${text.slice(0, max)}\n--- TRUNCATED (${text.length} chars total) — filter/map/slice data inside your code and return only what you need ---`;
+  return `${tokenPrefix(text, max)}\n--- TRUNCATED (${text.length} chars total) — filter/map/slice data inside your code and return only what you need ---`;
 }
 
 /**

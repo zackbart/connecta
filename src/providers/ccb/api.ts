@@ -10,7 +10,7 @@ import {
 // Pushpay ChMS v2 JSON contracts, OAuth, status meanings, admission and privacy.
 // The legacy per-church XML API is outside this provider's scope.
 import { Effect, Schema } from "effect";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, tokenPrefix } from "../../errors.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
 import { checked, indexedVendor } from "../_shared/rest/kit.js";
 import { valueSafety } from "../_shared/rest/value-safety.js";
@@ -490,7 +490,7 @@ function errorDetail(payload: unknown, status: number): string {
       if (typeof message === "string" && message.trim()) parts.push(message.trim());
     }
   }
-  const detail = parts.join("; ").slice(0, 500);
+  const detail = tokenPrefix(parts.join("; "), 500);
   return detail ? `CCB HTTP ${status}: ${detail}${/[.!?]$/.test(detail) ? "" : "."}` : `CCB returned HTTP ${status}.`;
 }
 
