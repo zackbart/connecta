@@ -185,20 +185,30 @@ export class ProgramWrites {
 /**
  * An error result from a program that sent writes, carrying their counts: a
  * program that fails after writing is not a program that is safe to repeat.
+ * Whatever ended the run, once a write has landed the program is not retryable
+ * and no wait window invites it (INV-9). A failed write is proven not applied,
+ * so failed writes alone leave the failure's own verdict standing.
  */
 function withWrites(result: ToolResult, writes: WriteCounts): ToolResult {
   const structured = result.structuredContent;
   const error = structured?.error;
-  const annotated = toolError({
-    ...(error !== null && typeof error === "object"
+  const { retryAfterMs, ...failure } =
+    error !== null && typeof error === "object"
       ? (error as Record<string, unknown>)
       : {
+          retryAfterMs: undefined,
           code: "executor_failed",
           message: result.content[0]?.text ?? "",
           retryable: false,
-        }),
+        };
+  const landed = writes.succeeded > 0;
+  const annotated = toolError({
+    ...failure,
+    ...(landed ? { retryable: false } : retryAfterMs !== undefined ? { retryAfterMs } : {}),
     writes,
-    note: "This run attempted writes, counted in writes; those that succeeded are not undone. Check them before running the task again.",
+    note: landed
+      ? "This run completed writes, counted in writes, and they are not undone. Running this program again would repeat them: check them, then send only what is left."
+      : "This run attempted writes, counted in writes, and none applied. Check them before running the task again.",
   });
   if (structured && error !== null && typeof error === "object") {
     const { error: _replaced, ...rest } = structured;
