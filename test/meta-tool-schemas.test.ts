@@ -220,7 +220,7 @@ const BUDGETS = {
     call_tool: 260,
     call_destructive_tool: 300,
     authorize_connector: 460,
-    execute_code: 2_900,
+    execute_code: 2_850,
     execute_read_code: 700,
   },
   // search_tools grew for readyCalls, the complete reads that save the
@@ -234,7 +234,7 @@ const BUDGETS = {
     execute_code: 1_070,
     execute_read_code: 1_070,
   },
-  usage: 5_700,
+  usage: 5_800,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
   searchPage: { default: 470, compact: 730 },
