@@ -647,7 +647,7 @@ annotations.
 - the preview and its notice cost at most half of the result.
 
 ```text
-{"truncated":true,"resultId":"…","totalBytes":48210,"rows":{"path":"items","count":200,"shown":18,"keys":["id","email","status"]},"hint":"200 rows at items; the first 18 follow, in the result's own shape, with every value outside the list. All of it is retained for 15 minutes: run nextAction, editing its last line to filter, join or count the rows in execute_code, instead of repeating this read or reading pages by hand.","nextOffset":0,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => { let text = \"\", offset = 0, page; do { page = await connecta.result(\"…\", { offset }); text += page.text; offset = page.nextOffset; } while (page.hasMore); const rows = JSON.parse(text).items; return { count: rows.length, rows: rows.slice(0, 5) }; }"}}}
+{"truncated":true,"resultId":"…","totalBytes":48210,"rows":{"path":"items","count":200,"shown":18,"keys":["id","email","status"]},"hint":"200 rows at items; the first 18 follow, in the result's own shape, with every value outside the list. All of it is retained for 15 minutes: run nextAction in execute_code, editing its last line to filter, join or count the rows, instead of repeating this read or reading pages by hand.","nextOffset":0,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => { let text = \"\", offset = 0, page; do { page = await connecta.result(\"…\", { offset }); text += page.text; offset = page.nextOffset; } while (page.hasMore); const rows = JSON.parse(text).items; return { count: rows.length, rows: rows.slice(0, 5) }; }"}}}
 {"items":[{"id":"t_1","email":"alice@example.com","status":"open"},…],"has_more":true,"next_cursor":"c2"}
 ```
 
@@ -1808,6 +1808,8 @@ owns the supplied usage instructions, each endpoint's instructions
 (`endpointInstructions`), and connector guides. The native surface's names,
 listing, and call translation live in
 [native-tools.ts](https://github.com/zackbart/connecta/blob/main/src/native-tools.ts).
+[result-preview.ts](https://github.com/zackbart/connecta/blob/main/src/result-preview.ts)
+owns the rule behind previews of large reads, as pure functions of redacted text.
 
 [Schema tests](https://github.com/zackbart/connecta/blob/main/test/meta-tool-schemas.test.ts),
 [search tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-search.test.ts),

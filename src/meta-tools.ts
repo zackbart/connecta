@@ -718,7 +718,7 @@ const previewRead = function (
       resultId: id,
       totalBytes: bytes.length,
       ...preview.fields,
-      hint: `${preview.shown} All of it is retained for ${RESULT_TTL_SECONDS / 60} minutes: run nextAction, editing its last line to ${preview.noun === "rows" ? "filter, join or count the rows" : "search for what you need"} in ${results.routes.program}, instead of repeating this read or reading pages by hand.`,
+      hint: `${preview.shown} All of it is retained for ${RESULT_TTL_SECONDS / 60} minutes: run nextAction in ${results.routes.program}, editing its last line to ${preview.noun === "rows" ? "filter, join or count the rows" : "search for what you need"}, instead of repeating this read or reading pages by hand.`,
       nextOffset: 0,
       nextAction: {
         tool: "execute_code",
