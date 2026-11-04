@@ -35,6 +35,7 @@ interface SavedTrial {
   surface?: string;
   checks: { id: string; pass: boolean; advisory?: boolean; kind?: string }[];
   finalAnswer?: string;
+  transcript?: { kind?: string; id?: string; tool?: string; isError?: boolean; text?: string }[];
   metrics: {
     approvalPrompts?: { total: number; denied: number; byTool: Record<string, number> };
     firstTurnInputTokens?: number;
@@ -149,6 +150,28 @@ const totalTokens = (trial: SavedTrial) =>
 const invalid = (trial: SavedTrial) => trial.status === "error" || trial.status === "skipped";
 const k = (value: number | undefined) => (value === undefined ? "n/a" : `${Math.round(value / 1000)}k`);
 
+/** What an agent did after its first refused tool call: the host's refusal text, not Connecta's. */
+function afterRefusal(trial: SavedTrial): "stopped" | "switched" | "retried" | undefined {
+  const entries = trial.transcript ?? [];
+  const names = new Map<string, string>();
+  let refused = -1;
+  for (const [index, entry] of entries.entries()) {
+    if (entry.kind === "tool_use" && entry.id) names.set(entry.id, entry.tool ?? "");
+    if (entry.kind === "tool_result" && entry.isError && /declined|rejected/.test(entry.text ?? "")) {
+      refused = index;
+      break;
+    }
+  }
+  if (refused < 0) return undefined;
+  const tool = names.get(entries[refused]!.id ?? "");
+  const later = entries
+    .slice(refused + 1)
+    .filter((entry) => entry.kind === "tool_use" && entry.tool !== "ToolSearch")
+    .map((entry) => entry.tool);
+  if (!later.length) return "stopped";
+  return later.every((name) => name === tool) ? "retried" : "switched";
+}
+
 function line(trials: SavedTrial[]) {
   const valid = trials.filter((trial) => !invalid(trial));
   const passed = valid.filter((trial) => trial.status === "pass");
@@ -161,6 +184,13 @@ function line(trials: SavedTrial[]) {
     `first ${k(median(valid.map((t) => t.metrics.firstTurnInputTokens ?? Number.NaN)))}`,
     `turns ${median(valid.map((t) => t.metrics.modelTurns ?? Number.NaN)) ?? "n/a"}`,
     `dup ${valid.filter((t) => (t.metrics.downstream?.duplicateWrites ?? 0) > 0).length}`,
+    `after refusal ${JSON.stringify(
+      valid.reduce<Record<string, number>>((counts, trial) => {
+        const outcome = afterRefusal(trial);
+        if (outcome) counts[outcome] = (counts[outcome] ?? 0) + 1;
+        return counts;
+      }, {}),
+    )}`,
   ].join(" | ");
 }
 

@@ -1,0 +1,5278 @@
+{
+"measuredAt": {
+"commit": "30fca2c8",
+"note": "Batches ran before the rebase onto main; v1 read-arm text is excluded."
+},
+"batches": {
+"e1-allow-claude-five": {
+"runner": "claude",
+"surface": "five",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 5,
+"allowed": 5,
+"denied": 0,
+"byTool": {
+"execute_code": 5
+}
+},
+"tools": {
+"execute_code": 5
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1625,
+"cacheRead": 33040,
+"cacheCreation": 7613
+},
+"firstTurnInputTokens": 2123,
+"wallMs": 16076,
+"physicalWrites": 1
+},
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 3,
+"allowed": 3,
+"denied": 0,
+"byTool": {
+"execute_code": 3
+}
+},
+"tools": {
+"execute_code": 3
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 1494,
+"cacheRead": 17162,
+"cacheCreation": 4870
+},
+"firstTurnInputTokens": 2091,
+"wallMs": 21937,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 363,
+"cacheRead": 5799,
+"cacheCreation": 1427
+},
+"firstTurnInputTokens": 2058,
+"wallMs": 6541,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 3,
+"allowed": 3,
+"denied": 0,
+"byTool": {
+"execute_code": 3
+}
+},
+"tools": {
+"skills": 1,
+"execute_code": 3
+},
+"hostSearch": 1,
+"tokens": {
+"input": 14,
+"output": 865,
+"cacheRead": 20004,
+"cacheCreation": 3712
+},
+"firstTurnInputTokens": 2085,
+"wallMs": 16013,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-claude-native": {
+"runner": "claude",
+"surface": "native",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"chat__post_message": 1
+}
+},
+"tools": {
+"tracker__search_issues": 1,
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 6,
+"chat__post_message": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 1418,
+"cacheRead": 43629,
+"cacheCreation": 11289
+},
+"firstTurnInputTokens": 8533,
+"wallMs": 13941,
+"physicalWrites": 1
+},
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-fetch",
+"answer-evidence"
+],
+"prompts": {
+"total": 2,
+"allowed": 2,
+"denied": 0,
+"byTool": {
+"execute_code": 2
+}
+},
+"tools": {
+"execute_code": 2
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 997,
+"cacheRead": 30877,
+"cacheCreation": 10383
+},
+"firstTurnInputTokens": 8482,
+"wallMs": 15205,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 355,
+"cacheRead": 18457,
+"cacheCreation": 7645
+},
+"firstTurnInputTokens": 8468,
+"wallMs": 7671,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 656,
+"cacheRead": 27955,
+"cacheCreation": 7977
+},
+"firstTurnInputTokens": 8572,
+"wallMs": 10584,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-claude-read-five": {
+"runner": "claude",
+"surface": "read-five",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 1110,
+"cacheRead": 25978,
+"cacheCreation": 18044
+},
+"firstTurnInputTokens": 2106,
+"wallMs": 15118,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 5,
+"allowed": 5,
+"denied": 0,
+"byTool": {
+"execute_code": 5
+}
+},
+"tools": {
+"execute_code": 5
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1553,
+"cacheRead": 33336,
+"cacheCreation": 7491
+},
+"firstTurnInputTokens": 2138,
+"wallMs": 18249,
+"physicalWrites": 1
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 383,
+"cacheRead": 5829,
+"cacheCreation": 1443
+},
+"firstTurnInputTokens": 2072,
+"wallMs": 7214,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 3,
+"allowed": 3,
+"denied": 0,
+"byTool": {
+"execute_code": 3
+}
+},
+"tools": {
+"skills": 1,
+"execute_code": 3,
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1075,
+"cacheRead": 26966,
+"cacheCreation": 4238
+},
+"firstTurnInputTokens": 2102,
+"wallMs": 12266,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-claude-read-six": {
+"runner": "claude",
+"surface": "read-six",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 5,
+"allowed": 5,
+"denied": 0,
+"byTool": {
+"execute_code": 4,
+"call_destructive_tool": 1
+}
+},
+"tools": {
+"execute_code": 4,
+"call_destructive_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1417,
+"cacheRead": 33590,
+"cacheCreation": 6857
+},
+"firstTurnInputTokens": 2150,
+"wallMs": 16253,
+"physicalWrites": 1
+},
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 2
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 1371,
+"cacheRead": 45511,
+"cacheCreation": 19973
+},
+"firstTurnInputTokens": 2119,
+"wallMs": 21139,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 374,
+"cacheRead": 5857,
+"cacheCreation": 1457
+},
+"firstTurnInputTokens": 2086,
+"wallMs": 6334,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"skills": 1,
+"execute_code": 1,
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 770,
+"cacheRead": 18021,
+"cacheCreation": 4050
+},
+"firstTurnInputTokens": 2113,
+"wallMs": 10794,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-claude-six": {
+"runner": "claude",
+"surface": "six",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 1077,
+"cacheRead": 25917,
+"cacheCreation": 18289
+},
+"firstTurnInputTokens": 2103,
+"wallMs": 16760,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 5,
+"allowed": 5,
+"denied": 0,
+"byTool": {
+"execute_code": 5
+}
+},
+"tools": {
+"execute_code": 5
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1582,
+"cacheRead": 33873,
+"cacheCreation": 6983
+},
+"firstTurnInputTokens": 2135,
+"wallMs": 19160,
+"physicalWrites": 1
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 368,
+"cacheRead": 5486,
+"cacheCreation": 1779
+},
+"firstTurnInputTokens": 2071,
+"wallMs": 6130,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 3,
+"allowed": 3,
+"denied": 0,
+"byTool": {
+"execute_code": 3
+}
+},
+"tools": {
+"execute_code": 3
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 760,
+"cacheRead": 17838,
+"cacheCreation": 4140
+},
+"firstTurnInputTokens": 2098,
+"wallMs": 15919,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-codex-five": {
+"runner": "codex",
+"surface": "five",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 19268,
+"output": 454,
+"cacheRead": 39296,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6198,
+"wallMs": 19159,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 4,
+"allowed": 4,
+"denied": 0,
+"byTool": {
+"execute_code": 3,
+"call_destructive_tool": 1
+}
+},
+"tools": {
+"execute_code": 3,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11885,
+"output": 508,
+"cacheRead": 59904,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6220,
+"wallMs": 21824,
+"physicalWrites": 1
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 4891,
+"output": 154,
+"cacheRead": 18816,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6177,
+"wallMs": 11981,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1,
+"call_tool": 2
+},
+"hostSearch": null,
+"tokens": {
+"input": 6035,
+"output": 303,
+"cacheRead": 38016,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 16901,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-codex-native": {
+"runner": "codex",
+"surface": "native",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"ci__get_run_log": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 27161,
+"output": 369,
+"cacheRead": 68096,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6184,
+"wallMs": 19345,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"chat__post_message": 1
+}
+},
+"tools": {
+"analytics__list_accounts": 1,
+"tracker__search_issues": 1,
+"analytics__get_account_metrics": 12,
+"tracker__get_issue": 1,
+"chat__post_message": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 14757,
+"output": 385,
+"cacheRead": 59776,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 22776,
+"physicalWrites": 1
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"revenuecat__list-projects": 1,
+"skills": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 13080,
+"output": 284,
+"cacheRead": 55936,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 16860,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11173,
+"output": 203,
+"cacheRead": 39424,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6179,
+"wallMs": 15380,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-codex-read-five": {
+"runner": "codex",
+"surface": "read-five",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 23305,
+"output": 456,
+"cacheRead": 40320,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6198,
+"wallMs": 21904,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 2,
+"allowed": 2,
+"denied": 0,
+"byTool": {
+"execute_code": 1,
+"call_destructive_tool": 1
+}
+},
+"tools": {
+"execute_read_code": 3,
+"execute_code": 1,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 23599,
+"output": 535,
+"cacheRead": 66432,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 26079,
+"physicalWrites": 1
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 6393,
+"output": 132,
+"cacheRead": 20224,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6181,
+"wallMs": 9371,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"execute_read_code": 1,
+"call_tool": 2
+},
+"hostSearch": null,
+"tokens": {
+"input": 13740,
+"output": 324,
+"cacheRead": 36736,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 17075,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-codex-read-six": {
+"runner": "codex",
+"surface": "read-six",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 22886,
+"output": 534,
+"cacheRead": 42496,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6198,
+"wallMs": 23131,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"call_destructive_tool": 1
+}
+},
+"tools": {
+"execute_read_code": 4,
+"search_tools": 1,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 18776,
+"output": 624,
+"cacheRead": 80256,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 30796,
+"physicalWrites": 1
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"execute_read_code": 2,
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 10727,
+"output": 319,
+"cacheRead": 44032,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 16136,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 7353,
+"output": 152,
+"cacheRead": 21248,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6177,
+"wallMs": 11871,
+"physicalWrites": 0
+}
+]
+},
+"e1-allow-codex-six": {
+"runner": "codex",
+"surface": "six",
+"approval": "prompt-allow",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 1,
+"allowed": 1,
+"denied": 0,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 21602,
+"output": 516,
+"cacheRead": 39552,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6198,
+"wallMs": 21682,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 4,
+"allowed": 4,
+"denied": 0,
+"byTool": {
+"unknown": 4
+}
+},
+"tools": {
+"execute_code": 3,
+"call_tool": 1,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 26331,
+"output": 590,
+"cacheRead": 58368,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 26672,
+"physicalWrites": 1
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11261,
+"output": 167,
+"cacheRead": 14464,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6179,
+"wallMs": 10888,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 2,
+"allowed": 2,
+"denied": 0,
+"byTool": {
+"unknown": 2
+}
+},
+"tools": {
+"execute_code": 2,
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 7352,
+"output": 326,
+"cacheRead": 41216,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 17245,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-claude-five": {
+"runner": "claude",
+"surface": "five",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 428,
+"cacheRead": 7169,
+"cacheCreation": 2647
+},
+"firstTurnInputTokens": 2123,
+"wallMs": 5704,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 943,
+"cacheRead": 25875,
+"cacheCreation": 17677
+},
+"firstTurnInputTokens": 2091,
+"wallMs": 18450,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"skills": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 683,
+"cacheRead": 11798,
+"cacheCreation": 3220
+},
+"firstTurnInputTokens": 2086,
+"wallMs": 8350,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 344,
+"cacheRead": 5797,
+"cacheCreation": 1426
+},
+"firstTurnInputTokens": 2057,
+"wallMs": 8120,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 340,
+"cacheRead": 7728,
+"cacheCreation": 3135
+},
+"firstTurnInputTokens": 2123,
+"wallMs": 11071,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 1052,
+"cacheRead": 25891,
+"cacheCreation": 17664
+},
+"firstTurnInputTokens": 2091,
+"wallMs": 13418,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"skills": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 662,
+"cacheRead": 11792,
+"cacheCreation": 3197
+},
+"firstTurnInputTokens": 2084,
+"wallMs": 14697,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 357,
+"cacheRead": 5799,
+"cacheCreation": 1427
+},
+"firstTurnInputTokens": 2058,
+"wallMs": 7757,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-claude-native": {
+"runner": "claude",
+"surface": "native",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-fetch",
+"log-facts",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 582,
+"cacheRead": 19866,
+"cacheCreation": 9212
+},
+"firstTurnInputTokens": 8484,
+"wallMs": 14058,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"chat__post_message": 1
+}
+},
+"tools": {
+"tracker__search_issues": 1,
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 6,
+"chat__post_message": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 1453,
+"cacheRead": 43625,
+"cacheCreation": 11266
+},
+"firstTurnInputTokens": 8532,
+"wallMs": 15332,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 579,
+"cacheRead": 27955,
+"cacheCreation": 7977
+},
+"firstTurnInputTokens": 8572,
+"wallMs": 10908,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 357,
+"cacheRead": 18455,
+"cacheCreation": 7644
+},
+"firstTurnInputTokens": 8467,
+"wallMs": 11539,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-fetch",
+"log-facts",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 456,
+"cacheRead": 19860,
+"cacheCreation": 9029
+},
+"firstTurnInputTokens": 8481,
+"wallMs": 14934,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 2,
+"allowed": 0,
+"denied": 2,
+"byTool": {
+"chat__post_message": 2
+}
+},
+"tools": {
+"tracker__search_issues": 1,
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 6,
+"chat__post_message": 2
+},
+"hostSearch": 1,
+"tokens": {
+"input": 18,
+"output": 1750,
+"cacheRead": 69367,
+"cacheCreation": 11937
+},
+"firstTurnInputTokens": 8533,
+"wallMs": 23453,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 364,
+"cacheRead": 18461,
+"cacheCreation": 7647
+},
+"firstTurnInputTokens": 8470,
+"wallMs": 9467,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 587,
+"cacheRead": 27952,
+"cacheCreation": 7976
+},
+"firstTurnInputTokens": 8571,
+"wallMs": 13047,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-claude-read-five": {
+"runner": "claude",
+"surface": "read-five",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 1109,
+"cacheRead": 25984,
+"cacheCreation": 18123
+},
+"firstTurnInputTokens": 2106,
+"wallMs": 14621,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 427,
+"cacheRead": 7210,
+"cacheCreation": 2639
+},
+"firstTurnInputTokens": 2136,
+"wallMs": 17331,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 358,
+"cacheRead": 5831,
+"cacheCreation": 1444
+},
+"firstTurnInputTokens": 2073,
+"wallMs": 6598,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"skills": 1,
+"execute_read_code": 2,
+"call_tool": 2
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1061,
+"cacheRead": 32681,
+"cacheCreation": 5610
+},
+"firstTurnInputTokens": 2101,
+"wallMs": 15670,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 425,
+"cacheRead": 7214,
+"cacheCreation": 2613
+},
+"firstTurnInputTokens": 2138,
+"wallMs": 12746,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-fetch"
+],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 953,
+"cacheRead": 25988,
+"cacheCreation": 18065
+},
+"firstTurnInputTokens": 2106,
+"wallMs": 13242,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"skills": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 557,
+"cacheRead": 11874,
+"cacheCreation": 3219
+},
+"firstTurnInputTokens": 2100,
+"wallMs": 9434,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 330,
+"cacheRead": 5831,
+"cacheCreation": 1444
+},
+"firstTurnInputTokens": 2073,
+"wallMs": 6258,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-claude-read-six": {
+"runner": "claude",
+"surface": "read-six",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 1073,
+"cacheRead": 26048,
+"cacheCreation": 19087
+},
+"firstTurnInputTokens": 2119,
+"wallMs": 13997,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 2,
+"allowed": 0,
+"denied": 2,
+"byTool": {
+"execute_code": 1,
+"call_destructive_tool": 1
+}
+},
+"tools": {
+"execute_code": 1,
+"search_tools": 4,
+"call_tool": 9,
+"call_destructive_tool": 1
+},
+"hostSearch": 3,
+"tokens": {
+"input": 28,
+"output": 2668,
+"cacheRead": 88152,
+"cacheCreation": 12128
+},
+"firstTurnInputTokens": 2151,
+"wallMs": 29882,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 556,
+"cacheRead": 7869,
+"cacheCreation": 3388
+},
+"firstTurnInputTokens": 2114,
+"wallMs": 9043,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 338,
+"cacheRead": 5855,
+"cacheCreation": 1456
+},
+"firstTurnInputTokens": 2085,
+"wallMs": 6928,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 396,
+"cacheRead": 7695,
+"cacheCreation": 3106
+},
+"firstTurnInputTokens": 2151,
+"wallMs": 7321,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 984,
+"cacheRead": 26033,
+"cacheCreation": 18098
+},
+"firstTurnInputTokens": 2119,
+"wallMs": 16287,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"execute_read_code": 2,
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 879,
+"cacheRead": 22414,
+"cacheCreation": 5595
+},
+"firstTurnInputTokens": 2114,
+"wallMs": 11502,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 379,
+"cacheRead": 5857,
+"cacheCreation": 1457
+},
+"firstTurnInputTokens": 2086,
+"wallMs": 6584,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-claude-six": {
+"runner": "claude",
+"surface": "six",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 957,
+"cacheRead": 25944,
+"cacheCreation": 17676
+},
+"firstTurnInputTokens": 2104,
+"wallMs": 13648,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 482,
+"cacheRead": 7510,
+"cacheCreation": 2941
+},
+"firstTurnInputTokens": 2136,
+"wallMs": 20106,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 558,
+"cacheRead": 7820,
+"cacheCreation": 3355
+},
+"firstTurnInputTokens": 2098,
+"wallMs": 11156,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 378,
+"cacheRead": 5484,
+"cacheCreation": 1778
+},
+"firstTurnInputTokens": 2070,
+"wallMs": 9685,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 388,
+"cacheRead": 8211,
+"cacheCreation": 3630
+},
+"firstTurnInputTokens": 2137,
+"wallMs": 10528,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 892,
+"cacheRead": 25914,
+"cacheCreation": 17722
+},
+"firstTurnInputTokens": 2102,
+"wallMs": 14634,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"skills": 1,
+"execute_code": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 649,
+"cacheRead": 12111,
+"cacheCreation": 3343
+},
+"firstTurnInputTokens": 2099,
+"wallMs": 9740,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 374,
+"cacheRead": 5825,
+"cacheCreation": 1440
+},
+"firstTurnInputTokens": 2071,
+"wallMs": 9593,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-codex-five": {
+"runner": "codex",
+"surface": "five",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 4884,
+"output": 177,
+"cacheRead": 18944,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 11140,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 16755,
+"output": 387,
+"cacheRead": 39296,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6198,
+"wallMs": 17276,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 10918,
+"output": 199,
+"cacheRead": 12928,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 12621,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 7095,
+"output": 171,
+"cacheRead": 20864,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6179,
+"wallMs": 12726,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 6686,
+"output": 189,
+"cacheRead": 17152,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 15267,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 16776,
+"output": 439,
+"cacheRead": 39296,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6200,
+"wallMs": 19169,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 4902,
+"output": 223,
+"cacheRead": 18944,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 15762,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 13459,
+"output": 151,
+"cacheRead": 10240,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6177,
+"wallMs": 10360,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-codex-native": {
+"runner": "codex",
+"surface": "native",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"chat__post_message": 1
+}
+},
+"tools": {
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 12,
+"tracker__search_issues": 1,
+"tracker__get_issue": 1,
+"chat__post_message": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 14760,
+"output": 381,
+"cacheRead": 59776,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 20615,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"ci__get_run_log": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 25795,
+"output": 366,
+"cacheRead": 66304,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6186,
+"wallMs": 25534,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 21610,
+"output": 170,
+"cacheRead": 28928,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6177,
+"wallMs": 13567,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"revenuecat__list-projects": 1,
+"skills": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 26966,
+"output": 291,
+"cacheRead": 39936,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 18349,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"chat__post_message": 1
+}
+},
+"tools": {
+"analytics__list_accounts": 1,
+"tracker__search_issues": 1,
+"analytics__get_account_metrics": 12,
+"tracker__get_issue": 1,
+"chat__post_message": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 16530,
+"output": 366,
+"cacheRead": 57984,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 20793,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"ci__get_run_log": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 35518,
+"output": 354,
+"cacheRead": 56576,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6186,
+"wallMs": 30071,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"revenuecat__list-projects": 1,
+"skills": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 13906,
+"output": 287,
+"cacheRead": 52992,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6194,
+"wallMs": 16509,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 21622,
+"output": 155,
+"cacheRead": 28928,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6179,
+"wallMs": 13822,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-codex-read-five": {
+"runner": "codex",
+"surface": "read-five",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 20320,
+"output": 490,
+"cacheRead": 42112,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6196,
+"wallMs": 20581,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_read_code": 4,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 23110,
+"output": 658,
+"cacheRead": 61696,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6224,
+"wallMs": 29091,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 6381,
+"output": 129,
+"cacheRead": 20224,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6177,
+"wallMs": 10768,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"execute_read_code": 2,
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 9706,
+"output": 334,
+"cacheRead": 40960,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 20292,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 22887,
+"output": 444,
+"cacheRead": 40320,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6198,
+"wallMs": 19007,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"execute_code": 1
+}
+},
+"tools": {
+"execute_read_code": 4,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 18443,
+"output": 556,
+"cacheRead": 67200,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 29809,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 6421,
+"output": 162,
+"cacheRead": 20224,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6179,
+"wallMs": 10286,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"execute_read_code": 1,
+"call_tool": 2
+},
+"hostSearch": null,
+"tokens": {
+"input": 14764,
+"output": 309,
+"cacheRead": 35712,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 20401,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-codex-read-six": {
+"runner": "codex",
+"surface": "read-six",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 27910,
+"output": 512,
+"cacheRead": 37376,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6196,
+"wallMs": 22886,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"call_destructive_tool": 1
+}
+},
+"tools": {
+"execute_read_code": 3,
+"search_tools": 1,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 12489,
+"output": 580,
+"cacheRead": 64384,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6220,
+"wallMs": 25314,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 14183,
+"output": 168,
+"cacheRead": 14464,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6181,
+"wallMs": 9976,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"execute_read_code": 2,
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 8957,
+"output": 330,
+"cacheRead": 45824,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 17358,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1,
+"execute_read_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 22337,
+"output": 480,
+"cacheRead": 44160,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6198,
+"wallMs": 19391,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"call_destructive_tool": 1
+}
+},
+"tools": {
+"execute_read_code": 3,
+"search_tools": 1,
+"call_tool": 1,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 19707,
+"output": 610,
+"cacheRead": 73600,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6220,
+"wallMs": 27084,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11903,
+"output": 177,
+"cacheRead": 25728,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6177,
+"wallMs": 11326,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"execute_read_code": 2,
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 16978,
+"output": 317,
+"cacheRead": 37760,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 17955,
+"physicalWrites": 0
+}
+]
+},
+"e1-deny-codex-six": {
+"runner": "codex",
+"surface": "six",
+"approval": "prompt-deny",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 5943,
+"output": 183,
+"cacheRead": 19840,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 11466,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 17682,
+"output": 435,
+"cacheRead": 41344,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6198,
+"wallMs": 20688,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 5995,
+"output": 212,
+"cacheRead": 19840,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 13314,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11853,
+"output": 159,
+"cacheRead": 13824,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6179,
+"wallMs": 10710,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"one-post",
+"names-issue",
+"names-customer",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11326,
+"output": 169,
+"cacheRead": 14464,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6224,
+"wallMs": 11358,
+"physicalWrites": 0
+},
+{
+"task": "p5-result-paging",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"log-facts",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"call_tool": 1,
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 17650,
+"output": 433,
+"cacheRead": 41344,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6196,
+"wallMs": 19567,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "fail",
+"failed": [
+"resolved-project",
+"correct-destination",
+"answer-evidence"
+],
+"prompts": {
+"total": 1,
+"allowed": 0,
+"denied": 1,
+"byTool": {
+"unknown": 1
+}
+},
+"tools": {
+"execute_code": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 6001,
+"output": 212,
+"cacheRead": 19840,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 16044,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": {
+"total": 0,
+"allowed": 0,
+"denied": 0,
+"byTool": {}
+},
+"tools": {
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 6357,
+"output": 167,
+"cacheRead": 16640,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6179,
+"wallMs": 10297,
+"physicalWrites": 0
+}
+]
+},
+"e3-claude-native-hints": {
+"runner": "claude",
+"surface": "native-hints",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "para-who-owes",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"billing__find_customer": 1,
+"billing__list_invoices": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 351,
+"cacheRead": 27642,
+"cacheCreation": 7954
+},
+"firstTurnInputTokens": 8443,
+"wallMs": 12048,
+"physicalWrites": 0
+},
+{
+"task": "para-green-build",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"ci__list_runs": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 300,
+"cacheRead": 18592,
+"cacheCreation": 7871
+},
+"firstTurnInputTokens": 8451,
+"wallMs": 16720,
+"physicalWrites": 0
+},
+{
+"task": "para-mark-done",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__close_issue": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 207,
+"cacheRead": 18591,
+"cacheCreation": 7803
+},
+"firstTurnInputTokens": 8441,
+"wallMs": 5409,
+"physicalWrites": 1
+},
+{
+"task": "para-green-build",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"ci__list_runs": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 302,
+"cacheRead": 18592,
+"cacheCreation": 7871
+},
+"firstTurnInputTokens": 8451,
+"wallMs": 5995,
+"physicalWrites": 0
+},
+{
+"task": "para-mark-done",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__close_issue": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 184,
+"cacheRead": 18591,
+"cacheCreation": 7803
+},
+"firstTurnInputTokens": 8441,
+"wallMs": 6676,
+"physicalWrites": 1
+},
+{
+"task": "para-who-owes",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"billing__find_customer": 1,
+"billing__list_invoices": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 327,
+"cacheRead": 27642,
+"cacheCreation": 7954
+},
+"firstTurnInputTokens": 8443,
+"wallMs": 14492,
+"physicalWrites": 0
+}
+]
+},
+"e3-claude-native": {
+"runner": "claude",
+"surface": "native",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 300,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "para-green-build",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"ci__list_runs": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 307,
+"cacheRead": 18216,
+"cacheCreation": 8139
+},
+"firstTurnInputTokens": 8451,
+"wallMs": 13763,
+"physicalWrites": 0
+},
+{
+"task": "para-who-owes",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"billing__find_customer": 1,
+"billing__list_invoices": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 346,
+"cacheRead": 27225,
+"cacheCreation": 8216
+},
+"firstTurnInputTokens": 8444,
+"wallMs": 20825,
+"physicalWrites": 0
+},
+{
+"task": "para-mark-done",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__close_issue": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 206,
+"cacheRead": 18229,
+"cacheCreation": 8064
+},
+"firstTurnInputTokens": 8440,
+"wallMs": 12508,
+"physicalWrites": 1
+},
+{
+"task": "para-green-build",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"ci__list_runs": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 301,
+"cacheRead": 18536,
+"cacheCreation": 7816
+},
+"firstTurnInputTokens": 8450,
+"wallMs": 5792,
+"physicalWrites": 0
+},
+{
+"task": "para-mark-done",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__close_issue": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 8,
+"output": 195,
+"cacheRead": 18540,
+"cacheCreation": 7753
+},
+"firstTurnInputTokens": 8440,
+"wallMs": 7842,
+"physicalWrites": 1
+},
+{
+"task": "para-who-owes",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"billing__find_customer": 1,
+"billing__list_invoices": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 361,
+"cacheRead": 27539,
+"cacheCreation": 7902
+},
+"firstTurnInputTokens": 8444,
+"wallMs": 12572,
+"physicalWrites": 0
+}
+]
+},
+"e4-claude-native-no-search": {
+"runner": "claude",
+"surface": "native",
+"approval": "auto",
+"toolSearch": false,
+"catalogTools": 500,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 2,
+"chat__post_message": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 8,
+"output": 1141,
+"cacheRead": 506330,
+"cacheCreation": 169887
+},
+"firstTurnInputTokens": 167395,
+"wallMs": 13301,
+"physicalWrites": 1
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 6,
+"output": 581,
+"cacheRead": 336458,
+"cacheCreation": 168560
+},
+"firstTurnInputTokens": 168059,
+"wallMs": 19223,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 4,
+"output": 244,
+"cacheRead": 333795,
+"cacheCreation": 1005
+},
+"firstTurnInputTokens": 167329,
+"wallMs": 11480,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 2,
+"chat__post_message": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 8,
+"output": 1100,
+"cacheRead": 673273,
+"cacheCreation": 3047
+},
+"firstTurnInputTokens": 167395,
+"wallMs": 23304,
+"physicalWrites": 1
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 6,
+"output": 551,
+"cacheRead": 503994,
+"cacheCreation": 1024
+},
+"firstTurnInputTokens": 168059,
+"wallMs": 18048,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 4,
+"output": 255,
+"cacheRead": 334135,
+"cacheCreation": 667
+},
+"firstTurnInputTokens": 167330,
+"wallMs": 16447,
+"physicalWrites": 0
+}
+]
+},
+"e4-claude-pinned-no-search": {
+"runner": "claude",
+"surface": "pinned",
+"approval": "auto",
+"toolSearch": false,
+"catalogTools": 500,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 2,
+"chat__post_message": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 8,
+"output": 1057,
+"cacheRead": 34525,
+"cacheCreation": 12649
+},
+"firstTurnInputTokens": 10385,
+"wallMs": 12873,
+"physicalWrites": 1
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 6,
+"output": 528,
+"cacheRead": 20106,
+"cacheCreation": 10384
+},
+"firstTurnInputTokens": 9883,
+"wallMs": 17132,
+"physicalWrites": 0
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"ci__get_run": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 4,
+"output": 217,
+"cacheRead": 19640,
+"cacheCreation": 1140
+},
+"firstTurnInputTokens": 10319,
+"wallMs": 5390,
+"physicalWrites": 0
+}
+]
+},
+"e4-claude-six-no-search": {
+"runner": "claude",
+"surface": "six",
+"approval": "auto",
+"toolSearch": false,
+"catalogTools": 500,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"execute_code": 3
+},
+"hostSearch": 0,
+"tokens": {
+"input": 10,
+"output": 718,
+"cacheRead": 18480,
+"cacheCreation": 5303
+},
+"firstTurnInputTokens": 4268,
+"wallMs": 10580,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 4,
+"call_destructive_tool": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 12,
+"output": 1444,
+"cacheRead": 29595,
+"cacheCreation": 8033
+},
+"firstTurnInputTokens": 4187,
+"wallMs": 20065,
+"physicalWrites": 1
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 4,
+"output": 262,
+"cacheRead": 7243,
+"cacheCreation": 1171
+},
+"firstTurnInputTokens": 4121,
+"wallMs": 4416,
+"physicalWrites": 0
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"execute_code": 2,
+"call_tool": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 10,
+"output": 734,
+"cacheRead": 22322,
+"cacheCreation": 1870
+},
+"firstTurnInputTokens": 4268,
+"wallMs": 8689,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 4,
+"call_destructive_tool": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 12,
+"output": 1397,
+"cacheRead": 33626,
+"cacheCreation": 4678
+},
+"firstTurnInputTokens": 4186,
+"wallMs": 28670,
+"physicalWrites": 1
+},
+{
+"task": "p5-known-read-routing",
+"repeat": 2,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"call_tool": 1
+},
+"hostSearch": 0,
+"tokens": {
+"input": 4,
+"output": 242,
+"cacheRead": 7581,
+"cacheCreation": 831
+},
+"firstTurnInputTokens": 4120,
+"wallMs": 6932,
+"physicalWrites": 0
+}
+]
+},
+"e5-claude-five-150": {
+"runner": "claude",
+"surface": "five",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 150,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"execute_code": 3
+},
+"hostSearch": 1,
+"tokens": {
+"input": 14,
+"output": 860,
+"cacheRead": 19841,
+"cacheCreation": 3545
+},
+"firstTurnInputTokens": 2086,
+"wallMs": 10307,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 5
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1408,
+"cacheRead": 30911,
+"cacheCreation": 6322
+},
+"firstTurnInputTokens": 2123,
+"wallMs": 15111,
+"physicalWrites": 1
+}
+]
+},
+"e5-claude-five-50": {
+"runner": "claude",
+"surface": "five",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 50,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"execute_code": 2,
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 14,
+"output": 984,
+"cacheRead": 21346,
+"cacheCreation": 3899
+},
+"firstTurnInputTokens": 2085,
+"wallMs": 25621,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 5
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1556,
+"cacheRead": 32591,
+"cacheCreation": 7284
+},
+"firstTurnInputTokens": 2123,
+"wallMs": 29606,
+"physicalWrites": 1
+}
+]
+},
+"e5-claude-five-500": {
+"runner": "claude",
+"surface": "five",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 500,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 4
+},
+"hostSearch": 1,
+"tokens": {
+"input": 14,
+"output": 1499,
+"cacheRead": 26734,
+"cacheCreation": 7423
+},
+"firstTurnInputTokens": 2123,
+"wallMs": 14217,
+"physicalWrites": 1
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"execute_code": 2,
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 14,
+"output": 817,
+"cacheRead": 21376,
+"cacheCreation": 3922
+},
+"firstTurnInputTokens": 2087,
+"wallMs": 14480,
+"physicalWrites": 0
+}
+]
+},
+"e5-claude-native-150": {
+"runner": "claude",
+"surface": "native",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 150,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 543,
+"cacheRead": 18493,
+"cacheCreation": 4823
+},
+"firstTurnInputTokens": 5418,
+"wallMs": 8381,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__search_issues": 1,
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 6,
+"chat__post_message": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 1352,
+"cacheRead": 31010,
+"cacheCreation": 8135
+},
+"firstTurnInputTokens": 5378,
+"wallMs": 23436,
+"physicalWrites": 1
+}
+]
+},
+"e5-claude-native-50": {
+"runner": "claude",
+"surface": "native",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 50,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 556,
+"cacheRead": 12319,
+"cacheCreation": 2765
+},
+"firstTurnInputTokens": 3360,
+"wallMs": 17220,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__search_issues": 1,
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 6,
+"chat__post_message": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 1393,
+"cacheRead": 22772,
+"cacheCreation": 6071
+},
+"firstTurnInputTokens": 3320,
+"wallMs": 18591,
+"physicalWrites": 1
+}
+]
+},
+"e5-claude-native-500": {
+"runner": "claude",
+"surface": "native",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 500,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 10,
+"output": 511,
+"cacheRead": 40372,
+"cacheCreation": 12116
+},
+"firstTurnInputTokens": 12711,
+"wallMs": 14380,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__search_issues": 1,
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 6,
+"chat__post_message": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 1412,
+"cacheRead": 60181,
+"cacheCreation": 15428
+},
+"firstTurnInputTokens": 12673,
+"wallMs": 16832,
+"physicalWrites": 1
+}
+]
+},
+"e5-claude-six-150": {
+"runner": "claude",
+"surface": "six",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 150,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"execute_code": 3,
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1023,
+"cacheRead": 27860,
+"cacheCreation": 4729
+},
+"firstTurnInputTokens": 2099,
+"wallMs": 21543,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 5
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1580,
+"cacheRead": 33259,
+"cacheCreation": 6799
+},
+"firstTurnInputTokens": 2136,
+"wallMs": 50830,
+"physicalWrites": 1
+}
+]
+},
+"e5-claude-six-50": {
+"runner": "claude",
+"surface": "six",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 50,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 3
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 892,
+"cacheRead": 17853,
+"cacheCreation": 4149
+},
+"firstTurnInputTokens": 2099,
+"wallMs": 25350,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 5
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1514,
+"cacheRead": 33504,
+"cacheCreation": 6874
+},
+"firstTurnInputTokens": 2136,
+"wallMs": 39669,
+"physicalWrites": 1
+}
+]
+},
+"e5-claude-six-500": {
+"runner": "claude",
+"surface": "six",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 500,
+"target": "worker",
+"cli": "2.1.318 (Claude Code)",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 2,
+"call_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 12,
+"output": 829,
+"cacheRead": 17786,
+"cacheCreation": 4034
+},
+"firstTurnInputTokens": 2098,
+"wallMs": 11465,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 4,
+"call_destructive_tool": 1
+},
+"hostSearch": 1,
+"tokens": {
+"input": 16,
+"output": 1455,
+"cacheRead": 35333,
+"cacheCreation": 7112
+},
+"firstTurnInputTokens": 2136,
+"wallMs": 15157,
+"physicalWrites": 1
+}
+]
+},
+"e5-codex-five-150": {
+"runner": "codex",
+"surface": "five",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 150,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 1,
+"call_tool": 2
+},
+"hostSearch": null,
+"tokens": {
+"input": 7999,
+"output": 281,
+"cacheRead": 36352,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 14915,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 3,
+"call_tool": 1,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 19962,
+"output": 544,
+"cacheRead": 62464,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 25350,
+"physicalWrites": 1
+}
+]
+},
+"e5-codex-five-50": {
+"runner": "codex",
+"surface": "five",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 50,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 3,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11168,
+"output": 510,
+"cacheRead": 57472,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 20626,
+"physicalWrites": 1
+},
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 2,
+"call_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 6287,
+"output": 326,
+"cacheRead": 38272,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 23747,
+"physicalWrites": 0
+}
+]
+},
+"e5-codex-five-500": {
+"runner": "codex",
+"surface": "five",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 500,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 1,
+"call_tool": 2
+},
+"hostSearch": null,
+"tokens": {
+"input": 15817,
+"output": 297,
+"cacheRead": 28544,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 17163,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 3,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11909,
+"output": 504,
+"cacheRead": 59904,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6224,
+"wallMs": 24344,
+"physicalWrites": 1
+}
+]
+},
+"e5-codex-native-150": {
+"runner": "codex",
+"surface": "native",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 150,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11818,
+"output": 241,
+"cacheRead": 54784,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 17904,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__search_issues": 1,
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 6,
+"tracker__get_issue": 1,
+"chat__post_message": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 14930,
+"output": 402,
+"cacheRead": 94848,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6220,
+"wallMs": 22246,
+"physicalWrites": 1
+}
+]
+},
+"e5-codex-native-50": {
+"runner": "codex",
+"surface": "native",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 50,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"skills": 1,
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 13210,
+"output": 241,
+"cacheRead": 38144,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 14117,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"tracker__search_issues": 1,
+"analytics__list_accounts": 1,
+"analytics__get_account_metrics": 6,
+"tracker__get_issue": 1,
+"chat__post_message": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 12956,
+"output": 362,
+"cacheRead": 56960,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 18029,
+"physicalWrites": 1
+}
+]
+},
+"e5-codex-native-500": {
+"runner": "codex",
+"surface": "native",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 500,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"revenuecat__list-projects": 1,
+"revenuecat__list-subscriptions": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 11888,
+"output": 305,
+"cacheRead": 54784,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 18117,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"analytics__list_accounts": 1,
+"tracker__search_issues": 1,
+"analytics__get_account_metrics": 12,
+"tracker__get_issue": 1,
+"chat__post_message": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 14797,
+"output": 383,
+"cacheRead": 59648,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6222,
+"wallMs": 22701,
+"physicalWrites": 1
+}
+]
+},
+"e5-codex-six-150": {
+"runner": "codex",
+"surface": "six",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 150,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 1,
+"call_tool": 2
+},
+"hostSearch": null,
+"tokens": {
+"input": 7395,
+"output": 325,
+"cacheRead": 40960,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6192,
+"wallMs": 16035,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 3,
+"call_tool": 1,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 19878,
+"output": 599,
+"cacheRead": 64768,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6224,
+"wallMs": 30174,
+"physicalWrites": 1
+}
+]
+},
+"e5-codex-six-50": {
+"runner": "codex",
+"surface": "six",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 50,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 1,
+"call_tool": 2
+},
+"hostSearch": null,
+"tokens": {
+"input": 7173,
+"output": 313,
+"cacheRead": 41216,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6194,
+"wallMs": 17033,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 3,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 19175,
+"output": 529,
+"cacheRead": 53632,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6220,
+"wallMs": 23701,
+"physicalWrites": 1
+}
+]
+},
+"e5-codex-six-500": {
+"runner": "codex",
+"surface": "six",
+"approval": "auto",
+"toolSearch": true,
+"catalogTools": 500,
+"target": "worker",
+"cli": "codex-cli 0.166.0",
+"srcTree": "f7e31f1e4966",
+"trials": [
+{
+"task": "p5-revenuecat-text",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 1,
+"call_tool": 2
+},
+"hostSearch": null,
+"tokens": {
+"input": 11496,
+"output": 306,
+"cacheRead": 36864,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6190,
+"wallMs": 15720,
+"physicalWrites": 0
+},
+{
+"task": "cross-connector-join",
+"repeat": 1,
+"status": "pass",
+"failed": [],
+"prompts": null,
+"tools": {
+"execute_code": 3,
+"call_tool": 1,
+"call_destructive_tool": 1
+},
+"hostSearch": null,
+"tokens": {
+"input": 13706,
+"output": 562,
+"cacheRead": 71168,
+"cacheCreation": 0
+},
+"firstTurnInputTokens": 6220,
+"wallMs": 24286,
+"physicalWrites": 1
+}
+]
+}
+}
+}

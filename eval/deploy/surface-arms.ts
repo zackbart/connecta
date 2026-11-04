@@ -66,7 +66,7 @@ function rewriteReadReply(text: string): string {
 /** A read-only refusal on the writable deployment must not claim the endpoint has no write route. */
 function rewriteRefusal(text: string): string {
   return text.replace(
-    /this endpoint is read-only\. No write route exists on this endpoint\. Ask the operator for a writable connection if writes are required\./g,
+    /this endpoint is read-only\. No write route exists on this endpoint[^"\\]*/g,
     READ_ROUTE_REFUSAL,
   );
 }

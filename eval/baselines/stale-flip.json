@@ -1,0 +1,573 @@
+[
+ {
+  "case": "native-flip",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "native",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 6,
+  "physicalVendorCalls": 6,
+  "duplicateWrite": true,
+  "repeatedRecords": [
+   {
+    "id": "A-1",
+    "count": 2
+   },
+   {
+    "id": "A-4",
+    "count": 2
+   }
+  ],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 1,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "native-write-control",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "native",
+  "listed": "write",
+  "called": "write",
+  "hostToolCallsSeen": 4,
+  "physicalVendorCalls": 4,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "native-read-control",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "native",
+  "listed": "read",
+  "called": "read",
+  "hostToolCallsSeen": 6,
+  "physicalVendorCalls": 6,
+  "duplicateWrite": false,
+  "repeatedRecords": [
+   {
+    "id": "A-1",
+    "count": 2
+   },
+   {
+    "id": "A-4",
+    "count": 2
+   }
+  ],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 1,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "six-call-tool-flip",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "six",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 8,
+  "physicalVendorCalls": 0,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 1,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "native-override-read",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "native",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 6,
+  "physicalVendorCalls": 6,
+  "duplicateWrite": true,
+  "repeatedRecords": [
+   {
+    "id": "A-1",
+    "count": 2
+   },
+   {
+    "id": "A-4",
+    "count": 2
+   }
+  ],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 1,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "six-override-read",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "six",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 8,
+  "physicalVendorCalls": 5,
+  "duplicateWrite": true,
+  "repeatedRecords": [
+   {
+    "id": "A-2",
+    "count": 2
+   }
+  ],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 1,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "read-program-override",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "read-six",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 6,
+  "physicalVendorCalls": 6,
+  "duplicateWrite": true,
+  "repeatedRecords": [
+   {
+    "id": "A-1",
+    "count": 2
+   },
+   {
+    "id": "A-4",
+    "count": 2
+   }
+  ],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 1,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "native-bound-flip",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "native-bound",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 6,
+  "physicalVendorCalls": 0,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 1,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "six-program-flip",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "six",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 4,
+  "physicalVendorCalls": 4,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "read-program-flip",
+  "mode": "parallel",
+  "host": "claude",
+  "target": "worker",
+  "surface": "read-six",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 6,
+  "physicalVendorCalls": 0,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 3,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 4,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 5,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 0,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   },
+   {
+    "jsonrpcId": 1,
+    "session": "absent",
+    "protocol": "2026-07-28"
+   }
+  ]
+ },
+ {
+  "case": "native-flip",
+  "mode": "reset",
+  "host": "codex",
+  "target": "worker",
+  "surface": "native",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 1,
+  "physicalVendorCalls": 1,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2025-06-18"
+   }
+  ]
+ },
+ {
+  "case": "native-read-control",
+  "mode": "reset",
+  "host": "codex",
+  "target": "worker",
+  "surface": "native",
+  "listed": "read",
+  "called": "read",
+  "hostToolCallsSeen": 1,
+  "physicalVendorCalls": 1,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2025-06-18"
+   }
+  ]
+ },
+ {
+  "case": "native-flip",
+  "mode": "http-503",
+  "host": "codex",
+  "target": "worker",
+  "surface": "native",
+  "listed": "read",
+  "called": "write",
+  "hostToolCallsSeen": 1,
+  "physicalVendorCalls": 1,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2025-06-18"
+   }
+  ]
+ },
+ {
+  "case": "native-read-control",
+  "mode": "http-503",
+  "host": "codex",
+  "target": "worker",
+  "surface": "native",
+  "listed": "read",
+  "called": "read",
+  "hostToolCallsSeen": 1,
+  "physicalVendorCalls": 1,
+  "duplicateWrite": false,
+  "repeatedRecords": [],
+  "retryIdentity": [
+   {
+    "jsonrpcId": 2,
+    "session": "absent",
+    "protocol": "2025-06-18"
+   }
+  ]
+ }
+]
