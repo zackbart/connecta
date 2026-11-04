@@ -31,11 +31,20 @@ it.each(["direct", "search"])(
     const error = surface === "direct" ? response.structuredContent.error : response.structuredContent.catalogErrors[0];
     expect(error).toMatchObject({
       recovery: "oauth",
-      nextAction: { tool: "authorize_connector", arguments: { connector: "service" } },
+      nextAction: {
+        url: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v3.`),
+        purpose: expect.any(String),
+      },
       authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v3.`),
       instructions: expect.any(String),
     });
-    expect(error.nextAction.arguments).not.toHaveProperty("force");
+    // The link goes on as it is, so what the agent passes along is what was signed.
+    expect(error.nextAction.url).toBe(error.authorizationUrl);
+    expect(error.nextAction.purpose).toBe(
+      "Give this link to the user, unchanged, then stop. Retry after they confirm.",
+    );
+    expect(error.instructions).toMatch(/^For the person opening this link: /);
+    expect(new URL(error.nextAction.url).searchParams.has("force")).toBe(false);
     expect(flow.sign).toHaveBeenCalledOnce();
     expect(flow.connector.startAuth).not.toHaveBeenCalled();
     if (surface === "search") expect(JSON.stringify(response)).not.toContain("PRIVATE_");
@@ -118,8 +127,12 @@ it("INV-4 INV-5 INV-10: auth handoffs preserve management boundaries and statele
       expect(called.error).toMatchObject({
         code: "auth_required",
         recovery: withUi ? "operator_config" : "unavailable",
-        nextAction: { tool: "authorize_connector" },
+        nextAction: withUi
+          ? { url: called.error?.operatorUrl, purpose: expect.stringContaining("for the operator to open") }
+          : { action: "contact_operator", purpose: expect.stringContaining("the operator must fix this connector") },
       });
+      // The error says one thing to do; no route text still points at authorize_connector.
+      expect(called.error.message).not.toContain("authorize_connector");
       if (connector !== generic) expect(called.error.message).toContain("not a Stripe secret");
       const authorized = await rpc("authorize_connector", { connector: connector.id });
       expect(authorized).toMatchObject({

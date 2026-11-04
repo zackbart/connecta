@@ -201,7 +201,7 @@ describe("authorization and credential handoffs after a write are outcome-aware"
       reconciliationRequired: true,
       recovery: "oauth",
       authorizationUrl: `${BASE}/auth/tickets`,
-      nextAction: { tool: "authorize_connector" },
+      nextAction: { url: `${BASE}/auth/tickets`, purpose: expect.stringContaining("re-read the write's target") },
     });
     expect(served.error.instructions).toContain(
       "Then re-read the target of the write that failed to check whether it took effect before any fresh call;",

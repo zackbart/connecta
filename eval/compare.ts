@@ -1,4 +1,5 @@
 /** Offline paired A/B report. Route-only verdicts never enter the decision rule. */
+import type { Surface } from "./agent/surface.js";
 import { z } from "zod";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
@@ -8,6 +9,8 @@ import { observation, trialOutcome } from "./agent/verdict.js";
 import type { TrialResult } from "./agent/run.js";
 import type { AgentResultFile } from "./report/summary.js";
 import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
+import { taskForSurface } from "./tasks/surface.js";
+import { noCodeDecisionLines } from "./worker-comparison-plan.js";
 import { downstreamMetrics } from "./agent/trace.js";
 import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
@@ -74,14 +77,14 @@ const trialSchema = z
     model: knownString,
     runner: z.enum(["codex", "claude", "eve"]),
     target: z.enum(["node", "worker"]).optional(),
-    surface: z.enum(["six", "code"]),
+    surface: z.enum(["six", "five", "code", "native", "native-no-code"]),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
     status: z.enum(["pass", "fail", "error", "skipped"]),
     timeoutMs: z.number().positive().finite(),
     error: z.string().min(1).optional(),
     skip: z
-      .object({ code: z.literal("runner-limitation"), reason: knownString })
+      .object({ code: z.enum(["runner-limitation", "capability-mismatch"]), reason: knownString })
       .strict()
       .optional(),
     codex: z.unknown().optional(),
@@ -100,11 +103,12 @@ const trialSchema = z
   })
   .strict();
 
-/** The only exclusion is an unexecuted, explicitly recorded Claude rich-output N/A. */
+/** The only exclusions are unexecuted, explicitly recorded task N/As: Claude rich output, or an arm's capability mismatch. */
 function isNA(trial: TrialResult, runner: "codex" | "claude" | "eve"): boolean {
-  const skip = ACTIVE_TASKS.find((t) => t.id === trial.task)?.runnerSkips?.[runner];
+  const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
+  const skip = task && taskForSurface(task, trial.surface ?? "six").runnerSkips?.[runner];
   return (
-    runner === "claude" &&
+    (runner === "claude" || skip?.code === "capability-mismatch") &&
     !!skip &&
     trial.status === "skipped" &&
     trial.skip?.code === skip.code &&
@@ -119,7 +123,7 @@ function isNA(trial: TrialResult, runner: "codex" | "claude" | "eve"): boolean {
   );
 }
 
-function validate(file: AgentResultFile, surface: "six" | "code"): Map<string, TrialResult> {
+function validate(file: AgentResultFile, surface: Surface): Map<string, TrialResult> {
   if (file.kind !== "connecta-eval/agent" || file.version !== 1)
     throw new Error("Expected agent result file version 1");
   if (file.stopped) throw new Error(`Incomplete ${surface} batch: ${file.stopped}`);
@@ -203,7 +207,7 @@ const targetOf = (file: AgentResultFile) => file.config.target ?? "node";
  * any comparison: fresh, unregraded, on the current protocol and a clean known
  * source, with every trial consistent with its batch, target included.
  */
-function measuredProvenance(label: string, surface: "six" | "code", file: AgentResultFile): string[] {
+function measuredProvenance(label: string, surface: Surface, file: AgentResultFile): string[] {
   const reasons: string[] = [];
   const current = runProtocol();
   const known = (value: unknown) =>
@@ -343,6 +347,55 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     throw new Error(
       `Comparison refused: arms ran on different targets (${targetOf(a)}, ${targetOf(b)}); use --cross-target for a diagnostic`,
     );
+  if (
+    [a.config.surface, b.config.surface].some(
+      (surface) => surface === "five" || surface === "native" || surface === "native-no-code",
+    )
+  ) {
+    const arms = [a.config.surface!, b.config.surface!] as const;
+    if (arms[0] === arms[1]) throw new Error("Expected distinct surface arms");
+    const reasons = [
+      ...measuredProvenance(arms[0], arms[0], a),
+      ...measuredProvenance(arms[1], arms[1], b),
+      ...settingMismatches(a, b, ["surface"]),
+    ];
+    if (reasons.length) throw new Error(`Comparison refused: ${reasons.join("; ")}`);
+    const left = validate(a, arms[0]),
+      right = validate(b, arms[1]);
+    if (left.size !== right.size || [...left.keys()].some((key) => !right.has(key)))
+      throw new Error("Arms must have identical model/task/repeat pairs");
+    const lines = [
+      `Native surface comparison: ${arms.join(" vs ")}; paired ${a.protocol!.pairId}; diagnostic only; use the preregistered Worker decision rule.`,
+    ];
+    for (const [arm, file] of [
+      [arms[0], a],
+      [arms[1], b],
+    ] as const) {
+      const passed = file.trials.filter((t) => trialOutcome(t, file.config.runner!).pass).length;
+      lines.push(`${arm}: ${passed}/${file.trials.length}; duplicate writes ${safety(file.trials).duplicates}`);
+      for (const model of file.config.models)
+        lines.push(
+          ...efficiencyLines(
+            modelEfficiency(
+              file.trials.filter((t) => t.model === model),
+              { include: () => true, pass: (t) => trialOutcome(t, file.config.runner!).pass },
+            ),
+            reliability(
+              file.trials.filter((t) => t.model === model),
+              file.config.repeats,
+              (t) => (trialOutcome(t, file.config.runner!).pass ? "pass" : "fail"),
+            ),
+          ),
+        );
+    }
+    const native = arms[0] === "native" ? a : arms[1] === "native" ? b : undefined;
+    const noCode = arms[0] === "native-no-code" ? a : arms[1] === "native-no-code" ? b : undefined;
+    if (native && noCode) {
+      const passedIn = (file: AgentResultFile) => (trial: TrialResult) => trialOutcome(trial, file.config.runner!).pass;
+      lines.push(...noCodeDecisionLines(native, noCode, passedIn(native), passedIn(noCode)));
+    }
+    return lines.join("\n");
+  }
   const mismatches = provenance(a, b);
   if (mismatches.length && !options.allowMismatch)
     throw new Error(`Comparison refused:\n${mismatches.map((r) => `- ${r}`).join("\n")}`);
