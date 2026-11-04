@@ -12,7 +12,7 @@ is the arm the rule selects, on bytes alone. Its quality is inconclusive.
 
 ## Stage A: meta surface (`six`), 9 tasks
 
-`quickbooks-write-journey` failed all 31 valid trials on every arm, so it cannot
+`quickbooks-write-journey` failed all 15 valid trials on every arm, so it cannot
 separate arms. Each cell has 18 trials, or 16 without that task. One trial is
 invalid: `example`/Codex, a QuickBooks restart lost its Worker connection under
 load. Tokens are means over the 16 other trials, against control.
@@ -92,7 +92,7 @@ More trials were not spent to chase significance.
 | Cause | control | terse | disambiguation | example |
 | --- | --- | --- | --- | --- |
 | Guessed named-tool argument, such as `get_family {id}` | 6 | 7 | 4 | 0 |
-| Stripe hatch `fields` anchor on a list | 3 | 0 | 1 | 5 |
+| Stripe hatch `fields` anchor | 3 | 0 | 1 | 5 |
 | Cloudflare `page` argument | 1 | 4 | 1 | 3 |
 | Sheets `/v4` path prefix | 2 | 2 | 1 | 0 |
 | Other | 0 | 1 | 2 | 2 |

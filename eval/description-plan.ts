@@ -8,7 +8,7 @@
  * file, is reported, and removes its pair from pass comparisons. It is not rerun.
  *
  * Deviation, recorded after Stage A and before Stage B: `quickbooks-write-journey`
- * failed all 31 valid trials on every arm and host, so it cannot separate arms.
+ * failed all 15 valid trials on every arm and host, so it cannot separate arms.
  * Its prompt omits the invoice details, and a scripted turn makes the endpoint
  * read-only before an agent that asks for them can write. The scripted reference
  * passes. It stays in Stage A's results, reported as non-discriminating, and was
