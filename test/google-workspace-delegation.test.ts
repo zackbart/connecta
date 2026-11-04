@@ -1848,13 +1848,13 @@ describe("Workspace served classification on unauthorized requests", () => {
           expect(read.isError, JSON.stringify(read)).toBeFalsy();
           expect(JSON.stringify(read)).toContain("Native form");
           const before = apiCalls.length;
-          const denied = await rpc("reads", "workspace__forms_api_write", {
+          const denied = await rpc("reads", "workspace__WRITE__forms_api_write", {
             path: "/forms",
             method: "POST",
             body: { info: { title: "Denied" } },
           });
           expect(denied.isError).toBe(true);
-          const refused = await rpc("native", "workspace__forms_api_write", {
+          const refused = await rpc("native", "workspace__WRITE__forms_api_write", {
             path: "/forms/f/watches",
             method: "POST",
             body: {},
@@ -1862,7 +1862,7 @@ describe("Workspace served classification on unauthorized requests", () => {
           expect(refused.isError).toBe(true);
           expect(apiCalls).toHaveLength(before);
           apiReplies.push(() => Response.json({ error: { code: 500 } }, { status: 500 }));
-          const unknown = await rpc("native", "workspace__forms_api_write", {
+          const unknown = await rpc("native", "workspace__WRITE__forms_api_write", {
             path: "/forms",
             method: "POST",
             body: { info: { title: "Once" } },

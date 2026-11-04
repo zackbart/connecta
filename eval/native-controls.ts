@@ -1,6 +1,9 @@
 /** No paid model: actual Worker surface, state, paging and grader controls. */
 import { playReference } from "./agent/reference.js";
 import assert from "node:assert/strict";
+import { z } from "zod";
+import { FakeService, Ledger, type FakeTool } from "./fakes/service.js";
+import { NO_INJECTION } from "./fakes/injection.js";
 import { World } from "./fakes/world.js";
 import { startDeployment } from "./deploy/targets.js";
 import { connectMcp } from "./support/mcp.js";
@@ -33,6 +36,59 @@ async function distractorControls(arm: Surface, task: ActiveTask, world: World, 
   assert.equal(passes(grade(), "outcome"), false);
   const restored = restoreGradeInputs(structuredClone(saveGradeInputs(world, parseTrace([], [], []))));
   assert.equal(restored.world.injected.catalogCalls.length, 2);
+}
+
+/** A read a host cached turns into a write: replays of its name write nothing, and the write's own name writes once. */
+async function staleReadNameControl() {
+  const ledger = new Ledger();
+  const tool: FakeTool = {
+    name: "set_status",
+    description: "Set a record's status.",
+    input: z.object({ id: z.string() }),
+    annotations: { readOnlyHint: true, destructiveHint: false },
+    run: () => ({ json: { ok: true } }),
+  };
+  const crm = new FakeService("crm", "Customer records.", [tool], ledger);
+  await crm.start();
+  const world = new World({}, NO_INJECTION);
+  await world.start();
+  const specs = world.connectorSpecs.bind(world);
+  world.connectorSpecs = () => [
+    ...specs(),
+    { id: "crm", title: "crm", description: "Customer records.", url: crm.url },
+  ];
+  const deployment = await startDeployment("worker", world, { id: "stale-read-name" } as ActiveTask, "native");
+  const physical = () => crm.calls.filter((call) => call.tool === "set_status").length;
+  try {
+    const before = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+    assert.equal(
+      (await before.listTools()).find((listed) => listed.address === "crm.set_status")?.name,
+      "crm__set_status",
+    );
+    await before.close();
+    tool.annotations = { readOnlyHint: false, destructiveHint: true };
+    assert.ok(deployment.restart);
+    await deployment.restart(false);
+    const after = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+    assert.equal(
+      (await after.listTools()).find((listed) => listed.address === "crm.set_status")?.name,
+      "crm__WRITE__set_status",
+    );
+    for (const id of ["A-1", "A-2", "A-1", "A-2"]) {
+      const replay = await after.call("crm__set_status", { id });
+      assert.equal(replay.isError, true);
+      assert.match(replay.text, /destructive_tool_requires_approval/);
+    }
+    assert.equal(physical(), 0);
+    assert.equal((await after.call("crm__WRITE__set_status", { id: "A-1" })).isError, false);
+    assert.equal(physical(), 1);
+    await after.close();
+    console.log("ok native: replays of a stale read name wrote nothing, and the write's own name wrote once");
+  } finally {
+    await deployment.close();
+    await world.stop();
+    await crm.stop();
+  }
 }
 
 async function nativeControls() {
@@ -99,7 +155,7 @@ async function nativeControls() {
       await deployment.restart(true);
       const before = world.ledger.calls.length;
       const refusal = await mcp.call(
-        arm === "six" ? "call_destructive_tool" : "tracker__close_issue",
+        arm === "six" ? "call_destructive_tool" : "tracker__WRITE__close_issue",
         arm === "six" ? { address: "tracker.close_issue", args: { id: "WEB-105" } } : { id: "WEB-105" },
       );
       assert.equal(refusal.isError, true);
@@ -117,6 +173,7 @@ async function nativeControls() {
   }
 }
 await nativeControls();
+await staleReadNameControl();
 
 /** The real read route: reads run, a write is refused with 0 sent, handles cross routes. */
 async function readRouteControls(target: "node" | "worker") {

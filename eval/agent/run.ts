@@ -203,7 +203,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     const deployment = (cleanupDeployment = await startDeployment(target, world, task, surfaceArm));
     const hostEvents: StreamEvent[] = [];
     const host = (cleanupHost = task.host
-      ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
+      ? await startAuthHost(deployment, task.host.urlElicitation, (e) => hostEvents.push(e))
       : undefined);
     const surface = await surfaceOf(deployment.mcpUrl, deployment.token);
     assertSurface(
