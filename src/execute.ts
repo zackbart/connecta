@@ -2091,6 +2091,12 @@ const REQUIRED_GUIDE_LEGEND = ' *Read connecta.skill("connector:<id>") before it
 /** Deployment configuration, normalized and capped like a title: a one-line purpose, never a paragraph. */
 const CONNECTOR_PURPOSE_MAX_BYTES = 57;
 
+/** Clips on a whole token, so text with no token that fits leaves nothing to show. */
+const inventoryNote = (text: string, maxBytes: number) => {
+  const clipped = boundedEchoText(text, maxBytes);
+  return clipped === "…" ? undefined : clipped;
+};
+
 /**
  * Every configured connector, from configuration alone. Detail degrades before
  * names do: purposes go first, from the end of registry order, then titles, and
@@ -2108,11 +2114,11 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
     const name = guideFirst(connector) ? `${connector.id}*` : connector.id;
     const rawTitle = connector.title?.replace(/\s+/g, " ").trim();
     const title =
-      titled && rawTitle && addsInformation(connector.id, rawTitle) ? boundedEchoText(rawTitle, 45) : undefined;
+      titled && rawTitle && addsInformation(connector.id, rawTitle) ? inventoryNote(rawTitle, 45) : undefined;
     const description = connector.description?.replace(/\s+/g, " ").trim().replace(/\.$/, "");
     const purpose =
       withPurpose && description && addsInformation(`${connector.id} ${rawTitle ?? ""}`, description)
-        ? boundedEchoText(description, CONNECTOR_PURPOSE_MAX_BYTES)
+        ? inventoryNote(description, CONNECTOR_PURPOSE_MAX_BYTES)
         : undefined;
     const notes = [title, purpose].filter((note) => note !== undefined);
     return notes.length > 0 ? `${name} (${notes.join("; ")})` : name;

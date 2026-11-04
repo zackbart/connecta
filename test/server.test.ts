@@ -384,10 +384,16 @@ describe("server /mcp end-to-end", () => {
     ).toBe(
       'Connectors: crm* (Customer CRM; Current accounts and contracts), crm_old (Retired CRM: audit lookups only), tickets (Support tickets), notes. *Read connecta.skill("connector:<id>") before its first call.',
     );
-    // A purpose caps at 60 UTF-8 bytes, never splitting a character.
-    const capped = (await inventory([{ id: "crm", description: "é".repeat(40) }]))!;
-    expect(capped).toBe(`Connectors: crm (${"é".repeat(28)}…).`);
+    // A purpose caps at 60 UTF-8 bytes on a whole token, never splitting a character.
+    const capped = (await inventory([{ id: "crm", description: "données clients ".repeat(8) }]))!;
+    expect(capped).toMatch(/^Connectors: crm \(données clients( données clients)*( données)?…\)\.$/);
     expect(bytes(capped.slice("Connectors: crm (".length, -2))).toBeLessThanOrEqual(60);
+    // Text with no token that fits leaves nothing to show, so the entry is the bare id.
+    expect(await inventory([{ id: "crm", description: "é".repeat(40) }])).toBe("Connectors: crm.");
+    expect(await inventory([{ id: "crm", title: "é".repeat(40) }])).toBe("Connectors: crm.");
+    expect(await inventory([{ id: "crm", title: "Customer CRM", description: "é".repeat(40) }])).toBe(
+      "Connectors: crm (Customer CRM).",
+    );
     // Past the cap purposes go first, from the end of registry order, before any title or name.
     const described = Array.from({ length: 16 }, (_, index) => ({
       id: `service_${String(index).padStart(2, "0")}`,

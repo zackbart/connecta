@@ -148,7 +148,8 @@ only when it says more than the id: a title whose words the id already spells,
 such as `Google Calendar` for `google_calendar`, is dropped. It then adds the
 connector's configured description as a one-line purpose, unless that too only
 respells the id and title. Titles and purposes normalize whitespace; titles cap
-at 48 UTF-8 bytes and purposes at 60. A connector whose guide is required
+at 48 UTF-8 bytes and purposes at 60, clipping on a whole token; text with no token
+that fits is omitted. A connector whose guide is required
 carries a `*`, and one legend follows when an entry shown has the mark. Optional
 guides are not named here; search and describe name them. For example:
 `Connectors: crm* (Customer CRM; Current accounts and contracts), tickets. *Read connecta.skill("connector:<id>") before its first call.`
