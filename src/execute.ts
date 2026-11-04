@@ -53,6 +53,8 @@ import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js
 import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { readResource } from "./resource-read.js";
+import { failureRecord, logFailure } from "./operator-record.js";
+import { HeldResults, sealHeldResults } from "./result-seal.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import { normalizeTimeoutMs } from "./timeout.js";
@@ -566,6 +568,8 @@ interface SandboxLimits {
   dispatchController?: AbortController | undefined;
   /** Set when a program read a result field off an unawaited host call. */
   unawaited?: { read: boolean } | undefined;
+  /** The run's retained results, which it seals when it ends. */
+  heldResults?: HeldResults | undefined;
 }
 
 /** Numeric accounting only; no addresses, arguments, or results. */
@@ -726,6 +730,7 @@ function sandboxProvider(
               { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
               limits.followUpRoutes,
+              limits.heldResults,
             ]);
           const envelope =
             resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
@@ -1010,6 +1015,7 @@ function sandboxProvider(
   const meta = createMetaTools(registry, baseUrl, {
     readOnly: limits.readOnly,
     requestScope,
+    heldResults: limits.heldResults,
     onResultRead: (dependencies) => limits.resultDependencies?.push(...dependencies),
   });
   const catalogDependency = (connector: string, tool?: string) => {
@@ -1290,7 +1296,8 @@ function sandboxProvider(
         return [
           name,
           (...args: unknown[]) => {
-            if (budgetFailure) return stopped;
+            // Once sealing begins the run's secret set is final, so nothing new may start.
+            if (budgetFailure || limits.heldResults?.accepts() === false) return stopped;
             // Uncounted: one per run; any further call through the bridge ends the run.
             if (budget === "once") {
               if (++notices > 1)
@@ -1347,7 +1354,7 @@ function sandboxProvider(
                     limits.readProgram ? READ_PROGRAM_SOURCE : undefined,
                   )
                 : guarded;
-            const settled = runEdge(
+            const running = runEdge(
               operationEffect.pipe(
                 Effect.catch((error) => {
                   if (deadline && hostAccessSignal?.aborted)
@@ -1374,7 +1381,9 @@ function sandboxProvider(
                   return typedFailure(error);
                 }),
               ),
-            ).then(
+            );
+            limits.heldResults?.track(running);
+            const settled = running.then(
               (value) => {
                 if (counted) hostCalls.succeeded++;
                 return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
@@ -1620,10 +1629,12 @@ export function createExecuteTool(
     hostCalls: HostCalls,
     programWrites: ProgramWrites,
     unawaited: { read: boolean },
+    retention: { note?: string },
     ceiling: ResponseCeiling,
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
+      const heldResults = new HeldResults(sentSecrets, requestOwner(requestScope).credentialReads);
       const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
       const emitted = new EmitCollector(
         resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
@@ -1706,6 +1717,7 @@ export function createExecuteTool(
                 resultDependencies,
                 dispatchController,
                 unawaited,
+                heldResults,
               },
               requestScope,
             ),
@@ -1787,6 +1799,7 @@ export function createExecuteTool(
             maxResultChars - emitted.textChars,
             programWrites.hasSucceeded,
             maxResultChars,
+            heldResults,
             ceiling.answerBy,
             config.followUpRoutes,
           ]),
@@ -1799,7 +1812,20 @@ export function createExecuteTool(
           budgetFailure ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit)) : Effect.succeed(exit),
         ),
       );
-      return Effect.flatMap(exited, (exit) => {
+      // Every way a run answers can carry a result id, so every one of them seals, by the
+      // time the response must be on its way. A sealing cut short leaves entries unreadable.
+      const sealRun = Effect.suspend(() =>
+        sealHeldResults(heldResults, registry.resultsStorage(), ceiling.answerBy, callerSignal),
+      ).pipe(
+        Effect.tap(({ refused, refusedWrite }) =>
+          Effect.sync(() => {
+            if (refused === 0) return;
+            retention.note = refusedWrite ? RESULTS_REFUSED_WRITE_NOTE : RESULTS_REFUSED_NOTE;
+            logFailure(logger, "result paging unavailable", failureRecord({}));
+          }),
+        ),
+      );
+      const answered = Effect.flatMap(exited, (exit) => {
         // A synchronous fire-and-forget burst can also settle its executor in
         // this turn. The host's terminal refusal always wins over that value.
         if (budgetFailure instanceof HostCallBudgetExceeded) {
@@ -1830,6 +1856,7 @@ export function createExecuteTool(
           ),
         );
       });
+      return Effect.tap(answered, () => sealRun);
     });
 
   return authMethod(
@@ -1842,6 +1869,7 @@ export function createExecuteTool(
         const hostCalls: HostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
         const programWrites = new ProgramWrites();
         const unawaited = { read: false };
+        const retention: { note?: string } = {};
         const ceiling = responseCeiling(config.requestStartedAt ?? Date.now(), watchdog.ms);
         const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
@@ -1863,6 +1891,7 @@ export function createExecuteTool(
             hostCalls,
             programWrites,
             unawaited,
+            retention,
             ceiling,
           );
         });
@@ -1882,7 +1911,12 @@ export function createExecuteTool(
               // Calls abandoned by the guest are failed when the run cancels them.
               // Connecta attaches its own integers after the envelope check.
               const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
-              const note = finishedRunNote(result, hostCalls.attempted, programWrites.sent, unawaited.read);
+              const note = [
+                finishedRunNote(result, hostCalls.attempted, programWrites.sent, unawaited.read),
+                retention.note,
+              ]
+                .filter(Boolean)
+                .join(" ");
               result.structuredContent = {
                 ...result.structuredContent,
                 ...(note ? { note } : {}),
@@ -1901,6 +1935,9 @@ export function createExecuteTool(
   );
 }
 
+const RESULTS_REFUSED_NOTE =
+  "A result this run retained was not kept for later runs, so paging its id from a new program may fail. Rerun the read for a fresh result.";
+const RESULTS_REFUSED_WRITE_NOTE = `${RESULTS_REFUSED_NOTE} A write's output among them may not be retrievable: that write already ran, so do not repeat it.`;
 const UNAWAITED_HINT = "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.";
 const SENT_NOTE =
   "Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.";

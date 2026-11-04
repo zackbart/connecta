@@ -638,6 +638,7 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 | `catalog_lookup_failed`      | the connector's catalog could not be loaded                                                                                                                                                           | per cause     |
 | `result_processing_failed`   | the result could not be prepared                                                                                                                                                                      | per message   |
 | `result_too_large`           | a discovery response exceeded its byte bound                                                                                                                                                          | false         |
+| `result_not_retained`        | paging a result its run did not publish (`R4a`): rerun a read, never repeat a write                                                                                                                   | false         |
 | `budget_exceeded`            | the run exhausted a host-call, write, or emitted-output budget                                                                                                                                        | false         |
 | `write_outcome_unknown`      | a program write was sent and no answer proves whether it applied; `unknownWrites` says how each failed, and none is sent again (`W9`)                                                                 | false         |
 | `executor_failed`            | the executor returned a malformed result or failed outside the guest program                                                                                                                          | false         |
@@ -803,6 +804,47 @@ grants, pool membership, and endpoint OR connector `readOnly`. Reading a stash i
 its dependencies forward to any new return stash. The page cap is the smallest
 of the deployment cap and contributing connectors' effective `maxResultBytes`.
 Read-only endpoints cannot page write results. A UUID is a handle, never a grant.
+
+**R4a.** A run's retained results are unreadable from other requests by default.
+One becomes readable only after its bytes pass the run's final secret set, including
+any credential or private argument registered after they were stored. This covers
+every result the run stashes: oversized `connecta.call` reads and writes, those
+transferred without showing a handle, and an oversized return. An id the program
+places in its return value, its error or a later call's arguments is covered alike.
+Executors do not take part, so QuickJS, Worker and custom executors behave the same.
+
+Each entry's first chunk, which a reader needs, stays in memory until the run ends,
+and paging inside the run reads it from there. Every way a run answers then seals.
+Sealing starts no further host calls, then waits for the run's host calls and the
+request's credential reads to finish, so its secret set is final. Only then does it
+write first chunks. An entry the set has not grown past is written with no other
+storage work. After growth, its stored bytes are read back and checked, in stored
+form and structurally, so JSON-escaped, URL-encoded and base64 forms and a form split
+across text blocks are found. An entry with no match is written unchanged. An entry
+whose JSON was serialized from a typed array, `Buffer`, `DataView` or `ArrayBuffer`,
+including one a `toJSON` holds or returns, is not read back and stays unreadable
+after growth, since those bytes are checked only while still binary. Stored bytes are
+never rewritten, so
+`totalBytes` and any offset issued during the run stay valid in later runs.
+
+An entry that was not written stays unreadable: it matched the final set, a read-back
+or write failed, or work was still pending at the response's answer-by time, which
+is `execute.watchdogMs` plus a margin of at most 2 seconds. None of these publishes
+anything first and withdraws it later. The run's response carries a `note` that
+paging such an id may fail and to rerun the read, and with a write's output among
+them, not to repeat that write. Paging it from a later request fails with
+`result_not_retained`, `retryable: false`: a read's message says to rerun, and a
+write's says its output is not retrievable and not to repeat it. That answer comes
+from a marker holding the entry's binding and no bytes. If storing the marker fails,
+the id answers `not_found`. Cancellation starts no marker or cleanup; storage expiry
+reclaims the chunks. A write's output is always retrievable inside the run that wrote
+it, so a program that needs it can read it before it ends.
+
+A direct `call_tool`, `call_destructive_tool` or native tool's stash has no later
+call in its request to wait for, so its bytes pass that request's set when stored,
+and no seal applies. A direct call in a different request shares no secret set
+with it: a credential first used there never checks an earlier direct entry, just
+as it never checks that earlier call's inline output.
 
 If paging is unavailable because the stash is full, storage fails, or text
 cannot round-trip as UTF-8, the successful return keeps the existing bounded
@@ -1167,6 +1209,7 @@ caps and aggregate capacity charges on memory, SQLite and D1. Capacity exhaustio
 or a storage failure returns a successful notice without a `resultId`. A failed
 automatic reconstruction retains the handle. Neither result path reissues the
 call or changes a completed write into a failed or unknown write. Guest returns use the same store when they exceed the presentation cap (`R2`–`R4`).
+Pages from a later run see these results only after the run publishes them (`R4a`).
 
 Over-bound arguments and other unpaged bridge results still fail catchably with
 executor-owned text. An over-bound result names the called address; an argument

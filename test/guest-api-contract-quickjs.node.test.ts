@@ -34,6 +34,10 @@ import {
   checkLargeProgramRead,
   checkLargeProgramWrite,
   checkProgramPagingFailure,
+  checkRetainedResultsPassFinalSet,
+  checkRetainedResultsSameRunAndCost,
+  checkRetainedResultsUnreadableWhileSealing,
+  retainedSealingCases,
   checkProgramResultBom,
   checkProgramResultSurrogates,
   checkProgramReturnFallback,
@@ -114,6 +118,18 @@ describe("guest API contract (QuickJS executor)", () => {
   it("INV-7 INV-9: paging failures preserve completed write accounting and never replay the write", async () => {
     await checkProgramPagingFailure(executor);
   });
+  it("INV-5: a retained result is readable from later runs only if it passes its run's final secret set", async () => {
+    await checkRetainedResultsPassFinalSet(executor);
+  }, 60_000);
+  it("INV-5: same-run paging keeps working and a run pays no extra storage to seal", async () => {
+    await checkRetainedResultsSameRunAndCost(executor);
+  }, 60_000);
+  for (const [title, check] of Object.entries(retainedSealingCases)) {
+    it(`INV-5 INV-7: ${title}`, () => check(executor), 60_000);
+  }
+  it("INV-5: at every step of sealing another request reads only what sealing published", async () => {
+    await checkRetainedResultsUnreadableWhileSealing(executor);
+  }, 60_000);
   it("[L4, W9] cancels an exempt write queued at exhaustion", async () => {
     await checkQueuedWriteAtExhaustion(executor);
   });
