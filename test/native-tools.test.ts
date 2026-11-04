@@ -467,10 +467,14 @@ describe("native tool surface", () => {
       try {
         const token = await issueAgentToken(storage, "assistant");
         const listed = await rpc(app, token, "native", "tools/list", {});
-        const native = listed.result.tools.find((tool: { name: string }) => tool.name === "crm__set_status");
+        const native = listed.result.tools.find((tool: { name: string }) => tool.name === "crm__WRITE__set_status");
         expect(native.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
-        await callAndMaybeReplay(app, token, "native", "crm__set_status", { id: "A-1" });
+        await callAndMaybeReplay(app, token, "native", "crm__WRITE__set_status", { id: "A-1" });
         expect(physical).toEqual([{ id: "A-1" }]);
+        // The read name the override used to serve is refused unsent, however often a host resends it.
+        const stale = await rpc(app, token, "native", "tools/call", { name: "crm__set_status", arguments: {} }, false);
+        expect(envelope(stale.result).error).toMatchObject({ code: "destructive_tool_requires_approval" });
+        expect(physical).toHaveLength(1);
 
         // call_tool is annotated read-only, so the host may replay it; both attempts are refused unsent.
         const refused = await callAndMaybeReplay(app, token, "meta", "call_tool", {
