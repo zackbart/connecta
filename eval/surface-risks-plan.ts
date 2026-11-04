@@ -2,9 +2,16 @@
  * The surface-risk experiments, fixed before any score was seen. Change only by
  * adding a new plan with its reason; never reselect tasks from results.
  *
- * Budget: 190 planned paid trials, plus up to 10 reruns of trials made invalid
- * by load or host errors. `E5` and the prompt-allow batch use one repeat, not
- * two, because two repeats everywhere would exceed the 200-trial budget.
+ * Budget: 197 paid trials of the 200 allowed, leaving 3 for invalid trials. `E5`
+ * and the prompt-allow batch use one repeat, not two, because two repeats
+ * everywhere would exceed the budget.
+ *
+ * One revision, made while read-arm scores were partial. 14 trials ran with
+ * read-arm text that told agents "Everything else: execute_code" and sent paging
+ * to the wrong route; they are retained as a separate diagnostic and excluded.
+ * To pay for rerunning them, E3 drops `para-tell-room`, whose queries already
+ * rank first on both arms in eval/search-rank.ts, and the pinned arm uses one
+ * repeat because it exists to size tokens. No other task or arm changed.
  */
 export interface SurfaceBatch {
   id: string;
@@ -25,7 +32,7 @@ export const MAX_PAID_TRIALS = 200;
 const E1_TASKS = ["p5-known-read-routing", "p5-revenuecat-text", "p5-result-paging", "cross-connector-join"] as const;
 const E1_ARMS = ["six", "five", "native", "read-six", "read-five"] as const;
 /** Everyday wording; the hints in eval/fakes/search-hints.ts never saw these prompts. */
-const E3_TASKS = ["para-green-build", "para-who-owes", "para-mark-done", "para-tell-room"] as const;
+const E3_TASKS = ["para-green-build", "para-who-owes", "para-mark-done"] as const;
 const E4_TASKS = ["p5-known-read-routing", "p5-revenuecat-text", "cross-connector-join"] as const;
 const E5_TASKS = ["p5-revenuecat-text", "cross-connector-join"] as const;
 
@@ -70,7 +77,7 @@ export const SURFACE_BATCHES: SurfaceBatch[] = [
     surface,
     catalogTools: 500,
     tasks: E4_TASKS,
-    repeats: 2,
+    repeats: surface === "pinned" ? 1 : 2,
     noToolSearch: true,
   })),
   ...(["claude", "codex"] as const).flatMap((runner) =>
@@ -92,6 +99,9 @@ export function batchTrials(batch: SurfaceBatch): number {
   return batch.tasks.length * batch.repeats;
 }
 
+/** Trials spent on the retired read-arm text; they count against the budget. */
+export const RETIRED_TRIALS = 14;
+
 export function plannedTrials(): number {
-  return SURFACE_BATCHES.reduce((sum, batch) => sum + batchTrials(batch), 0);
+  return SURFACE_BATCHES.reduce((sum, batch) => sum + batchTrials(batch), RETIRED_TRIALS);
 }

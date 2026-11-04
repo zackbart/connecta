@@ -51,6 +51,12 @@ async function readRouteControls(surface: "read-six" | "read-five") {
       surface,
     );
     const readTool = tools.find((tool) => tool.name === READ_TOOL)!;
+    assert.doesNotMatch(
+      readTool.description ?? "",
+      /Everything else: execute_code/,
+      "the read route keeps reads on it",
+    );
+    assert.match(session.instructions ?? "", /execute_read_code programs need no write approval/);
     assert.equal(readTool.readOnly, true, "the read route is annotated read-only");
     assert.equal(tools.find((tool) => tool.name === "execute_code")!.readOnly, false, "execute_code stays a write");
     if (surface === "read-five") assert.ok(!tools.some((tool) => tool.name === "search_tools"));
@@ -95,6 +101,7 @@ async function readRouteControls(surface: "read-six" | "read-five") {
     };
     const id = notice.resultId ?? notice.nextAction?.arguments?.id;
     assert.ok(id, log.text.slice(0, 300));
+    assert.doesNotMatch(log.text, /"tool":"execute_code"/, "a truncated read pages on the read route");
     const page = await session.call(READ_TOOL, {
       code: `async () => { const page = await connecta.result(${JSON.stringify(id)}, { offset: 0, maxBytes: 200 }); return { bytes: page.text?.length ?? 0 }; }`,
     });

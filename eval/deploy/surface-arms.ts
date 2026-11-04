@@ -42,27 +42,25 @@ export function armPools<T extends Record<string, unknown>>(pools: Record<string
 export const READ_ROUTE_REFUSAL =
   "This read route refuses every write before dispatch. Nothing was sent. To write, use call_destructive_tool or execute_code, which ask the host for approval.";
 
-const READ_INSTRUCTIONS: [from: string, to: string][] = [
-  ["read-only work starts with execute_code", `read-only work starts with ${READ_TOOL}`],
-  [
-    "On a writable endpoint, programs and call_destructive_tool may write.",
-    `${READ_TOOL} programs run without write approval and refuse every write before dispatch, and their search omits write tools. execute_code programs and call_destructive_tool may write and need approval; use execute_code only for a program that must write or to discover a write tool.`,
-  ],
-];
-
-const READ_FIVE_INSTRUCTIONS: [from: string, to: string][] = READ_INSTRUCTIONS.map(([from, to]) => [
-  from,
-  to.replace(
-    "use execute_code only for a program that must write or to discover a write tool",
-    "use execute_code only for a program that must write or to discover a write tool's address and schema",
-  ),
-]);
+const READ_APPROVAL_TEXT =
+  "This endpoint permits writes through call_destructive_tool and execute_code, subject to connector restrictions; the host owns approval.";
 
 function rewriteInstructions(text: string, surface: Surface): string {
-  let next = text;
-  for (const [from, to] of surface === "read-five" ? READ_FIVE_INSTRUCTIONS : READ_INSTRUCTIONS)
-    next = next.replace(from, to);
-  return next;
+  const discovery =
+    surface === "read-six"
+      ? "To find a write tool's address and schema, use search_tools."
+      : "To find a write tool's address and schema, use connecta.search inside execute_code.";
+  return text
+    .replace("read-only work starts with execute_code", `read-only work starts with ${READ_TOOL}`)
+    .replace(
+      READ_APPROVAL_TEXT,
+      `${READ_TOOL} programs need no write approval: they refuse every write before dispatch, and their search omits write tools. Use execute_code only for a program that must write, and call_destructive_tool for one known write; the host asks for approval on both. ${discovery}`,
+    );
+}
+
+/** The read route's replies must send follow-up work back to the read route. */
+function rewriteReadReply(text: string): string {
+  return rewriteRefusal(text.replaceAll("execute_code", READ_TOOL));
 }
 
 /** A read-only refusal on the writable deployment must not claim the endpoint has no write route. */
@@ -257,7 +255,7 @@ function withSibling(connecta: Connecta, surface: Surface): Connecta {
         const text = await response.text();
         const headers = new Headers(response.headers);
         headers.delete("content-length");
-        return new Response(rewriteRefusal(text), { status: response.status, headers });
+        return new Response(rewriteReadReply(text), { status: response.status, headers });
       }
       if (body.method === "tools/call" && !read && String(body.params?.name ?? "").includes("__")) {
         return connecta.fetch(forward(request, sibling(path), body), env, ctx);
@@ -289,12 +287,18 @@ function withSibling(connecta: Connecta, surface: Surface): Connecta {
           tools.push({
             ...program,
             name: READ_TOOL,
-            description: `Read-only programs: every write is refused before dispatch, and search omits write tools. ${program.description ?? ""}`,
+            description: String(program.description ?? "").replace(
+              /One known read: call_tool\. Everything else: execute_code\. Read-only endpoint: search and describe omit write tools, and every write call is refused\./,
+              `One known read: call_tool. Every other read: ${READ_TOOL}, for discovery, joins, reduction and paging. Every write is refused before dispatch and search omits write tools. One known write: call_destructive_tool. A program that must write: execute_code.`,
+            ),
             annotations: { ...program.annotations, readOnlyHint: true, destructiveHint: false },
           });
           for (const tool of tools) {
             if (tool.name === "execute_code")
-              tool.description = `Programs that may write; the host asks for approval. Read-only programs belong in ${READ_TOOL}. ${tool.description ?? ""}`;
+              tool.description = String(tool.description ?? "").replace(
+                "Everything else: execute_code.",
+                `Every other read: ${READ_TOOL}. Only a program that must write: execute_code.`,
+              );
             if (tool.name === "call_tool")
               tool.description = String(tool.description ?? "").replace(
                 "Other read work: execute_code",
