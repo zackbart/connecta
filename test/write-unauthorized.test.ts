@@ -212,6 +212,12 @@ const declared = (matches: Exclude<Evidence, undefined>["matches"]): Evidence =>
   matches,
 });
 
+/** An unknown write's auth handoff: the link goes on, then reconcile, never a retry. */
+const UNKNOWN_WRITE_LINK = {
+  url: expect.any(String),
+  purpose: expect.stringContaining("re-read the write's target"),
+};
+
 describe("a write answered 401", () => {
   it("INV-9: keeps its auth code and outcome-aware handoff, with an unknown outcome and no retry or wait", async () => {
     const { connector, sent } = tickets({ "/tickets": 401 });
@@ -222,7 +228,7 @@ describe("a write answered 401", () => {
       writeOutcome: "unknown",
       reconciliationRequired: true,
       recovery: "operator_config",
-      nextAction: { tool: "authorize_connector", arguments: { connector: "tickets" } },
+      nextAction: UNKNOWN_WRITE_LINK,
       message: `Tickets rejected the configured token. ${SENTENCE}`,
     });
     expect(error).not.toHaveProperty("retryAfterMs");
@@ -288,7 +294,7 @@ describe("a write answered 401", () => {
       retryable: false,
       writeOutcome: "unknown",
       reconciliationRequired: true,
-      nextAction: { tool: "authorize_connector" },
+      nextAction: UNKNOWN_WRITE_LINK,
     });
     expect(error.instructions).toContain(RECONCILE);
     expect(sent).toEqual(["POST /tickets", "POST /follow-ups"]);
@@ -424,7 +430,7 @@ describe("a write answered 401 is decided before every other exception", () => {
       retryable: false,
       writeOutcome: "unknown",
       reconciliationRequired: true,
-      nextAction: { tool: "authorize_connector", arguments: { connector: "giving" } },
+      nextAction: UNKNOWN_WRITE_LINK,
       // On the kit the 401 is mapped by Tithe.ly's status table even past the ceiling (B.3), so its words stay.
       message:
         "Tithe.ly returned HTTP 401. Tithe.ly rejected the key pair. It may be revoked, mistyped, or issued for the " +
@@ -461,7 +467,7 @@ describe("a write answered 401 is decided before every other exception", () => {
       retryable: false,
       writeOutcome: "unknown",
       reconciliationRequired: true,
-      nextAction: { tool: "authorize_connector", arguments: { connector: "tickets" } },
+      nextAction: UNKNOWN_WRITE_LINK,
       message: `Tickets rejected the configured token. ${SENTENCE}`,
     });
     expect(error).not.toHaveProperty("retryAfterMs");
@@ -480,7 +486,7 @@ describe("a write answered 401 is decided before every other exception", () => {
         code: "auth_required",
         retryable: false,
         writeOutcome: "unknown",
-        nextAction: { tool: "authorize_connector" },
+        nextAction: UNKNOWN_WRITE_LINK,
         message: `Tickets rejected the configured token. ${SENTENCE}`,
       });
       expect(error).not.toHaveProperty("retryAfterMs");
@@ -503,7 +509,7 @@ describe("a write answered 401 is decided before every other exception", () => {
       code: "auth_required",
       retryable: false,
       writeOutcome: "unknown",
-      nextAction: { tool: "authorize_connector" },
+      nextAction: UNKNOWN_WRITE_LINK,
       message: `Tickets answered this write with HTTP 401. ${SENTENCE}`,
     });
     expect(error).not.toHaveProperty("retryAfterMs");
@@ -517,7 +523,7 @@ describe("a write answered 401 is decided before every other exception", () => {
       code: "auth_required",
       retryable: false,
       writeOutcome: "unknown",
-      nextAction: { tool: "authorize_connector" },
+      nextAction: UNKNOWN_WRITE_LINK,
       message: `Tickets rejected the configured token. ${SENTENCE}`,
     });
     expect(error).not.toHaveProperty("retryAfterMs");
@@ -591,7 +597,10 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
         retryable: false,
         writeOutcome: "unknown",
         reconciliationRequired: true,
-        nextAction: { tool: "authorize_connector", arguments: { connector: "outer" } },
+        nextAction: {
+          action: "contact_operator",
+          purpose: expect.stringContaining("re-read the write's target"),
+        },
         message: `Tickets rejected the configured token. ${SENTENCE}`,
       });
       expect(error).not.toHaveProperty("retryAfterMs");
@@ -699,7 +708,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
       retryable: false,
       writeOutcome: "unknown",
       reconciliationRequired: true,
-      nextAction: { tool: "authorize_connector", arguments: { connector: "billing" } },
+      nextAction: UNKNOWN_WRITE_LINK,
       message: `Stripe answered this write with HTTP 401. ${STRIPE_SENTENCE}`,
     });
     expect(error).not.toHaveProperty("retryAfterMs");
@@ -744,7 +753,7 @@ describe("Q8 across nested boundaries, the invocation's deadline and repeated re
       code: "auth_required",
       retryable: false,
       writeOutcome: "unknown",
-      nextAction: { tool: "authorize_connector" },
+      nextAction: UNKNOWN_WRITE_LINK,
       message: `Stripe answered this write with HTTP 401. ${STRIPE_SENTENCE}`,
     });
     expect(error.retry).not.toContain("idempotencyKey");

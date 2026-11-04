@@ -112,7 +112,7 @@ export async function checkAuthHandoffProgram(executor: Executor): Promise<void>
   try {
     const result = (await flow.rpc("execute_code", { code: AUTH_PROGRAM })).structuredContent.result;
     const error = result.calls[0].data;
-    expect(error).toMatchObject({ code: "downstream_oauth_required", recovery: "oauth", nextAction: { tool: "authorize_connector", arguments: { connector: "service" } }, authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v3.`), instructions: expect.any(String) });
+    expect(error).toMatchObject({ code: "downstream_oauth_required", recovery: "oauth", nextAction: { url: error.authorizationUrl, purpose: expect.stringContaining("Give this link to the user") }, authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v3.`), instructions: expect.any(String) });
     for (const call of result.calls) {
       expect(call.data).toEqual(call.details);
       expect(call.data.authorizationUrl).toBe(error.authorizationUrl);

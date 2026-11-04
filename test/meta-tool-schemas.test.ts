@@ -392,6 +392,29 @@ describe("always-loaded agent surface budgets", () => {
   });
 });
 
+it("names the right call shape when a direct call uses MCP's own argument names, accepting nothing new", async () => {
+  const app = makeDeployment({ executor: stubExecutor, readOnly: false, connectors: [calcApi()] });
+  try {
+    for (const name of ["call_tool", "call_destructive_tool"]) {
+      const call = async (args: Record<string, unknown>) =>
+        (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: TOKEN }))).result;
+      const wrongKey = await call({ address: "calc.add", arguments: { a: 1, b: 2 } });
+      expect(wrongKey.isError, name).toBe(true);
+      expect(wrongKey.content[0].text, name).toContain(
+        'Unrecognized key: "arguments". Send { address, args }, with the tool\'s arguments in args.',
+      );
+      const mcpShape = await call({ name: "calc.add", arguments: { a: 1, b: 2 } });
+      expect(mcpShape.isError, name).toBe(true);
+      expect(mcpShape.content[0].text, name).toContain(
+        'address: expected a string such as "connector.tool". Send { address, args }.',
+      );
+      expect(mcpShape.content[0].text, name).toContain('Unrecognized keys: "name", "arguments".');
+    }
+  } finally {
+    await app.close();
+  }
+});
+
 it("front-loads configured scope and guidance within the instructions budget", async () => {
   const { endpointInstructions, CONNECTA_INSTRUCTIONS } = await import("../src/skills.js");
   expect(endpointInstructions()).toBe(CONNECTA_INSTRUCTIONS);
