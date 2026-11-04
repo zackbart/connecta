@@ -18,7 +18,7 @@ import { gradeTask, classifyChecks, passes, type Grading } from "../tasks/gradin
 import { taskForSurface } from "../tasks/surface.js";
 import { assertSurface, type Surface } from "./surface.js";
 import { startAuthHost } from "./auth-host.js";
-import { infraError, stopsBatch } from "./infra.js";
+import { infraError, stopsBatch, WORKER_RELOADED } from "./infra.js";
 import { saveGradeInputs, type SavedGradeInputs } from "./saved.js";
 import { runProtocol } from "../support/meta.js";
 import { conversationCompletion } from "./completion.js";
@@ -256,6 +256,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
         return followUp.prompt;
       },
     });
+    const reloaded = await deployment.reloaded?.();
     world.programs = await observedPrograms(deployment);
     const trace = parseTrace(run.events, run.turnStarts, prompts);
     trace.urlElicitations = parseTrace(hostEvents, [], []).urlElicitations ?? [];
@@ -308,7 +309,9 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       ? "interrupted by operator"
       : run.timedOut
         ? `${options.runner ?? "codex"} trial timed out`
-        : infraError(run.events, run.exitCode, trace.loadedTools);
+        : reloaded
+          ? WORKER_RELOADED
+          : infraError(run.events, run.exitCode, trace.loadedTools);
     const completed = conversationCompletion(trace, run.turnStarts.length, run.timedOut, run.aborted).check;
     const unprompted: Check = {
       id: "no-confirmation-needed",

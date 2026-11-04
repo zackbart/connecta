@@ -37,6 +37,10 @@ export function infraError(events: StreamEvent[], exitCode: number | null, loade
   return undefined;
 }
 
+/** Not a result: the reload revoked the host's token and dropped observed programs. */
+export const WORKER_RELOADED =
+  "Worker reloaded during the trial: a file in its wrangler bundle (eval/deploy or src) changed in this checkout";
+
 export function stopsBatch(error: string | undefined): boolean {
   return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified/i.test(
     error ?? "",

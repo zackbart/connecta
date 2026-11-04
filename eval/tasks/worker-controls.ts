@@ -21,7 +21,8 @@ import { join, sep } from "node:path";
 import { playReference } from "../agent/reference.js";
 import { gradeTask } from "./grading.js";
 import { crossTarget, compare } from "../compare.js";
-import { startVendorGateway } from "../deploy/worker.js";
+import { stopsBatch, WORKER_RELOADED } from "../agent/infra.js";
+import { startVendorGateway, startWorkerDeployment } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
 import { fakeTransportState, routeFakeVendor } from "../fakes/transport.js";
 import type { AgentResultFile } from "../report/summary.js";
@@ -797,6 +798,70 @@ export async function injectionControls() {
 }
 
 /** Force a candidate to be occupied by another listener, then recover before serving. */
+/**
+ * Build hooks must not reload a live Worker, and a reload that does happen must
+ * be reported. The entry file is this control's own, so it never edits shared
+ * sources under a concurrent eval.
+ */
+export async function workerReloadControls() {
+  if (stopsBatch(WORKER_RELOADED) || /authentication/i.test(WORKER_RELOADED))
+    throw new Error("A Worker reload must read as its own infrastructure error");
+  const hooks = () => {
+    for (const script of ["generate-version", "build-operator-ui"]) {
+      const { status } = spawnSync(process.execPath, [join(ROOT, "scripts", `${script}.mjs`)], { stdio: "inherit" });
+      if (status !== 0) throw new Error(`${script} failed`);
+    }
+  };
+  hooks();
+  const dir = await mkdtemp(join(tmpdir(), "connecta-worker-reload-"));
+  const main = join(dir, "worker.ts");
+  const entry = `export { default } from ${JSON.stringify(join(ROOT, "eval", "deploy", "worker-agent.ts"))};\n`;
+  await writeFile(main, entry);
+  const world = new World();
+  let deployment: Awaited<ReturnType<typeof startWorkerDeployment>> | undefined;
+  try {
+    await world.start();
+    deployment = await startWorkerDeployment(world.connectorSpecs(), {}, [], 0, main);
+    const initialize = () =>
+      fetch(deployment!.mcpUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${deployment!.token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "reload-control", version: "1" },
+          },
+        }),
+      });
+    hooks();
+    // A write reached wrangler's watcher within about a second when this regressed.
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+    if (await deployment.reloaded!()) throw new Error("Rerunning build hooks reloaded a live Worker");
+    if ((await initialize()).status !== 200) throw new Error("The issued token stopped working without a reload");
+    console.log("ok   rerunning the build hooks leaves a live Worker and its token alone");
+    await writeFile(main, `${entry}// changed\n`);
+    const deadline = Date.now() + 30_000;
+    while (!(await deployment.reloaded!())) {
+      if (Date.now() > deadline) throw new Error("A changed bundle input was not reported as a reload");
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if ((await initialize()).status !== 401) throw new Error("A reloaded Worker should refuse the earlier token");
+    console.log("ok   a Worker reload is reported instead of surfacing as a host authorization failure");
+  } finally {
+    await deployment?.close();
+    await world.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 export async function portCollisionControls() {
   const competitor = await serveFetch(async () => new Response("competitor"));
   const port = competitor.port;

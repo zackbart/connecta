@@ -174,5 +174,6 @@ for (const [path, contents] of [
       console.error(`${relative(root, path)} is stale; run pnpm run build:operator-ui`);
       process.exitCode = 1;
     }
-  } else await writeFile(path, contents);
+    // Worker evals bundle src/ under wrangler's watcher, which reloads on any write.
+  } else if (current !== contents) await writeFile(path, contents);
 }

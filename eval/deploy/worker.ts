@@ -146,6 +146,7 @@ export async function startWorkerDeployment(
   extra: Record<string, unknown> = {},
   everyPool: string[] = [],
   d1LatencyMs = 0,
+  main = join(ROOT, "eval", "deploy", "worker-agent.ts"),
 ): Promise<Deployment> {
   const gateway = await startVendorGateway();
   const since = Date.now();
@@ -174,7 +175,7 @@ export async function startWorkerDeployment(
     };
     dev = await wranglerDev({
       name: "connecta-eval-agent",
-      main: join(ROOT, "eval", "deploy", "worker-agent.ts"),
+      main,
       vars: {
         EVAL_COMPOSITION: JSON.stringify(composition),
         EVAL_GATEWAY: gateway.url,
@@ -204,6 +205,8 @@ export async function startWorkerDeployment(
         return programs;
       },
       observe: async () => (programs = (await (await control("programs")).json()) as ProgramObservation[]),
+      // Each module instance rotates the token, so a different one means wrangler reloaded.
+      reloaded: async () => ((await (await control("token")).json()) as { token: string }).token !== token,
       openConnect: async () => {
         throw new Error("The worker target has no fake OAuth connection page.");
       },

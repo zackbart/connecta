@@ -13,6 +13,8 @@ const source = `// Generated from package.json by scripts/generate-version.mjs.
 // Workers-safe: no runtime filesystem read or deployment override.
 export const CONNECTA_VERSION = ${JSON.stringify(version)};
 `;
+// Worker evals bundle src/ under wrangler's watcher, which reloads on any write.
 for (const path of ["src/version.ts", "bin/version.mjs"]) {
-  await writeFile(new URL(path, root), source);
+  const target = new URL(path, root);
+  if ((await readFile(target, "utf8").catch(() => undefined)) !== source) await writeFile(target, source);
 }

@@ -345,6 +345,17 @@ because the Worker imports the package by name from `dist/`.
   - A trial stops its group when it ends. The first SIGINT/SIGTERM stops the
     batch in order; a second kills every group at once. Process exit also kills
     any group still tracked.
+- **Reloads.** `wrangler dev` has no flag to stop watching its bundle, whose
+  inputs are `eval/deploy/` and `src/` (tsconfig paths resolve the package name
+  to source, so the shared `dist/` lease does not cover them). Any write to an
+  input reloads the Worker, and each module instance rotates the agent token and
+  starts a new program log. The build hooks (`pretest`, `pretypecheck`,
+  `prebuild` and similar) therefore write only changed bytes, so `check` or
+  `test:browser` can run beside a batch. Editing an input during a batch still
+  reloads. `eval:agent` compares the token after each conversation and records
+  `Worker reloaded during the trial` as an infrastructure error, ungraded, rather
+  than the host's authorization failure that the revoked token would otherwise
+  produce. Do not edit `src/` or `eval/deploy/` in a checkout running a Worker batch.
 - **Network isolation, and its limits.** Isolation differs between wrangler's
   Node processes and the native workerd process.
   - **Wrangler's Node processes** run with `WRANGLER_SEND_METRICS=false` and

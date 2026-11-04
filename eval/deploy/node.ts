@@ -43,6 +43,8 @@ export interface Deployment {
   secretLeaks?(): Promise<{ findings: string[]; sources: string[] }>;
   /** Refresh `programs` from a deployment that observes them out of process. */
   observe?(): Promise<ProgramObservation[]>;
+  /** Whether an out-of-process deployment restarted since it issued `token`. */
+  reloaded?(): Promise<boolean>;
   /** The operator saving a credential in the connection page. */
   openConnect(url: string): Promise<void>;
   setCredential(connectorId: string, value: string): Promise<void>;
