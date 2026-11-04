@@ -104,7 +104,8 @@ const nativeDirect = {
   directOnly: "when calling this tool directly",
   forDirect: "when calling this tool directly",
   onlyDirectRead: "only when calling this tool directly",
-  writeNeedsApproval: "Invoke it through its own native tool so the MCP host can request approval.",
+  writeNeedsApproval:
+    "This name is bound to a read, so nothing was sent. Invoke it through its own write tool so the MCP host can request approval.",
 };
 
 const PHRASES: Readonly<Record<RouteSurface, RoutePhrases>> = {

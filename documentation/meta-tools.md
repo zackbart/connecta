@@ -1143,7 +1143,31 @@ behavior is unchanged.
 The host echoes `requestState` and its bare `inputResponses.connecta_auth`
 response on the original `tools/call`. Accept re-runs the original call; it
 does not prove browser consent completed. Decline or cancel ends without
-dispatch, with `auth_declined` or `auth_cancelled`. Three prompts are allowed
+dispatch or another prompt, with `auth_declined` or `auth_cancelled`. A client
+can answer without showing anything, so neither code means a person refused, and
+Connecta cannot tell the difference. When this caller may still connect, the
+refusal carries the handoff this connector would get on a host without URL
+support (`connector`, `recovery`, `authorizationUrl` or `operatorUrl`,
+`instructions`), plus `nextAction: { url, purpose }`:
+
+```json
+{
+  "code": "auth_declined",
+  "message": "The client declined the connection prompt, possibly automatically, so the user may not have seen it. Nothing was retried.",
+  "retryable": false,
+  "connector": "service",
+  "recovery": "oauth",
+  "authorizationUrl": "https://connecta.example/connect/service?h=...",
+  "nextAction": { "url": "https://connecta.example/connect/service?h=...", "purpose": "..." }
+}
+```
+
+Give that link to the user once, then stop. Do not prompt again, retry, or reach
+the service another way until they confirm. If they already refused this
+connection in the conversation, only mention that the link is available.
+A failed signing or storage step leaves the refusal without a link. Connecta
+keeps no record of which clients refuse, so each new prompt to such a client
+ends the same way. Three prompts are allowed
 within one ten-minute retry window, then `auth_round_limit` ends the flow.
 Each state can be consumed once; concurrent or repeated retries are refused
 before dispatch. A Continue link from a pending restart requires that restart
@@ -1711,13 +1735,13 @@ refuses it otherwise, and refuses any `surface` other than `"meta"` or
 `"native"`. Both pool endpoints, `/mcp/<pool>` and `/agent/<pool>`, serve the
 pool's surface.
 
-| A native pool lists          | Shape                                                                                                                                                             |
-| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Each visible downstream tool | Named `<connector>__<tool>`; object input constraints and local references preserved; no `outputSchema`; `_meta["dev.connecta/address"]` is its address           |
-| `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes           |
-| `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks |
-| `authorize_connector`        | Always; requests the existing typed authorization handoff for a granted connector                                                                                 |
-| `skills`                     | Always                                                                                                                                                            |
+| A native pool lists          | Shape                                                                                                                                                                                             |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Each visible downstream tool | A read is `<connector>__<tool>`, a write `<connector>__WRITE__<tool>`; object input constraints and local references preserved; no `outputSchema`; `_meta["dev.connecta/address"]` is its address |
+| `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes                                           |
+| `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks                                 |
+| `authorize_connector`        | Always; requests the existing typed authorization handoff for a granted connector                                                                                                                 |
+| `skills`                     | Always                                                                                                                                                                                            |
 
 `search_tools`, `call_tool`, and `call_destructive_tool` are not listed. Auth failures still carry their handoff in the error envelope.
 
@@ -1728,17 +1752,33 @@ name reserved for a built-in guide uses its canonical connector skill URI. This
 compact pointer repeats on each tool so host search results retain it; connectors
 without guides add nothing. It depends only on the admitted connector roster.
 
-**Names.** A name is a pure function of the connector id and downstream tool
-name, so it survives catalog refreshes. It is `<connector>__<tool>` when the
-tool name uses only `[A-Za-z0-9_-]`, contains no `__`, does not start with `_`,
-and the whole name fits 48 characters; otherwise it is that name's head plus
-`_` and the first six hex digits of the SHA-256 of `<connector>.<tool>`. A
-connector id that does not start with a letter is prefixed with `C`. 48
-characters leave room for a client's own prefix under common 64-character
-tool-name limits (Eve's `connecta__`, Claude Code's `mcp__connecta__`). Two
-tools that would share a name are both left out of the list, with an operator
-warning, and a call by that name is refused; both stay callable by address in
-`execute_code`.
+**Names.** A name is a pure function of the connector id, the downstream tool
+name and its served classification, so it survives catalog refreshes until the
+classification changes. A read is `<connector>__<tool>` and a write
+`<connector>__WRITE__<tool>` when the tool name uses only `[A-Za-z0-9_-]`,
+contains no `__`, does not start with `_`, and the whole name fits 48 characters.
+Otherwise a read is that name's head plus `_` and the first six hex digits of the
+SHA-256 of `<connector>.<tool>`, and a write is up to 24 characters of the
+connector, `__WRITE__`, the head of the tool name, `_w` and the same six hex
+digits. A write whose plain name would end in `_` and six lowercase hex digits,
+such as a tool named `get_373b87` or `facade`, also takes this hashed form. A
+connector id that does not start with a letter is prefixed with `C`. 48 characters
+leave room for a client's own prefix under common 64-character tool-name limits
+(Eve's `connecta__`, Claude Code's `mcp__connecta__`).
+
+A name a client holds for a read can never select a write. Every write's name
+contains `__WRITE__` and never ends in `_` and six lowercase hex digits. A read's
+name contains `__WRITE__` only when the tool's own name supplies it, and such a read
+is always hashed, so it ends that way and takes the read route. A tool's read name
+does not depend on its classification or on this rule, so names clients cached from
+earlier versions stay read names. Two tools that would share either name are both
+left out of the list, with an operator warning, and a call by either of their names
+is refused; both stay callable by address in `execute_code`.
+
+Read a tool's name from `tools/list` rather than building it. Host approval rules,
+allowlists, prompts and recipes that name a native write must use its `__WRITE__`
+name, and a tool that changes classification changes name. Programs keep using the
+address, which never changes.
 
 **Annotations** come from the served classification only: a read is
 `{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
@@ -1746,31 +1786,43 @@ write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
 whatever hints the downstream declared. A read-only endpoint or connector
 leaves write tools out of the list, by the same rule search and describe use.
 
-**Calls take the existing paths.** A call to a downstream tool is the
-`call_tool` call for its address when the tool is currently a read, and the
-`call_destructive_tool` call when it is a write, run by the same handler. So
-classification, `read_only_endpoint` refusal, argument validation and repair,
-admission, redaction, single-attempt writes, auth elicitation, downstream input,
-result caps, and activity use the same enforcement. Activity records source
-`native` with the canonical address and served classification. A name must
-exactly match the definition's native name before dispatch. Unknown or ambiguous
-names fail with `unknown_tool`; catalog failures retain their handoff. Success results are
+**Calls take the existing paths.** A name selects its route: a read's name is the
+`call_tool` call for its address, and a write's name is the
+`call_destructive_tool` call, run by the same handler. So classification,
+`read_only_endpoint` refusal, argument validation and repair, admission, redaction,
+single-attempt writes, auth elicitation, downstream input, result caps, and activity
+use the same enforcement. Activity records source `native` with the canonical
+address and served classification. Unknown or ambiguous names fail with
+`unknown_tool`; catalog failures retain their handoff. Success results are
 `call_tool`'s default mode: native `content`, never `structuredContent`, which
 is why no `outputSchema` is advertised. A truncated result's notice pages with
 `connecta.result` inside `execute_code`, or with `read_result` on a pool without
 `execute_code`.
 
 **Approval is the host's, enforcement is Connecta's.** The host approves from
-the annotations of the list it cached. If a tool changes from read to write
-between that list and a call (a downstream changes its hints, or the deployment
-changes its classification), the call runs under Connecta's current verdict:
-on the `call_destructive_tool` route, refused on a read-only endpoint, and never
-resent, although the host approved what it saw as a read. To narrow that
-window, a native `tools/list` carries a 300-second private cache hint, against
-an hour on meta endpoints. This hint does not guarantee that a host refreshes
-its cached annotations; the stale-approval race is accepted on writable pools.
-A listing that omits a connector or lists one stale carries 60 seconds instead,
-about when that connector is next asked.
+the annotations of the list it cached, and some hosts resend calls they believe
+are read-only when a connection fails. Those resends are new stateless requests:
+their JSON-RPC ids restart and they carry no session id, so Connecta cannot tell
+them from new calls. A name is therefore bound to its classification. If a tool
+changes from read to write between that list and a call (a downstream changes its
+hints, or the deployment changes its classification), the cached read name takes
+the `call_tool` route, which refuses before dispatch: `read_only_endpoint` on a
+read-only endpoint, otherwise `destructive_tool_requires_approval` with
+`nextAction.tool` set to the write's name. However often the host resends, nothing
+reaches the downstream. The write runs only by its own name, annotated destructive, after a refreshed
+list; Claude Code 2.1.318 and Codex 0.166.0 did not resend destructive calls when
+tested. In the other direction, a cached
+write name whose tool is now a read still runs, once, on the
+`call_destructive_tool` route. A native `tools/list` carries a 300-second private
+cache hint, against an hour on meta endpoints; hosts need not honor it. A listing
+that omits a connector or lists one stale carries 60 seconds instead, about when
+that connector is next asked.
+
+The verdict is Connecta's current catalog: a downstream change takes effect when
+Connecta's catalog next loads it. A tool whose source declares a write and whose
+deployment classification overrides it to read has a read's name and takes the
+`call_tool` route, and a host may resend it; do not override a write to read unless
+repeating it is harmless. This also applies to `call_tool` on the meta surface.
 
 **Listing.** `tools/list` is one page with no cursor (Eve's MCP client reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
@@ -1815,7 +1867,9 @@ beside `authorizationUrl` or `operatorUrl`; give it and the instructions to the 
 clients may resume native auth and downstream form/URL input with the same
 wire name, arguments and returned `requestState`. Changed names, targets or
 arguments, expired state and spent retry nonces are refused. Never resend a
-write to recover output.
+write to recover output. A refusal of a stale read name says nothing was sent:
+refresh the host's tool list and call the write's own name only if the write is
+still wanted.
 
 **Schemas.** Ordinary `type: "object"` schemas are byte-identical. Object
 constraints without a top-level type, composed object schemas and local
