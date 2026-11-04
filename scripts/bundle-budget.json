@@ -1,7 +1,8 @@
 {
   "notes": [
-    "2026-11-04: The response ceiling lives in the root: its clock, its queue refusal and the direct-call cap. Same-machine comparison against the read-deadline branch: root +338 B, examples/worker +463 B, ./worker +16 B, ./ui unchanged. Local gzip reads higher than CI, so these caps move by the deltas from CI's 422,733 B and 806,774 B plus the usual small headroom.",
+    "2026-11-04: Run-deadline read caps on top of the failure-recovery text, with their discovery cancellation. CI on 92d32845 measures the root at 424,205 B and examples/worker at 808,467 B. The caps move to 424,300 B and 808,550 B.",
     "2026-11-04: Run-deadline read caps need to live in the root: the deadline clock, the write gate and the discovery timeout. CI measures this PR at 422,733 B and 806,774 B, up 528 B and 788 B from origin/main against 325 B and 383 B of headroom. The caps move to 422,800 B and 806,850 B, leaving 67 B and 76 B.",
+    "2026-11-04: Failure-recovery text (agent-text/failure-recovery) adds about 1,398 B to the root and 1,809 B to examples/worker against main's CI measures of 422,175 B and 806,117 B, past their 325 B and 383 B of headroom. This is new agent-facing text, not drift; the root cap moves to 423,700 B and the examples/worker cap to 808,000 B.",
     "2026-11-03: The performance, security and guidance batch has landed, so its temporary headroom ends. CI at 0d89ea9c measures the root at 422,175 B and examples/worker at 806,117 B, up from 415,751 B and 796,900 B at Release 0.40.0 (+6,424 B and +9,217 B). The caps move to 422,500 B and 806,500 B, leaving 325 B and 383 B for later changes.",
     "2026-11-03: More temporary batch headroom. CI measured root at 419,015 B and examples/worker at 801,303 B on #1280, with more of the batch still open. The root cap moves to 425,000 B and the examples/worker cap to 808,000 B. These get tightened to measured sizes plus normal headroom when the batch lands.",
     "2026-11-03: The opt-in timing trace (#1270) puts the root at 418,224 B on CI before merging later main changes, over the 418,000 B batch cap. The root cap moves to 420,000 B, under the same plan: tighten to measured sizes when the batch lands.",
@@ -59,7 +60,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 423200
+      "maxGzip": 424300
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -142,7 +143,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 807350
+      "maxGzip": 808550
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

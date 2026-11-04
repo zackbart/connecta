@@ -116,8 +116,8 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
    called with the program's arguments and awaited. Connecta supplies `search`,
    `describe`, `call`, `read`, `result`, `skill`, and `emit`; the prelude also
    binds the guest's `skills` alias to `skill`. Connecta also supplies
-   `unawaited`, which the built-in prelude calls at most once, after a failed
-   program read a result field off an unawaited call. It spends no host call;
+   `unawaited`, which the built-in prelude calls at most once, after a
+   program read a result field off an unawaited call, whether it then failed or finished. It spends no host call;
    the host admits one notice per run and ends the run with `budget_exceeded`
    on any further call, so a bridge that exposes it directly gains no
    uncounted round trips.
@@ -628,7 +628,8 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
 `connector`, `operation`, `recovery` (`oauth`, `operator_config`, or
-`unavailable`), `nextAction` naming `authorize_connector`, and a `retry`
+`unavailable`), a `nextAction` carrying the handoff as
+[authorization recovery](./meta-tools.md#authorization-recovery) describes, and a `retry`
 sentence. A program cannot recover credentials — only an operator can — so stop
 and let the failure reach the model.
 
@@ -665,11 +666,16 @@ non-enumerable getters for result fields (`data`, `format`, `content`, `tools`,
 `catalogErrors`, `total`, `text`, `resultId`, `hasMore`, `nextOffset`). Reading
 one before `await`, as in `connecta.call(...).data` or
 `const { tools } = connecta.search(...)`, returns undefined as before and sets
-a per-run flag. When that program then fails, the prelude reports the flag
-through the uncounted `unawaited` host function before the failure crosses,
-and the hint is `connecta.* returns a Promise; await it`. Awaiting, `then`,
-`Promise.all`, and `Promise.allSettled` never read those fields. Hints are
-fixed text; no program source, field name, or value enters them.
+a per-run flag. The prelude reports the flag through the uncounted `unawaited`
+host function before the program's outcome crosses. A failed program's hint is
+`connecta.* returns a Promise; await it`; a program that still finished carries
+the same words in `note` (`R1`). Awaiting, `then`, `Promise.all`, and
+`Promise.allSettled` never read those fields. A `TypeError` saying a value is not a
+function or not iterable, in a program that uses `connecta.search`, `describe` or
+`call`, names the result shape: `search and describe return { tools }; call returns
+{ data, format }.` A syntax error in source that does not start
+as a program says `Pass one expression: async () => { ...; return answer; }.`
+Hints are fixed text; no program source, field name, or value enters them.
 
 An unchanged uncaught host error retains its classification through Error
 identity. A new error containing its message is a new program error. Copied
@@ -719,6 +725,15 @@ unchanged except for `R2`'s size guard. Connecta does not summarize or select
 fields. Program-authored projection saved bytes; host heuristics could drop
 deliberately returned fields. Helpers need [#222](https://github.com/zackbart/connecta/issues/222)
 evidence that programs fail to project.
+
+A program that finished with nothing to read looks like nothing happened, and a
+write inside it must not run again. When `result` is absent and nothing was
+emitted, the response carries a fixed `note`. After a write:
+`Program returned nothing. Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.`
+After reads only: `Program returned nothing, though its calls ran. Add a return.`
+With no calls: `Program returned nothing and made no host calls. Add a return.`
+A returned `null` is a return. An unawaited read (`E6`) puts its await hint in
+`note` even beside a value, followed by the write sentences when a write was sent.
 
 **R2.** The boundary is `execute.maxResultChars` serialized characters, shared
 with emitted text: 24,000 (~6k tokens) by default, configurable from 4,000 to
@@ -982,6 +997,10 @@ early rather than late. A read that reaches its cap fails with a retryable
 `timeout` the program can catch, so `Promise.allSettled` keeps every result that
 finished. Caught or not, it is the read's failure, not a sandbox timeout. A
 later read gets the one-tick deadline that is left, and fails the same way.
+The cap ends the work as well as the wait: the read's downstream signal aborts
+before the program hears `timeout`, and a listing other callers still wait on is
+cancelled once the last of them leaves. Storage operations cannot be withdrawn
+once sent, so one in flight runs to its end, and no further one starts.
 
 Writes are exempt, because a write ended early is a write with an unknown
 outcome. A write-like call (`W9`), a source write overridden to read included,
@@ -1053,7 +1072,7 @@ Every `call`, `read`, `search`, `describe`, `result`, and `skill` spends one hos
 call on entry, before resolution, validation, or dispatch; automatic transfer
 pages of a paged result do not. Catching a local refusal refunds nothing.
 The first call beyond the budget ends the host run with one non-retryable
-`budget_exceeded` (`E2`). Its bridge stays pending until lease disposal so guest
+`budget_exceeded` (`E2`), whose message says the run ended with nothing returned, to split the remaining work across programs within the limit, and not to resend any write already sent. Its bridge stays pending until lease disposal so guest
 `try/catch` cannot swallow it. Later host access, including `emit`, stops; pending
 replies are withheld. The refusal reaches no connector, returns no partial result,
 and discards accepted emits (`M4`). Calls still resolving or awaiting admission
@@ -1090,8 +1109,10 @@ including U+FEFF at page starts. Larger values return a
 `{ format: "paged", valueFormat, resultId, totalBytes, truncated: true, hint }`
 handle. Pass the handle or its `resultId` to `connecta.result` and reduce the
 pages before returning them. Automatic transfers spend no additional host-call
-budget; explicit paging does. This policy is shared by QuickJS, Worker and custom
-executors that run provider preludes.
+budget; explicit paging does, so a read's `hint` offers the whole loop only when
+it fits the calls left and otherwise bounds the pages per program
+([paging](./meta-tools.md#paging-with-connectaresult)). This policy is shared by
+QuickJS, Worker and custom executors that run provider preludes.
 Oversized raw text containing unpaired UTF-16 surrogates returns a handle without
 `resultId`, with a notice that it cannot be paged as text. This preserves the
 UTF-8 byte-offset contract without silently replacing code units. The completed
@@ -1251,7 +1272,10 @@ if the program does not await it, bounded by its host-call deadline. A write
 that reaches accounting after the program settles is not sent. An unanswered
 write makes the run fail `write_outcome_unknown` with
 `writes: { succeeded, failed, unknown }`, regardless of its return value.
-A failed program that already wrote carries those counts on its error. No
+A failed program that already wrote carries those counts on its error. The
+write-budget refusal is `execute_code write budget exceeded (10 writes per run); <address> was not sent.`,
+followed by checking the run's writes count and sending only the remaining writes
+in a new program. No
 write is automatically retried, including an ambiguous timeout. A downstream
 refusal can establish failure only when it covers the whole call: a request
 connecta never sent, or an HTTP 4xx refusal (not 408) of the only request the
@@ -1479,16 +1503,16 @@ each bridge call by the entry's budget class and binds it by name to a host
 implementation, and the `execute_code` description joins each entry's compact
 declaration and names the functions that spend no host call.
 
-| Function    | Budget     | Purpose                                                                    |
-| ----------- | ---------- | -------------------------------------------------------------------------- |
-| `search`    | `hostCall` | Searches the catalog and returns one flat page of `{ tools }`.             |
-| `describe`  | `hostCall` | Describes exact addresses, one entry per address in order.                 |
-| `call`      | `hostCall` | Calls one tool and inlines transfer pages and native content.              |
-| `read`      | `hostCall` | Reads one advertised resource URI.                                         |
-| `result`    | `hostCall` | Pages a retained result by page or UTF-8 byte offset.                      |
-| `skill`     | `hostCall` | Fetches a skill's text by exact name.                                      |
-| `emit`      | `emission` | Forwards a content block to the client; needs no await.                    |
-| `unawaited` | `once`     | Tells the host a failed program read a result field off an unawaited call. |
+| Function    | Budget     | Purpose                                                             |
+| ----------- | ---------- | ------------------------------------------------------------------- |
+| `search`    | `hostCall` | Searches the catalog and returns one flat page of `{ tools }`.      |
+| `describe`  | `hostCall` | Describes exact addresses, one entry per address in order.          |
+| `call`      | `hostCall` | Calls one tool and inlines transfer pages and native content.       |
+| `read`      | `hostCall` | Reads one advertised resource URI.                                  |
+| `result`    | `hostCall` | Pages a retained result by page or UTF-8 byte offset.               |
+| `skill`     | `hostCall` | Fetches a skill's text by exact name.                               |
+| `emit`      | `emission` | Forwards a content block to the client; needs no await.             |
+| `unawaited` | `once`     | Tells the host a program read a result field off an unawaited call. |
 
 A `hostCall` function spends one host call on entry (`L4`, `M7`) and returns a
 Promise whose result fields mark an unawaited read. The runtime wraps

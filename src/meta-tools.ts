@@ -254,6 +254,40 @@ interface ResultStash {
   pagingTool?: "read_result";
   /** `execute.maxResultChars` of the program that runs nextAction. Default 24_000. */
   programChars?: number;
+  /** `execute.maxHostCalls` of a program that loops over this result. Default 20. */
+  programHostCalls?: number;
+}
+
+/** Calls a whole-result loop leaves the program, so it can also act on what it finds. */
+const LOOP_SPARE_HOST_CALLS = 2;
+
+/** A running program's `execute.maxHostCalls`, and how many of them remain. */
+interface ProgramHostCalls {
+  max: number;
+  left: number;
+}
+
+/**
+ * Host calls to read every page of a retained result at the default page size.
+ * A page can stop up to three bytes short to keep a character whole, so the
+ * count assumes every one does.
+ */
+const resultPages = (cap: number, totalBytes: number) =>
+  Math.ceil(totalBytes / Math.max(1, Math.min(cap, PROGRAM_RESULT_PAGE_BYTES) - 3));
+
+/** Whether a program with this many calls left can walk every page of a retained result. */
+const loopFits = (cap: number, totalBytes: number, calls: number) =>
+  resultPages(cap, totalBytes) + LOOP_SPARE_HOST_CALLS <= calls;
+
+/**
+ * A read handle's advice, sized to the calls its program has left. Overrunning
+ * them ends the run and discards everything it read, so a result that can't fit
+ * pages across programs, which carry the offset and reduction between them.
+ */
+function readHandleHint(id: string, cap: number, totalBytes: number, calls: ProgramHostCalls): string {
+  if (loopFits(cap, totalBytes, calls.left))
+    return "Loop connecta.result(handle, { offset }) until !hasMore, setting offset to nextOffset.";
+  return `Needs up to ${resultPages(cap, totalBytes)} host calls; this program has ${calls.left} left, and overrunning returns nothing. Call connecta.result(${JSON.stringify(id)}, { offset }) at most ${Math.max(0, calls.left - LOOP_SPARE_HOST_CALLS)} times here and ${Math.max(1, calls.max - LOOP_SPARE_HOST_CALLS)} per new program, return your reduction and nextOffset, and continue from both within ${RESULT_TTL_SECONDS / 60} minutes.`;
 }
 
 /**
@@ -302,7 +336,7 @@ type PreviewShape = { kind: "prefix"; bytes: number } | { kind: "text-of-envelop
 const readReduceFirst = (routes: AgentRouteNames) =>
   `To find something specific, repeat this read inside ${routes.program} with connecta.call and filter or search the result there, returning only what matters`;
 
-function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewShape): string {
+function pagingHint(results: ResultStash, id: string, totalBytes: number, preview: PreviewShape): string {
   if (results.pagingTool === "read_result") {
     const shown =
       preview.kind === "prefix"
@@ -321,6 +355,11 @@ function pagingHint(results: ResultStash, totalBytes: number, preview: PreviewSh
         : preview.kind === "text-of-envelope"
           ? ["Its text follows.", `to read the full ${totalBytes}-byte content array as JSON, page it`]
           : [`The result is ${totalBytes} bytes.`, "to read it in full, page it"];
+    // Stop fetching again when one program can reach every retained byte: the reduction
+    // still sees the whole value, and the downstream is asked only once. Beyond that the
+    // loop would end in budget_exceeded with nothing returned, so a program repeats the read.
+    if (loopFits(results.cap, totalBytes, results.programHostCalls ?? CONFIG_DEFAULTS.execute.maxHostCalls))
+      return `${shown} The full result is retained for ${RESULT_TTL_SECONDS / 60} minutes. To find something in it, loop connecta.result(${JSON.stringify(id)}, { offset }) from offset 0 until !hasMore, setting offset to nextOffset, in one ${results.routes.program} program; filter there and return the matches. To read on, run nextAction.`;
     return `${shown} ${readReduceFirst(results.routes)}; ${full} with connecta.result using nextAction.`;
   }
   const body =
@@ -413,7 +452,7 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
       truncated: true,
       resultId: id,
       totalBytes,
-      hint: pagingHint(results, totalBytes, preview),
+      hint: pagingHint(results, id, totalBytes, preview),
       nextOffset: preview.kind === "prefix" ? preview.bytes : 0,
       nextAction:
         results.pagingTool === "read_result"
@@ -442,9 +481,12 @@ export function pageProgramResult(
   format: "json" | "text",
   secrets: SentSecrets,
   requestScope: object,
+  hostCalls: ProgramHostCalls,
   wireBytes = PROGRAM_RESULT_WIRE_BYTES,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
-  return runEdge(pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, wireBytes));
+  return runEdge(
+    pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, hostCalls, wireBytes),
+  );
 }
 const pageProgramResultNative = /* @__PURE__ */ registerAuth(
   pageProgramResult,
@@ -456,6 +498,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
     format: "json" | "text",
     secrets: SentSecrets,
     requestScope: object,
+    hostCalls: ProgramHostCalls,
     wireBytes: number = PROGRAM_RESULT_WIRE_BYTES,
   ) {
     return authFlow<{ data: unknown; format: "json" | "text" } | ProgramResultHandle>(function* () {
@@ -465,6 +508,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
       const text = secrets.text(format === "text" ? String(data) : serializeResultText(data));
       const bytes = enc.encode(text);
       const write = resolved.definition.classification !== "read";
+      const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes);
       const notice = yield* upwardStep(
         stashResult(
           bytes,
@@ -479,7 +523,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
               classification: write ? "write" : "read",
             },
             write,
-            cap: resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes),
+            cap,
             set: authMethod((id: string, chunks: string[], ttl: number) =>
               registryProgram(registry, "stashResult", id, chunks, ttl),
             ),
@@ -501,7 +545,9 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
         totalBytes: bytes.length,
         truncated: true,
         hint: notice.resultId
-          ? `${write ? WRITE_ALREADY_RAN + " " : ""}Page this result with connecta.result(handle); do not repeat the call for output.`
+          ? write
+            ? `${WRITE_ALREADY_RAN} Page this result with connecta.result(handle); do not repeat the call for output.`
+            : readHandleHint(notice.resultId, cap, bytes.length, hostCalls)
           : notice.hint,
       };
     });
@@ -866,6 +912,8 @@ function metaToolsForRequest(
     routes?: AgentRouteNames | undefined;
     /** `execute.maxResultChars`, which sizes the pages truncation notices ask programs to read. */
     maxProgramResultChars?: number | undefined;
+    /** `execute.maxHostCalls`, which decides whether a notice can offer a whole-result loop. */
+    maxProgramHostCalls?: number | undefined;
     activitySource?: "native" | undefined;
   } = {},
 ) {
@@ -1006,6 +1054,7 @@ function metaToolsForRequest(
                     cap,
                     ...(opts.pagingTool ? { pagingTool: opts.pagingTool } : {}),
                     ...(opts.maxProgramResultChars !== undefined ? { programChars: opts.maxProgramResultChars } : {}),
+                    ...(opts.maxProgramHostCalls !== undefined ? { programHostCalls: opts.maxProgramHostCalls } : {}),
                     set: authMethod((id: string, value: string[], ttlSeconds: number) =>
                       registryProgram(registry, "stashResult", id, value, ttlSeconds),
                     ),
@@ -1544,7 +1593,10 @@ const READ_ONLY_LOCAL = {
 } as const;
 
 const CALL_INPUT_SCHEMA = {
-  address: z.string().meta({ "x-mcp-header": "Address" }),
+  // Error text only: neither message reaches the advertised schema or widens what is accepted.
+  address: z
+    .string({ error: 'expected a string such as "connector.tool". Send { address, args }.' })
+    .meta({ "x-mcp-header": "Address" }),
   args: z.record(z.string(), z.unknown()).optional(),
   resultMode: z.enum(["mcp", "value"]).optional(),
   timeoutMs: z.number().int().positive().optional(),
@@ -1569,17 +1621,28 @@ const SEARCH_INPUT = advertisedSchema(
   }),
 );
 
-const CALL_INPUT = advertisedSchema(z.strictObject(CALL_INPUT_SCHEMA));
+/** MCP's own `tools/call` spells these `name` and `arguments`; say so at the point of failure. */
+const CALL_SHAPE = {
+  error: (issue: { code?: string | undefined; keys?: readonly string[] | undefined }) =>
+    issue.code === "unrecognized_keys"
+      ? `Unrecognized key${issue.keys?.length === 1 ? "" : "s"}: ${issue.keys?.map((key) => JSON.stringify(key)).join(", ")}. Send { address, args }, with the tool's arguments in args.`
+      : undefined,
+};
+
+const CALL_INPUT = advertisedSchema(z.strictObject(CALL_INPUT_SCHEMA, CALL_SHAPE));
 
 const CALL_DESTRUCTIVE_INPUT = advertisedSchema(
-  z.strictObject({
-    ...CALL_INPUT_SCHEMA,
-    // Bounded above, but with no lower bound: a model that sends `""` or
-    // whitespace has written no reason, and failing an entire consequential
-    // call over a cosmetic field the host merely displays is the wrong
-    // trade. It is normalized to absent in the handler instead.
-    reason: z.string().max(500).optional(),
-  }),
+  z.strictObject(
+    {
+      ...CALL_INPUT_SCHEMA,
+      // Bounded above, but with no lower bound: a model that sends `""` or
+      // whitespace has written no reason, and failing an entire consequential
+      // call over a cosmetic field the host merely displays is the wrong
+      // trade. It is normalized to absent in the handler instead.
+      reason: z.string().max(500).optional(),
+    },
+    CALL_SHAPE,
+  ),
 );
 
 const READ_RESULT_DESC =
@@ -1632,6 +1695,8 @@ export function registerMetaTools(
     requestScope?: object | undefined;
     /** `execute.maxResultChars`: sizes the pages truncation notices ask programs to read. */
     maxProgramResultChars?: number | undefined;
+    /** `execute.maxHostCalls`: decides whether a notice can offer a whole-result loop. */
+    maxProgramHostCalls?: number | undefined;
     /**
      * A native pool: register `authorize_connector` and `skills`, plus `read_result` when the pool
      * has no execute_code, and return the route native tool calls take.
@@ -1643,6 +1708,7 @@ export function registerMetaTools(
 ): NativeCallRoute | undefined {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     maxProgramResultChars: ctx.maxProgramResultChars,
+    maxProgramHostCalls: ctx.maxProgramHostCalls,
     routes: ctx.routes,
     ...(ctx.native && !ctx.native.executeCode ? { pagingTool: "read_result" as const } : {}),
     ...(ctx.native ? { activitySource: "native" as const } : {}),

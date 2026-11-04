@@ -837,6 +837,91 @@ export async function checkReadDeadlineUtilities(executor: Executor): Promise<vo
   expect(Date.now() - started).toBeGreaterThan(1_000);
 }
 
+/**
+ * The cap ends the work, not only the wait: the downstream signal aborts before
+ * the program hears `timeout`, on every read path it covers, and the run is still
+ * going when that happens, so teardown is not what aborted it.
+ */
+export async function checkReadDeadlineCancels(executor: Executor): Promise<void> {
+  const operations = [
+    { name: "search", code: `connecta.search({ connector: "slow" })` },
+    { name: "describe", code: `connecta.describe({ address: "slow.read" })` },
+    { name: "call", code: `connecta.call("slow.read", {}, { timeoutMs: 600000 })` },
+    { name: "read", code: `connecta.read("resource://slow/" + encodeURIComponent("docs://hanging"))` },
+    { name: "skill", code: `connecta.skill(${JSON.stringify(downstreamSkillUri("slow", "skill://guide/SKILL.md"))})` },
+    { name: "result", code: `connecta.result(RESULT_ID)` },
+  ];
+  for (const { name, code } of operations) {
+    let hang = false;
+    let aborts = 0;
+    let startedWork = 0;
+    let settledAfterAborts: number | undefined;
+    const hanging = (signal: AbortSignal | undefined) => {
+      startedWork++;
+      signal?.addEventListener("abort", () => aborts++, { once: true });
+      return new Promise<never>(() => {});
+    };
+    const slow: Connector = {
+      id: "slow",
+      kind: "api",
+      async listTools(ctx) {
+        return hang ? hanging(ctx.signal) : [readOnly("read")];
+      },
+      async readResource(_uri, ctx) {
+        return hanging(ctx.signal);
+      },
+      downstreamSkills: {
+        list: (ctx) => hanging(ctx.signal),
+        read: (_uri, ctx) => hanging(ctx.signal),
+      },
+      async callTool() {
+        return { padding: "x".repeat(30_000) };
+      },
+    };
+    const observed = customExecutor(
+      {
+        deadlineMs: required(executor.deadlineMs),
+        execute: (program, providers) =>
+          executor.execute(
+            program,
+            providers.map((provider) => ({
+              ...provider,
+              fns: Object.fromEntries(
+                Object.entries(provider.fns).map(([fn, call]) => [
+                  fn,
+                  (...args: unknown[]) =>
+                    call(...args).finally(() => {
+                      if (fn === name) settledAfterAborts = aborts;
+                    }),
+                ]),
+              ),
+            })),
+          ),
+      },
+      { lifecycle: "self-managed" },
+    );
+    const execute = createExecuteTool(makeRegistry([slow]), CONTRACT_BASE, observed, silentLogger);
+    let program = code;
+    if (name === "result") {
+      // An id from a run with a working catalog; reading it rechecks access.
+      const stored = await execute({ code: `async () => (await connecta.call("slow.read")).data` });
+      const { resultId } = required(stored.structuredContent).result as { resultId: string };
+      program = code.replace("RESULT_ID", JSON.stringify(resultId));
+    }
+    hang = true;
+    const outcome = await execute({
+      code: `async () => {
+        const failed = await ${program}.catch((error) => error);
+        return { code: failed.code, retryable: failed.retryable };
+      }`,
+    });
+    expect(outcome.isError, `${name}: ${outcome.content[0]?.text}`).toBeFalsy();
+    expect(required(outcome.structuredContent).result, name).toEqual({ code: "timeout", retryable: true });
+    expect(startedWork, `${name} reached downstream work`).toBeGreaterThan(0);
+    expect(settledAfterAborts, `${name}'s downstream signal aborted before the program heard`).toBe(startedWork);
+  }
+}
+
 export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {
   let releaseRead!: () => void;
   const blocked = new Promise<void>((resolve) => {
@@ -1459,7 +1544,128 @@ function record(outcome: ContractOutcome): Record<string, unknown> {
   return outcome.result as Record<string, unknown>;
 }
 
+const RETURNED_NOTHING_AFTER_WRITE =
+  "Program returned nothing. Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.";
+
 export const CONTRACT_CASES: ContractCase[] = [
+  {
+    clauses: "R1, V5",
+    name: "INV-9: a program that wrote and returned nothing says so and sends the write once",
+    code: `async () => { await connecta.call("reader.wipe"); }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.value).not.toHaveProperty("result");
+      expect(outcome.value.note).toBe(RETURNED_NOTHING_AFTER_WRITE);
+      expect(outcome.value.hostCalls).toEqual({ attempted: 1, admitted: 1, succeeded: 1, failed: 0 });
+      // The note is the whole recovery: nothing in the run sends the write again.
+      expect(state.calls["reader.wipe"]).toBe(1);
+    },
+  },
+  {
+    clauses: "R1",
+    name: "INV-9: a program that read and returned nothing may safely add a return",
+    code: `async () => { await connecta.call("reader.read", { value: "x" }); }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.value.note).toBe("Program returned nothing, though its calls ran. Add a return.");
+    },
+  },
+  {
+    clauses: "R1",
+    name: "a program with no calls and no return is told to add one",
+    code: `async () => { const x = 1; }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.value.note).toBe("Program returned nothing and made no host calls. Add a return.");
+      expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
+    },
+  },
+  ...[
+    ["a null return", `async () => null`],
+    ["a value return", `async () => ({ ok: true })`],
+    ["an emit with no return", `async () => { connecta.emit({ type: "text", text: "shown" }); }`],
+  ].map(([label, code]): ContractCase => ({
+    clauses: "R1",
+    name: `${label} carries no returned-nothing note`,
+    code: code!,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.value).not.toHaveProperty("note");
+    },
+  })),
+  {
+    clauses: "E6, R1",
+    name: "INV-9: an unawaited read in a program that still finished names the await and the sent write",
+    code: `async () => {
+      const pending = connecta.call("reader.wipe");
+      const data = pending.data;
+      await pending;
+      return data;
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.value.note).toContain("connecta.* returns a Promise; await it");
+      expect(outcome.value.note).toContain("Its writes were already sent. Do not rerun it");
+      expect(state.calls["reader.wipe"]).toBe(1);
+    },
+  },
+  {
+    clauses: "E6, R1",
+    name: "an unawaited read beside a returned value still names the await",
+    code: `async () => {
+      const pending = connecta.call("reader.read", { value: "x" });
+      const data = pending.data;
+      await pending;
+      return { data };
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.value.note).toBe(
+        "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.",
+      );
+    },
+  },
+  ...[
+    [
+      "search result used as an array",
+      `const page = await connecta.search({ query: "read" });\nreturn page.map((tool) => tool.address);`,
+    ],
+    [
+      "call result used as an array",
+      `const result = await connecta.call("reader.read", { value: "x" });\nreturn result.map((row) => row);`,
+    ],
+    [
+      "describe result iterated",
+      `const page = await connecta.describe({ address: "reader.read" });\nfor (const tool of page) return tool;`,
+    ],
+  ].map(([label, source]): ContractCase => ({
+    clauses: "E6",
+    name: `INV-6: program errors name the result shape for a ${label}`,
+    code: `async () => {\n${source}\n}`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "TypeError",
+          hint: "search and describe return { tools }; call returns { data, format }.",
+        },
+      });
+    },
+  })),
+  {
+    clauses: "E6",
+    name: "INV-6: a bare statement is told to pass one async arrow",
+    code: `const page = await connecta.search({ query: "read" });`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        details: { name: "SyntaxError", hint: "Pass one expression: async () => { ...; return answer; }." },
+      });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
+    },
+  },
   {
     clauses: "S5, M1, M2, M8",
     name: "INV-3: emit(call result) delivers original native rich blocks with metadata",
@@ -2798,6 +3004,8 @@ return fs;
         retryable: false,
       });
       expect(required(outcomes[1]).nextAction).toBeUndefined();
+      // The findings name the fix, so nothing sends the program off to search first.
+      expect(required(outcomes[2]).nextAction).toBeUndefined();
       expect(required(outcomes[2])).toMatchObject({
         ok: false,
         code: "unavailable",
@@ -2821,7 +3029,6 @@ return fs;
         ok: false,
         code: "invalid_args",
         retryable: false,
-        nextAction: "connecta.search",
         validation: {
           issues: [
             { path: "/text", expected: "string (required)", received: "missing" },
@@ -2917,15 +3124,8 @@ return fs;
         validation: {
           issues: [{ path: "/options/uppercase", expected: "boolean", received: "string" }],
         },
-        nextAction: {
-          function: "connecta.search",
-          arguments: {
-            query: "echo",
-            connector: "remote",
-            includeSchemas: "compact",
-          },
-        },
       });
+      expect(outcome.value.error).not.toHaveProperty("nextAction");
       expect(outcome.text).not.toContain("private-value");
       expect(outcome.text).not.toContain("private-secret");
       expect(state.calls["remote.echo"]).toBeUndefined();
@@ -3073,7 +3273,8 @@ return fs;
       expect(outcome.value).toMatchObject({
         error: {
           code: "budget_exceeded",
-          message: "execute_code host-call budget exceeded (20 calls maximum)",
+          message:
+            "execute_code host-call budget exceeded (20 calls maximum); the run returned nothing. Split the rest across programs of at most 20 calls each; do not resend any write it sent.",
           retryable: false,
         },
         hostCalls: {

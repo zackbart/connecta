@@ -518,6 +518,7 @@ function serveMcp(
         responseCeilingMs: opts.config.execute.watchdogMs,
         requestStartedAt,
         maxProgramResultChars: opts.config.execute.maxResultChars,
+        maxProgramHostCalls: opts.config.execute.maxHostCalls,
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         discoveryConcurrency: opts.config.discovery.concurrency,
         requestSignal,

@@ -633,13 +633,18 @@ export class InvocationService {
               },
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
-              nextAction: this.catalog.searchRecovery(
-                {
-                  query: target.toolName,
-                  connector: target.connector.id,
-                },
-                "Inspect the current input shape if the validation findings are not sufficient.",
-              ),
+              // Findings naming the fix lead on their own; a search would only cost a turn.
+              ...(error.validation.issues?.length && error.validation.acceptedKeys && !error.validation.truncated
+                ? {}
+                : {
+                    nextAction: this.catalog.searchRecovery(
+                      {
+                        query: target.toolName,
+                        connector: target.connector.id,
+                      },
+                      "Only if the validation above is not enough: inspect the schema.",
+                    ),
+                  }),
               retry: `Correct the listed arguments and retry ` + `${target.connector.id}.${target.toolName}.`,
             };
           case "not_found":
@@ -839,7 +844,7 @@ export class InvocationService {
           if (refusal === "read_only_endpoint") {
             return framingError(
               "read_only_endpoint",
-              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. No write route exists ${connectorReadOnly ? "for this connection" : "on this endpoint"}. Ask the operator for a writable connection if writes are required.`,
+              `Tool "${canonicalAddress}" is a write, and ${connectorReadOnly ? `connector "${target.connector.id}"` : "this endpoint"} is read-only. No write route exists ${connectorReadOnly ? "for this connection" : "on this endpoint"}; tell the user. Only the operator can provide a writable connection.`,
             );
           }
           if (refusal === "destructive_tool_requires_approval") {

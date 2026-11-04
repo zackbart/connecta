@@ -25,6 +25,7 @@ import {
   checkProgramReadDependencies,
   checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
+  checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
   checkSharedPreludes,
   checkStashAuthority,
@@ -493,6 +494,10 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
     expect(required(workerExecutor).deadlineMs).toBe(50_000);
     expect(required(workerExecutor).deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
   });
+
+  it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {
+    await checkReadDeadlineCancels(required(workerReadDeadlineExecutor));
+  }, 60_000);
 
   it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
     const outcome = await contractHarness().run(required(workerExecutor), CAPABILITY_PROBE_CODE);
