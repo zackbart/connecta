@@ -24,6 +24,7 @@ No imports, require, filesystem, fetch, or timers.
 
 \`connecta.call(address, args, { timeoutMs })\` and
 \`connecta.call({ address, args, timeoutMs })\` return \`{ data, format }\`.
+Other properties read from \`data\`.
 Parse \`format: "text"\` only when documented as JSON. Verify collection roots.
 
 \`connecta.read("resource://id/"+encodeURIComponent(uri))\` returns \`{ contents }\` for advertised URIs.

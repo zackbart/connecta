@@ -173,9 +173,13 @@ access and keeps its environment maps empty, but exposes the globals and runtime
 builtins in `X5`.
 
 **P3.** Values cross the host bridge as JSON: arguments must be
-JSON-serializable and results arrive as plain JSON. A value outside JSON — a
-cycle, a `BigInt`, a function, a class instance — never round-trips; it either
-ends the run with an error or is converted lossily, executor's choice (`X9`).
+JSON-serializable and results arrive as plain JSON. A `connecta.call` result is
+an envelope of plain JSON fields whose prototype is its `data` (`S5a`), and that
+prototype never crosses: the trusted runner JSON-normalizes the program's return
+on both executors, and a bridge argument carries only its own JSON. A value
+outside JSON — a cycle, a `BigInt`, a function, a class instance — never
+round-trips; it either ends the run with an error or is converted lossily,
+executor's choice (`X9`).
 
 **P4.** Nothing survives an execution: no module scope, cache, or scratch
 storage carried to the next program, and no request-bound object outliving its
@@ -389,6 +393,42 @@ MCP `toolResult` or
 `structuredContent` is JSON; all-text content is JSON when it parses, otherwise
 text. API string values are text, other API values are JSON. Check `format`
 before treating `data` as an object. A downstream `isError` throws.
+
+**S5a.** Any other property of an inline result reads from `data`, so
+`r.items` is `r.data.items`, `rows.map(...)` and `rows.length` work when `data`
+is an array, and `text.split(...)`, `text.length` and `` `${text}` `` work when
+it is text. `data` is the envelope's prototype; the envelope is not a Proxy.
+`data`, `format`, `content`, and `contentResult` keep their meaning even when
+`data` has a field of that name, so a list whose own root is `data` reads
+`r.data.data`. A paged handle does not read through, and neither do scalars or
+`null`, which have no fields to read.
+
+The envelope itself is unchanged: `r.data`, `{ data, format }`, `Object.keys(r)`,
+spread, `JSON.stringify(r)`, and returning `r` or nesting it all give the same
+plain `{ data, format }`. `Array.isArray(r)` stays false and `typeof r` stays
+`"object"`, so a text result is not a primitive string. `for...in` also lists the
+data's keys, and `in` sees them. Array mutators (`sort`, `push`, and the rest)
+change `data`, not the envelope; assigning `r.x = 1` writes to the envelope, as
+it always did. A wrong root still fails: `r.items.map` is a `TypeError` when
+`data` has no `items`.
+
+Migration from 0.41: nothing a program did with `r.data` changes. Defensive
+reads get simpler; this 267-character answer
+
+```js
+async () => { const r = await connecta.call("crm.list_projects"); if (r.format === "paged") return { resultId: r.resultId }; const d = r.format === "json" ? r.data : JSON.parse(r.data); const rows = Array.isArray(d) ? d : d.items; return rows.map(p => p.id).length; }
+```
+
+becomes these 82 characters:
+
+```js
+async () => (await connecta.call("crm.list_projects")).items.map(p => p.id).length
+```
+
+A program that tested a result's fields for absence sees the difference:
+`r.items === undefined` and `"items" in r` were always the envelope's answer and
+now report `data`'s. `for...in` over a result visits more keys. `r.content` keeps
+its meaning, so `for (const b of r.content ?? [])` never iterates a data field.
 
 An inline MCP result containing image, audio, resource, or resource_link blocks
 also exposes `content?: GuestNativeBlock[]`, even when `data` comes from
@@ -664,7 +704,10 @@ a per-run flag. When that program then fails, the prelude reports the flag
 through the uncounted `unawaited` host function before the failure crosses,
 and the hint is `connecta.* returns a Promise; await it`. Awaiting, `then`,
 `Promise.all`, and `Promise.allSettled` never read those fields. Hints are
-fixed text; no program source, field name, or value enters them.
+fixed text; no program source, field name, or value enters them. Reading through
+to `data` (`S5a`) removes the failures that came from guessing an envelope root,
+such as `(r.items ?? r).map`; a root neither `data` nor the envelope has still
+fails here.
 
 An unchanged uncaught host error retains its classification through Error
 identity. A new error containing its message is a new program error. Copied
@@ -1297,9 +1340,13 @@ never settle and fails fast; the Dynamic Worker waits for its deadline.
 Requiring the fast failure would require a host-driven job loop — not a
 reasonable demand on a platform sandbox.
 
-**X7. Value codec.** QuickJS is JSON-only; `@cloudflare/codemode` tunnels binary
-values through a tagged envelope, so a `Uint8Array` may survive there. `P3` is
-the contract: JSON-serializable values, or the program is Workers-only.
+**X7. Value codec.** QuickJS is JSON-only. `@cloudflare/codemode` tunnels binary
+values through a tagged envelope, so a binary host-call value may still survive
+into a Worker guest; such a value keeps its own receiver and does not read
+through (`S5a`). A program's return is JSON-normalized on both executors, because
+Workers RPC refuses a read-through envelope's prototype, so a Worker return no
+longer carries the non-JSON superset it could before. Nothing depended on it: the
+host serialized every return as JSON anyway. `P3` is the contract.
 
 **X8. Unknown properties.** The guest namespace exposes only the seven documented
 functions. Unknown and inherited members are absent on both executors; calling
@@ -1369,13 +1416,13 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `P1`, `P5`             | both guest-contract executors (TypeScript syntax, trailing terminators, wrapper recovery), `test/program-source.test.ts` (which semicolons and wrappers are recovered), `test/quickjs-executor.node.test.ts` (`normalizeCode`)                                                                                                                                                                                                                                                                                                                                                                |
 | `P2`, `X5`             | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.node.test.ts` (exact absent globals and blocked imports), `test/deployment-shapes.node.test.ts` (loader-only Worker construction)                                                                                                                                                                                                                                                                             |
-| `P3`, `X9`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `P3`, `X7`, `X9`       | both guest-contract executors (normalized returns), `test/guest-api-contract.test.ts`, `test/execute.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `P4`                   | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution)                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `A1`, `A2`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (canonical addressing), `test/server.test.ts` (bounded live connector inventory)                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `S1`, `S1a`, `S2`      | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, unfiltered browse), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools-search.test.ts` (mixed complete/partial ranking, stable pagination, the two safety classes), `test/typescript-signatures.test.ts` (the TypeScript format over provider and pathological schemas, search/describe parity, observed labeling)                                                                                                                                         |
 | `S3`                   | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `S4`                   | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools-search.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds)                                                                                                                                                                                                                                                                                                                                     |
-| `S5`, `S6`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity)                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `S5`, `S5a`, `S6`      | both guest-contract executors (read-through by shape, unchanged envelope), `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`, fail-closed annotations, activity parity)                                                                                                                                                                                                                                                                                                                                                                                            |
 | `S7`                   | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `S8`, `E1`, `X11`      | both guest-contract executors (caught call, discovery, utility, removed-function, and forgery cases; typed promise rejections), `test/quickjs-executor.node.test.ts` (oversized messages, private transport, forged outcomes)                                                                                                                                                                                                                                                                                                                                                                 |
 | `S9`                   | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, failure isolation)                                                                                                                                                                                                                                                                                                                                    |

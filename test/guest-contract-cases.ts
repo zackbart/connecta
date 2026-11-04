@@ -1088,6 +1088,23 @@ function contractConnectors(state: ContractState): Connector[] {
       return { done: true };
     },
   };
+  // Result shapes for the read-through envelope (S5a).
+  const shapes: Connector = {
+    id: "shapes",
+    kind: "api",
+    async listTools() {
+      return ["rows", "list", "colliding", "scalar", "nothing", "empty"].map((name) => readOnly(name));
+    },
+    async callTool(name) {
+      count(`shapes.${name}`);
+      if (name === "rows") return [{ id: "b" }, { id: "a" }];
+      if (name === "list") return { object: "list", data: [{ id: 1 }], has_more: false };
+      if (name === "colliding") return { content: "body", contentResult: "other", format: "shadow", error: null };
+      if (name === "scalar") return 7;
+      if (name === "empty") return "";
+      return null;
+    },
+  };
   const remote: Connector = {
     id: "remote",
     kind: "mcp",
@@ -1294,6 +1311,7 @@ function contractConnectors(state: ContractState): Connector[] {
   };
   return [
     reader,
+    shapes,
     remote,
     collide,
     odd,
@@ -3468,6 +3486,230 @@ return fs;
       expect(outcome.value.emittedDiscarded).toBe(1);
       expect(outcome.content).toHaveLength(1);
       expect(outcome.text).not.toContain("doomed block");
+    },
+  },
+  {
+    clauses: "S5a",
+    name: "a result reads other properties through to data, as an object, array or text",
+    code: `async () => {
+      const object = await connecta.call("reader.read", { value: "v" });
+      const rows = await connecta.call("shapes.rows");
+      const text = await connecta.call("reader.text");
+      const list = await connecta.call("shapes.list");
+      const ids = [];
+      for (const row of rows) ids.push(row.id);
+      const inherited = [];
+      for (const key in object) inherited.push(key);
+      const { echo } = object;
+      return {
+        echo, destructured: echo === object.data.echo, inherited,
+        length: rows.length, mapped: rows.map(row => row.id), sliced: rows.slice(1), first: rows[0].id, ids,
+        filtered: rows.filter(row => row.id === "a").length, spreadRows: [...rows].length,
+        concatenated: [].concat(rows, ["c"]).length,
+        chars: text.length, split: text.split(" ").length, upper: text.toUpperCase(), lines: text.includes("plain"),
+        textFirst: text[0], tpl: \`\${text}\`, str: String(text), parsedText: text + "!",
+        envelopeFirst: list.data.object, inner: list.data.data[0].id, hasMore: list.has_more,
+        isArray: Array.isArray(rows), typeofText: typeof text,
+      };
+    }`,
+    check(outcome) {
+      const message = "a plain downstream message";
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        echo: "v",
+        destructured: true,
+        inherited: ["data", "format", "echo"],
+        length: 2,
+        mapped: ["b", "a"],
+        sliced: [{ id: "a" }],
+        first: "b",
+        ids: ["b", "a"],
+        filtered: 1,
+        spreadRows: 2,
+        concatenated: 3,
+        chars: message.length,
+        split: 4,
+        upper: message.toUpperCase(),
+        lines: true,
+        textFirst: "a",
+        tpl: message,
+        str: message,
+        parsedText: `${message}!`,
+        envelopeFirst: "list",
+        inner: 1,
+        hasMore: false,
+        isArray: false,
+        typeofText: "object",
+      });
+    },
+  },
+  {
+    clauses: "S5a, P3, X7",
+    name: "reading through leaves the envelope's keys, JSON, spread and return unchanged",
+    code: `async () => {
+      const object = await connecta.call("reader.read", { value: "v" });
+      const rows = await connecta.call("shapes.rows");
+      const text = await connecta.call("reader.text");
+      const { data, format } = object;
+      const settled = await Promise.allSettled([connecta.call("reader.read", { value: "s" })]);
+      const [one, two] = await Promise.all([connecta.call("reader.read", { value: "1" }), connecta.call("reader.text")]);
+      return {
+        destructured: { data, format }, keys: Object.keys(object), rowKeys: Object.keys(rows), textKeys: Object.keys(text),
+        own: Object.prototype.hasOwnProperty.call(object, "echo"), json: JSON.parse(JSON.stringify(rows)),
+        spread: { ...text }, whole: object, wholeRows: rows, wholeText: text, nested: { deep: [object] }, settled, one, two,
+      };
+    }`,
+    follows: `async () => await connecta.call("shapes.rows")`,
+    check(outcome, _state, follow) {
+      const object = { data: { echo: "v" }, format: "json" };
+      const rows = { data: [{ id: "b" }, { id: "a" }], format: "json" };
+      const text = { data: "a plain downstream message", format: "text" };
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        destructured: object,
+        keys: ["data", "format"],
+        rowKeys: ["data", "format"],
+        textKeys: ["data", "format"],
+        own: false,
+        json: rows,
+        spread: text,
+        whole: object,
+        wholeRows: rows,
+        wholeText: text,
+        nested: { deep: [object] },
+        settled: [{ status: "fulfilled", value: { data: { echo: "s" }, format: "json" } }],
+        one: { data: { echo: "1" }, format: "json" },
+        two: text,
+      });
+      expect(required(follow).result).toEqual(rows);
+    },
+  },
+  {
+    clauses: "S5a",
+    name: "a data field never shadows data, format, content or contentResult",
+    code: `async () => {
+      const r = await connecta.call("shapes.colliding");
+      const blocks = [];
+      for (const block of r.content ?? []) blocks.push(block);
+      return { format: r.format, content: r.content, contentResult: r.contentResult, error: r.error, data: r.data.content,
+        blocks, shadowed: r.data.format, keys: Object.keys(r) };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        format: "json",
+        error: null,
+        data: "body",
+        blocks: [],
+        shadowed: "shadow",
+        keys: ["data", "format"],
+      });
+    },
+  },
+  {
+    clauses: "S5a",
+    name: "array mutators change data and leave the envelope's own keys alone",
+    code: `async () => {
+      const r = await connecta.call("shapes.rows");
+      const sorted = r.sort((a, b) => (a.id < b.id ? -1 : 1));
+      r.push({ id: "c" });
+      return { sorted: Array.isArray(sorted), first: r[0].id, inData: r.data[0].id, length: r.length, dataLength: r.data.length,
+        keys: Object.keys(r), whole: r };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        sorted: true,
+        first: "a",
+        inData: "a",
+        length: 3,
+        dataLength: 3,
+        keys: ["data", "format"],
+        whole: { data: [{ id: "a" }, { id: "b" }, { id: "c" }], format: "json" },
+      });
+    },
+  },
+  {
+    clauses: "S5a, E6",
+    name: "a wrong root still fails, and scalars, null and empty text stay plain",
+    code: `async () => {
+      const scalar = await connecta.call("shapes.scalar");
+      const nothing = await connecta.call("shapes.nothing");
+      const empty = await connecta.call("shapes.empty");
+      const r = await connecta.call("shapes.list");
+      let wrong; try { r.items.map(x => x); } catch (err) { wrong = err.name; }
+      return { scalar, nothing, empty, emptyLength: empty.length, missing: scalar.nope, nothingKeys: Object.keys(nothing), wrong };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        scalar: { data: 7, format: "json" },
+        nothing: { data: null, format: "json" },
+        empty: { data: "", format: "text" },
+        emptyLength: 0,
+        nothingKeys: ["data", "format"],
+        wrong: "TypeError",
+      });
+    },
+  },
+  {
+    clauses: "S5a, P3",
+    name: "a read-through envelope crosses host calls as its plain JSON",
+    code: `async () => {
+      const r = await connecta.call("reader.read", { value: "v" });
+      const passed = await connecta.call("reader.read", { value: JSON.stringify(r) });
+      const nested = await connecta.call("reader.read", { value: r });
+      let emitted; try { await connecta.emit(r); } catch (err) { emitted = err.code; }
+      return { passed: passed.echo, nested: nested.echo, emitted };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        passed: JSON.stringify({ data: { echo: "v" }, format: "json" }),
+        nested: { data: { echo: "v" }, format: "json" },
+        emitted: "invalid_args",
+      });
+    },
+  },
+  {
+    clauses: "S5, S5a, M1",
+    name: "a rich result still emits its retained blocks after reading through",
+    code: `async () => {
+      const rich = await connecta.call("assets.rich", { structured: true });
+      await connecta.emit(rich);
+      return { revision: rich.revision, count: rich.content.length, keys: Object.keys(rich) };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({ revision: 7, keys: ["data", "format", "content"] });
+      expect((outcome.result as { count: number }).count).toBeGreaterThan(0);
+      expect(outcome.value.emitted).toBe((outcome.result as { count: number }).count);
+    },
+  },
+  {
+    clauses: "P3, X9",
+    name: "a value outside JSON keeps its existing outcome, and an envelope beside it stays plain",
+    code: `async () => {
+      const r = await connecta.call("reader.read", { value: "v" });
+      return { when: new Date(0), nan: NaN, missing: undefined, r };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        when: "1970-01-01T00:00:00.000Z",
+        nan: null,
+        r: { data: { echo: "v" }, format: "json" },
+      });
+    },
+  },
+  {
+    clauses: "M3, P3",
+    name: "an emission started while serializing the return is still acknowledged",
+    code: `async () => ({ toJSON() { connecta.emit({ type: "text", text: "late" }); return { ok: true }; } })`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ ok: true });
+      expect(outcome.value.emitted).toBe(1);
     },
   },
   {

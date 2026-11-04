@@ -119,6 +119,17 @@ export function guestInitializer(): string {
   const isArray = Array.isArray;
   const weakGet = Function.prototype.call.bind(WeakMap.prototype.get);
   const weakSet = Function.prototype.call.bind(WeakMap.prototype.set);
+  const getPrototypeOf = Object.getPrototypeOf;
+  const setPrototypeOf = Object.setPrototypeOf;
+  const defineProperty = Object.defineProperty;
+  const hasOwn = Function.prototype.call.bind(Object.prototype.hasOwnProperty);
+  const bind = Function.prototype.call.bind(Function.prototype.bind);
+  const NativeString = String;
+  const ObjectPrototype = Object.prototype;
+  const concatSpreadable = Symbol.isConcatSpreadable;
+  const jsonParse = JSON.parse;
+  const jsonStringify = JSON.stringify;
+  const MUTATORS = freeze(["copyWithin", "fill", "pop", "push", "reverse", "shift", "sort", "splice", "unshift"]);
   return freeze((provider) => {
   const pending = [];
   const emit = provider.emit;
@@ -139,7 +150,36 @@ export function guestInitializer(): string {
         format: value.handle.valueFormat };
     } catch { return value.handle; }
   }
+  // Other properties read from data through the prototype chain, so the
+  // envelope stays its own object: keys, JSON, spread and emit refs are unchanged.
+  function readThrough(value) {
+    if (!value || value.format === "paged" || !hasOwn(value, "data")) return value;
+    const data = value.data;
+    const hidden = (key, field) => defineProperty(value, key, { __proto__: null, value: field, writable: true, configurable: true });
+    // These two keep their meaning even when data has a field of the same name.
+    if (!hasOwn(value, "content")) hidden("content", undefined);
+    if (!hasOwn(value, "contentResult")) hidden("contentResult", undefined);
+    if (typeof data === "string") {
+      setPrototypeOf(value, new NativeString(data));
+      // String methods stringify their receiver; the wrapper's refuse this one.
+      hidden("toString", () => data);
+      hidden("valueOf", () => data);
+    } else if (isArray(data)) {
+      setPrototypeOf(value, data);
+      hidden(concatSpreadable, true);
+      // Generic mutators would write indexes onto the envelope, not the array.
+      for (let i = 0; i < MUTATORS.length; i++) hidden(MUTATORS[i], bind(data[MUTATORS[i]], data));
+    } else if (data && typeof data === "object") {
+      // A value outside JSON keeps its own receiver checks (X7).
+      const proto = getPrototypeOf(data);
+      if (proto === ObjectPrototype || proto === null) setPrototypeOf(value, data);
+    }
+    return value;
+  }
   async function call() {
+    return readThrough(await apply(rawCall, undefined, arguments));
+  }
+  async function rawCall() {
     const reply = await apply(hostCall, undefined, arguments);
     if (!reply || !reply.native) return inline(reply);
     const native = await inline(reply.native.value);
@@ -212,9 +252,23 @@ ${GUEST_NAMESPACE}
           if (unawaited) try { await provider.unawaited(); } catch {}
           throw error;
         }
-        for (let i = 0; i < pending.length; i++) {
-          const report = await pending[i].settled;
-          if (!report.ok && !pending[i].handled) throw report.error;
+        let settled = 0;
+        const acknowledged = async () => {
+          for (; settled < pending.length; settled++) {
+            const report = await pending[settled].settled;
+            if (!report.ok && !pending[settled].handled) throw report.error;
+          }
+        };
+        await acknowledged();
+        // Workers RPC refuses a read-through envelope's prototype. A value JSON
+        // cannot carry keeps its existing refusal (X9). A getter or toJSON may
+        // emit during this, so acknowledge again.
+        if (result && typeof result === "object") {
+          try {
+            const text = jsonStringify(result);
+            if (text !== undefined) result = jsonParse(text);
+          } catch {}
+          await acknowledged();
         }
         return result;
       };

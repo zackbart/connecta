@@ -29,7 +29,11 @@ export interface GuestResultHandle {
   truncated: true;
   hint: string;
 }
-/** Inline MCP rich results expose original blocks; emit(result) forwards all of them. */
+/**
+ * Inline MCP rich results expose original blocks; emit(result) forwards all of them.
+ * Other properties of an inline result read from `data` at runtime; this type
+ * names the envelope, the part with a fixed shape.
+ */
 export type GuestResult = ({ data: unknown; format: "json" } | { data: string; format: "text" } | GuestResultHandle) & {
   content?: GuestNativeBlock[];
   /** Paging handle when native content exceeds the inline cap or transfer fails. */
