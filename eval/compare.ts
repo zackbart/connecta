@@ -92,7 +92,8 @@ const trialSchema = z
     claude: z.unknown().optional(),
     saved: z.unknown().optional(),
     regrade: z.unknown().optional(),
-    checks: z.array(z.object({ id: knownString, pass: z.boolean() }).passthrough()),
+    // Check ids are authored constants, not observations: `unknown-no-replay` is a real one.
+    checks: z.array(z.object({ id: z.string().min(1), pass: z.boolean() }).passthrough()),
     metrics: z.unknown(),
     approvals: z.unknown(),
     transcript: z.array(z.unknown()),

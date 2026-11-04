@@ -212,6 +212,12 @@ describe("description measures", () => {
             input: { method: "POST", path: "/v1/refunds" },
             isError: false,
           },
+          {
+            tool: "call_destructive_tool",
+            input: { address: "stripe_sandbox.stripe_api_write", args: { method: "POST", path: "/v1/refunds" } },
+            isError: true,
+            resultText: '{"error":{"code":"connector_call_failed"}}',
+          },
           { tool: "execute_code", input: { code: "run()" }, isError: false },
         ],
         [
@@ -227,14 +233,19 @@ describe("description measures", () => {
       ),
     );
     expect(measured).toMatchObject({
-      firstAttempts: 3,
+      firstAttempts: 4,
       firstAttemptInvalidArgs: 2,
       invalidArgs: 2,
-      hatchCalls: 3,
+      hatchCalls: 4,
       hatchMisuse: 1,
       hatchNamedBypass: 1,
       searches: 2,
     });
+  });
+
+  it("accept an authored check id naming the word unknown", () => {
+    const source = readFileSync("eval/compare.ts", "utf8");
+    expect(source).toContain("id: z.string().min(1), pass: z.boolean()");
   });
 
   it("orders attempts by call, keeping programs the trace cannot match", () => {

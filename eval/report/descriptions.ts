@@ -101,7 +101,10 @@ export interface DescriptionMetrics {
   firstAttemptInvalidArgs: number;
   invalidArgs: number;
   hatchCalls: number;
-  /** Failed hatch calls, plus hatch calls reaching an operation a named tool serves. */
+  /**
+   * Hatch calls refused invalid_args, plus hatch calls reaching an operation a
+   * named tool serves. Other failures are not misuse: recovery tasks inject them.
+   */
   hatchMisuse: number;
   hatchNamedBypass: number;
   searches: number;
@@ -136,7 +139,7 @@ export function descriptionMetrics(trial: TrialResult): DescriptionMetrics {
     const path = typeof attempt.args.path === "string" ? attempt.args.path : "";
     const bypass = (namedPatterns[provider] ?? []).some((op) => op.method === method && op.path.test(path));
     if (bypass) hatchNamedBypass += 1;
-    if (attempt.failed || bypass) hatchMisuse += 1;
+    if (attempt.invalidArgs || bypass) hatchMisuse += 1;
   }
   const programCalls = (name: string) =>
     (trial.saved?.world.programs ?? []).flatMap((p) => p.calls).filter((call) => call.name === name).length;

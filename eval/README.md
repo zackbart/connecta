@@ -1334,8 +1334,9 @@ consent, so they were checked against the pinned index by hand.
 
 - **First-attempt `invalid_args`:** distinct provider tools whose first call in
   the trial failed `invalid_args`, across direct, native and program calls.
-- **Hatch misuse:** failed `_api_read`, `_api_write` or `_api_upload` calls, plus
-  hatch calls reaching an operation a named tool serves.
+- **Hatch misuse:** `_api_read`, `_api_write` or `_api_upload` calls refused
+  `invalid_args`, plus hatch calls reaching an operation a named tool serves.
+  Other failures do not count, because recovery tasks inject them.
 - **Searches:** `search_tools`, `connecta.search` and observable host searches.
   Codex reports no host search, so its count is a lower bound.
 - **Invalid trials:** a timeout, interruption or runner error is reported and

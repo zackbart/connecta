@@ -3,9 +3,17 @@
  * scores. `eval/report/descriptions.ts` reads these rules; it does not tune them.
  *
  * Budget: 200 paid trials. Stage A is 4 arms x 9 tasks x 2 hosts x 2 repeats =
- * 144. Stage B is 2 arms x 6 tasks x 2 hosts x 2 repeats = 48. Eight remain for
- * a runner pilot. A load-related timeout is invalid: it stays in the result
+ * 144. Stage B is planned as 2 arms x 6 tasks x 2 hosts x 2 repeats = 48. Eight remain
+ * for a runner pilot. A load-related timeout is invalid: it stays in the result
  * file, is reported, and removes its pair from pass comparisons. It is not rerun.
+ *
+ * Deviation, recorded after Stage A and before Stage B: `quickbooks-write-journey`
+ * failed all 31 valid trials on every arm and host, so it cannot separate arms.
+ * Its prompt omits the invoice details, and a scripted turn makes the endpoint
+ * read-only before an agent that asks for them can write. The scripted reference
+ * passes. It stays in Stage A's results, reported as non-discriminating, and was
+ * removed from Stage B, leaving 5 tasks and 40 trials. Removal did not depend on
+ * any difference between arms. Paid total: 2 pilot + 144 + 40 = 186.
  */
 export const DESCRIPTION_PLAN = {
   budget: 200,
@@ -42,7 +50,6 @@ export const DESCRIPTION_PLAN = {
       "cloudflare-step2-kv-hatch",
       "github-release-once",
       "ccb-family-group-join",
-      "quickbooks-write-journey",
       "google-sheets-4",
     ],
   },
