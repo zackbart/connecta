@@ -10,20 +10,21 @@ import type { Injection } from "../fakes/injection.js";
 import type { Deployment } from "../deploy/node.js";
 import { observedPrograms, startDeployment, type Target } from "../deploy/targets.js";
 import { connectMcp, type ListedTool } from "../support/mcp.js";
-import type { ActiveTask, Check } from "../tasks/types.js";
+import type { ActiveTask, Check, TrialSkip } from "../tasks/types.js";
 import { runCodex } from "./codex.js";
 import { runClaude } from "./claude.js";
 import { gradeTask, classifyChecks, passes, type Grading } from "../tasks/grading.js";
 import { taskForSurface } from "../tasks/surface.js";
 import { assertSurface, type Surface } from "./surface.js";
 import { startAuthHost } from "./auth-host.js";
-import { infraError, stopsBatch } from "./infra.js";
+import { connectionLost, infraError, stopsBatch } from "./infra.js";
 import { saveGradeInputs, type SavedGradeInputs } from "./saved.js";
 import { runProtocol } from "../support/meta.js";
 import { conversationCompletion } from "./completion.js";
 import {
   countBy,
   downstreamMetrics,
+  errorsBeforeFirstDownstreamSuccess,
   parseTrace,
   type AgentTrace,
   type StreamEvent,
@@ -58,6 +59,8 @@ interface TrialMetrics {
   /** Times the runner answered "yes" to an agent asking permission it already had. */
   confirmationNudges: number;
   downstream: DownstreamMetrics;
+  /** Calls to catalog padding: private ledgers, absent from `downstream`. */
+  distractors?: DownstreamMetrics;
 }
 
 export interface TrialResult {
@@ -72,7 +75,7 @@ export interface TrialResult {
   model: string;
   repeat: number;
   status: "pass" | "fail" | "error" | "skipped";
-  skip?: { code: "runner-limitation"; reason: string };
+  skip?: TrialSkip;
   saved?: SavedGradeInputs;
   regrade?: { applied: string[]; unavailable: string[]; reason?: string };
   error?: string;
@@ -257,7 +260,11 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
         return followUp.prompt;
       },
     });
-    world.programs = await observedPrograms(deployment);
+    const lost = await connectionLost(deployment.mcpUrl, deployment.token);
+    world.programs = await observedPrograms(deployment).catch((failure: unknown) => {
+      if (lost) return deployment.programs;
+      throw failure;
+    });
     const trace = parseTrace(run.events, run.turnStarts, prompts);
     for (const use of trace.toolUses) {
       const listed = surface.find((tool) => tool.name === use.tool);
@@ -293,11 +300,10 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
         : {}),
       firstTurnInputTokens: trace.firstTurnInputTokens,
       hostSearchCalls: trace.hostSearchCalls,
-      toolErrorsBeforeFirstSuccess: (() => {
-        const uses = trace.toolUses.filter((use) => surfaceNames.has(use.tool));
-        const first = uses.findIndex((use) => use.isError === false);
-        return (first < 0 ? uses : uses.slice(0, first)).filter((use) => use.isError === true).length;
-      })(),
+      toolErrorsBeforeFirstSuccess: errorsBeforeFirstDownstreamSuccess(
+        trace.toolUses.filter((use) => surfaceNames.has(use.tool)),
+        world.programs,
+      ),
       wallMs: run.wallMs,
       apiMs: trace.apiMs,
       modelTurns: trace.modelTurns,
@@ -315,12 +321,15 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       toolErrors: trace.toolUses.filter((use) => use.isError).length,
       confirmationNudges: nudges,
       downstream: downstreamMetrics(world.ledger.calls, world.ledger.requests),
+      ...(world.injected.catalogCalls.length
+        ? { distractors: downstreamMetrics(world.injected.catalogCalls, []) }
+        : {}),
     };
     const error = run.aborted
       ? "interrupted by operator"
       : run.timedOut
         ? `${options.runner ?? "codex"} trial timed out`
-        : infraError(run.events, run.exitCode, trace.loadedTools);
+        : (lost ?? infraError(run.events, run.exitCode, trace.loadedTools));
     const completed = conversationCompletion(trace, run.turnStarts.length, run.timedOut, run.aborted).check;
     const unprompted: Check = {
       id: "no-confirmation-needed",

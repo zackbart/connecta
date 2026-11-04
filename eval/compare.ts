@@ -9,6 +9,8 @@ import { observation, trialOutcome } from "./agent/verdict.js";
 import type { TrialResult } from "./agent/run.js";
 import type { AgentResultFile } from "./report/summary.js";
 import { ACTIVE_TASKS, COMPARISON_TASKS } from "./tasks/index.js";
+import { taskForSurface } from "./tasks/surface.js";
+import { noCodeDecisionLines } from "./worker-comparison-plan.js";
 import { downstreamMetrics } from "./agent/trace.js";
 import { restoreGradeInputs } from "./agent/saved.js";
 import { flags, runProtocol } from "./support/meta.js";
@@ -82,7 +84,7 @@ const trialSchema = z
     timeoutMs: z.number().positive().finite(),
     error: z.string().min(1).optional(),
     skip: z
-      .object({ code: z.literal("runner-limitation"), reason: knownString })
+      .object({ code: z.enum(["runner-limitation", "capability-mismatch"]), reason: knownString })
       .strict()
       .optional(),
     codex: z.unknown().optional(),
@@ -100,11 +102,12 @@ const trialSchema = z
   })
   .strict();
 
-/** The only exclusion is an unexecuted, explicitly recorded Claude rich-output N/A. */
+/** The only exclusions are unexecuted, explicitly recorded task N/As: Claude rich output, or an arm's capability mismatch. */
 function isNA(trial: TrialResult, runner: "codex" | "claude"): boolean {
-  const skip = ACTIVE_TASKS.find((t) => t.id === trial.task)?.runnerSkips?.[runner];
+  const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
+  const skip = task && taskForSurface(task, trial.surface ?? "six").runnerSkips?.[runner];
   return (
-    runner === "claude" &&
+    (runner === "claude" || skip?.code === "capability-mismatch") &&
     !!skip &&
     trial.status === "skipped" &&
     trial.skip?.code === skip.code &&
@@ -373,6 +376,12 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
             ),
           ),
         );
+    }
+    const native = arms[0] === "native" ? a : arms[1] === "native" ? b : undefined;
+    const noCode = arms[0] === "native-no-code" ? a : arms[1] === "native-no-code" ? b : undefined;
+    if (native && noCode) {
+      const passedIn = (file: AgentResultFile) => (trial: TrialResult) => trialOutcome(trial, file.config.runner!).pass;
+      lines.push(...noCodeDecisionLines(native, noCode, passedIn(native), passedIn(noCode)));
     }
     return lines.join("\n");
   }

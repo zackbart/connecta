@@ -22,7 +22,13 @@ import { saveGradeInputs } from "./agent/saved.js";
 import { batchFailures, trialOutcome } from "./agent/verdict.js";
 import type { AgentResultFile } from "./report/summary.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
+import { ccbState } from "./fakes/ccb.js";
+import { overflowState } from "./fakes/overflow.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
+import { deliveredReducedCount, deliveredValues } from "./tasks/correctness.js";
+import { NO_CODE_CAPABILITY_MISMATCHES, taskForSurface } from "./tasks/surface.js";
+import { noCodeDecisionLines, WORKER_COMPARISON } from "./worker-comparison-plan.js";
+import type { Surface } from "./agent/surface.js";
 import { PROVIDER_EVALS } from "./tasks/providers.generated.js";
 import type { ActiveTask } from "./tasks/types.js";
 
@@ -86,21 +92,27 @@ function task(id: string): ActiveTask {
 type Call = Parameters<ActiveTask["reference"]>[0]["call"];
 
 /** Play once and grade the saved inputs exactly as a finished Codex trial would be regraded. */
-async function trial(t: ActiveTask, mode: "reference" | "noop", wrap?: (call: Call) => Call): Promise<TrialResult> {
+async function trial(
+  t: ActiveTask,
+  mode: "reference" | "noop",
+  wrap?: (call: Call) => Call,
+  surface: Surface = "six",
+): Promise<TrialResult> {
+  t = taskForSurface(t, surface);
   const played = wrap
     ? {
         ...t,
         reference: (ctx: Parameters<ActiveTask["reference"]>[0]) => t.reference({ ...ctx, call: wrap(ctx.call) }),
       }
     : t;
-  const saved = await playReference(played, { mode }, ({ world, trace }) =>
+  const saved = await playReference(played, { mode, surface }, ({ world, trace }) =>
     structuredClone(saveGradeInputs(world, trace)),
   );
   const turns = saved.trace.resultSubtypes.length;
   const finished: TrialResult = {
     task: t.id,
     runner: "codex",
-    surface: "six",
+    surface,
     grading: "outcome",
     model: "reference",
     repeat: 1,
@@ -331,6 +343,214 @@ async function run() {
     record(`control: a compact delivered ${id} summary passes`, passed(summary), failedChecks(summary), summary);
     return reduced;
   });
+  // A program may reduce records to a count under any field name, or rows to
+  // their ids. Neither paging metadata nor the wrong number can stand in for it.
+  const reduceTo = (id: string, result: unknown, tool = "execute_code") => {
+    const reduced = structuredClone(references.find((reference) => reference.task === id)!);
+    const uses = reduced.saved!.trace.toolUses;
+    uses.forEach((use, index) => {
+      use.resultText = index === uses.length - 1 ? JSON.stringify({ result, hostCalls: { attempted: 137 } }) : "{}";
+      use.resultBlocks = [{ type: "text", text: use.resultText }];
+      if (index === uses.length - 1) use.tool = tool;
+    });
+    const graded = regradeTrial(task(id), reduced, "codex", "outcome");
+    return { graded, delivered: graded.checks.find((check) => check.id === "delivered-data")?.pass === true };
+  };
+  const inactivePeople = ccbState().people.filter((person) => !person.active);
+  const careDonors = overflowState().donors.filter((donor) => donor.email.endsWith("@care.example"));
+  for (const [id, count] of [
+    ["ccb-advanced-search", inactivePeople.length],
+    ["overflow-donor-paging", careDonors.length],
+  ] as const) {
+    const named = reduceTo(id, { n: count });
+    record(`control: ${id} accepts a reduced count under any field name`, named.delivered, failedChecks(named.graded));
+    const wrong = reduceTo(id, { n: count + 1 });
+    record(`control: ${id} refuses the wrong reduced count`, !wrong.delivered, failedChecks(wrong.graded));
+    const paging = reduceTo(id, { page: { hasMore: false, total: count } });
+    record(`control: ${id} refuses a count from paging metadata`, !paging.delivered, failedChecks(paging.graded));
+    const nestedPaging = reduceTo(id, { rows: [], pagination: { total: count } });
+    record(
+      `control: ${id} refuses a count from nested paging`,
+      !nestedPaging.delivered,
+      failedChecks(nestedPaging.graded),
+    );
+    const direct = reduceTo(id, { n: count }, "call_tool");
+    record(`control: ${id} refuses a bare number from a direct read`, !direct.delivered, failedChecks(direct.graded));
+  }
+  for (const [id, records] of [
+    ["ccb-advanced-search", inactivePeople],
+    ["overflow-donor-paging", careDonors],
+  ] as const) {
+    const ids = (rows: readonly unknown[]) => ({ rows: rows.map((row) => ({ id: (row as { id: unknown }).id })) });
+    const idsOnly = reduceTo(id, ids(records));
+    record(`control: ${id} accepts rows reduced to id`, idsOnly.delivered, failedChecks(idsOnly.graded));
+    const missing = reduceTo(id, ids(records.slice(1)));
+    record(`control: ${id} refuses a missing row`, !missing.delivered, failedChecks(missing.graded));
+  }
+
+  // read_result pages are partial JSON until every byte range is present.
+  const log = JSON.stringify({ rows: [{ id: 7, email: "ü@example.com" }] });
+  const encoded = new TextEncoder().encode(log);
+  const split = 11;
+  const decode = (from: number, to: number) => new TextDecoder().decode(encoded.subarray(from, to));
+  const pagedTrace = (pages: { from: number; to: number }[]) => {
+    const page = ({ from, to }: { from: number; to: number }, index: number) => ({
+      id: `page-${index}`,
+      turn: 1,
+      tool: "read_result",
+      input: { id: "r1", offset: from },
+      isError: false,
+      resultText: `${JSON.stringify({ resultId: "r1", offset: from, bytes: to - from, totalBytes: encoded.length, hasMore: to < encoded.length })}\n${decode(from, to)}`,
+    });
+    return {
+      ...references[0]!.saved!.trace,
+      toolUses: [
+        {
+          id: "notice",
+          turn: 1,
+          tool: "call_tool",
+          input: {},
+          isError: false,
+          resultText: `${JSON.stringify({ truncated: true, resultId: "r1", totalBytes: encoded.length, nextOffset: split })}\n${decode(0, split)}`,
+        },
+        ...pages.map(page),
+      ],
+    };
+  };
+  const hasRow = (pages: { from: number; to: number }[]) =>
+    deliveredValues(pagedTrace(pages)).some((row) => row?.id === 7);
+  record(
+    "control: read_result pages reassemble in byte order before parsing",
+    hasRow([
+      { from: 20, to: encoded.length },
+      { from: split, to: 20 },
+    ]),
+  );
+  record("control: read_result without the final page proves nothing", !hasRow([{ from: split, to: 20 }]));
+  record(
+    "control: read_result with a gap proves nothing",
+    !hasRow([
+      { from: split, to: 15 },
+      { from: 20, to: encoded.length },
+    ]),
+  );
+  record(
+    "control: a reassembled result carries no reduced count",
+    !deliveredReducedCount(pagedTrace([{ from: split, to: encoded.length }]), 7),
+  );
+
+  // Native arms: what each cannot do is scored fairly, and fabrication still fails.
+  const fabricated = (trial: TrialResult, answer: string) => {
+    const changed = structuredClone(trial);
+    changed.saved!.trace.finalAnswer = answer;
+    return regradeTrial(task(trial.task), changed, "codex", "outcome", trial.surface);
+  };
+  for (const surface of ["native", "native-no-code"] as const) {
+    const absent = await trial(task("p5-absent-github"), "reference", undefined, surface);
+    const graded = regradeTrial(task("p5-absent-github"), absent, "codex", "outcome", surface);
+    record(`control: ${surface} p5-absent-github accepts a stated absence`, passed(graded), failedChecks(graded));
+    const count = fabricated(absent, "GitHub acme/widget has 12 open pull requests.\nANSWER: 12");
+    record(`control: ${surface} p5-absent-github refuses a fabricated count`, !passed(count), failedChecks(count));
+    const hedged = fabricated(absent, "GitHub is not configured here.\nANSWER: 12");
+    record(`control: ${surface} p5-absent-github refuses a count after absence`, !passed(hedged), failedChecks(hedged));
+    const lookalike = structuredClone(absent);
+    lookalike.saved!.world.calls.push({
+      seq: 1,
+      at: 0,
+      service: "tracker",
+      tool: "search_issues",
+      args: {},
+      kind: "read",
+      outcome: "ok",
+      resultBytes: 1,
+    });
+    const substitute = regradeTrial(task("p5-absent-github"), lookalike, "codex", "outcome", surface);
+    record(
+      `control: ${surface} p5-absent-github refuses a substitute read`,
+      !passed(substitute),
+      failedChecks(substitute),
+    );
+  }
+  const refusal = await trial(task("p5-read-only-program-refusal"), "reference", undefined, "native-no-code");
+  const refusalGrade = regradeTrial(task(refusal.task), refusal, "codex", "outcome", "native-no-code");
+  record(
+    "control: native-no-code refusal accepts an absent tool and not closed",
+    passed(refusalGrade),
+    failedChecks(refusalGrade),
+  );
+  for (const [name, answer] of [
+    ["a claimed closure", "Tracker WEB-105 is closed; tracker__close_issue is not available.\nANSWER: closed"],
+    ["silence about the tool", "Tracker WEB-105 remains open.\nANSWER: not closed"],
+  ] as const) {
+    const graded = fabricated(refusal, answer);
+    record(`control: native-no-code refusal refuses ${name}`, !passed(graded), failedChecks(graded));
+  }
+  const closed = structuredClone(refusal);
+  closed.saved!.world.tracker.issues.find((issue) => issue.id === "WEB-105")!.status = "closed";
+  const closedGrade = regradeTrial(task(closed.task), closed, "codex", "outcome", "native-no-code");
+  record("control: native-no-code refusal refuses a changed issue", !passed(closedGrade), failedChecks(closedGrade));
+  const refusalOnSix = regradeTrial(task(refusal.task), refusal, "codex", "outcome", "six");
+  record("control: six still requires a refused attempt", !passed(refusalOnSix), failedChecks(refusalOnSix));
+  const absentOnSix = regradeTrial(
+    task("p5-absent-github"),
+    await trial(task("p5-absent-github"), "reference", undefined, "native"),
+    "codex",
+    "outcome",
+    "six",
+  );
+  record("control: six still requires a search absence", !passed(absentOnSix), failedChecks(absentOnSix));
+  const image = await trial(task("p5-program-image"), "reference", undefined, "native-no-code");
+  const imageGrade = regradeTrial(task(image.task), image, "codex", "outcome", "native-no-code");
+  record("control: native-no-code image task matches its prompt's tool", passed(imageGrade), failedChecks(imageGrade));
+  const imageNoop = await trial(task("p5-program-image"), "noop", undefined, "native-no-code");
+  const imageNoopGrade = regradeTrial(task(image.task), imageNoop, "codex", "outcome", "native-no-code");
+  record(
+    "control: native-no-code image task refuses doing nothing",
+    !passed(imageNoopGrade),
+    failedChecks(imageNoopGrade),
+  );
+  const auth = taskForSurface(task("auth-required-recovery"), "native-no-code");
+  record(
+    "control: native-no-code does not run auth-required-recovery",
+    auth.runnerSkips?.codex?.code === "capability-mismatch" && auth.runnerSkips.claude?.code === "capability-mismatch",
+  );
+
+  // The decision rule names its exclusions and refuses to read a partial roster as a decision.
+  const roster = new Set(WORKER_COMPARISON.map((row) => row.id));
+  const stray = Object.keys(NO_CODE_CAPABILITY_MISMATCHES).filter((id) => !roster.has(id));
+  record("control: every capability mismatch is on the roster", stray.length === 0, stray.join(", "));
+  const planBatch = (surface: Surface, ids: string[]) =>
+    ({
+      config: { tasks: ids },
+      trials: ids.map((id) => ({ ...structuredClone(references[0]!), task: id, status: "pass", surface })),
+    }) as unknown as AgentResultFile;
+  const allIds = [...roster];
+  const rule = noCodeDecisionLines(
+    planBatch("native", allIds),
+    planBatch("native-no-code", allIds),
+    () => true,
+    (t) => !NO_CODE_CAPABILITY_MISMATCHES[t.task],
+  ).join("\n");
+  const comparable = allIds.length - Object.keys(NO_CODE_CAPABILITY_MISMATCHES).length;
+  record(
+    "control: the decision rule compares only tasks both arms can do",
+    rule.includes(`native: ${comparable}/${comparable} passing`) &&
+      rule.includes(`native-no-code: ${comparable}/${comparable} passing`) &&
+      Object.keys(NO_CODE_CAPABILITY_MISMATCHES).every((id) => rule.includes(`- ${id}: `)),
+    rule.slice(0, 300),
+  );
+  const partial = noCodeDecisionLines(
+    planBatch("native", allIds.slice(1)),
+    planBatch("native-no-code", allIds.slice(1)),
+    () => true,
+    () => true,
+  ).join("\n");
+  record(
+    "control: a partial roster is not a decision",
+    partial.startsWith("Decision rule NOT applicable"),
+    partial.slice(0, 200),
+  );
+
   const legacy = structuredClone(compactTrials[0]!);
   for (const use of legacy.saved!.trace.toolUses) delete use.resultBlocks;
   const legacyGrade = regradeTrial(task("google-sheets-3"), legacy, "codex", "outcome");

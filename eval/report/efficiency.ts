@@ -204,6 +204,15 @@ export interface ExpensiveTrial {
   toolErrors: number | undefined;
 }
 
+/** A trial that called catalog padding. A write also fails `no-distractor-writes`. */
+interface DistractorTrial {
+  task: string;
+  repeat: number;
+  reads: number;
+  writes: number;
+  byTool: Record<string, number>;
+}
+
 export interface ModelEfficiency {
   model: string;
   /** Trials that ran (N/A excluded). */
@@ -230,6 +239,8 @@ export interface ModelEfficiency {
   responses: Record<string, { calls: number; medianBytes: number; maxBytes: number }>;
   /** Most expensive ran trials by total tokens, then wall time. */
   expensive: ExpensiveTrial[];
+  /** Every ran trial that called catalog padding. */
+  distractors: DistractorTrial[];
 }
 
 /**
@@ -277,8 +288,15 @@ export function modelEfficiency(
         guideFetches: e.guideFetches,
         toolErrors: e.toolErrors,
       }));
+    const distractors = ran.flatMap((trial): DistractorTrial[] => {
+      const calls = trial.metrics?.distractors;
+      return calls
+        ? [{ task: trial.task, repeat: trial.repeat, reads: calls.reads, writes: calls.writes, byTool: calls.byTool }]
+        : [];
+    });
     return {
       model,
+      distractors,
       trials: ran.length,
       passing: passing.length,
       withoutSizes: measured.filter(({ e }) => e.responses === undefined).length,
@@ -376,6 +394,14 @@ export function efficiencyLines(models: ModelEfficiency[], rel?: Reliability): s
       lines.push(
         `  expensive: ${trial.task} #${trial.repeat} ${trial.status} ${fmtCount(trial.totalTokens, 0)} tokens` +
           `${trial.wallMs === undefined ? "" : ` ${(trial.wallMs / 1000).toFixed(0)}s`}: ${expenseReason(trial)}`,
+      );
+    for (const trial of summary.distractors)
+      lines.push(
+        `  distractors: ${trial.task} #${trial.repeat} ${trial.reads} read(s), ${trial.writes} write(s): ${Object.entries(
+          trial.byTool,
+        )
+          .map(([tool, count]) => `${tool} ×${count}`)
+          .join(", ")}`,
       );
   }
   return lines;

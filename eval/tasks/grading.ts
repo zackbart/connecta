@@ -240,6 +240,7 @@ const OUTER: Record<string, Grading> = {
   "conversation-completed": "outcome",
   "no-confirmation-needed": "outcome",
   "no-duplicate-writes": "outcome",
+  "no-distractor-writes": "outcome",
 };
 
 export function classifyChecks(task: string, checks: Check[]): Check[] {
@@ -287,6 +288,10 @@ export function gradeTask(
     };
   }
   const duplicateWrites = downstreamMetrics(context.world.ledger.calls, []).duplicateWrites;
+  // Padding keeps a private ledger, so task checks cannot see these calls.
+  // Reading a wrong tool is reported; writing to one is a real wrong mutation.
+  const distractors = context.world.injected.catalogCalls;
+  const distractorWrites = distractors.filter((call) => call.kind === "write");
   return classifyChecks(task.id, [
     ...task.grade({ ...context, surface, grading }),
     {
@@ -295,5 +300,15 @@ export function gradeTask(
       pass: duplicateWrites === 0,
       detail: `${duplicateWrites} duplicate write(s)`,
     },
+    ...(distractors.length
+      ? [
+          {
+            id: "no-distractor-writes",
+            description: "no write reached a padded catalog tool",
+            pass: distractorWrites.length === 0,
+            detail: `${distractorWrites.length} write(s): ${distractorWrites.map((call) => `${call.service}.${call.tool}`).join(", ")}`,
+          },
+        ]
+      : []),
   ]);
 }

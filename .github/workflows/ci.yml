@@ -103,6 +103,8 @@ jobs:
         timeout-minutes: 16
         uses: ./.github/actions/install-chromium
       - run: pnpm run eval:smoke --out eval/results/smoke.json
+      - name: Verify eval surface arms against real deployments
+        run: pnpm run eval:selftest --native-only
       - name: Upload eval diagnostics
         if: ${{ failure() }}
         uses: actions/upload-artifact@v6

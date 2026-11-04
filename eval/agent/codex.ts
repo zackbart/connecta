@@ -420,6 +420,8 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       baseInstructions:
         "Complete the user's task using only the connecta MCP tools. Do not use shell, files, web, or other services.",
       allowProviderModelFallback: false,
+      // Without this the app-server never reports the host's own `exec` calls.
+      experimentalRawEvents: true,
     });
     model = thread.model;
     if (model !== options.model) throw new Error(`Codex served ${String(model)} instead of ${options.model}`);
