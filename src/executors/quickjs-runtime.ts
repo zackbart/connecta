@@ -43,10 +43,8 @@ const MAX_LOG_MARKER_TRANSPORT_BYTES = Math.max(
   logTransportBytes(LOG_ENTRY_LIMIT_MARKER),
   logTransportBytes(LOG_SIZE_LIMIT_MARKER),
 );
-// Keep one host result below the range where quickjs-emscripten@0.32.0 can
-// nondeterministically fail during runtime disposal under concurrent load.
-// This still lets guest code reduce data more than ten times larger than
-// connecta's final response budget.
+// Bounds what one host result puts in the guest. This still lets guest code
+// reduce data more than ten times larger than connecta's final response budget.
 const MAX_HOST_RESULT_BYTES = 256 * 1024;
 
 function logTransportBytes(entry: string): number {
@@ -293,6 +291,8 @@ function installBridge(
  */
 export interface QuickJsExecutionResult extends ExecuteResult {
   timedOut?: boolean;
+  /** Settles once the run's runtime is freed; false when freeing it failed. */
+  tornDown?: Promise<boolean>;
 }
 
 /**
@@ -309,6 +309,12 @@ export async function executeQuickJs(
   const { timeoutMs, cpuTimeMs, memoryLimitBytes, maxStackSizeBytes } = options;
   const QuickJS = await getQuickJS();
   const ctx = QuickJS.newContext();
+  // quickjs-emscripten-core 0.32.0's executePendingJobs reads its context out-pointer through a
+  // typed array, which detaches when WASM memory grows during the job pass. It then reads
+  // undefined and calls newContext({ contextPointer: undefined }), which creates a context
+  // nothing frees, and freeing the runtime aborts. A run has this one context, and that lookup
+  // is the only thing here that reaches newContext, so it always means this one.
+  ctx.runtime.newContext = () => ctx;
   const deadline = Date.now() + timeoutMs;
   const timeoutError = `Execution timed out after ${timeoutMs}ms.`;
   const cpuTimeoutError = `Execution exceeded the ${cpuTimeMs}ms guest CPU budget.`;
@@ -339,7 +345,16 @@ export async function executeQuickJs(
   let describeError: QuickJSHandle | undefined;
   const logs: string[] = [];
   const bridge = installBridge(ctx, providers, logs, onLog);
-  const finish = <T extends ExecuteResult>(r: T): T => {
+  // A failed free leaves this child's WASM module unusable, but the answer is already in host memory.
+  const dispose = (): boolean => {
+    try {
+      ctx.dispose();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const finish = <T extends ExecuteResult>(r: T): T & { tornDown: Promise<boolean> } => {
     bridge.aborted = true;
     describeError?.dispose();
     for (const failure of bridge.failures) failure.error.dispose();
@@ -352,18 +367,18 @@ export async function executeQuickJs(
     // stragglers are waiting on. Arming before the pending check (and
     // synchronously, before the first await) closes the settle-before-arm
     // window: any settle after this point resolves the promise we await.
-    if (bridge.pending === 0) ctx.dispose();
-    else {
-      void (async () => {
-        armWake(bridge);
-        while (bridge.pending > 0) {
-          await bridge.waitForSettle;
-          armWake(bridge);
-        }
-        ctx.dispose();
-      })();
-    }
-    return logs.length > 0 ? { ...r, logs } : r;
+    const tornDown =
+      bridge.pending === 0
+        ? Promise.resolve(dispose())
+        : (async () => {
+            armWake(bridge);
+            while (bridge.pending > 0) {
+              await bridge.waitForSettle;
+              armWake(bridge);
+            }
+            return dispose();
+          })();
+    return { ...r, ...(logs.length > 0 ? { logs } : {}), tornDown };
   };
   const rejected = (error: QuickJSHandle): QuickJsExecutionResult => {
     // Interrupt/deadline facts are host state, never inferred by inspecting
