@@ -1,4 +1,5 @@
 /** Regressions that generic wrong-source and missing-answer mutations cannot expose. */
+import { GITHUB_REFUSAL_TEXT } from "../fakes/github.js";
 import { restCounterexamples } from "./rest-controls.js";
 import { ALICE, googleSpreadsheet } from "../fakes/google.js";
 import type { AgentTrace } from "../agent/trace.js";
@@ -57,6 +58,66 @@ export function counterexamples(
         world: changedCalls(world.ledger.calls.filter((c) => c.seq <= write.seq)),
       });
   }
+  if (task.id === "auth-required-recovery") {
+    const said = trace.transcript.flatMap((entry) => (entry.kind === "assistant" ? [entry.text] : []));
+    const issued = said.map((text) => /https?:\/\/\S+/.exec(text)?.[0]).find(Boolean) ?? "";
+    const retell = (text: (line: string) => string): AgentTrace => ({
+      ...trace,
+      finalAnswer: text(trace.finalAnswer ?? ""),
+      transcript: trace.transcript.map((entry) =>
+        entry.kind === "assistant" ? { ...entry, text: text(entry.text) } : entry,
+      ),
+    });
+    cases.push({
+      name: "handoff paraphrased, no link",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, "the connection page")),
+    });
+    cases.push({
+      name: "handoff link altered",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, decodeURIComponent(issued).replace("://", "://copy."))),
+    });
+    for (const [name, appended] of [
+      ["path", "/extra"],
+      ["query", "&extra=1"],
+      ["token characters", "BROKEN"],
+      ["token character, one that a linkifier would drop", "_"],
+    ] as const)
+      cases.push({
+        name: `handoff link with appended ${name}`,
+        check: "handed-off",
+        trace: retell((line) => line.replaceAll(issued, `${issued}${appended}`)),
+      });
+    cases.push({
+      name: "handoff link appended to inside a Markdown destination",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, `[Connect](${issued}BROKEN)`)),
+    });
+    cases.push({
+      name: "handoff link only inside another URL",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, `https://proxy.example/?u=${issued}`)),
+    });
+    cases.push({
+      name: "authorize_connector called, nothing passed on",
+      check: "handed-off",
+      trace: {
+        ...retell((line) => line.replaceAll(issued, "the connection page")),
+        toolUses: [
+          ...trace.toolUses,
+          {
+            id: "authorize",
+            turn: 1,
+            tool: "authorize_connector",
+            input: { connector: "billing" },
+            isError: false,
+            resultText: JSON.stringify({ operatorUrl: issued }),
+          },
+        ],
+      },
+    });
+  }
   if (task.id.startsWith("github-")) {
     const changedCalls = (calls: World["ledger"]["calls"]): World =>
       Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
@@ -69,6 +130,68 @@ export function counterexamples(
         name: "duplicate business write",
         world: changedCalls([...world.ledger.calls, { ...write, seq: 99999 }]),
       });
+    if (task.id === "github-ci-scope-gap") {
+      const answer = trace.finalAnswer ?? "";
+      const results = (text: string) => ({
+        ...trace,
+        toolUses: trace.toolUses.map((use) => (use.isError ? { ...use, resultText: text } : use)),
+      });
+      cases.push(
+        {
+          name: "gadget reported clean",
+          trace: { ...trace, finalAnswer: answer.replace(/^gadget:.*$/m, "gadget: none") },
+        },
+        {
+          name: "gap only in prose above a clean final line",
+          trace: {
+            ...trace,
+            finalAnswer: `gadget: unread: checks=read\n\n${answer.replace(/^gadget:.*$/m, "gadget: none")}`,
+          },
+        },
+        {
+          name: "widget failure omitted",
+          trace: { ...trace, finalAnswer: answer.replace(/^widget:.*$/m, "widget: none") },
+        },
+        {
+          name: "credential reset advised",
+          trace: {
+            ...trace,
+            finalAnswer: answer.replace(/^gadget:.*$/m, "gadget: unread: checks; reset the credential"),
+          },
+        },
+        {
+          name: "credential reset advised above the final lines",
+          trace: {
+            ...trace,
+            finalAnswer:
+              "Reset the GitHub credential to restore gadget access.\nwidget: integration-tests\ngadget: unread: checks=read",
+          },
+        },
+        {
+          name: "refusal surfaced as auth_required",
+          check: "no-credential-handoff",
+          trace: results(JSON.stringify({ error: { code: "auth_required" } })),
+        },
+        {
+          name: "vendor refusal text returned",
+          check: "vendor-text-withheld",
+          trace: results(
+            JSON.stringify({ error: { code: "provider_permission_denied", message: GITHUB_REFUSAL_TEXT } }),
+          ),
+        },
+        {
+          name: "gadget never read",
+          world: changedCalls(
+            world.ledger.calls.filter((c) => !String(c.args.path).startsWith("/repos/alice/gadget/")),
+          ),
+        },
+        {
+          name: "widget check runs not delivered",
+          check: "delivered-data",
+          trace: { ...trace, toolUses: trace.toolUses.filter((use) => use.isError) },
+        },
+      );
+    }
     if (task.id === "github-repository-paging")
       cases.push({
         name: "first page only",
@@ -1253,6 +1376,28 @@ export function positiveVariants(
             .join("\n"),
       },
     });
+  }
+  if (task.id === "auth-required-recovery") {
+    const said = trace.transcript.flatMap((entry) => (entry.kind === "assistant" ? [entry.text] : []));
+    const issued = said.map((text) => /https?:\/\/\S+/.exec(text)?.[0]).find(Boolean) ?? "";
+    for (const [name, wrapped] of [
+      ["sentence punctuation", `${issued}.`],
+      ["a Markdown link", `[Connect billing](${issued}).`],
+      ["bold", `**${issued}**,`],
+      ["a code span", `\`${issued}\`:`],
+      ["an angle autolink", `<${issued}>`],
+      ["parentheses around it", `(${issued}).`],
+      ["parentheses opened earlier", `(open this: ${issued})`],
+    ] as const)
+      cases.push({
+        name: `handoff link intact in ${name}`,
+        trace: {
+          ...trace,
+          transcript: trace.transcript.map((entry) =>
+            entry.kind === "assistant" ? { ...entry, text: entry.text.replaceAll(issued, wrapped) } : entry,
+          ),
+        },
+      });
   }
   return cases.map((c) => {
     const checks = task.grade({ world: c.world ?? world, trace: c.trace });

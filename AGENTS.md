@@ -96,8 +96,8 @@ every PR, main push, nightly and manual run:
   does not filter membership in Vitest 5.0.4.
   `workers` runs the binding-backed `WORKERS_SUITES` in `vitest.config.ts`
   with four Vitest workers on the four-core CI runner.
-- `behavior` runs `eval:outcomes` and `eval:smoke`, retaining `eval/results/`
-  on failure.
+- `behavior` runs `eval:outcomes`, `eval:smoke` and
+  `eval:selftest --native-only`, retaining `eval/results/` on failure.
 - `browser` runs Playwright. Visual comparisons never retry; behavior tests
   keep two CI retries. Any failed attempt retains the HTML report, diffs and
   traces as `playwright-report`.
@@ -113,7 +113,7 @@ concrete jobs with `actions: read` and requires exactly one completed,
 successful job in the latest attempt for each expected build and Node matrix
 leg (retaining successful legs when only failures are rerun). A rolled-up job
 result alone is insufficient evidence that every leg completed; the API check
-also covers cancellation after a leg's last successful step. Superseded PR runs are cancelled; each main
+also covers cancellation after a leg's last successful step. It rereads the jobs API for up to about five minutes, because that API can report finished legs as queued; a failed or duplicated leg fails at once, and passing still requires a read proving every leg. Superseded PR runs are cancelled; each main
 push retains a full run. Branch protection should require `check` and an
 up-to-date branch. Repository settings are managed separately.
 
@@ -248,9 +248,7 @@ Read the matching skill before that work: [add-provider](./.claude/skills/add-pr
 Use Sol (GPT-6.1-Sol through T3 `delegate_task`: `codex`, `gpt-6.1-sol`) for
 building, fix rounds, rebases and independent reviews, as authorized by #703.
 The builder never reviews its own PR; an independent Sol may review a Sol-built
-PR. Security reviews run at xhigh reasoning. Use Opus (`claudeAgent`,
-`claude-opus-5-5`) sparingly for orchestration and design-heavy or cross-cutting
-work where Sol has stalled. Run at most about four concurrent Opus agents.
+PR. Security reviews run at xhigh reasoning.
 Every PR gets an independent review before merge, in at most two rounds: a full first round, then a diff-only second round in which only production-reachable defects block.
 Parallel builders use separate worktrees off `origin/main`, or off the lower item's branch when stacked. A build may stack on an unmerged lower item; merges stay in plan order.
 One checklist item is one PR; reference its owning issue in the body.

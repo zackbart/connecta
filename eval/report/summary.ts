@@ -29,6 +29,8 @@ export interface AgentResultFile {
     maxBudgetUsd?: number;
     mcpOutputTokens?: number | "host default";
     runner?: "codex" | "claude" | "eve";
+    /** Eve only: the helper configuration under test. */
+    eve?: import("../agent/eve.js").EveConnection;
     /** Absent in results written before the worker target existed: node. */
     target?: import("../deploy/targets.js").Target;
     /** Absent in results written before injection existed: none. */

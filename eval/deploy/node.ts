@@ -45,6 +45,8 @@ export interface Deployment {
   observe?(): Promise<ProgramObservation[]>;
   /** Whether an out-of-process deployment restarted since it issued `token`. */
   reloaded?(): Promise<boolean>;
+  /** Worker target only: restart or stop its process, as reload controls need. */
+  processControl?: { restart(): Promise<void>; stop(): Promise<void> };
   /** The operator saving a credential in the connection page. */
   openConnect(url: string): Promise<void>;
   setCredential(connectorId: string, value: string): Promise<void>;
@@ -129,6 +131,7 @@ export async function startNodeDeployment(
           evalConfig(
             {
               connectors,
+              surface,
               extra,
               fixtures: { alice: ALICE, accountA: ACCOUNT_A, shopZone: SHOP_ZONE },
               readOnly: endpointReadOnly,

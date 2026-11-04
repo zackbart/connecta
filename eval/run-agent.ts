@@ -1,9 +1,12 @@
-import { eveVersion } from "./agent/eve.js";
+import { eveVersion, type EveConnection } from "./agent/eve.js";
 import { guidanceArm } from "./deploy/guidance.js";
 /**
  * `pnpm run eval:agent [options]` runs fake-only tasks through Codex or Claude Code.
  *
- *   --runner       codex (default) or claude
+ *   --runner       codex (default), claude or eve
+ *   --eve-connection          Eve's connection name (default connecta)
+ *   --eve-description         Eve's connection description (default "Connecta task tools")
+ *   --eve-default-description omit the description, so the helper's own default applies
  *   --target       node (default) or worker: the deployment shape each trial
  *                  boots; worker runs workerd under wrangler dev
  *   --no-build     skip `pnpm run build` before a worker batch
@@ -21,7 +24,7 @@ import { guidanceArm } from "./deploy/guidance.js";
  *   --report       also write an HTML report
  *   --baseline     previous result file for that report
  *
- * Both runners use existing CLI sign-ins. Codex isolates its home; Claude
+ * The runners use existing sign-ins. Codex isolates its home; Claude
  * isolates settings and tools with CLI flags. Only the fake MCP endpoint loads. Completed trials are written
  * atomically as they finish. The exit status is nonzero unless every declared
  * trial ran once, completed normally and passed.
@@ -65,6 +68,15 @@ if (
     "Unsupported runner option; --max-budget-usd is Claude-only, and MCP output/utilization flags are retired",
   );
 }
+const eveFlags = ["eve-connection", "eve-description", "eve-default-description"].filter((flag) => args.has(flag));
+if (runner !== "eve" && eveFlags.length) throw new Error(`--${eveFlags[0]} is Eve-only`);
+if (args.has("eve-description") && args.has("eve-default-description"))
+  throw new Error("--eve-description and --eve-default-description conflict");
+const eve: EveConnection = {
+  ...(args.has("eve-connection") ? { connection: args.get("eve-connection")! } : {}),
+  ...(args.has("eve-description") ? { description: args.get("eve-description")! } : {}),
+  ...(args.has("eve-default-description") ? { description: null } : {}),
+};
 const models = (args.get("models") ?? (runner === "claude" ? CLAUDE_MODELS.join(",") : "gpt-6-luna"))
   .split(",")
   .map((model) => model.trim())
@@ -124,6 +136,7 @@ const file: AgentResultFile = {
   [`${runner}Version`]: version,
   config: {
     runner,
+    ...(eveFlags.length ? { eve } : {}),
     target,
     // Always recorded, zeros included, so a comparison can prove it matched.
     injection,
@@ -172,6 +185,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
 let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
   runner,
+  ...(eveFlags.length ? { eve } : {}),
   target,
   injection,
   surface,

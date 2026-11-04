@@ -16,6 +16,8 @@ export interface ListedTool {
   name: string;
   readOnly: boolean;
   description?: string;
+  address?: string | undefined;
+  inputSchema?: unknown;
 }
 
 export interface McpSession {
@@ -23,6 +25,7 @@ export interface McpSession {
   instructions: string | undefined;
   listTools(): Promise<ListedTool[]>;
   readResource(uri: string): Promise<unknown>;
+  listResources(): Promise<{ uri: string; description?: string | undefined }[]>;
   call(name: string, args: Record<string, unknown>): Promise<ToolResult>;
   close(): Promise<void>;
 }
@@ -40,11 +43,15 @@ export async function connectMcp(url: string, headers: Record<string, string>): 
       const listed = await client.listTools();
       return listed.tools.map((tool) => ({
         name: tool.name,
+        address:
+          typeof tool._meta?.["dev.connecta/address"] === "string" ? tool._meta["dev.connecta/address"] : undefined,
+        inputSchema: tool.inputSchema,
         ...(tool.description ? { description: tool.description } : {}),
         readOnly: tool.annotations?.readOnlyHint === true,
       }));
     },
     readResource: (uri) => client.readResource({ uri }),
+    listResources: async () => (await client.listResources()).resources,
     async call(name, args) {
       const result = await client.callTool({ name, arguments: args });
       const content = Array.isArray(result.content) ? result.content : [];

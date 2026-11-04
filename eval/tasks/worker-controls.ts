@@ -21,7 +21,7 @@ import { join, sep } from "node:path";
 import { playReference } from "../agent/reference.js";
 import { gradeTask } from "./grading.js";
 import { crossTarget, compare } from "../compare.js";
-import { stopsBatch, WORKER_RELOADED } from "../agent/infra.js";
+import { connectionLost, stopsBatch, trialInfraFailure, WORKER_RELOADED } from "../agent/infra.js";
 import { startVendorGateway, startWorkerDeployment } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
 import { fakeTransportState, routeFakeVendor } from "../fakes/transport.js";
@@ -277,7 +277,13 @@ export default { async fetch(request) {
     }
     await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
     for (const cleanup of ["close", "killAll"] as const) {
-      const dev = await wranglerDev({ name: "connecta-workerd-control", main, bootMs: 60_000 });
+      await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
+      const dev = await wranglerDev({ name: "connecta-workerd-control", main, bootMs: 60_000, freeze: true });
+      // Source edits cannot invalidate a running trial's token or model evidence.
+      await writeFile(main, 'export default { fetch: () => new Response("changed") };\n');
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      if ((await (await fetch(dev.origin + "/health")).text()) !== "ok")
+        throw new Error("A source edit reloaded the trial's frozen Worker bundle");
       const pgid = dev.process().child.pid!;
       const before = await groupMembers(pgid);
       const environments = await Promise.all(
@@ -799,9 +805,10 @@ export async function injectionControls() {
 
 /** Force a candidate to be occupied by another listener, then recover before serving. */
 /**
- * Build hooks must not reload a live Worker, and a reload that does happen must
- * be reported. The entry file is this control's own, so it never edits shared
- * sources under a concurrent eval.
+ * Agent trials serve a frozen snapshot, so a source edit in this checkout must not
+ * reach one, and a reload that does happen must be reported as a reload. Smokes keep
+ * Wrangler's bundler and watcher, so build hooks that rewrite identical bytes would
+ * reload them. Every edited file here is this control's own; hooks must not write.
  */
 export async function workerReloadControls() {
   if (stopsBatch(WORKER_RELOADED) || /authentication/i.test(WORKER_RELOADED))
@@ -814,14 +821,66 @@ export async function workerReloadControls() {
   };
   hooks();
   const dir = await mkdtemp(join(tmpdir(), "connecta-worker-reload-"));
-  const main = join(dir, "worker.ts");
-  const entry = `export { default } from ${JSON.stringify(join(ROOT, "eval", "deploy", "worker-agent.ts"))};\n`;
-  await writeFile(main, entry);
+  const entry = join(dir, "worker.ts");
+  const dep = join(dir, "dep.ts");
+  // Module state resets on reload. Random values are refused at global scope.
+  await writeFile(
+    entry,
+    `import { revision } from "./dep.ts";
+import { CONNECTA_VERSION } from ${JSON.stringify(join(ROOT, "src", "version.ts"))};
+import * as ui from ${JSON.stringify(join(ROOT, "src", "operator-ui", "generated.ts"))};
+let instance;
+export default { fetch: () => new Response(JSON.stringify({ instance: (instance ??= crypto.randomUUID()), revision, version: CONNECTA_VERSION, ui: Object.keys(ui).length })) };
+`,
+  );
+  const v1 = `export const revision = 1;\n`;
+  await writeFile(dep, v1);
+  const served = async (origin: string) =>
+    (await (await fetch(origin)).json()) as { instance: string; revision: number };
+  let settleMs = 5_000;
+  let smoke: Awaited<ReturnType<typeof wranglerDev>> | undefined;
+  let trial: Awaited<ReturnType<typeof wranglerDev>> | undefined;
   const world = new World();
   let deployment: Awaited<ReturnType<typeof startWorkerDeployment>> | undefined;
   try {
+    // The smoke shape. Identical bytes reload it, which is why the hooks must not write.
+    smoke = await wranglerDev({ name: "connecta-worker-reload-smoke", main: entry });
+    const before = await served(smoke.origin);
+    const started = Date.now();
+    await writeFile(dep, v1);
+    for (;;) {
+      if (Date.now() - started > 60_000) throw new Error("Rewriting a bundle input did not reload a smoke Worker");
+      if ((await served(smoke.origin).catch(() => before)).instance !== before.instance) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    // Scale later negative waits to the latency just measured on this machine.
+    settleMs = Math.max(settleMs, (Date.now() - started) * 3);
+    const reloaded = await served(smoke.origin);
+    hooks();
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
+    if ((await served(smoke.origin)).instance !== reloaded.instance)
+      throw new Error("Rerunning build hooks reloaded a Worker under Wrangler's bundler");
+    await smoke.close();
+    smoke = undefined;
+    console.log("ok   rerunning the build hooks leaves a Worker under Wrangler's bundler alone");
+
+    // The agent-trial shape: the same edit never reaches its frozen snapshot.
+    trial = await wranglerDev({ name: "connecta-worker-reload-trial", main: entry, freeze: true });
+    const snapshot = join(trial.persist, "snapshot", "worker.mjs");
+    const bytes = await readFile(snapshot, "utf8");
+    const frozen = await served(trial.origin);
+    await writeFile(dep, `export const revision = 2;\n`);
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
+    const after = await served(trial.origin);
+    if (after.instance !== frozen.instance || after.revision !== 1 || (await readFile(snapshot, "utf8")) !== bytes)
+      throw new Error("A source edit reached a running trial's snapshot");
+    await trial.close();
+    trial = undefined;
+    console.log("ok   a source edit leaves a running trial's snapshot and module instance unchanged");
+
+    // Reload detection, through the real deployment and its real token rotation.
     await world.start();
-    deployment = await startWorkerDeployment(world.connectorSpecs(), {}, [], 0, main);
+    deployment = await startWorkerDeployment(world.connectorSpecs());
     const initialize = () =>
       fetch(deployment!.mcpUrl, {
         method: "POST",
@@ -841,21 +900,31 @@ export async function workerReloadControls() {
           },
         }),
       });
+    const failure = async () =>
+      trialInfraFailure(
+        await deployment!.reloaded!(),
+        await connectionLost(deployment!.mcpUrl, deployment!.token),
+        "the conversation's own failure",
+      );
     hooks();
-    // A write reached wrangler's watcher within about a second when this regressed.
-    await new Promise((resolve) => setTimeout(resolve, 5_000));
-    if (await deployment.reloaded!()) throw new Error("Rerunning build hooks reloaded a live Worker");
+    if (await deployment.reloaded!()) throw new Error("Rerunning build hooks reloaded a live trial");
     if ((await initialize()).status !== 200) throw new Error("The issued token stopped working without a reload");
-    console.log("ok   rerunning the build hooks leaves a live Worker and its token alone");
-    await writeFile(main, `${entry}// changed\n`);
-    const deadline = Date.now() + 30_000;
-    while (!(await deployment.reloaded!())) {
-      if (Date.now() > deadline) throw new Error("A changed bundle input was not reported as a reload");
-      await new Promise((resolve) => setTimeout(resolve, 250));
-    }
+    if ((await failure()) !== "the conversation's own failure")
+      throw new Error("A healthy deployment must leave the conversation's own failure in place");
+    await deployment.processControl!.restart();
     if ((await initialize()).status !== 401) throw new Error("A reloaded Worker should refuse the earlier token");
-    console.log("ok   a Worker reload is reported instead of surfacing as a host authorization failure");
+    if (!(await connectionLost(deployment.mcpUrl, deployment.token))?.includes("rejected"))
+      throw new Error("A reload's rejected token must look like a lost connection to that check alone");
+    if ((await failure()) !== WORKER_RELOADED)
+      throw new Error("A reload must be reported instead of a lost connection");
+    await deployment.processControl!.stop();
+    if (await deployment.reloaded!()) throw new Error("A stopped Worker must not read as reloaded");
+    if (!(await failure())?.includes("unreachable"))
+      throw new Error("A stopped Worker must be reported as an unreachable deployment");
+    console.log("ok   a restarted Worker reports a reload; a stopped one reports a lost connection");
   } finally {
+    await smoke?.close();
+    await trial?.close();
     await deployment?.close();
     await world.stop();
     await rm(dir, { recursive: true, force: true });

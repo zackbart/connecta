@@ -225,6 +225,12 @@ export function registerConnectorVocabulary(connector: Connector, declarations: 
   if (entries.length) connectors.set(connector, new Map(entries));
 }
 
+/** Give a connector that delegates to an api() connector the vocabulary its hatch registered there. */
+export function carryConnectorVocabulary(source: Connector, target: Connector): void {
+  const registered = connectors.get(source);
+  if (registered) connectors.set(target, registered);
+}
+
 /**
  * Read tools whose operation vocabulary matches every query word, and the
  * fully determined reads among those operations, each through a visible read

@@ -11,6 +11,7 @@
  * It forwards with `redirect: "manual"`; the Worker sends every followed hop
  * back through the gateway.
  */
+import type { Surface } from "../agent/surface.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -146,7 +147,7 @@ export async function startWorkerDeployment(
   extra: Record<string, unknown> = {},
   everyPool: string[] = [],
   d1LatencyMs = 0,
-  main = join(ROOT, "eval", "deploy", "worker-agent.ts"),
+  surface: Surface = "six",
 ): Promise<Deployment> {
   const gateway = await startVendorGateway();
   const since = Date.now();
@@ -168,6 +169,7 @@ export async function startWorkerDeployment(
   try {
     const composition: EvalComposition = {
       connectors,
+      surface,
       extra,
       fixtures: { alice: ALICE, accountA: ACCOUNT_A, shopZone: SHOP_ZONE },
       readOnly: false,
@@ -175,7 +177,7 @@ export async function startWorkerDeployment(
     };
     dev = await wranglerDev({
       name: "connecta-eval-agent",
-      main,
+      main: join(ROOT, "eval", "deploy", "worker-agent.ts"),
       vars: {
         EVAL_COMPOSITION: JSON.stringify(composition),
         EVAL_GATEWAY: gateway.url,
@@ -185,6 +187,8 @@ export async function startWorkerDeployment(
       // Bound as hidden secrets: never echoed in wrangler's output or its log.
       secrets,
       publicUrlVar: true,
+      // A reload would rotate the token the agent's host already holds.
+      freeze: true,
     });
     const origin = dev.origin;
     const control = async (path: string, init?: RequestInit) => {
@@ -205,8 +209,17 @@ export async function startWorkerDeployment(
         return programs;
       },
       observe: async () => (programs = (await (await control("programs")).json()) as ProgramObservation[]),
-      // Each module instance rotates the token, so a different one means wrangler reloaded.
-      reloaded: async () => ((await (await control("token")).json()) as { token: string }).token !== token,
+      // Each module instance rotates the token, so a different one means a new instance.
+      // A silent or dead process is connectionLost's finding, not a reload.
+      reloaded: async () => {
+        try {
+          const current = await control("token", { signal: AbortSignal.timeout(15_000) });
+          return ((await current.json()) as { token: string }).token !== token;
+        } catch {
+          return false;
+        }
+      },
+      processControl: { restart: () => dev!.restart(), stop: () => dev!.stop() },
       openConnect: async () => {
         throw new Error("The worker target has no fake OAuth connection page.");
       },

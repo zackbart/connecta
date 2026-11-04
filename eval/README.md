@@ -37,7 +37,8 @@ CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped
 write recovery, Overflow donor paging, Gmail attachment-preserving draft refusal,
 Forms revision-conflict recovery, Docs indexes, Sheets rows across ranges and
 Slides deck/comment save outcomes. The provider/HTTP cleanup also promotes
-existing Tithe.ly cancellation recovery, a single GitHub draft release,
+existing Tithe.ly cancellation recovery, a single GitHub draft release, a GitHub
+CI read that reports one repository's permission gap while finishing another,
 Cloudflare DNS and Vercel environment recovery, shared-drive permission
 inheritance and Docs partial-creation recovery. Each is graded on outcome:
 downstream state, the physical write ledger and the final answer, not the
@@ -180,9 +181,11 @@ pnpm run eval:agent --runner codex --models gpt-6-luna --tasks p5-known-read-rou
 pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
 ```
 
-Eve requires Node 24+, the installed `eve@1.0.0-rc.1` dependency in
-`packages/connecta-eve/`, and its built helper (`pnpm --filter
-@zackbart/connecta-eve run build`). Run it with:
+Eve requires Node 24+ and the installed `eve@1.0.0-rc.1` dependency in
+`packages/connecta-eve/`. `eval:agent --runner eve` and `eval:selftest --eve-only`
+rebuild the helper first, so a batch cannot test a stale one; with `--no-build`, or
+when calling the runner directly, a missing helper build or install fails with the
+command to run. Run it with:
 
 ```sh
 pnpm run eval:agent --runner eve --models gpt-6.1-sol --target worker --grading outcome --tasks cross-connector-join,p5-result-paging,p5-trusted-program-write
@@ -206,12 +209,28 @@ the batch through `stopsBatch`, as do model authentication and rate limits.
 Eve deferred calls are recorded under their inner Connecta tool names so the
 same graders apply. `eve__search` stays in `metrics.otherTools`. Tokens come
 from Eve usage events; no dollar cost is inferred for subscription usage.
-Both deployment targets and the existing six/code surfaces use the same runner.
+Both deployment targets and the six, five, code, native and native-no-code arms
+use the same runner, except where the target refuses an arm. Eve searches count as
+host searches, and Eve's first usage event supplies the first request's input
+tokens. A native tool is called as `<connection>__<connector>__<tool>`. Eve emits
+no event for a deferred name it cannot resolve, so the model wrapper records those
+calls and the trace shows each as one failed `eve__tool` in `metrics.otherTools`.
+On native-no-code, `auth-required-recovery` is N/A: Eve relists tools each step,
+but the runner fixes its approvals and address map at session start.
+
+To test a helper change, `--eve-connection <name>` sets the connection's file name
+and tool prefix, and passes the name to `connectaInstructions`. `--eve-description
+<text>` sets the description and `--eve-default-description` omits it so the
+helper's default applies; a helper whose connection requires a description refuses
+to start. The default is `connecta` with `Connecta task tools`, and any override is
+recorded in the result file's `config.eve`.
+
 Each server and its app-server descendants occupy a tracked process group,
-with a trial deadline and TERM/KILL cleanup. `--eve-only` drives one read with
-Eve's `mockModel()` through its real HTTP server and the Node deployment;
-it also checks write denial and an invalid-token batch stop, needs no credentials,
-and makes no model calls.
+with a trial deadline and TERM/KILL cleanup. `--eve-only` drives a search, a
+mistaken name and a read with Eve's `mockModel()` through its real HTTP server, the
+batch path and the grader on every arm, on Node, on native over Worker, and under
+a custom connection and description. It also checks write denial on six and native
+and an invalid-token batch stop, needs no credentials, and makes no model calls.
 
 Codex uses the signed-in `codex` CLI, `~/.codex/auth.json`, and defaults to
 `gpt-6-luna`. Its isolated temporary `CODEX_HOME` contains only that credential
@@ -230,13 +249,13 @@ Claude uses the owner's signed-in `claude` CLI subscription login. The runner
 defaults to `claude-sonnet-5-5`, also accepts `claude-haiku-5-5`, and preserves the real home for login/keychain
 access without reading credentials.
 Each trial runs in an empty temporary workspace with
-`--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ""`,
+`--setting-sources ""`, `--disable-slash-commands`, `--no-chrome`, `--tools ToolSearch`,
 and `--strict-mcp-config --mcp-config <fake-only config>`. Empty setting sources
 omit user/project/local settings. Built-in plugins still load with empty setting
 sources in Claude Code 2.1.292. Explicit `--settings` disables hooks, automatic
 memory, and the known built-ins by setting `enabledPlugins` entries
 `cc-plugin-agents-md@builtin`, `cc-plugin-telemetry@builtin`, and
-`cc-plugin-plugin-authoring@builtin` to `false`. `--disable-slash-commands`
+`cc-plugin-plugin-authoring@builtin`, and `cc-plugin-privacy@builtin` to `false`. `--disable-slash-commands`
 removes their skills. The installed CLI's
 `CLAUDE_CODE_DISABLE_CLAUDE_MDS=1` and `CLAUDE_CODE_DISABLE_BUNDLED_SKILLS=1`
 controls suppress instructions and bundled skills; Claude.ai MCP servers are
@@ -345,17 +364,22 @@ because the Worker imports the package by name from `dist/`.
   - A trial stops its group when it ends. The first SIGINT/SIGTERM stops the
     batch in order; a second kills every group at once. Process exit also kills
     any group still tracked.
-- **Reloads.** `wrangler dev` has no flag to stop watching its bundle, whose
-  inputs are `eval/deploy/` and `src/` (tsconfig paths resolve the package name
-  to source, so the shared `dist/` lease does not cover them). Any write to an
-  input reloads the Worker, and each module instance rotates the agent token and
-  starts a new program log. The build hooks (`pretest`, `pretypecheck`,
+- **Reloads.** Agent trials serve a snapshot of `eval/deploy/worker-agent.ts` built
+  before boot, with Wrangler's bundling and watch off, so a source edit in this
+  checkout cannot reach a running trial. Each module instance rotates the agent
+  token and starts a new program log, so `eval:agent` compares the token after each
+  conversation. If it changed, because the process restarted or the served snapshot
+  did, the trial records `Worker reloaded during the trial` as an ungraded
+  infrastructure error, ahead of the rejected token that reload causes. A process
+  that stopped answering reads as a lost connection instead.
+
+  Smokes keep Wrangler's bundler and watcher. Their inputs reach `src/` through
+  tsconfig paths, and the shared `dist/` lease does not cover those, so rewriting
+  even identical bytes reloads them. The build hooks (`pretest`, `pretypecheck`,
   `prebuild` and similar) therefore write only changed bytes, so `check` or
-  `test:browser` can run beside a batch. Editing an input during a batch still
-  reloads. `eval:agent` compares the token after each conversation and records
-  `Worker reloaded during the trial` as an infrastructure error, ungraded, rather
-  than the host's authorization failure that the revoked token would otherwise
-  produce. Do not edit `src/` or `eval/deploy/` in a checkout running a Worker batch.
+  `test:browser` can run beside a smoke. A real edit of `src/` or `eval/deploy/`
+  during a smoke still reloads it, so do not edit those there.
+
 - **Network isolation, and its limits.** Isolation differs between wrangler's
   Node processes and the native workerd process.
   - **Wrangler's Node processes** run with `WRANGLER_SEND_METRICS=false` and
@@ -1224,3 +1248,152 @@ skills-tool or guest skill requests. Guide fetch rate is trials with at least
 one fetch divided by completed trials. Missing trials, interrupted conversations,
 fabricated answers and duplicate writes retain the existing fail-closed controls;
 never count an unavailable trial as a pass.
+
+### Worker native/code experiment
+
+`--surface native` configures every trial pool with `surface: "native"` and
+code enabled. `--surface native-no-code` uses that same product pool setting
+with `executeCode: false`. Both run on `--target worker`; neither uses the
+Node-only code adapter. `six` and Node `code` retain their existing behavior.
+Result files and individual trials retain the explicit surface arm.
+
+`worker-comparison-plan.ts` freezes the task roster, categories, large-catalog
+labels and decision rule before trials. Use outcome grading. Keep every
+Worker-eligible comparison task, plus the seven Planning Center workflows.
+The OAuth-host tasks remain refused by the Worker target.
+
+The decision rule compares `native` with `native-no-code` only on tasks both
+arms can do. `NO_CODE_CAPABILITY_MISMATCHES` in
+[tasks/surface.ts](tasks/surface.ts) is the list, with a reason for each:
+
+| Task                           | Why it cannot count for or against code                                                                     |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `p5-fanout-over-budget`        | Measures the guest host-call budget, which only a program spends.                                           |
+| `p5-connecta-read`             | Requires `connecta.read`, which needs a program.                                                            |
+| `p5-program-image`             | Needs `connecta.emit`; without code it repeats `p5-direct-rich-output`.                                     |
+| `p5-read-only-program-refusal` | A read-only native pool lists no write tool, so the refused attempt cannot happen.                          |
+| `auth-required-recovery`       | `billing__*` appears after the credential is saved, but hosts fix their tool list for the session. Not run. |
+
+Their rows stay in result files. `auth-required-recovery` records status
+`skipped` with code `capability-mismatch` on `native-no-code`, spends no model
+and keeps the batch's pairs intact. Connecta advertises no `list_changed`, Claude's
+allowlist is set at spawn, and on Codex CLI 0.166.0 `config/mcpServer/reload`
+succeeds while the next turn's `ALL_TOOLS` still lacks the new tools. `native`
+still runs it, because a program can call `connecta.call("billing.…")` once the
+credential exists.
+
+`eval:compare` applies the rule's first sentence to a `native` and
+`native-no-code` pair: pass counts and reduction/join/paging medians over the
+comparable roster, each exclusion with its reason, and an explicit "not
+applicable" when the batch omits a comparable roster task.
+
+`pnpm run eval:selftest --native-only` checks real Worker arm inventories,
+wrong-arm rejection, an observed known read and its grader, paging, physical
+writes and read-only refusal. The existing selftests remain available for
+state, duplicate-write and delivered-fact counterexamples.
+
+Native calls retain their wire names and inputs in saved evidence. The grader
+uses the actual listed `dev.connecta/address` and read-only annotation to
+present them to existing wrapper-aware outcome checks. It never derives a
+hashed tool address from the wire spelling. `read_result` remains an explicit
+pager and contributes delivered log facts. The read-only refusal fixture also
+recognizes a guessed `tracker__close_issue`, which is intentionally absent
+from the read-only inventory.
+
+Prompt adaptations: `p5-result-paging` names `ci__get_run_log` and the arm's
+pager. In native without code, `p5-trusted-program-write` names the native write,
+`p5-read-only-program-refusal` names the guessed native write and asks the agent
+to say so if the pool does not list it, and `p5-program-image` asks for direct
+image/caption delivery through `assets.get_badge_image`, which its destination
+then requires on that arm. Other prompts remain identical.
+
+Three outcomes differ on these arms because the capability does not exist, each
+with controls that keep fabrication failing. In `native-no-code`,
+`p5-read-only-program-refusal` accepts no write attempt, an unchanged issue,
+`ANSWER: not closed` and a stated absent tool; a claimed closure, a changed issue
+or silence about the tool fail. On both native arms, `p5-absent-github` needs no
+search result, because no top-level search exists: no downstream calls, a stated
+absence and `ANSWER: unavailable` pass, and a count or a substitute read fails. The fake billing credential uses opaque characters to avoid sharing
+an eight-character secret fragment with public native tool names.
+
+`codex-fidelity.ts` is an unpaid diagnostic. It connects the real pinned CLI to
+a local rejecting model endpoint and records model-request bodies. Its fake
+API key is not a real credential. An inventory alone does not establish model
+context, deferred search or definition-token cost; a failed capture must be
+reported as a fidelity limitation, not interpreted as zero cost.
+
+### Host search and catalog scale
+
+`--surface five` serves the normal meta tools except top-level `search_tools`.
+Discovery uses `connecta.search` inside `execute_code`; known direct reads and
+writes remain available. Both Node and Worker targets serve this arm. Its
+inventory, usage guide, route wording and error recovery agree, and hidden
+`search_tools` requests are refused before dispatch. `six` remains the default.
+The existing `code` arm is Node-only; `native` and `native-no-code` run on both
+targets with the product's native pool configuration. Native tool inventories
+include every padded tool; the Codex `enabled_tools` list is generated from
+that actual inventory, rather than from the six meta-tool names.
+
+`--catalog-tools <n>` adds exactly n deterministic distractor tools (default 0,
+integer 0–60000) across up to six neutral operational connectors. They include
+read/write classifications, nested schemas, enums and varied descriptions,
+including task-domain lookalikes. Every pool includes the injected connectors.
+Codex explicitly enables its host `code_mode` feature while disabling shell tools.
+Their MCP servers have separate ledgers, so calling one cannot count as task
+vendor evidence. Both targets serialize the same connector specs. Results
+record `config.injection.catalogTools`; `eval:compare` refuses unequal injection
+settings even with a mismatch override. Missing historical settings mean zero.
+
+Each trial also records `firstTurnInputTokens`, `hostSearchCalls` and
+`toolErrorsBeforeFirstSuccess` in metrics. The first is first-request input
+including cache reads/writes: Claude's first assistant usage, or Codex's first
+token-usage update (whose input already includes cached input). Host search
+counts Claude `ToolSearch` calls and Codex host `exec` calls, which the runner
+observes by starting its thread with `experimentalRawEvents: true`. Every `exec`
+counts, including one that only calls a tool, so the Codex figure is an upper
+bound on searches. Errors before success count failed Connecta top-level calls
+before the first call that reached a downstream tool successfully, or all failed
+calls if none did. Discovery, guides and authorization do not stop the count, so
+it compares across arms with different discovery routes; a program stops it once
+one of its `connecta.call`s succeeded. These fields appear in the report
+efficiency data and end-of-batch passing medians. Historical absent telemetry
+remains N/A.
+
+Padded tools stay out of task ledgers, but choosing one is what padding measures.
+Every trial that called one records `metrics.distractors` (reads, writes and calls
+by tool), and the end-of-batch summary and report list it by trial. A read is
+only reported. A write fails `no-distractor-writes`, an outcome check added only
+when the trial touched padding, and regrading keeps it through saved inputs.
+
+A trial whose deployment rejects the agent's token at conversation end (HTTP 401
+or 403), or is unreachable, reports `error` rather than `fail`, because the agent
+lost its tools mid-conversation. A slow answer to that check is not a loss.
+Claude ToolSearch is retained in `otherTools` and is permitted by the isolation
+guard; shell, filesystem and unrelated MCP services remain disabled.
+
+`pnpm run eval:selftest --native-only` covers native inventories and graders,
+five-arm refusal and served text, padded discovery/calls and distractor grading on
+both targets, `read_result` reassembly, and token rejection at trial end. These
+deterministic controls use no model allowance. CI's `behavior` job runs them after
+`eval:smoke`, whose build they reuse. Grader controls for capability mismatches
+and reduced counts run in `eval:outcomes`.
+
+Worker agent trials freeze their serving module graph into a temporary bundle
+before booting Wrangler (`wranglerDev`'s `freeze` option). Later source edits or
+generated-file writes cannot reload a running trial and rotate its fixture agent
+token. Smoke targets leave it off, so they keep exercising Wrangler's own bundler.
+Each trial still owns its own ports, D1 directory, gateway and cleanup.
+
+Codex fidelity can be checked without a paid model using
+`pnpm exec tsx eval/codex-fidelity.ts --events`: a local scripted Responses
+endpoint requests host `exec` to list `ALL_TOOLS`, then completes. This checks
+model-facing definitions without confusing generic examples in tool descriptions
+with enabled shell tools. On CLI 0.166.0 the capture also exposes a host `collaboration` namespace
+despite `multi_agent=false`; the diagnostic deliberately fails that isolation
+check. The scripted exec completes without hitting the `commandExecution`
+guard. CLI 0.166.0 emits no ordinary app-server item for a host `exec`, so the
+runner reads its raw custom-call events: the scripted run reports
+`hostSearchCalls: 1`, retained in `otherTools` as `host_exec`. Shell
+`commandExecution` items still fail the isolation guard. The eight initial paid probes were interrupted by development
+reloads and are diagnostics, not a valid arm comparison; no paid retries were
+run.

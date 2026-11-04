@@ -29,7 +29,7 @@ function serializable(value: unknown): boolean {
 
 /** Why the Worker target cannot serve this task, or undefined when it can. */
 export function workerRefusal(task: ActiveTask, surface: Surface = "six"): string | undefined {
-  if (surface !== "six")
+  if (surface === "code")
     return "the code surface arm wraps the Node deployment's fetch and QuickJS bridge (eval/deploy/code-surface.ts)";
   if (task.world?.oauth || task.host)
     return "the fake OAuth inbound auth, connector and URL-elicitation host are in-process Node objects";
@@ -59,7 +59,13 @@ export async function startDeployment(
   }
   const refusal = workerRefusal(task, surface);
   if (refusal) throw new Error(`Task ${task.id} is refused on the worker target: ${refusal}.`);
-  return startWorkerDeployment(world.connectorSpecs(), task.deployment, everyPool, world.injection.d1LatencyMs);
+  return startWorkerDeployment(
+    world.connectorSpecs(),
+    task.deployment,
+    everyPool,
+    world.injection.d1LatencyMs,
+    surface,
+  );
 }
 
 /** Observed programs, refreshed from out-of-process deployments. */

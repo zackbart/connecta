@@ -28,7 +28,7 @@ export function infraError(events: StreamEvent[], exitCode: number | null, loade
     return `authentication failure: ${failureText.slice(0, 300)}`;
   }
   if (failed) return `Agent turn failed: ${String(failed.result ?? failed.subtype)}`;
-  if (results.length && !loadedTools.includes(toolId("execute_code"))) {
+  if (results.length && !loadedTools.includes(toolId("skills"))) {
     return "the connecta MCP server was not connected when the session started";
   }
   const apiError = results.find((event) => event.api_error_status != null);
@@ -37,9 +37,48 @@ export function infraError(events: StreamEvent[], exitCode: number | null, loade
   return undefined;
 }
 
-/** Not a result: the reload revoked the host's token and dropped observed programs. */
+/**
+ * Not a result: the reload revoked the host's token and dropped observed programs.
+ * Agent trials serve a frozen snapshot, so a source edit in this checkout cannot do it.
+ */
 export const WORKER_RELOADED =
-  "Worker reloaded during the trial: a file in its wrangler bundle (eval/deploy or src) changed in this checkout";
+  "Worker reloaded during the trial: its process restarted or its served snapshot changed, which rotated the host's token";
+
+/**
+ * A rejected or unreachable connection at trial end means the host lost its
+ * deployment mid-conversation, so the transcript does not measure the agent.
+ * A slow answer proves nothing and is not treated as a loss.
+ */
+export async function connectionLost(mcpUrl: string, token: string): Promise<string | undefined> {
+  try {
+    const response = await fetch(mcpUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    await response.body?.cancel();
+    return response.status === 401 || response.status === 403
+      ? `the deployment rejected the agent's token at trial end (HTTP ${response.status})`
+      : undefined;
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") return undefined;
+    return `the deployment was unreachable at trial end: ${error instanceof Error ? error.message : String(error)}`;
+  }
+}
+
+/** A reload explains a rejected token, so it wins over the loss the rejection looks like. */
+export function trialInfraFailure(
+  reloaded: boolean | undefined,
+  lost: string | undefined,
+  infra: string | undefined,
+): string | undefined {
+  return reloaded ? WORKER_RELOADED : (lost ?? infra);
+}
 
 export function stopsBatch(error: string | undefined): boolean {
   return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified/i.test(

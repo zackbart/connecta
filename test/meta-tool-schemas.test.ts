@@ -205,7 +205,8 @@ const BUDGETS = {
   },
   // search_tools grew for readyCalls, the complete reads that save the
   // details and operation-search host calls; its reasons enum is now shared.
-  outputSchema: { skills: 660, search_tools: 4_150, authorize_connector: 420, execute_code: 1_070 },
+  // Declaring descriptionTruncated adds 37 bytes.
+  outputSchema: { skills: 660, search_tools: 4_190, authorize_connector: 420, execute_code: 1_070 },
   usage: 5_700,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
@@ -390,6 +391,29 @@ describe("always-loaded agent surface budgets", () => {
       await app.close();
     }
   });
+});
+
+it("names the right call shape when a direct call uses MCP's own argument names, accepting nothing new", async () => {
+  const app = makeDeployment({ executor: stubExecutor, readOnly: false, connectors: [calcApi()] });
+  try {
+    for (const name of ["call_tool", "call_destructive_tool"]) {
+      const call = async (args: Record<string, unknown>) =>
+        (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: TOKEN }))).result;
+      const wrongKey = await call({ address: "calc.add", arguments: { a: 1, b: 2 } });
+      expect(wrongKey.isError, name).toBe(true);
+      expect(wrongKey.content[0].text, name).toContain(
+        'Unrecognized key: "arguments". Send { address, args }, with the tool\'s arguments in args.',
+      );
+      const mcpShape = await call({ name: "calc.add", arguments: { a: 1, b: 2 } });
+      expect(mcpShape.isError, name).toBe(true);
+      expect(mcpShape.content[0].text, name).toContain(
+        'address: expected a string such as "connector.tool". Send { address, args }.',
+      );
+      expect(mcpShape.content[0].text, name).toContain('Unrecognized keys: "name", "arguments".');
+    }
+  } finally {
+    await app.close();
+  }
 });
 
 it("front-loads configured scope and guidance within the instructions budget", async () => {

@@ -12,7 +12,7 @@ import {
   authOwnMethod,
 } from "./auth/native.js";
 import { registryProgram } from "./runtime/registry.js";
-import { enableAuthorizationHandoffs } from "./authorization-handoff.js";
+import { connectLinkFields, enableAuthorizationHandoffs } from "./authorization-handoff.js";
 import {
   createRequestStateCodec,
   inputRequired,
@@ -398,10 +398,13 @@ export class AuthElicitation {
                 ...result.structuredContent,
                 error: {
                   ...(result.structuredContent?.error as Record<string, unknown>),
-                  authorizationUrl:
-                    error.authorizationUrl ??
-                    (yield* upwardStep(authInvoke<{ url: string; nonce: string }>(self.options, "connectLink", [id])))
-                      .url,
+                  ...connectLinkFields(
+                    error,
+                    id,
+                    (error.authorizationUrl as string | undefined) ??
+                      (yield* upwardStep(authInvoke<{ url: string; nonce: string }>(self.options, "connectLink", [id])))
+                        .url,
+                  ),
                 },
               };
               return {
@@ -460,7 +463,7 @@ export class AuthElicitation {
                 ...result.structuredContent,
                 error: {
                   ...(result.structuredContent?.error as Record<string, unknown>),
-                  authorizationUrl: link.url,
+                  ...connectLinkFields(result.structuredContent?.error as Record<string, unknown>, id, link.url),
                 },
               };
               return {

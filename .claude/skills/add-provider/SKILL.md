@@ -291,7 +291,10 @@ links, plus marker containment in paths and queries.
   redaction while diagnostic facts and text stay redacted. Declare
   each numeric classifier or retry source through `numericFacts` with an exact
   body path or lowercase header, a review and its integer/delay format; name
-  the standard Retry-After fact `retryAfterMs`. Rules receive parsed bounded
+  the standard Retry-After fact `retryAfterMs`. `headers` values over 128 characters
+  stay invisible unless a reviewed `maxHeaderChars` admits them; rules parse such a
+  value strictly and repeat only a checked name, and a send's `context` carries
+  provider-confined values such as a bound repository for wording. Rules receive parsed bounded
   numbers from before redaction; wording receives only redacted sources. Enable
   `inBandRefusals` only when a result hook needs the whole response's declared
   facts to classify a refusal on a successful response.

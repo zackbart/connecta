@@ -73,6 +73,11 @@ import {
   restTransportControls,
 } from "./tasks/rest-controls.js";
 
+if (process.argv.includes("--native-only")) {
+  await import("./native-controls.js");
+  process.exit(0);
+}
+
 if (process.argv.includes("--worker-references-only")) {
   const only = flags(process.argv.slice(2)).get("tasks")?.split(",");
   const selected = only ? ACTIVE_TASKS.filter((task) => only.includes(task.id)) : ACTIVE_TASKS;
@@ -113,6 +118,7 @@ const runtimeControl = spawnSync(process.execPath, ["--test", "scripts/eval-runt
 assert.equal(runtimeControl.status, 0, "Runtime lock collision/crash controls failed");
 await portCollisionControls();
 console.log("ok   startup collisions recover before serving; failed join reads stop before posting");
+
 await gatewayControls();
 await gatewayRedirectControls();
 console.log("ok   worker vendor gateway: trial credential, loopback refusal, redirect credential stripping and modes");
