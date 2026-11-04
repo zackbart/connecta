@@ -48,8 +48,8 @@ Approval belongs to the client. A read-only endpoint keeps all six tools, omits
 write tools from `search_tools` results and describe, and refuses every write
 call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
-`resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
-advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
+`resources/read`) are documentation and may name tools the endpoint refuses. The three tools with structured-only success results
+(`execute_code`, `search_tools`, `authorize_connector`) advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
 including every authorization-handoff field, once under `$defs.failure`;
 `catalogErrors[]` references it through `allOf` with `connector` required, and
 `queryAnalysis.catalogError` references it directly. The schema declares no
