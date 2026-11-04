@@ -570,27 +570,38 @@ describe("GitHub App provider", () => {
     });
 
     it.each([
-      ["a single permission", { "x-accepted-github-permissions": "checks=read" }, "GitHub requires checks=read."],
+      ["a single permission", { "x-accepted-github-permissions": "checks=read" }, "This endpoint accepts checks=read."],
       [
         "alternative permission sets",
         { "x-accepted-github-permissions": "pull_requests=read,contents=read; issues=read,contents=read" },
-        "GitHub requires pull_requests=read and contents=read, or issues=read and contents=read.",
+        "This endpoint accepts pull_requests=read and contents=read, or issues=read and contents=read.",
       ],
       [
         "a missing OAuth scope",
         { "x-accepted-oauth-scopes": "repo, read:org", "x-oauth-scopes": "read:org" },
-        "GitHub requires the OAuth scope repo.",
+        "This endpoint lists the OAuth scope repo, which this token does not report.",
       ],
-    ])("a 403 with %s names it and the repository, with no credential recovery", async (_, headers, words) => {
+    ])("a 403 with %s reports it as a possible gap without proving a cause", async (_, headers, words) => {
       refuse(headers);
       const error = await failure();
       expect(error.code).toBe("provider_permission_denied");
       expect(error.retryable).toBe(false);
       expect(error.message).toContain("for acme/one");
       expect(error.message).toContain(words);
-      expect(error.message).toContain("resetting it will not help");
-      expect(error.message).not.toContain("unmarked secondary rate limit");
+      // Neither the key nor the grant is established by a 403, and a header does not rule out a limit.
+      expect(error.message).not.toMatch(/authenticated|credential works|GitHub requires/);
+      expect(error.message).toContain("unmarked secondary rate limit");
       expect(error.message).not.toContain(SENTINEL);
+      // Known, then likely, then what to do, ending with the credential path for a refusal everywhere.
+      const order = [
+        "GitHub refused this request",
+        "The likely cause is",
+        "do not reset the credential or switch tools",
+        "wait a minute before one retry",
+        "If every GitHub call through this connection is refused, verify the App ID, private key and installation.",
+      ].map((part) => error.message.indexOf(part));
+      expect(order).not.toContain(-1);
+      expect(order).toEqual([...order].sort((a, b) => a - b));
     });
 
     it.each([
@@ -606,7 +617,7 @@ describe("GitHub App provider", () => {
       expect(error.code).toBe("provider_permission_denied");
       // Falls back to what this call requested from the reviewed table.
       expect(error.message).toContain("This call requested checks=read.");
-      expect(error.message).not.toMatch(/GitHub requires|ignore|smuggled|perm_0|checks=owner/);
+      expect(error.message).not.toMatch(/This endpoint|ignore|smuggled|perm_0|checks=owner/);
       expect(error.message).not.toContain(SENTINEL);
       expect(error.message).toContain("unmarked secondary rate limit");
     });
@@ -618,6 +629,7 @@ describe("GitHub App provider", () => {
       expect(error.code).toBe("provider_permission_denied");
       expect(error.message).toContain("SAML single sign-on");
       expect(error.message).not.toContain("authorization_request");
+      expect(error.message).not.toMatch(/authenticated|credential works/);
       expect(error.message).not.toContain(SENTINEL);
     });
 
@@ -643,20 +655,37 @@ describe("GitHub App provider", () => {
         )
         .catch((caught: ConnectorCallError) => caught);
       expect(error).toMatchObject({ code: "provider_permission_denied" });
-      expect((error as ConnectorCallError).message).toContain("GitHub requires contents=write.");
+      expect((error as ConnectorCallError).message).toContain("This endpoint accepts contents=write.");
       expect(fixture.requests.filter((r) => r.url.pathname === "/repos/acme/one/releases")).toHaveLength(1);
     });
 
-    it.each([422, 403])("a token refused with %i names the permission the App does not hold", async (status) => {
+    const refuseCheckMints = (status: number) => {
       const fixture = apiFixture();
       fixture.respond((request) =>
         request.url.pathname.endsWith("/access_tokens") && request.body.permissions.checks
           ? new Response(SENTINEL, { status })
           : undefined,
       );
+      return fixture;
+    };
+    const installed = (permissions: unknown) => [
+      {
+        id: 11,
+        account: { login: "acme", type: "Organization" },
+        repository_selection: "all",
+        suspended_at: null,
+        permissions,
+      },
+    ];
+
+    it.each([422, 403])("a %i mint is a permission gap only when the installation record lacks it", async (status) => {
+      const fixture = refuseCheckMints(status);
+      fixture.installations(installed({ metadata: "read", issues: "read" }));
       const error = await failure();
       expect(error.code).toBe("provider_permission_denied");
+      expect(error.retryable).toBe(false);
       expect(error.message).toContain("for acme/one with checks=read");
+      expect(error.message).toContain("The installation does not hold checks=read.");
       expect(error.message).not.toContain(SENTINEL);
       expect(fixture.requests.some((r) => r.url.pathname === CHECKS)).toBe(false);
       // The working credential keeps serving reads the App does hold.
@@ -664,6 +693,76 @@ describe("GitHub App provider", () => {
       await expect(
         connection().callTool("github_api_read", { path: "/repos/acme/one/issues" }, context()),
       ).resolves.toBeDefined();
+    });
+
+    it.each([
+      ["holds the permission", { metadata: "read", checks: "read" }],
+      ["holds more than the permission", { metadata: "read", checks: "write" }],
+      ["has no readable record", undefined],
+      ["has a malformed record", { checks: 1 }],
+    ])("a 422 mint stays neutral when the installation %s", async (_, permissions) => {
+      const fixture = refuseCheckMints(422);
+      fixture.installations(installed(permissions));
+      const error = await failure();
+      expect(error.code).toBe("connector_call_failed");
+      expect(error.retryable).toBe(false);
+      expect(error.message).toContain("for acme/one with checks=read");
+      expect(error.message).toContain("validation failures and spam protection");
+      expect(error.message).not.toMatch(/does not hold|credential works|authenticated/);
+      expect(error.message).not.toContain(SENTINEL);
+    });
+
+    it("a lesser held access is a gap for a write mint and metadata is never named", async () => {
+      installOwnedTransport();
+      const fixture = apiFixture();
+      fixture.installations(installed({ contents: "read" }));
+      fixture.respond((request) =>
+        request.url.pathname.endsWith("/access_tokens") && request.body.permissions.contents === "write"
+          ? new Response(SENTINEL, { status: 422 })
+          : undefined,
+      );
+      const error = await connection()
+        .callTool(
+          "github_api_write",
+          { method: "POST", path: "/repos/acme/one/releases", body: { tag_name: "v1" } },
+          context(),
+        )
+        .catch((caught: ConnectorCallError) => caught);
+      expect(error).toMatchObject({ code: "provider_permission_denied" });
+      expect((error as ConnectorCallError).message).toContain("does not hold contents=write.");
+      // The resolver asks for metadata, which the record omits, without becoming a gap.
+      const metadata = apiFixture();
+      metadata.installations(installed({ checks: "read" }));
+      metadata.respond((request) =>
+        request.url.pathname.endsWith("/access_tokens") && request.body.permissions.metadata
+          ? new Response(SENTINEL, { status: 422 })
+          : undefined,
+      );
+      await expect(failure()).resolves.toMatchObject({ code: "connector_call_failed" });
+    });
+
+    it("a 403 mint without evidence keeps its causes open and the credential path", async () => {
+      const fixture = refuseCheckMints(403);
+      fixture.installations(installed({ metadata: "read", checks: "read" }));
+      const error = await failure();
+      expect(error.code).toBe("provider_permission_denied");
+      expect(error.retryable).toBe(false);
+      expect(error.message).toContain("lockout after repeated invalid credentials");
+      expect(error.message).toContain("verify the App ID, private key and installation");
+      expect(error.message).not.toMatch(/does not hold|credential works/);
+      expect(error.message).not.toContain(SENTINEL);
+    });
+
+    it("a 403 on the App's own installation list points at the credential", async () => {
+      const fixture = apiFixture();
+      fixture.respond((request) =>
+        request.url.pathname === "/app/installations" ? new Response(SENTINEL, { status: 403 }) : undefined,
+      );
+      const error = await failure();
+      expect(error.code).toBe("auth_required");
+      expect(error.retryable).toBe(false);
+      expect(error.message).toContain("verify the GitHub App ID and private key");
+      expect(error.message).not.toContain(SENTINEL);
     });
 
     it("a 401 while minting stays auth_required", async () => {

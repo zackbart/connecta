@@ -53,9 +53,11 @@ Check-run annotations give failing paths and lines, since log downloads are unav
 
 ## When access is refused
 
-`provider_permission_denied` names a gap in the App's access to that repository or
-permission; the credential works and other repositories may still work. Report the
-gap. `auth_required` is the only failure that concerns the credential itself.
+`provider_permission_denied` is a refusal: usually a gap in the App's access to that
+repository or permission, though a policy, an unmarked rate limit or a lockout can
+also cause it. Report the gap and continue; other repositories may still work. Do not
+reset the credential or switch tools on this alone. `auth_required` is the failure
+that points at the credential itself.
 
 ## Release and merge semantics
 

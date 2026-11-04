@@ -17,6 +17,28 @@ const GITHUB_TASK_IDS = [
   "github-ci-scope-gap",
 ];
 const standard = () => REST_TOOL_KINDS.has("github.github_api_read");
+const CLAUSE = /[.;:!?,\n]+|\b(?:but|so|then)\b/i;
+const CREDENTIAL = /\b(?:credentials?|keys?|tokens?|secrets?|pem)\b/i;
+const REPAIR =
+  /\b(?:reset(?:s|ting)?|rotat(?:e|es|ed|ing)|replac(?:e|es|ed|ing)|regenerat(?:e|es|ed|ing)|renew(?:s|ed|ing)?|reissu(?:e|es|ed|ing))\b/i;
+const LOG_IN_AGAIN = /\b(?:re-?authenticat(?:e|es|ed|ing)|re-?connect(?:s|ed|ing)?|gh auth login)\b/i;
+const DECLINED_BEFORE = /(?:\b(?:not|never|no|without|avoid|skip|rather than|instead of)|n't)(?:\s+\S+){0,3}\s*$/i;
+const DECLINED_AFTER =
+  /\b(?:will not|would not|does not|did not|can ?not)\s+(?:help|fix|restore|solve|resolve|change|matter|address)\b|n't\s+(?:help|fix|restore|solve|resolve|change|matter|address)\b|\b(?:unnecessary|not needed|not required|not necessary)\b/i;
+/** Advice to repair the credential anywhere in an answer; declining that repair is what the task wants. */
+function advisesCredentialRepair(answer: string): boolean {
+  return answer
+    .replaceAll("\u2019", "'")
+    .split(CLAUSE)
+    .some((clause) => {
+      const advice = LOG_IN_AGAIN.exec(clause) ?? (CREDENTIAL.test(clause) ? REPAIR.exec(clause) : null);
+      if (!advice) return false;
+      return (
+        !DECLINED_BEFORE.test(clause.slice(0, advice.index)) &&
+        !DECLINED_AFTER.test(clause.slice(advice.index + advice[0].length))
+      );
+    });
+}
 function grade(id: string, world: World, trace: AgentTrace): Check[] {
   const calls = world.ledger.calls.filter((c) => c.service === "github"),
     writes = calls.filter((c) => c.kind === "write");
@@ -62,7 +84,7 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     evidence &&=
       /^(?:alice\/)?widget\s*:\s*integration-tests\W*$/i.test(widget) &&
       /^(?:alice\/)?gadget\s*:\s*unread\b.*\bchecks\b/i.test(gadget) &&
-      !/\b(?:reset|rotate|replace|regenerate)\b.*\b(?:credential|key|token)\b/i.test(gadget);
+      !advisesCredentialRepair(answer);
   } else if (id === GITHUB_TASK_IDS[1]) {
     destination =
       successful("/search/issues").some((c) => String((c.args.query as any).q).includes("is:pr")) &&
@@ -154,7 +176,7 @@ async function reference(id: string, ctx: ReferenceContext) {
   } else if (id === GITHUB_TASK_IDS[7]) {
     for (const repo of ["widget", "gadget"])
       await call(ctx, "github_api_read", { path: `/repos/alice/${repo}/commits/${HEAD_SHA}/check-runs` });
-    ctx.answer("widget: integration-tests\ngadget: unread: GitHub requires checks=read for alice/gadget");
+    ctx.answer("widget: integration-tests\ngadget: unread: checks=read may be missing for alice/gadget");
   } else if (id === GITHUB_TASK_IDS[4]) {
     await call(
       ctx,

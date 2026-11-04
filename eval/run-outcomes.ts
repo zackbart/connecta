@@ -256,6 +256,26 @@ async function run() {
       failedChecks(falsePass),
       falsePass,
     );
+    const answerWith = (finalAnswer: string) => {
+      const trial = structuredClone(ciGap);
+      trial.saved!.trace.finalAnswer = finalAnswer;
+      return regradeTrial(task(ciGap.task), trial, "codex", "outcome");
+    };
+    const finalLines = "widget: integration-tests\ngadget: unread: checks=read";
+    const reset = answerWith(`Reset the GitHub credential to restore gadget access.\n${finalLines}`);
+    record(
+      "control: github-ci-scope-gap credential reset advised above the final lines fails",
+      !passed(reset) && reset.checks.some((c) => c.id === "answer-evidence" && !c.pass),
+      failedChecks(reset),
+      reset,
+    );
+    const declined = answerWith(`The key may be fine, so do not reset the credential yet.\n${finalLines}`);
+    record(
+      "control: github-ci-scope-gap answer declining a credential reset passes",
+      passed(declined),
+      failedChecks(declined),
+      declined,
+    );
   }
   const tithely = references.find((t) => t.task === "tithely-cancel-recovery");
   if (tithely) {

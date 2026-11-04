@@ -28,6 +28,8 @@ interface Installation {
   owner: string;
   all: boolean;
   organization: boolean;
+  /** GitHub's own record of what this installation holds; absent when unreadable. */
+  permissions?: Readonly<Record<string, string>>;
   expires: number;
 }
 interface Token {
@@ -55,6 +57,29 @@ function boundedSet<T>(map: Map<string, T>, key: string, value: T): void {
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+const ACCESS: Readonly<Record<string, number>> = { read: 1, write: 2, admin: 3 };
+
+/** Well-formed entries only; an empty or malformed record proves nothing. */
+function heldPermissions(value: unknown): Readonly<Record<string, string>> | undefined {
+  const held = Object.entries(record(value)).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string" && ACCESS[entry[1]] !== undefined,
+  );
+  return held.length > 0 ? Object.fromEntries(held) : undefined;
+}
+
+/**
+ * Requested permissions the installation's own record lacks, the only evidence
+ * that names a refused mint a permission gap. Metadata read is implicit for every App.
+ */
+function missingPermissions(installation: Installation, requested: Permissions): Permissions | undefined {
+  const held = installation.permissions;
+  if (!held) return undefined;
+  const missing = Object.entries(requested).filter(
+    ([name, access]) => name !== "metadata" && (ACCESS[held[name] ?? ""] ?? 0) < ACCESS[access]!,
+  );
+  return missing.length > 0 ? Object.fromEntries(missing) : undefined;
 }
 
 export class AppAuth {
@@ -224,11 +249,13 @@ export class AppAuth {
             "Install or unsuspend the GitHub App on the configured owner. The App credential works, so resetting it will not help.",
           );
         }
+        const permissions = heldPermissions(row.permissions);
         found = {
           id: Number(row.id),
           owner,
           all: row.repository_selection === "all",
           organization: account.type === "Organization",
+          ...(permissions ? { permissions } : {}),
           expires: Date.now() + INSTALLATION_TTL,
         };
       }
@@ -427,6 +454,7 @@ export class AppAuth {
     } catch {
       throw new ConnectorCallError("auth_required", "The GitHub App key could not sign an RS256 JWT. Replace the key.");
     }
+    const missing = missingPermissions(installation, permissionSet);
     let response: Record<string, unknown>;
     try {
       response = record(
@@ -440,7 +468,11 @@ export class AppAuth {
           jwt,
           ctx,
           false,
-          { repository, permissions: permissionWords(permissionSet) },
+          {
+            repository,
+            permissions: permissionWords(permissionSet),
+            ...(missing ? { missing: permissionWords(missing) } : {}),
+          },
         ),
       );
     } catch (error) {

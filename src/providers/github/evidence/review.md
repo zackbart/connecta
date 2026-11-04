@@ -51,12 +51,21 @@ authored content under the same embedded-URL scan as other reads; `details_url` 
 
 A 401 stays `auth_required`. A 403 is `provider_permission_denied` with no credential
 handoff unless `retry-after` or an exhausted `x-ratelimit-remaining` makes it
-`rate_limited`. Permission and scope headers pass only when the whole value matches
-a strict name pattern; `x-github-sso` is read as far as its `required` keyword and its
-URL never leaves. A secondary rate limit with neither header cannot be told from a
-permission refusal, because classification never reads GitHub's prose, so that wording
-says so. A mint answered 422 or 403 is the same gap, naming the reviewed permissions
-requested, and installation or repository-selection gaps in `AppAuth` use this code too.
+`rate_limited`. A 403 proves a refusal, not its cause: [GitHub documents](https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api)
+lockouts after repeated invalid credentials answering 403, secondary limits arrive
+unmarked, and policies refuse sufficient permissions. Classification never reads
+GitHub's prose, so the wording states what is known, what is likely and what to do, in
+that order, and never claims the key works or a grant is missing. Permission and scope
+headers pass only when the whole value matches a strict name pattern, and are worded as
+what the endpoint accepts, since they describe the endpoint and not this token;
+`x-github-sso` is read as far as its `required` keyword and its URL never leaves.
+A 403 on `GET /app/installations` is `auth_required`: only the App JWT is in play.
+A mint's 422 is [documented](https://docs.github.com/en/rest/apps/apps#create-an-installation-access-token-for-an-app)
+as validation failure or spam protection. A refused mint is called a permission gap
+only when `permissions` in GitHub's installation record lacks a requested permission,
+so no prose is read; otherwise a 422 is a neutral `connector_call_failed` and a 403
+keeps its causes open. Installation or repository-selection gaps in `AppAuth` follow a
+successful App-authenticated listing, so they can say the credential works.
 Installation tokens are still evicted on a non-rate 403 so repaired access applies on
 the next call.
 

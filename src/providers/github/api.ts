@@ -81,33 +81,47 @@ function missingScopes(accepted: string | undefined, held: string | undefined): 
   return missing.length > 0 ? missing.join(", ") : undefined;
 }
 
-const NOT_THE_KEY = "The App credential authenticated, so resetting it will not help.";
+const WITHHELD = "its reason is withheld";
+const WAIT = "After a burst of requests, wait a minute before one retry.";
+const ALL_REFUSED =
+  "If every GitHub call through this connection is refused, verify the App ID, private key and installation.";
+const OTHER_CAUSES =
+  "An unmarked secondary rate limit, an IP allow list or a repository or organization policy can also refuse a request with sufficient permissions, and repeated invalid credentials can lock out authentication with a 403.";
+const GRANT =
+  "the App owner must grant the permission and the installation owner must approve it or select this repository, or an administrator must lift the restriction.";
 
-/** Both refusals keep the credential out of it: the key works and this access is what is missing. */
+/**
+ * A 403 establishes a refusal and not its cause: classification never reads
+ * GitHub's prose, and the permission headers describe the endpoint rather than
+ * this token. Each message says what is known, what is likely, then what to do.
+ */
 function refused({ headers, operation, status }: Classified): Verdict {
+  // Only the App's own JWT is in play here, so no repository grant can explain it.
+  if (operation.template === "/app/installations")
+    return {
+      code: "auth_required",
+      retryable: false,
+      words: () =>
+        `GitHub refused the App's own request to list its installations (HTTP ${status}), before any repository permission applied; ${WITHHELD}. A lockout after repeated invalid credentials is likely, and an unmarked secondary rate limit, IP allow list or policy is possible. ${WAIT} If it persists, verify the GitHub App ID and private key.`,
+    };
   const repository = operation.context?.["repository"];
   const where = repository ? `for ${repository}` : "for this resource";
   if (/^required(?:;|$)/i.test(headers["x-github-sso"] ?? ""))
     return denied(
-      `GitHub refused this request ${where}: the organization enforces SAML single sign-on and this credential is not authorized for it. ${NOT_THE_KEY} An organization owner must authorize it.`,
+      `GitHub refused this request ${where}: the organization enforces SAML single sign-on and this credential is not authorized for it. An organization owner must authorize it; replacing the key will not change this.`,
     );
   const accepted = acceptedPermissions(headers["x-accepted-github-permissions"]);
   const scopes = accepted ? undefined : missingScopes(headers["x-accepted-oauth-scopes"], headers["x-oauth-scopes"]);
   const requested = operation.context?.["permissions"];
   const need = accepted
-    ? ` GitHub requires ${accepted}.`
+    ? ` This endpoint accepts ${accepted}.`
     : scopes
-      ? ` GitHub requires the OAuth scope ${scopes}.`
+      ? ` This endpoint lists the OAuth scope ${scopes}, which this token does not report.`
       : requested
         ? ` This call requested ${requested}.`
         : "";
-  // GitHub does not always mark a secondary rate limit, and its text stays withheld.
-  const unmarked =
-    accepted || scopes
-      ? ""
-      : " After a burst of requests this can also be an unmarked secondary rate limit: wait a minute before one retry.";
   return denied(
-    `GitHub refused this request ${where} (HTTP ${status}).${need} ${NOT_THE_KEY} The App owner must grant this permission and the installation owner must approve it, or select this repository; other repositories may still work.${unmarked}`,
+    `GitHub refused this request ${where} (HTTP ${status}); ${WITHHELD}.${need} The likely cause is access the App or its installation does not hold. ${OTHER_CAUSES} Report this as an access gap and continue with other repositories; do not reset the credential or switch tools on this result alone. ${WAIT} If it persists, ${GRANT} ${ALL_REFUSED}`,
   );
 }
 
@@ -116,17 +130,30 @@ function denied(message: string): Verdict {
 }
 
 /**
- * GitHub answers 422 when a token asks for a permission or repository the
- * installation does not hold, and 403 for a refused installation. These are the
- * failures an App without a newly reviewed permission meets first.
+ * GitHub documents a mint's 422 as a validation failure or spam protection, so
+ * the status alone never establishes a permission gap. `missing` is the positive
+ * evidence: requested permissions absent from GitHub's own installation record.
  */
 function refusedToken({ status, operation }: Classified): Verdict | undefined {
   if ((status !== 422 && status !== 403) || !/^\/app\/installations\/\d+\/access_tokens$/.test(operation.template))
     return undefined;
   const repository = operation.context?.["repository"],
-    requested = operation.context?.["permissions"];
+    requested = operation.context?.["permissions"],
+    missing = operation.context?.["missing"];
+  const asked = `GitHub would not issue an installation token${repository ? ` for ${repository}` : ""}${requested ? ` with ${requested}` : ""} (HTTP ${status})`;
+  if (missing)
+    return denied(
+      `${asked}. The installation does not hold ${missing}. Report this as an access gap; other reads may still work. The App owner must grant that permission and the installation owner must approve it; replacing the key will not add it.`,
+    );
+  if (status === 422)
+    return {
+      code: "connector_call_failed",
+      retryable: false,
+      words: () =>
+        `${asked}; ${WITHHELD}. GitHub documents this status for validation failures and spam protection, so a missing permission or repository is possible but not established. Report this failure; other reads may still work. Wait before one retry, and if it persists check the permissions and repositories granted to this installation.`,
+    };
   return denied(
-    `GitHub would not issue an installation token${repository ? ` for ${repository}` : ""}${requested ? ` with ${requested}` : ""} (HTTP ${status}). The App or its installation does not hold that permission or repository. ${NOT_THE_KEY} The App owner must grant this permission and the installation owner must approve it, or select this repository; other reads may still work.`,
+    `${asked}; ${WITHHELD}. A suspended installation, an IP allow list or policy, an unmarked secondary rate limit or a lockout after repeated invalid credentials can each cause this. Report this failure; other repositories may still work. ${WAIT} ${ALL_REFUSED}`,
   );
 }
 
