@@ -1,4 +1,4 @@
-import { routePhrases } from "./agent-routes.js";
+import { handoffInHand, routePhrases } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { upwardStep } from "./upward.js";
 import type { ConnectorCredentialValues } from "./types.js";
@@ -29,6 +29,47 @@ function outcomeAware(build: (unknownWrite: boolean) => AuthorizationHandoff): A
   const handoff = build(false);
   afterUnknownWrite.set(handoff, build(true));
   return handoff;
+}
+
+/**
+ * What to do with a handoff the error already carries. Passing it on is the
+ * whole step: calling authorize_connector would only return the same thing.
+ * After a write of unknown outcome the follow-up reconciles, never retries.
+ */
+function handoffAction(
+  handoff: AuthorizationHandoff,
+  unknownWrite: boolean,
+): NonNullable<CallErrorDetails["nextAction"]> {
+  const then = unknownWrite
+    ? "After they confirm, re-read the write's target before any fresh call."
+    : "Retry after they confirm.";
+  const url = handoff.authorizationUrl ?? handoff.operatorUrl;
+  if (!url)
+    return {
+      action: "contact_operator",
+      purpose: `Tell the user the operator must fix this connector, as instructions says, then stop. ${then}`,
+    };
+  return {
+    url,
+    purpose: handoff.authorizationUrl
+      ? `Give this link to the user, unchanged, then stop. ${then}`
+      : `Give this link to the user, unchanged, for the operator to open, then stop. ${then}`,
+  };
+}
+
+const unknownWriteError = (error: { writeOutcome?: unknown; reconciliationRequired?: unknown }): boolean =>
+  error.writeOutcome === "unknown" || error.reconciliationRequired === true;
+
+/**
+ * The fields for an auth error given only a connect link, where a capable host's
+ * prompt could not carry it: the same direct step as a full handoff.
+ */
+export function connectLinkFields(error: Record<string, unknown>, connector: string, authorizationUrl: string) {
+  return {
+    ...(typeof error.message === "string" ? { message: handoffInHand(error.message, connector) } : {}),
+    authorizationUrl,
+    nextAction: handoffAction({ connector, recovery: "oauth", authorizationUrl }, unknownWriteError(error)),
+  };
 }
 
 function oauthFollowUp(connectorId: string, unknownWrite: boolean, opts: HandoffOptions): string {
@@ -133,7 +174,7 @@ const authorizationHandoffNative = /* @__PURE__ */ registerAuth(
         status: "auth_required",
         authorizationUrl,
         instructions:
-          "Copy authorizationUrl exactly as returned; do not decode or re-encode it. Open it in a browser and sign in as the user who requested this connection. Connecta verifies your identity and permission before starting consent. " +
+          "For the person opening this link: open it in a browser and sign in as the user who requested this connection; Connecta verifies identity and permission before starting consent. For the agent: pass authorizationUrl on exactly as returned, without decoding or re-encoding it. " +
           oauthFollowUp(connector.id, unknownWrite, opts),
       }));
     });
@@ -249,7 +290,8 @@ export function withAuthorizationHandoffEffect<T extends CallErrorDetails>(scope
         return {
           ...error,
           ...value,
-          message: error.message,
+          message: handoffInHand(error.message, connector),
+          nextAction: handoffAction(value, unknownWriteError(error)),
           ...(value.message ? { instructions: value.message } : {}),
         };
       }),

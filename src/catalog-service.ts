@@ -564,12 +564,12 @@ const catalogFailureProperties = {
   // additive action advice compact in the always-loaded search schema.
   nextAction: {
     type: "object",
-    anyOf: [{ required: ["tool"] }, { required: ["action"] }],
+    anyOf: [{ required: ["url"] }, { required: ["tool"] }, { required: ["action"] }],
     properties: {
+      url: STRING,
       tool: { const: "authorize_connector" },
       action: { enum: ["contact_operator", "inspect_capabilities"] },
       purpose: STRING,
-      operatorHandoff: STRING,
       arguments: { type: "object", properties: { connector: STRING } },
     },
   },
@@ -1185,7 +1185,16 @@ export class CatalogService {
     };
   }
 
-  private unknownToolFailure(toolName: string, connector: Connector, started: number): CatalogResolution {
+  private unknownToolFailure(
+    toolName: string,
+    connector: Connector,
+    started: number,
+    tools: ToolDef[],
+  ): CatalogResolution {
+    // The same view discovery serves: a read-only scope never names a write here.
+    const visible =
+      this.readOnly || connector.readOnly === true ? tools.filter((tool) => tool.classification === "read") : tools;
+    const suggestions = hasControlCharacters(toolName) ? [] : describeSuggestions(connector.id, toolName, visible);
     return {
       ok: false,
       error: {
@@ -1199,6 +1208,7 @@ export class CatalogService {
           { query: hasControlCharacters(toolName) ? "" : recoveryQuery(toolName), connector: connector.id },
           "Find the connector's current canonical tool address.",
         ),
+        ...(suggestions.length > 0 ? { suggestions } : {}),
       },
       catalogMs: Date.now() - started,
       connector,
@@ -1231,7 +1241,7 @@ export class CatalogService {
         onSuccess: (tools): CatalogResolution => {
           const definition = tools.find((tool) => tool.name === toolName);
           if (!definition) {
-            return this.unknownToolFailure(toolName, connector, started);
+            return this.unknownToolFailure(toolName, connector, started, tools);
           }
           return {
             ok: true,
@@ -1851,7 +1861,7 @@ export class CatalogService {
               (apiSearchGuidance ? "" : filterRecovery)
             );
           return unavailableCatalogs === 0
-            ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
+            ? `No ${safetyLabel}tool matched these terms. Try other terms, scope by connector, or browse with an empty query.${filterRecovery}`
             : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`;
         }
         if (matchMode !== "partial") return undefined;

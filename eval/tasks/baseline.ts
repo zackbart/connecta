@@ -2,6 +2,7 @@
  * The baseline task set: today's surface, run on main before the rewrite and
  * re-run by every later phase.
  */
+import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask, Check, ReferenceContext } from "./types.js";
 import { uses } from "./types.js";
@@ -86,6 +87,28 @@ async function pageAll(call: ReferenceContext["call"], truncated: string): Promi
     offset = page.hasMore ? page.nextOffset : undefined;
   }
   return text;
+}
+
+/** Handoff links Connecta really gave the agent, read from what its tools returned. */
+function handoffLinks(trace: AgentTrace): string[] {
+  const links = new Set<string>();
+  for (const use of trace.toolUses)
+    for (const match of (use.resultText ?? "").matchAll(/\\?"(?:operatorUrl|authorizationUrl)\\?":\\?"([^"\\]+)/g))
+      links.add(match[1]!);
+  return [...links];
+}
+
+/**
+ * The agent's own words carry a real link exactly as issued. A person can only
+ * open what reaches them whole, so a paraphrase, a re-encoded link and a tool
+ * call nobody hears about all fail alike, by either route to the link.
+ */
+function handoffLinkReachedUser(trace: AgentTrace): boolean {
+  const said = [
+    trace.finalAnswer ?? "",
+    ...trace.transcript.flatMap((entry) => (entry.kind === "assistant" ? [entry.text] : [])),
+  ];
+  return handoffLinks(trace).some((link) => said.some((text) => text.includes(link)));
 }
 
 function resultPagingUses(trace: Parameters<typeof uses>[0]) {
@@ -258,7 +281,7 @@ const authRequiredRecovery: ActiveTask = {
   title: "auth_required recovery through the operator handoff",
   introducedIn: "baseline",
   measures:
-    "Recognising auth_required, handing off through authorize_connector, and retrying the original read once the operator has fixed it.",
+    "Recognising auth_required, getting the handoff link to the person intact, and retrying the original read once the operator has fixed it.",
   world: { billingCredential: "missing" },
   prompt:
     "How much does Northwind Traders currently owe us across unpaid invoices? Check billing, then post the total to #finance as " +
@@ -266,9 +289,8 @@ const authRequiredRecovery: ActiveTask = {
   followUps: [
     {
       before: async ({ trace, deployment, world, note }) => {
-        const asked = uses(trace, "authorize_connector").some((use) => use.input.connector === "billing");
-        if (!asked) {
-          note("Operator: nothing to act on — authorize_connector was never called for billing. Conversation ends.");
+        if (!handoffLinkReachedUser(trace)) {
+          note("Operator: nothing to act on — no handoff link for billing reached me intact. Conversation ends.");
           return false;
         }
         await deployment.setCredential("billing", world.billingToken);
@@ -280,23 +302,24 @@ const authRequiredRecovery: ActiveTask = {
   ],
   grade: ({ world, trace }) => {
     const authorize = uses(trace, "authorize_connector").filter((use) => use.input.connector === "billing");
+    const handedOff = handoffLinkReachedUser(trace);
     const invoices = world.ledger.calls.filter(
       (call) => call.service === "billing" && call.tool === "list_invoices" && call.outcome === "ok",
     );
     const { checks, text } = singlePost(world, "finance");
     const amount = normalizeMoney(text);
     return [
-      check("handed-off-route", "called authorize_connector for billing", authorize.length > 0),
+      check("handed-off-route", "gave the user the billing handoff link intact", handedOff),
       check(
         "handed-off",
-        "called authorize_connector for billing",
-        authorize.length > 0,
-        `${authorize.length} call(s)`,
+        "gave the user the billing handoff link intact",
+        handedOff,
+        `${handoffLinks(trace).length} link(s) issued`,
       ),
       check(
         "handed-off-once",
-        "called authorize_connector for billing only once",
-        authorize.length === 1,
+        "fetched the billing handoff with authorize_connector at most once",
+        authorize.length <= 1,
         `${authorize.length} call(s)`,
         true,
       ),
@@ -315,9 +338,12 @@ const authRequiredRecovery: ActiveTask = {
       onlyWrites(world, ["chat.post_message"]),
     ];
   },
-  reference: async ({ call, nextTurn }) => {
-    await call("call_tool", { address: "billing.find_customer", args: { query: "Northwind Traders" } });
-    await call("authorize_connector", { connector: "billing" });
+  reference: async ({ answer, call, nextTurn }) => {
+    const blocked = await call("call_tool", { address: "billing.find_customer", args: { query: "Northwind Traders" } });
+    const { nextAction } = (blocked.structured as { error: { nextAction: { url: string } } }).error;
+    answer(
+      `Billing needs its API key before I can read this. Please open ${nextAction.url} and save it, then tell me.`,
+    );
     await nextTurn();
     await call("execute_code", {
       code: `async () => {

@@ -24,6 +24,10 @@ type WriteCompletion =
       handoff?: WriteHandoff;
     };
 
+const CHECK_UNKNOWN_WRITE = "Read its target to see whether it applied before doing anything that depends on it.";
+const UNKNOWN_WRITE_ARGS =
+  "Any echoed arguments may be partial or absent; use your original arguments for any further call.";
+
 /** What a dispatched write's outcome says about whether it landed. */
 export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompletion {
   const state = classifyWriteOutcome(
@@ -41,13 +45,18 @@ export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompleti
   const handoff: WriteHandoff | undefined =
     (error.code === "auth_required" || error.code === "downstream_oauth_required") &&
     error.nextAction &&
-    "tool" in error.nextAction &&
-    error.nextAction.tool === "authorize_connector"
+    error.connector !== undefined
       ? {
           code: error.code,
-          ...(error.connector !== undefined ? { connector: error.connector } : {}),
+          connector: error.connector,
           ...(error.recovery !== undefined ? { recovery: error.recovery } : {}),
-          nextAction: error.nextAction,
+          // This terminal result carries no handoff fields, so it never holds a link:
+          // the agent fetches one, whatever the call's own error was given.
+          nextAction: {
+            tool: "authorize_connector",
+            arguments: { connector: error.connector },
+            operatorHandoff: "Give the URL and instructions it returns to the operator.",
+          },
           ...(error.retry !== undefined ? { retry: error.retry } : {}),
         }
       : undefined;
@@ -128,6 +137,11 @@ export class ProgramWrites {
     };
   }
 
+  /** Whether this run dispatched any write, whatever became of it. */
+  get sent(): boolean {
+    return this.states.length > 0 || this.inFlight.size > 0;
+  }
+
   /** Wait for dispatched writes, each bounded by its host-call deadline. */
   drain(): Effect.Effect<void> {
     return Effect.promise(async () => {
@@ -150,8 +164,8 @@ export class ProgramWrites {
       return toolError({
         code: handoff?.code ?? "write_outcome_unknown",
         message: handoff
-          ? "A write this program sent failed authorization after it left, so whether it took effect is unknown, and that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it, and give nextAction to the operator to recover the connector. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call."
-          : "A write this program sent has no known outcome, so that is the result rather than what the program returned. It will not be sent again. Check its target before doing anything that depends on it. Argument echoes may be partial or absent; use the original arguments if reconciliation requires another call.",
+          ? `A write this program sent failed authorization after it left, so its outcome is unknown and the program's return was discarded. It will not be resent. ${CHECK_UNKNOWN_WRITE} Then run nextAction and give what it returns to the operator to recover the connector. ${UNKNOWN_WRITE_ARGS}`
+          : `A write this program sent has an unknown outcome, and the program's return was discarded. It will not be resent. ${CHECK_UNKNOWN_WRITE} ${UNKNOWN_WRITE_ARGS}`,
         retryable: false,
         ...(handoff ? { ...handoff, reconciliationRequired: true, writeOutcome: "unknown" } : {}),
         ...(this.deadlines.length > 0 ? { details: this.deadlines[0] } : {}),

@@ -9,7 +9,7 @@ const FENCE = /^```[\w-]*\s*\n([\s\S]*?)\n?```$/;
 const PROGRAM_FENCE = /^```(?:js|javascript)?[ \t]*\r?\n([\s\S]*?)\r?\n```[ \t]*$/gm;
 
 /** Leading whitespace and comments, which may precede the arrow expression. */
-const LEADING_TRIVIA = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)+/;
+export const LEADING_TRIVIA = /^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)+/;
 
 /** One character of an identifier, keyword, or number; `\\` for escapes. */
 const WORD = /[\w$\\\u0080-\uffff]/;

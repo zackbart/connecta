@@ -1,4 +1,5 @@
 import { GUEST_FUNCTIONS } from "./guest-functions.js";
+import { LEADING_TRIVIA } from "./program-source.js";
 
 /** Capture the single-use runner before evaluating the guest expression. */
 export function wrapGuestProgram(code: string): string {
@@ -212,6 +213,7 @@ ${GUEST_NAMESPACE}
           if (unawaited) try { await provider.unawaited(); } catch {}
           throw error;
         }
+        if (unawaited) try { await provider.unawaited(); } catch {}
         for (let i = 0; i < pending.length; i++) {
           const report = await pending[i].settled;
           if (!report.ok && !pending[i].handled) throw report.error;
@@ -285,6 +287,14 @@ export function programError(
   ) {
     hint =
       'Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill("usage"). Services are addressed by connector.tool, never guest globals.';
+  } else if (
+    name === "TypeError" &&
+    /not a function|not iterable/.test(message) &&
+    /\bconnecta\s*\.\s*(?:search|describe|call)\b/.test(code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ""))
+  ) {
+    hint = "search and describe return { tools }; call returns { data, format }. Read those fields.";
+  } else if (name === "SyntaxError" && !/^(?:async\b|\(|function\b)/.test(code.replace(LEADING_TRIVIA, ""))) {
+    hint = "Pass one expression: async () => { ...; return answer; }.";
   }
   return {
     code: "program_error",

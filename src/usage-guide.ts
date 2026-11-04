@@ -101,7 +101,7 @@ fixed across pages; connector caps and the 32 KiB bridge ceiling apply.
 async () => {
   let text = "", offset = 0, page;
   do {
-    page = await connecta.result("result-id", { offset, maxBytes: 8000 });
+    page = await connecta.result("result-id", { offset });
     text += page.text;
     offset = page.nextOffset;
   } while (page.hasMore);

@@ -3,8 +3,11 @@
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
 import { afterAll, describe, expect, it, vi } from "vitest";
+import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
+import { createMetaTools } from "../src/meta-tools.js";
+import { USAGE_SKILL } from "../src/usage-guide.js";
 import { checkAuthHandoffProgram } from "./fixtures/authorization-handoff.js";
 import {
   CAPABILITY_PROBE_CODE,
@@ -20,6 +23,7 @@ import {
   CONTRACT_CASES,
   contractHarness,
 } from "./guest-contract-cases.js";
+import { makeRegistry, required, silentLogger } from "./helpers.js";
 import {
   checkLargeProgramRead,
   checkLargeProgramWrite,
@@ -163,6 +167,111 @@ describe("guest API contract (QuickJS executor)", () => {
       contractCase.check(outcome, harness.state, follow);
     });
   }
+
+  describe("the whole-result loop a truncated read offers", () => {
+    const BASE = "https://connecta.loop";
+    const run = async (text: string, options: { maxHostCalls?: number; maxResultBytes?: number } = {}) => {
+      const calls = { reads: 0 };
+      const registry = makeRegistry(
+        [
+          {
+            id: "logs",
+            kind: "api",
+            ...(options.maxResultBytes ? { maxResultBytes: options.maxResultBytes } : {}),
+            listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+            callTool: async () => {
+              calls.reads++;
+              return text;
+            },
+          },
+        ],
+        {},
+      );
+      const notice = JSON.parse(
+        required(
+          (
+            await createMetaTools(
+              registry,
+              BASE,
+              options.maxHostCalls ? { maxProgramHostCalls: options.maxHostCalls } : {},
+            ).callTool({ address: "logs.read" })
+          ).content[0],
+        ).text!.split("\n")[0]!,
+      ) as { hint: string; resultId: string; totalBytes: number };
+      const loop = async () =>
+        JSON.parse(
+          required(
+            (
+              await createExecuteTool(
+                registry,
+                BASE,
+                executor,
+                silentLogger,
+                undefined,
+                options.maxHostCalls ? { maxHostCalls: options.maxHostCalls } : {},
+              )({
+                code: `async () => {
+                  let text = "", offset = 0, page;
+                  do {
+                    page = await connecta.result(${JSON.stringify(notice.resultId)}, { offset });
+                    text += page.text;
+                    offset = page.nextOffset;
+                  } while (page.hasMore);
+                  return { length: text.length };
+                }`,
+              })
+            ).content[0],
+          ).text!,
+        ) as { result?: { length: number }; error?: { code: string }; hostCalls: { attempted: number } };
+      return { notice, loop, calls };
+    };
+    // 18 pages of 23,997 bytes is the last size offered at the default 24,000-byte cap and 20 calls.
+    const LARGEST_OFFERED = 18 * 23_997;
+
+    it.each([
+      ["a small overflow", 30_000, "x"],
+      ["the near-limit size", LARGEST_OFFERED, "x"],
+      ["three-byte characters that shorten every page", LARGEST_OFFERED, "\u20ac"],
+    ])("[L4] completes inside the budget for %s", async (_label, bytes, unit) => {
+      // A downstream string is retained in its JSON form, two quotes longer.
+      const text = unit!.repeat(Math.floor((bytes - 2) / new TextEncoder().encode(unit).length));
+      const { notice, loop, calls } = await run(text);
+      expect(notice.hint).toContain(`loop connecta.result(${JSON.stringify(notice.resultId)}, { offset })`);
+      expect(notice.hint).toContain("retained for 15 minutes");
+      expect(notice.hint).not.toContain("repeat this read");
+      const looped = await loop();
+      expect(looped.error).toBeUndefined();
+      expect(looped.result?.length).toBe(text.length + 2);
+      expect(looped.hostCalls.attempted).toBeLessThanOrEqual(18);
+      // Whole-value reduction without fetching the downstream a second time.
+      expect(calls.reads).toBe(1);
+    });
+
+    it("[L4] falls back to repeating the read past the near-limit size, where a loop would lose everything", async () => {
+      const { notice, loop } = await run("x".repeat(LARGEST_OFFERED + 24_000));
+      expect(notice.hint).toContain("repeat this read inside execute_code with connecta.call");
+      expect(notice.hint).not.toContain("loop connecta.result");
+      // The size is still reachable with no calls to spare, which is why the margin is two.
+      expect((await loop()).hostCalls.attempted).toBeLessThanOrEqual(20);
+      const beyond = await run("x".repeat(21 * 24_000));
+      expect(beyond.notice.hint).toContain("repeat this read");
+      expect((await beyond.loop()).error?.code).toBe("budget_exceeded");
+    });
+
+    it("[L4] sizes the offer from the connector's cap and the deployment's budget", async () => {
+      const text = "x".repeat(225_781);
+      expect((await run(text)).notice.hint).toContain("loop connecta.result");
+      expect((await run(text, { maxResultBytes: 1_000 })).notice.hint).toContain("repeat this read");
+      expect((await run(text, { maxHostCalls: 5 })).notice.hint).toContain("repeat this read");
+    });
+
+    it("[L4] the usage guide's paging example finishes the size that used to exhaust the budget", async () => {
+      expect(USAGE_SKILL).not.toMatch(/connecta\.result\("result-id", \{[^}]*maxBytes/);
+      const looped = await (await run("x".repeat(225_781))).loop();
+      expect(looped.error).toBeUndefined();
+      expect(looped.hostCalls.attempted).toBe(10);
+    });
+  });
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
     const outcome = await contractHarness().run(

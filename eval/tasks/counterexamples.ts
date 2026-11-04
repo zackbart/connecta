@@ -57,6 +57,45 @@ export function counterexamples(
         world: changedCalls(world.ledger.calls.filter((c) => c.seq <= write.seq)),
       });
   }
+  if (task.id === "auth-required-recovery") {
+    const said = trace.transcript.flatMap((entry) => (entry.kind === "assistant" ? [entry.text] : []));
+    const issued = said.map((text) => /https?:\/\/\S+/.exec(text)?.[0]).find(Boolean) ?? "";
+    const retell = (text: (line: string) => string): AgentTrace => ({
+      ...trace,
+      finalAnswer: text(trace.finalAnswer ?? ""),
+      transcript: trace.transcript.map((entry) =>
+        entry.kind === "assistant" ? { ...entry, text: text(entry.text) } : entry,
+      ),
+    });
+    cases.push({
+      name: "handoff paraphrased, no link",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, "the connection page")),
+    });
+    cases.push({
+      name: "handoff link altered",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, decodeURIComponent(issued).replace("://", "://copy."))),
+    });
+    cases.push({
+      name: "authorize_connector called, nothing passed on",
+      check: "handed-off",
+      trace: {
+        ...retell((line) => line.replaceAll(issued, "the connection page")),
+        toolUses: [
+          ...trace.toolUses,
+          {
+            id: "authorize",
+            turn: 1,
+            tool: "authorize_connector",
+            input: { connector: "billing" },
+            isError: false,
+            resultText: JSON.stringify({ operatorUrl: issued }),
+          },
+        ],
+      },
+    });
+  }
   if (task.id.startsWith("github-")) {
     const changedCalls = (calls: World["ledger"]["calls"]): World =>
       Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
