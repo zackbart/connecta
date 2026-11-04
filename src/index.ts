@@ -290,6 +290,13 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const requestAdmission = new AdmissionController(resolved.admission.requests);
   let codeAdmission: AdmissionController | undefined;
   let executor = resolved.executor;
+  if (executor.deadlineMs !== undefined && executor.deadlineMs >= resolved.execute.watchdogMs) {
+    logger.warn(
+      `[connecta] The executor's ${executor.deadlineMs}ms deadline does not end before execute.watchdogMs ` +
+        `(${resolved.execute.watchdogMs}ms), so programs end at the watchdog. Raise execute.watchdogMs ` +
+        "above it if your MCP clients allow requests that long.",
+    );
+  }
   // Read the identity off the configured executor, before any wrapper hides
   // it behind an anonymous object literal.
   const configuredExecutorName = executorName(executor);

@@ -2,6 +2,7 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
+import { CONFIG_DEFAULTS } from "../src/config-defaults.js";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
 import { customExecutor } from "../src/executor-contract.js";
@@ -19,6 +20,9 @@ import {
   checkQueuedWriteAtExhaustion,
   checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
+  checkDispatchGateAfterAuth,
+  checkDispatchGateAfterCatalog,
+  checkStallAtCeiling,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -173,6 +177,23 @@ describe("guest API contract (QuickJS executor)", () => {
 
   it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
     await checkReadDeadlineUtilities(readDeadlineExecutor);
+  });
+
+  it("[L3, INV-9] a stall after a successful write is never retryable", async () => {
+    await checkStallAtCeiling(readDeadlineExecutor, "for (;;) {}");
+  });
+
+  it("[L3, W9, INV-9] the final gate refuses a write its auth step ran out of time, unsent", async () => {
+    await checkDispatchGateAfterAuth(readDeadlineExecutor);
+  }, 60_000);
+
+  it("[L3, W9, INV-9] the final gate refuses a read its catalog ran out of time, unsent", async () => {
+    await checkDispatchGateAfterCatalog(readDeadlineExecutor);
+  }, 60_000);
+
+  it("[L3] the default run deadline ends below the response ceiling", () => {
+    expect(executor.deadlineMs).toBe(30_000);
+    expect(executor.deadlineMs).toBeLessThan(CONFIG_DEFAULTS.execute.watchdogMs);
   });
 
   it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {
