@@ -6,6 +6,9 @@ import type { ServerOptions } from "./routes/shared.js";
 import { oauthConnectKeys } from "./storage/keys.js";
 
 const HANDOFF_TTL_MS = 15 * 60_000;
+// A flow can issue a link until its ten-minute retry state ends, and that link lives
+// fifteen more, so a reset's record outlives every link that could repeat it.
+const FLOW_RESET_EXPIRY = { ttlSeconds: 30 * 60 };
 const INTERACTIVE_OAUTH_REQUIRED =
   "An interactive provider (Clerk or Cloudflare Access) is required to connect OAuth connectors.";
 
@@ -17,7 +20,8 @@ interface Handoff {
   expiresAt: number;
   nonce: string;
   force: boolean;
-  after?: string;
+  /** The first link of a forced flow, whose rounds share one reset. Absent on that link. */
+  flow?: string;
 }
 
 // Length-prefixed fields avoid JSON keys and escaping without reserving any
@@ -31,7 +35,7 @@ function encodeHandoff(h: Handoff): string {
     h.expiresAt.toString(36),
     h.nonce,
     h.force ? "1" : "0",
-    h.after ?? "",
+    h.flow ?? "",
   ]
     .map((field) => `${field.length}:${field}`)
     .join("");
@@ -50,7 +54,7 @@ function decodeHandoff(value: string): Handoff {
     fields.push(value.slice(offset, offset + length));
     offset += length;
   }
-  const [connector, owner, principal, origin, expiry, nonce, force, after] = fields;
+  const [connector, owner, principal, origin, expiry, nonce, force, flow] = fields;
   if (fields.length !== 8 || offset !== value.length || !/^[0-9a-z]+$/.test(expiry!) || !/^[01]$/.test(force!))
     throw new Error("Invalid handoff fields");
   return {
@@ -61,7 +65,7 @@ function decodeHandoff(value: string): Handoff {
     expiresAt: parseInt(expiry!, 36),
     nonce: nonce!,
     force: force === "1",
-    ...(after ? { after } : {}),
+    ...(flow ? { flow } : {}),
   };
 }
 
@@ -136,9 +140,9 @@ export function oauthConnectLink(
   principal: string | undefined,
   force = false,
   opaque = false,
-  after?: string,
+  flow?: string,
 ): Promise<{ url: string; nonce: string }> {
-  return runEdge(oauthConnectLinkNative(opts, baseUrl, connectorId, principal, force, opaque, after));
+  return runEdge(oauthConnectLinkNative(opts, baseUrl, connectorId, principal, force, opaque, flow));
 }
 const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
   oauthConnectLink,
@@ -149,7 +153,7 @@ const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
     principal: string | undefined,
     force: boolean = false,
     opaque: boolean = false,
-    after?: string,
+    flow?: string,
   ) {
     return authFlow<{ url: string; nonce: string }>(function* () {
       const unavailable = oauthConnectUnavailable(opts);
@@ -164,7 +168,7 @@ const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
         expiresAt: Date.now() + HANDOFF_TTL_MS,
         nonce: crypto.randomUUID(),
         force,
-        ...(after ? { after } : {}),
+        ...(flow ? { flow } : {}),
       };
       const vault = opts.config.vault!;
       if (opaque && (!vault.seal || !vault.open))
@@ -184,52 +188,25 @@ const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
 );
 
 /** A claim precedes OAuth reset; only a completed start can prove recovery. */
-export function oauthConnectLinkProgress(
+export function oauthConnectLinkStarted(
   opts: ServerOptions,
   baseUrl: string,
   id: string,
   nonce: string,
-): Promise<"claimed" | "started" | "failed" | undefined> {
-  return runEdge(oauthConnectLinkProgressNative(opts, baseUrl, id, nonce));
+): Promise<boolean> {
+  return runEdge(oauthConnectLinkStartedNative(opts, baseUrl, id, nonce));
 }
-const oauthConnectLinkProgressNative = /* @__PURE__ */ registerAuth(
-  oauthConnectLinkProgress,
+const oauthConnectLinkStartedNative = /* @__PURE__ */ registerAuth(
+  oauthConnectLinkStarted,
   function (opts: ServerOptions, baseUrl: string, id: string, nonce: string) {
-    return authFlow<"claimed" | "started" | "failed" | undefined>(function* () {
-      const stage = yield* upwardStep(
-        authStorage<string | null>(opts.registry.contextFor(id, baseUrl).storage, "get", [
-          oauthConnectKeys.used(nonce),
-        ]),
-      );
-      return stage === "used" ? "claimed" : stage === "started" || stage === "failed" ? stage : undefined;
-    });
-  },
-);
-
-/** Make outstanding flow links single-use refusals before a completion check. */
-export function closeOAuthConnectLinks(
-  opts: ServerOptions,
-  baseUrl: string,
-  id: string,
-  nonces: string[],
-): Promise<void> {
-  return runEdge(closeOAuthConnectLinksNative(opts, baseUrl, id, nonces));
-}
-const closeOAuthConnectLinksNative = /* @__PURE__ */ registerAuth(
-  closeOAuthConnectLinks,
-  function (opts: ServerOptions, baseUrl: string, id: string, nonces: string[]) {
-    return authFlow<void>(function* () {
-      const storage = opts.registry.contextFor(id, baseUrl).storage;
-      for (const nonce of nonces) {
-        yield* upwardStep(
-          authStorage<boolean>(storage, "compareAndSet", [
+    return authFlow<boolean>(function* () {
+      return (
+        (yield* upwardStep(
+          authStorage<string | null>(opts.registry.contextFor(id, baseUrl).storage, "get", [
             oauthConnectKeys.used(nonce),
-            null,
-            "closed",
-            { ttlSeconds: HANDOFF_TTL_MS / 1000 },
           ]),
-        );
-      }
+        )) === "started"
+      );
     });
   },
 );
@@ -312,6 +289,8 @@ const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
                 )
               : atob(payload),
           );
+          // A retired predecessor binding: nothing here can honor it, so it must not be ignored.
+          if ("after" in h) return null;
         }
         const connector = opts.registry.getConnector(connectorId);
         if (
@@ -330,8 +309,8 @@ const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
         )
           return null;
         if (
-          h.after !== undefined &&
-          (typeof h.after !== "string" || !/^[a-f0-9-]{36}$/.test(h.after) || h.after === h.nonce || h.force)
+          h.flow !== undefined &&
+          (typeof h.flow !== "string" || !/^[a-f0-9-]{36}$/.test(h.flow) || h.flow === h.nonce || !h.force)
         )
           return null;
         if (
@@ -350,26 +329,43 @@ const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
   },
 );
 
-/** Claim only after browser identity and permissions pass, before starting OAuth. */
-export function consumeOAuthConnectLink(opts: ServerOptions, handoff: Handoff): Promise<boolean> {
-  return runEdge(consumeOAuthConnectLinkNative(opts, handoff));
+/**
+ * Claim only after browser identity and permissions pass, before starting OAuth.
+ * A forced flow resets once, whichever of its links arrives first. A later visitor
+ * continues that attempt, waits on it without spending its link, or, once it has
+ * failed, takes over the reset.
+ */
+export function claimOAuthConnectStart(
+  opts: ServerOptions,
+  handoff: Handoff,
+): Promise<"reset" | "continue" | "pending" | "refused"> {
+  return runEdge(claimOAuthConnectStartNative(opts, handoff));
 }
-const consumeOAuthConnectLinkNative = /* @__PURE__ */ registerAuth(
-  consumeOAuthConnectLink,
+const claimOAuthConnectStartNative = /* @__PURE__ */ registerAuth(
+  claimOAuthConnectStart,
   function (opts: ServerOptions, handoff: Handoff) {
-    return authFlow<boolean>(function* () {
-      if (handoff.expiresAt <= Date.now()) return false;
+    return authFlow<"reset" | "continue" | "pending" | "refused">(function* () {
+      if (handoff.expiresAt <= Date.now()) return "refused";
       const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
+      const reset = handoff.force ? oauthConnectKeys.reset(handoff.flow ?? handoff.nonce) : undefined;
+      const prior = reset ? yield* upwardStep(authStorage<string | null>(storage, "get", [reset])) : "started";
+      if (prior === "used") return "pending";
+      const claiming = prior !== "started";
       if (
-        handoff.after &&
-        (yield* upwardStep(authStorage<string | null>(storage, "get", [oauthConnectKeys.used(handoff.after)]))) !==
-          "started"
+        claiming &&
+        !(yield* upwardStep(authStorage<boolean>(storage, "compareAndSet", [reset!, prior, "used", FLOW_RESET_EXPIRY])))
       )
-        return false;
+        return "pending";
       const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
-      return yield* upwardStep(
-        authStorage<boolean>(storage, "compareAndSet", [oauthConnectKeys.used(handoff.nonce), null, "used", expiry]),
-      );
+      if (
+        yield* upwardStep(
+          authStorage<boolean>(storage, "compareAndSet", [oauthConnectKeys.used(handoff.nonce), null, "used", expiry]),
+        )
+      )
+        return claiming ? "reset" : "continue";
+      if (claiming)
+        yield* upwardStep(authStorage<boolean>(storage, "compareAndSet", [reset!, "used", prior, FLOW_RESET_EXPIRY]));
+      return "refused";
     });
   },
 );
@@ -386,8 +382,19 @@ const finishOAuthConnectStartNative = /* @__PURE__ */ registerAuth(
   finishOAuthConnectStart,
   function (opts: ServerOptions, handoff: Handoff, outcome: "started" | "failed") {
     return authFlow<boolean>(function* () {
-      if (handoff.expiresAt <= Date.now()) return false;
       const storage = opts.registry.contextFor(handoff.connector, handoff.origin).storage;
+      // Settled first, and whatever the link's expiry: a finished link proves its flow's
+      // reset finished, and only the visitor who claimed a reset can find it still claimed.
+      if (handoff.force)
+        yield* upwardStep(
+          authStorage<boolean>(storage, "compareAndSet", [
+            oauthConnectKeys.reset(handoff.flow ?? handoff.nonce),
+            "used",
+            outcome,
+            FLOW_RESET_EXPIRY,
+          ]),
+        );
+      if (handoff.expiresAt <= Date.now()) return false;
       const expiry = { ttlSeconds: Math.max(1, Math.ceil((handoff.expiresAt - Date.now()) / 1000)) };
       return yield* upwardStep(
         authStorage<boolean>(storage, "compareAndSet", [oauthConnectKeys.used(handoff.nonce), "used", outcome, expiry]),

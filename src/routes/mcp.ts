@@ -12,8 +12,7 @@ import { executeLimits } from "../config.js";
 import {
   oauthConnectUrl,
   oauthConnectLink,
-  oauthConnectLinkProgress,
-  closeOAuthConnectLinks,
+  oauthConnectLinkStarted,
   claimAuthRetry,
   oauthConnectUnavailable,
 } from "../oauth-handoff.js";
@@ -431,7 +430,7 @@ function serveMcp(
         principal: principalKey,
         registry,
         canManage: canManageAuth,
-        connectLink: authMethod((id: string, force?: boolean, after?: string) =>
+        connectLink: authMethod((id: string, force?: boolean, flow?: string) =>
           authCall<{ url: string; nonce: string }>(oauthConnectLink, [
             opts,
             opts.config.publicUrl ?? baseUrl,
@@ -439,14 +438,11 @@ function serveMcp(
             principalKey,
             force,
             Boolean(opts.config.vault?.seal && opts.config.vault.open),
-            after,
+            flow,
           ]),
         ),
-        linkProgress: authMethod((id: string, nonce: string) =>
-          authCall<"claimed" | "started" | "failed" | undefined>(oauthConnectLinkProgress, [opts, baseUrl, id, nonce]),
-        ),
-        closeLinks: authMethod((id: string, nonces: string[]) =>
-          authCall<void>(closeOAuthConnectLinks, [opts, baseUrl, id, nonces]),
+        linkStarted: authMethod((id: string, nonce: string) =>
+          authCall<boolean>(oauthConnectLinkStarted, [opts, baseUrl, id, nonce]),
         ),
         claimRetry: authMethod((id: string, nonce: string) =>
           authCall<boolean>(claimAuthRetry, [opts, baseUrl, id, nonce]),
@@ -465,14 +461,17 @@ function serveMcp(
         // A request-local server cannot publish catalog changes. Set this before
         // tool registration, whose SDK default otherwise advertises listChanged.
         capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
-        // Instructions reflect the admitted pool and effective write policy. Every cache hint below is private, so a client keeps
-        // what it learned per endpoint URL and never shares it across them.
+        // Instructions reflect the admitted pool, its connector roster and the effective write
+        // policy. `registry` is this caller's admitted view, the one execute_code's inventory
+        // reads, so a person at plain /mcp never sees an id outside their pool. Every cache hint
+        // below is private, so a client keeps what it learned for this caller and endpoint URL.
         instructions: endpointInstructions(
           pool !== undefined ? opts.pools.get(pool)?.description : undefined,
           native,
           readOnly ||
             (registry.listConnectors().length > 0 &&
               registry.listConnectors().every((connector) => connector.readOnly === true)),
+          registry.listConnectors().map((connector) => connector.id),
         ),
         inputRequired: { legacyShim: false },
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },

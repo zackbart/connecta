@@ -183,6 +183,86 @@ describe("maintainers and plain /mcp", () => {
     await c.close();
   });
 
+  it("INV-4: names in instructions only the connectors this caller was admitted to, from configuration alone", async () => {
+    const c = deployment({
+      pools: {
+        team: { tools: ["notes.search", "wiki"], members: ["bob", "carol"] },
+        finance: { tools: ["billing"], members: ["dave"] },
+      },
+      auth: {
+        ...users(),
+        authorize(request) {
+          const user = /^Bearer (alice|bob|carol|dave)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
+          return user
+            ? { ok: true, userId: user, subjectId: user }
+            : { ok: false, response: Response.json({ error: "unauthorized" }, { status: 401 }) };
+        },
+      },
+    });
+    const send = async (path: string, user: string, method = "initialize", headers: HeadersInit = {}) => {
+      const modern = method === "server/discover";
+      const reply = (await readJsonRpc(
+        await c.fetch(
+          request(path, user, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
+              ...(modern ? { "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method } : {}),
+              ...headers,
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method,
+              params: modern
+                ? {
+                    _meta: {
+                      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                      "io.modelcontextprotocol/clientCapabilities": {},
+                    },
+                  }
+                : { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+            }),
+          }),
+        ),
+      )) as any;
+      expect(reply.error, `${method} ${path} ${user}`).toBeUndefined();
+      return reply.result.instructions as string;
+    };
+    const roster = (text: string) => /^Gateway to connected services: (.*?)\. /.exec(text)?.[1];
+    // A maintainer sees the catalog; a person at plain /mcp sees only their pool.
+    expect(roster(await send("/mcp", "alice"))).toBe("notes, wiki, billing");
+    const bob = await send("/mcp", "bob");
+    expect(roster(bob)).toBe("notes, wiki");
+    expect(bob).not.toContain("billing");
+    expect(roster(await send("/mcp", "dave"))).toBe("billing");
+    // Same roster for every member, on either route, whatever the request carries.
+    expect(await send("/mcp", "carol")).toBe(bob);
+    expect(await send("/mcp/team", "bob")).toBe(bob);
+    expect(await send("/mcp/team", "bob", "server/discover")).toBe(bob);
+    expect(await send("/mcp", "bob", "initialize", { "X-Connector": "billing", "Mcp-Name": "billing" })).toBe(bob);
+    // Instructions disclose nothing the execute_code inventory does not.
+    const app = deployment({
+      executor: scriptedExecutor(async () => null),
+      pools: { team: { tools: ["notes.search", "wiki"], members: ["bob"] } },
+    });
+    const listed = (await readJsonRpc(
+      await app.fetch(
+        request("/mcp", "bob", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+        }),
+      ),
+    )) as any;
+    expect(listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code").description).toMatch(
+      /^Connectors: notes, wiki\.$/m,
+    );
+    await app.close();
+    await c.close();
+  });
+
   it("isolates equal person ids in different namespaces when resolving /mcp", async () => {
     const auth = ["east", "west"].map((namespace): InboundAuth => ({
       kind: namespace,

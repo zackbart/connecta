@@ -115,13 +115,19 @@ const URL_WRAPPER_CLOSERS: Record<string, string> = {
  * destination, or a whitespace-delimited word without the sentence punctuation
  * a linkifier also leaves out and without a closer matching what opened it.
  * Every other trailing character stays, because it would be part of the link a
- * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL.
+ * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL. So does
+ * punctuation inside a destination, which a person's click sends along, so a word
+ * touching a destination is never read a second time as a bare URL. A URL in a
+ * link's label isn't one either: the click goes to the destination.
  */
 export function urlTokens(text: string): string[] {
-  const tokens = [...text.matchAll(/\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g)].map(
-    (match) => match[1]!,
-  );
+  const destinations = [
+    ...text.matchAll(/(?:\[[^[\]]*)?\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g),
+  ];
+  const tokens = destinations.map((match) => match[1]!);
   for (const match of text.matchAll(/https?:\/\/\S+/g)) {
+    const end = match.index + match[0].length;
+    if (destinations.some((span) => match.index < span.index + span[0].length && span.index < end)) continue;
     const before = text.slice(0, match.index);
     // Glued to a preceding word, this is a part of another URL, like a proxy's `?u=`.
     if (before && !/[\s([<"'`*_:]$/.test(before)) continue;

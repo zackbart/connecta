@@ -1,7 +1,7 @@
 import { traceFor } from "../timing-trace.js";
 // One owner per existing upstream request identity. Facts survive revocation;
 // retaining them never reconstitutes a call capability or a live operation.
-import { Context, Exit, Scope, type Effect } from "effect";
+import { Context, Effect, Exit, Scope } from "effect";
 import type { AuthorizationHandoff } from "../errors.js";
 import type { SentSecrets } from "../sent-secrets.js";
 import type { ToolDef } from "../types.js";
@@ -19,6 +19,35 @@ export interface RequestHandoffs {
   enabled: boolean;
   handoffs: Map<string, Effect.Effect<AuthorizationHandoff, unknown>>;
 }
+/** Work that can still add to a secret set. A sealing run waits until none is left. */
+export class PendingWork {
+  private active = 0;
+  private readonly waiting = new Set<() => void>();
+  get pending(): boolean {
+    return this.active > 0;
+  }
+  /** Returns the function that ends this piece of work; calling it twice counts once. */
+  begin(): () => void {
+    this.active++;
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      if (--this.active > 0) return;
+      for (const wake of this.waiting) wake();
+      this.waiting.clear();
+    };
+  }
+  /** Succeeds when nothing is pending. Interrupting it drops the wait. */
+  readonly idle: Effect.Effect<void> = Effect.callback<void>((resume) => {
+    if (this.active === 0) return resume(Effect.void);
+    const wake = () => resume(Effect.void);
+    this.waiting.add(wake);
+    return Effect.sync(() => {
+      this.waiting.delete(wake);
+    });
+  });
+}
 export class RequestOwner {
   open = true;
   admitted = false;
@@ -28,6 +57,8 @@ export class RequestOwner {
   readonly calls = new Set<CallLease>();
   readonly signals = new WeakMap<AbortSignal, { readonly signal: AbortSignal; readonly refresh: () => void }>();
   readonly scope = Scope.makeUnsafe();
+  /** Credential reads whose values have yet to join this request's secret set. */
+  readonly credentialReads = new PendingWork();
   // Initialize secrets only when data is sent. Metadata-only UI imports must
   // not retain the payload matcher merely to revoke a request.
   readonly retained = {
