@@ -213,8 +213,9 @@ const BUDGETS = {
   },
   // search_tools grew for readyCalls, the complete reads that save the
   // details and operation-search host calls; its reasons enum is now shared.
+  // It grew again for catalogErrors' stale and ageMs, which report a stale listing.
   // Declaring descriptionTruncated adds 37 bytes.
-  outputSchema: { search_tools: 4_190, authorize_connector: 420, execute_code: 1_070 },
+  outputSchema: { search_tools: 4_240, authorize_connector: 420, execute_code: 1_070 },
   usage: 5_500,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
