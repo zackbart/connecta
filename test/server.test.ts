@@ -830,6 +830,77 @@ describe("execute_read_code registration", () => {
     for (const tool of off.tools) expect(tool.description, tool.name).not.toContain("execute_read_code");
   });
 
+  it("names it on a writable endpoint whose connectors are all read-only, with no write route to mention", async () => {
+    const readOnlyConnector = api("docs", {
+      readOnly: true,
+      tools: [
+        {
+          name: "read",
+          description: "Read",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object" },
+          handler: () => "text",
+        },
+      ],
+    });
+    const connecta = makeDeployment({ readOnly: false, connectors: [readOnlyConnector] });
+    const init = await readJsonRpc(
+      await mcpRpc(
+        connecta,
+        "initialize",
+        { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "probe", version: "0" } },
+        { token: TOKEN },
+      ),
+    );
+    expect(init.result.instructions).toContain("Other read work: one execute_read_code program");
+    expect(init.result.instructions).toContain("can't perform writes");
+    expect(init.result.instructions).not.toContain("Programs that write");
+    expect(names(await list(connecta))).toContain("execute_read_code");
+  });
+
+  it("pages a writing program's oversized return through it, without resending the write", async () => {
+    let writes = 0;
+    const connecta = makeDeployment({
+      readOnly: false,
+      connectors: [
+        api("docs", {
+          tools: [
+            {
+              name: "save",
+              description: "Save",
+              annotations: { readOnlyHint: false },
+              inputSchema: { type: "object" },
+              handler: () => {
+                writes++;
+                return { saved: true };
+              },
+            },
+          ],
+        }),
+      ],
+      executor: scriptedExecutor(async (fns) => {
+        if (fns.call && !resultId) {
+          await fns.call("docs.save", {});
+          return "x".repeat(30_000);
+        }
+        return fns.result!(resultId, { maxBytes: 100 });
+      }),
+    });
+    let resultId = "";
+    const run = async (name: string) =>
+      (
+        await readJsonRpc(
+          await mcpRpc(connecta, "tools/call", { name, arguments: { code: "async () => run" } }, { token: TOKEN }),
+        )
+      ).result;
+    const written = await run("execute_code");
+    const notice = written.structuredContent.result;
+    expect(notice.nextAction.tool).toBe("execute_read_code");
+    resultId = notice.resultId;
+    expect((await run("execute_read_code")).isError).toBeFalsy();
+    expect(writes).toBe(1);
+  });
+
   it("offers it, not the prompted route, for paging a truncated direct read", async () => {
     const connecta = makeDeployment({
       readOnly: false,

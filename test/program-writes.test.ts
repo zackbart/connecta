@@ -130,7 +130,9 @@ function world(options: WorldOptions = {}) {
     {
       readOnly: options.readOnly,
       ...(options.maxResultChars !== undefined ? { maxResultChars: options.maxResultChars } : {}),
-      ...(options.readProgram ? { readProgram: true, routes: routeNames("read-route") } : {}),
+      ...(options.readProgram
+        ? { readProgram: true, routes: routeNames("read-route"), followUpRoutes: routeNames("read-route") }
+        : {}),
     },
   );
   let next = 0;

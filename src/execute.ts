@@ -530,6 +530,8 @@ interface SandboxLimits {
   routes?: AgentRouteNames | undefined;
   /** A read-only program on a writable endpoint: refuse write-like calls, mark them in discovery. */
   readProgram?: boolean | undefined;
+  /** Names paging and other read follow-ups from a program, whichever program route it ran on. */
+  followUpRoutes?: AgentRouteNames | undefined;
   resultDependencies?: ProgramResultDependency[];
   sentSecrets?: SentSecrets;
   defaultToolTimeoutMs?: number | undefined;
@@ -723,7 +725,7 @@ function sandboxProvider(
               requestScope,
               { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
-              limits.readProgram ? limits.routes : undefined,
+              limits.followUpRoutes,
             ]);
           const envelope =
             resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
@@ -1584,6 +1586,8 @@ interface RunnerConfig {
   routes?: AgentRouteNames | undefined;
   /** A read-only program on a writable endpoint. See `READ_PROGRAM_DESCRIPTION`. */
   readProgram?: boolean | undefined;
+  /** Where the endpoint lists `execute_read_code`: paging a result needs no write approval. */
+  followUpRoutes?: AgentRouteNames | undefined;
 }
 
 /** Runs one `execute_code` program and answers as the tool does. */
@@ -1697,6 +1701,7 @@ export function createExecuteTool(
                 maxWrites: config.maxWrites,
                 routes: config.routes,
                 readProgram: config.readProgram,
+                followUpRoutes: config.followUpRoutes,
                 programWrites,
                 resultDependencies,
                 dispatchController,
@@ -1783,7 +1788,7 @@ export function createExecuteTool(
             programWrites.hasSucceeded,
             maxResultChars,
             ceiling.answerBy,
-            config.readProgram ? config.routes : undefined,
+            config.followUpRoutes,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
@@ -2260,6 +2265,7 @@ export function registerExecuteTool(
     requestScope: ctx.requestScope,
     requestStartedAt: ctx.requestStartedAt,
     routes: ctx.routes,
+    ...(ctx.readRoute ? { followUpRoutes: routeNames("read-route") } : {}),
   };
   const programHandler = (execute: ExecuteHandler, name: string) => (args: unknown, extra: ServerContext) =>
     Effect.gen(function* () {

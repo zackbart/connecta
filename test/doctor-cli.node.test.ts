@@ -114,6 +114,55 @@ describe("connecta doctor's executor line", () => {
     expect(line).not.toContain("x".repeat(41));
   });
 
+  it("refuses a seventh tool at an agent endpoint, which holds the read program route back", async () => {
+    const server = createServer(async (request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      if (request.url === "/health") {
+        response.end(JSON.stringify({ status: "ok", connectors: 0 }));
+        return;
+      }
+      if (request.method !== "POST") {
+        response.writeHead(405);
+        response.end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      if (body.method === "notifications/initialized") {
+        response.writeHead(202);
+        response.end();
+        return;
+      }
+      let result: unknown = {};
+      if (body.method === "initialize")
+        result = {
+          protocolVersion: "2025-11-25",
+          capabilities: { tools: {} },
+          serverInfo: { name: "wrong", version: "1" },
+        };
+      if (body.method === "tools/list")
+        result = {
+          tools: [...META_TOOL_NAMES, "execute_read_code"].map((name) => ({
+            name,
+            inputSchema: { type: "object" },
+          })),
+        };
+      if (body.method === "tools/call") result = { content: [{ type: "text", text: '{"result":42}' }] };
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    teardown.push(() => new Promise<void>((done) => server.close(() => done())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    await expect(
+      run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`, "--pool", "bots"], {
+        env: { ...process.env, CONNECTA_TOKEN: `cta_${"a".repeat(43)}` },
+      }),
+    ).rejects.toThrow(/Unexpected MCP surface/);
+  });
+
   it("auto-negotiates a legacy server and reports its negotiated revision", async () => {
     const methods: string[] = [];
     const server = createServer(async (request, response) => {

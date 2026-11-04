@@ -130,8 +130,9 @@ the marker on the entry it selects where it would drop a page-level note.
 
 **Handles.** `connecta.result` works with the existing stash bindings: a `resultId`
 from a direct read or a read program pages from a read program on the same endpoint.
-Follow-up text from `call_tool`, `search_tools` and a read program names this route on
-endpoints that list it, so paging costs no write approval.
+Follow-up text from `call_tool`, `search_tools` and both program routes names this route
+on endpoints that list it, including paging a writing program's oversized return, so
+paging costs no write approval and cannot resend the write.
 
 **Off switch.** `execute: { readRoute: false }` in deployment code stops listing it
 on every writable endpoint. It is the deployment's choice alone, and suits a deployment

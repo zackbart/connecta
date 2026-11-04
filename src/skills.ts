@@ -73,7 +73,7 @@ export function endpointInstructions(
   const instructions = native
     ? nativeInstructions(native.executeCode, readOnly)
     : readRoute
-      ? `${gateway}Other read work: one ${READ_PROGRAM_SOURCE} program that searches, calls and returns the answer, with no write approval. Programs that write: ${META_ROUTES.program}. ${META_ROUTES.search} finds a write's address. ${policy(readOnly)} ${RECOVERY}`
+      ? `${gateway}Other read work: one ${READ_PROGRAM_SOURCE} program that searches, calls and returns the answer, with no write approval. ${readOnly ? "" : `Programs that write: ${META_ROUTES.program}. ${META_ROUTES.search} finds a write's address. `}${policy(readOnly)} ${RECOVERY}`
       : `${gateway}Everything else: one ${META_ROUTES.program} program that searches, calls and returns the answer. ${policy(readOnly)} ${RECOVERY}`;
   return description === undefined ? instructions : `${description} ${instructions}`;
 }
