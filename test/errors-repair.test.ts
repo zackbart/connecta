@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { schemaExample } from "../src/validate.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { InvocationService } from "../src/invocation.js";
@@ -258,10 +259,31 @@ describe("repairing error envelopes", () => {
     // A connector's own copy of the call is replaced by the schema's synthesized example.
     for (const supplied of [{}, { example: args }]) {
       const error = await invoke(supplied, args);
-      expect(error.validation).toMatchObject({ example: { query: "x" } });
+      expect(error.validation).toMatchObject({ example: { query: "<query>" } });
+      // Without accepted keys the findings may not be enough, so discovery stays as the fallback.
+      expect(error.nextAction).toMatchObject({
+        purpose: "Only if the validation above is not enough: inspect the schema.",
+      });
       expect(error.retry).toContain("notes.find");
       expect(JSON.stringify(error)).not.toMatch(/sentinel/);
     }
+    // A placeholder must stay valid, so a schema that refuses it keeps its plain sample,
+    // and a secret position never echoes even its own name.
+    expect(schemaExample({ type: "object", required: ["id"], properties: { id: { type: "string" } } }).example).toEqual(
+      { id: "<id>" },
+    );
+    expect(
+      schemaExample({
+        type: "object",
+        required: ["id", "code", "token", "pin"],
+        properties: {
+          id: { type: "string", pattern: "^[a-z]*$" },
+          code: { type: "string", maxLength: 3 },
+          token: { type: "string", writeOnly: true },
+          pin: { type: "string", minLength: 8 },
+        },
+      }).example,
+    ).toEqual({ id: "", code: "", token: "", pin: "xxxxxxxx" });
     // A stated reason stands, and no example rides beside it.
     const withheld = await invoke({ exampleUnavailable: "Read notes_api_details." }, args);
     expect(withheld.validation).not.toHaveProperty("example");

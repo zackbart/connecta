@@ -3368,7 +3368,7 @@ compiling and configuring the real thing.
   is not a declared refusal standing for the whole call makes the call
   unknown, never retryable, with no wait and no resend or key-reuse advice;
   while any such 401 is unrenewed the verdict keeps an authorization code,
-  so invocation keeps the `authorize_connector` handoff and picks its
+  so invocation keeps the authorization handoff and picks its
   reconcile-first words. Its code and words are the failure's when that is an
   authorization verdict, else the 401's own recorded verdict, else
   `auth_required`, with a sentence saying the write was sent before the
@@ -3924,7 +3924,8 @@ physical-attempt and body/admission suites remain compatibility evidence.
 
 The standard hatch privately registers bounded vendor operation text against its
 ApiTool identity; `apiConnector` transfers those facts to the constructed
-connector. `operation-vocabulary.ts` contains only pure lexical/cache logic and
+connector, and a provider that wraps that connector carries them to its outer
+object with `carryConnectorVocabulary`. `operation-vocabulary.ts` contains only pure lexical/cache logic and
 types. Catalog discovery consumes those facts after loading and classifying a
 complete visible catalog. It never imports a provider or an operation index,
 parses operation contracts, invokes a handler, or authenticates. Matching requires

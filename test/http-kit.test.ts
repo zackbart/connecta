@@ -422,6 +422,25 @@ const MAPPING_RULES: ReadonlyArray<readonly [string, () => void]> = [
   [
     "INV-5 INV-6: reviewed headers are bounded and value safety withholds the body before detail",
     () => {
+      for (const maxHeaderChars of [0, 1.5, 1025])
+        expect(() => validateVendorErrors({ ...VENDOR, maxHeaderChars })).toThrow(/maxHeaderChars/);
+      const widened: unknown[] = [];
+      toConnectorCallError(
+        status(400, { "x-long": "r".repeat(129), "x-longer": "r".repeat(130) }, {}),
+        {
+          ...VENDOR,
+          headers: ["x-long", "x-longer"],
+          maxHeaderChars: 129,
+          classify: [
+            (input) => {
+              widened.push(input.headers);
+              return undefined;
+            },
+          ],
+        },
+        { classification: "read", dispatches: [] },
+      );
+      expect(widened).toEqual([Object.fromEntries([["x-long", "r".repeat(129)]])]);
       for (const withheld of [true, false]) {
         let seen: unknown;
         const vendor: VendorErrors = {

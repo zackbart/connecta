@@ -14,6 +14,7 @@
  *
  * `/__eval/*` are local process controls, never product routes.
  */
+import { forSurface } from "./code-surface.js";
 import { workerExecutor } from "@zackbart/connecta/worker";
 import { createConnecta } from "@zackbart/connecta";
 import { accessTokens, AccessTokenManager } from "@zackbart/connecta/auth/access-tokens";
@@ -70,7 +71,7 @@ async function setup(env: Env): Promise<Live> {
   );
   await presetCredentials(vault, composition.connectors);
   const previous: ProgramObservation[] = [];
-  let observed = observePrograms(workerExecutor({ loader: env.LOADER }));
+  let observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface);
   let readOnly = composition.readOnly;
   const build = () =>
     createConnecta(
@@ -96,7 +97,7 @@ async function setup(env: Env): Promise<Live> {
     programs: () => [...previous, ...observed.programs],
     observeNext: () => {
       previous.push(...observed.programs);
-      observed = observePrograms(workerExecutor({ loader: env.LOADER }));
+      observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface);
     },
     setReadOnly: (value) => {
       readOnly = value;
@@ -130,6 +131,6 @@ export default withAccess({
       state.connecta = state.build();
       return new Response(null, { status: 204 });
     }
-    return state.connecta.fetch(request, env, ctx);
+    return forSurface(state.connecta, JSON.parse(bindings.EVAL_COMPOSITION).surface ?? "six").fetch(request, env, ctx);
   },
 });

@@ -14,7 +14,7 @@ export const GUEST_FUNCTIONS = [
     name: "search",
     budget: "hostCall",
     declaration:
-      "search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string }[]; hasMore: boolean; nextOffset?: number }>;",
+      "search(args?: { query?: string; connector?: string; limit?: number; offset?: number; includeSchemas?: Schemas; fullDescriptions?: boolean }): Promise<{ tools: Tool[]; catalogErrors: { connector: string; code: string; message: string }[]; hasMore: boolean; nextOffset?: number }>;",
   },
   /** Describes exact addresses, one entry per address in order. */
   {
@@ -58,7 +58,7 @@ export const GUEST_FUNCTIONS = [
     budget: "emission",
     declaration: "emit(block: Block | Native | Exclude<Result, Paged>): PromiseLike<void>;",
   },
-  /** Tells the host a failed program read a result field off an unawaited call. */
+  /** Tells the host a program read a result field off an unawaited call. */
   {
     name: "unawaited",
     budget: "once",

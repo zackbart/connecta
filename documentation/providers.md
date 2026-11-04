@@ -941,10 +941,20 @@ Enable only vendor permissions needed by the workflows: Metadata read for
 repository lookup; Issues read for issues/comments/labels; Pull requests read
 for PRs/reviews/review comments/changed files/PR commits; Contents read for
 repository commits/comparisons/contents/releases; Actions read for workflows,
-runs and jobs. Release writes require Contents write. The guarded merge retains
+runs and jobs; Checks read for check runs, suites and annotations; Commit statuses
+read for commit statuses. Release writes require Contents write. The guarded merge retains
 Contents, Pull requests and Workflows write. Code search retains Contents read
 and GitHub's own search restrictions. Each operation token is narrowed to its
 reviewed permission and repository IDs; an org grant does not permit org admin.
+A resource 403 that carries no rate-limit header is `provider_permission_denied`, with
+no credential handoff, naming the repository and the permission the endpoint accepts.
+It establishes the refusal, not its cause: a missing permission is likely, but a policy,
+an unmarked secondary rate limit or a lockout gives the same answer, so its message
+ends with credential checks for when every call is refused. A refused token mint is a
+permission gap only when GitHub's installation record lacks the requested permission;
+otherwise a 422 is a neutral `connector_call_failed` and a 403 stays
+`provider_permission_denied` with its causes open. A 401, an unusable key or a 403 on
+the App's own installation list is `auth_required`.
 
 The four github_api tools cover a pinned operation index with a bounded reviewed
 repository read and release-write allowlist. All other operations are refused.
@@ -963,8 +973,8 @@ File contents retain base64 encoding; the character bound applies after decoding
 Use `/repos/alice/widget/contents/src/index.ts` for a nested file and
 `/repos/alice/widget/contents` for the root directory. Contents paths must be
 canonical relative paths, without dot/empty segments, backslashes or encoded
-traversal. Encode branch-name slashes as `%2F` in `commits/{ref}` and
-`compare/{basehead}`. Owner-prefixed object refs and cross-repository compares are
+traversal. Encode branch-name slashes as `%2F` in `commits/{ref}`, its check and
+status reads, and `compare/{basehead}`. Owner-prefixed object refs and cross-repository compares are
 refused before authentication. PR-list head filters require `login:branch`, for
 example `head:"alice:feature/x"`; they filter the selected repository's PRs.
 Bare head branches are refused because GitHub silently ignores them. The base

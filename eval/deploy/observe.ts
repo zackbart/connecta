@@ -52,16 +52,16 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
               try {
                 const original = guidanceValue(await fn(...args));
                 const result =
-                  surface === "six"
+                  surface !== "code" && surface !== "five"
                     ? original
-                    : call.name === "connecta.skill"
+                    : call.name === "connecta.skill" && surface === "code"
                       ? codeSkill(args[0], original)
-                      : codeValue(original);
+                      : codeValue(original, surface);
                 call.outcome = "ok";
                 call.result = result;
                 return result;
               } catch (original) {
-                const error = surface === "six" ? original : codeError(original);
+                const error = surface !== "code" && surface !== "five" ? original : codeError(original, surface);
                 call.outcome = "error";
                 if (error && typeof error === "object" && "code" in error) call.errorCode = String(error.code);
                 throw error;

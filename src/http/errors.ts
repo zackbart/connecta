@@ -76,6 +76,12 @@ export interface OperationRef {
   readonly template: string;
   /** Named facts the provider set for this request, such as Google's `revisionGuarded`. */
   readonly flags?: Readonly<Record<string, true>>;
+  /**
+   * Values the provider already checked, such as a bound repository or the
+   * permissions it requested, that failure wording may state. Never vendor
+   * text or caller text the provider has not confined.
+   */
+  readonly context?: Readonly<Record<string, string>>;
 }
 
 /** A non-2xx answer (or an in-band refusal mapped as one), with the body parsed when it was JSON. */
@@ -243,6 +249,12 @@ export interface VendorErrors<F extends Facts = Facts> {
   readonly displayFacts?: Readonly<Record<string, { readonly maxItems: number; readonly review: string }>>;
   /** Response headers rules and wording may read, by lowercase name. Every other header is invisible. */
   readonly headers?: readonly string[];
+  /**
+   * Longest `headers` value rules and wording may read, default 128. A longer
+   * reviewed limit suits a header whose long values (a signed URL) the rules
+   * parse rather than repeat. Every other limit stays in force.
+   */
+  readonly maxHeaderChars?: number;
   /** One detail line for the reader, built after classification. */
   readonly detail: (input: DetailInput<F>) => string;
   /** Rules that cut across statuses, in order, before the table: the first verdict wins. */
@@ -292,6 +304,9 @@ interface AuthBeforeExecution<F extends Facts> {
 export function validateVendorErrors(vendor: VendorErrors<any>): void {
   errorMeanings(vendor);
   captureErrorReviews(vendor);
+  const limit = vendor.maxHeaderChars;
+  if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_REVIEWED_HEADER))
+    throw new Error(`maxHeaderChars must be a whole number from 1 to ${MAX_REVIEWED_HEADER}.`);
   const proof = vendor.authBeforeExecution;
   if (proof && (typeof proof.evidence !== "string" || !proof.evidence.trim() || typeof proof.matches !== "function")) {
     throw new Error("An authBeforeExecution declaration requires nonempty evidence and a narrow raw-fact predicate.");
@@ -314,6 +329,7 @@ const TOKEN = /^[A-Za-z0-9_.:[\]-]{1,128}$/;
 /** How many entries of a list the detail line sees. Classification sees them all. */
 const DISPLAYED = 8;
 const MAX_HEADER = 128;
+const MAX_REVIEWED_HEADER = 1024;
 const MAX_DEPTH = 32;
 const MAX_WAIT_MS = 86_400_000;
 const errorReviews = new WeakMap<
@@ -549,11 +565,12 @@ function displayed<F extends Facts>(facts: F, vendor: VendorErrors<any>): F {
   ) as F;
 }
 
-function visibleHeaders(headers: Headers, allowed: readonly string[] | undefined): Record<string, string> {
+function visibleHeaders(headers: Headers, vendor: VendorErrors<any>): Record<string, string> {
   const out: Record<string, string> = Object.create(null);
-  for (const name of allowed ?? []) {
+  const limit = vendor.maxHeaderChars ?? MAX_HEADER;
+  for (const name of vendor.headers ?? []) {
     const value = headers.get(name);
-    if (value !== null && value.length <= MAX_HEADER && !hasControl(value)) out[name.toLowerCase()] = value;
+    if (value !== null && value.length <= limit && !hasControl(value)) out[name.toLowerCase()] = value;
   }
   return out;
 }
@@ -874,7 +891,7 @@ function classificationInput(failure: StatusFailure, vendor: VendorErrors<any>, 
     facts: { ...redacted, ...(captured?.vendor === vendor ? captured.facts : vocabularyFacts(redacted, vendor)) },
     presence: structuralPresence(failure.body, captureErrorReviews(vendor).presence),
     numbers,
-    headers: visibleHeaders(failure.headers, vendor.headers),
+    headers: visibleHeaders(failure.headers, vendor),
     retryAfterMs: numbers["retryAfterMs"],
     operation: failure.operation,
     withheld,
