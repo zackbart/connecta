@@ -1503,6 +1503,8 @@ promise independently of upstream evaluation. Guest computation may continue
 briefly until platform teardown, but no late return, callback, `finally`, call,
 or emit changes the finished host result. Disposal releases request resources;
 it does not guarantee a synchronous guest-CPU kill.
+If freeing a finished run's runtime fails, the run keeps its answer, a warning is
+logged and the child is replaced before it can take another run.
 
 **X4. Log rendering and capture.** QuickJS JSON-stringifies non-string arguments
 and captures `log`, `info`, `warn`, `error`, and `debug`; the Dynamic Worker

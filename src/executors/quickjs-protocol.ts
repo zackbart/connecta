@@ -55,7 +55,7 @@ export interface ExecutionPayload {
    * this flag, never on error text a guest can fabricate.
    */
   timedOut?: boolean;
-  /** Set by the runtime when this child's WASM module can't run again; the outcome stands. */
+  /** Set by the child when freeing the run's runtime failed: the outcome stands, the child doesn't. */
   retire?: boolean;
 }
 

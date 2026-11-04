@@ -28,6 +28,14 @@ const pending = new Map<
   }
 >();
 
+/** Host calls still open will never hear back; settling them lets their handles go. */
+function settlePending(): void {
+  for (const request of pending.values()) {
+    request.reject(new Error("Execution ended before the host call settled."));
+  }
+  pending.clear();
+}
+
 function send(message: ChildToParentMessage): void {
   if (!process.send) throw new Error("QuickJS child IPC channel is unavailable.");
   // Bound the actual process.send envelope, not only its nested payloadJson.
@@ -101,10 +109,14 @@ async function run(payload: RunPayload): Promise<void> {
         payloadJson: stringifyBounded(entry, "QuickJS log entry"),
       }),
     );
+    // Answer only once the runtime is freed, so the parent knows whether this child can take the
+    // next run before it could send one. Only the settled stragglers stand in the way.
+    settlePending();
+    const tornDown = await raw.tornDown;
     const prepared: ExecutionPayload = {
       outcome: prepareExecuteResultForTransport(raw),
       ...(raw.timedOut ? { timedOut: true } : {}),
-      ...(raw.teardownFailed ? { retire: true } : {}),
+      ...(tornDown === false ? { retire: true } : {}),
     };
     let payloadJson: string;
     try {
@@ -119,10 +131,7 @@ async function run(payload: RunPayload): Promise<void> {
     sendResult(payload.id, payloadJson);
   } finally {
     activeJobId = undefined;
-    for (const request of pending.values()) {
-      request.reject(new Error("Execution ended before the host call settled."));
-    }
-    pending.clear();
+    settlePending();
   }
 }
 
