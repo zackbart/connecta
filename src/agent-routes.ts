@@ -84,6 +84,22 @@ const nativeAuthorize = {
   authorizeCall: () => "Give this error's nextAction to the user or operator.",
   authorizeAgain: "retry the original native call",
 };
+
+/**
+ * An auth error's message, once that error carries what authorize_connector
+ * would return: the fixed route text stops sending the agent to fetch it again.
+ * Only Connecta's own phrases change; provider wording around them stays.
+ */
+export function handoffInHand(message: string, connector: string): string {
+  return message
+    .replaceAll(metaAuthorize.authorizeAndOpen(connector), nativeAuthorize.authorizeAndOpen())
+    .replaceAll(metaAuthorize.authorizeAndFollow(connector), nativeAuthorize.authorizeAndFollow())
+    .replaceAll(metaAuthorize.authorizeCall(connector), nativeAuthorize.authorizeCall())
+    .replaceAll(metaAuthorize.authorizeCall(), nativeAuthorize.authorizeCall())
+    .replaceAll(metaAuthorize.authorizeFor("recovery options"), nativeAuthorize.authorizeFor())
+    .replaceAll(metaAuthorize.authorizeFor("this connector"), nativeAuthorize.authorizeFor());
+}
+
 const nativeDirect = {
   directOnly: "when calling this tool directly",
   forDirect: "when calling this tool directly",

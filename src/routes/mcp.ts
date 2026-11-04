@@ -515,6 +515,7 @@ function serveMcp(
         ...(activity ? { activity } : {}),
         defaultToolTimeoutMs: opts.config.calls.defaultTimeoutMs ?? opts.config.execute.hostCallTimeoutMs,
         maxProgramResultChars: opts.config.execute.maxResultChars,
+        maxProgramHostCalls: opts.config.execute.maxHostCalls,
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         discoveryConcurrency: opts.config.discovery.concurrency,
         requestSignal,
