@@ -7,6 +7,7 @@ import {
 } from "eve/connections";
 import { defineDynamic, defineInstructions } from "eve/instructions";
 import { never, type Approval, type ApprovalPolicy } from "eve/tools/approval";
+import { CONNECTA_VERSION } from "./version.js";
 
 /** Where an Eve agent reaches Connecta and how it proves who it is. */
 export interface ConnectaEndpointOptions {
@@ -22,7 +23,18 @@ export interface ConnectaEndpointOptions {
    * no restart. Defaults to the `CONNECTA_ACCESS_TOKEN` environment variable.
    */
   getToken?: () => string | Promise<string>;
+  /**
+   * Extra request headers, such as a service token for an edge in front of
+   * Connecta. A function is resolved on every request. These never replace
+   * the helper's bearer or MCP protocol headers on guidance requests.
+   */
+  headers?: ConnectaHeaders;
 }
+
+/** Fixed headers, or a resolver called on every request. */
+export type ConnectaHeaders =
+  | Readonly<Record<string, string>>
+  | (() => Readonly<Record<string, string>> | Promise<Readonly<Record<string, string>>>);
 
 /** App-owned pool policy; use `ctx.memo` when its result should stay fixed. */
 export type ConnectaPoolSelector = (ctx: DynamicContext) => string | Promise<string>;
@@ -35,8 +47,13 @@ export interface ConnectaConnectionOptions extends Omit<ConnectaEndpointOptions,
   pool?: string | ConnectaPoolSelector;
   /** Omit this value when false or when the policy throws. Evaluated every model call. */
   when?: ConnectaPredicate;
-  /** What the connection offers, for the model choosing which connection to search. */
-  description: string;
+  /**
+   * What the connection offers, in Eve's catalog listing and in the words every
+   * tool of this connection matches in `eve__search`. Defaults to a fixed
+   * neutral line. Describe the domain in prose; do not list connectors or
+   * operations here, because a query naming one then matches every tool.
+   */
+  description?: string;
   /** Eve's approval for every Connecta tool: a policy or configuration. Defaults to `never()`. */
   approval?: Approval;
   /**
@@ -52,6 +69,11 @@ export interface ConnectaInstructionsOptions extends Omit<ConnectaEndpointOption
   pool?: string | ConnectaPoolSelector;
   /** Omit this value when false or when the policy throws. Evaluated every model call. */
   when?: ConnectaPredicate;
+  /**
+   * The Eve connection's name, which is its file under `agent/connections/`.
+   * The model calls `<connection>__<tool>`. Default `connecta`.
+   */
+  connection?: string;
   /** MCP client name for instruction requests. Default `connecta-eve-instructions`. */
   clientName?: string;
   /** How long fetched instructions are reused. Default ten minutes. */
@@ -110,6 +132,7 @@ export function connectaConnection(
   options: ConnectaConnectionOptions,
 ): McpClientConnectionDefinition | ReturnType<typeof defineDynamicConnection>;
 export function connectaConnection(options: ConnectaConnectionOptions) {
+  warnOnGenericDescription(options.description);
   const { pool, ...rest } = options;
   if (typeof pool === "function" || options.when) {
     return defineDynamicConnection(async (ctx) => {
@@ -131,15 +154,33 @@ export function connectaConnection(options: ConnectaConnectionOptions) {
   return connectionDefinition(options, connectaEndpoint(pool === undefined ? rest : { ...rest, pool }));
 }
 
+/**
+ * Eve matches these words against every search query, and a short word also
+ * matches longer query words ("use" hits "users"), so this avoids common stems.
+ */
+const DEFAULT_DESCRIPTION = "Connecta integration gateway.";
+/** "Company tools through Connecta" and other strings any Connecta connection could claim. */
+const GENERIC_DESCRIPTION =
+  /\b(?:tools?|services?|integrations?|apps?)\s+(?:through|via|from|using|on|in|with)\s+connecta\b|^\W*(?:(?:the|our|all|my|company|connecta|mcp|tools?|services?|integrations?|connections?|gateway|server|access|through|via|using)\W*)*$/i;
+
+function warnOnGenericDescription(description: string | undefined): void {
+  if (description === undefined || !GENERIC_DESCRIPTION.test(description)) return;
+  console.warn(
+    `[connecta-eve] Connection description ${JSON.stringify(description)} gives the model no domain information. Omit it, or say what this agent reaches in prose without listing connectors.`,
+  );
+}
+
 function connectionDefinition(
   options: ConnectaConnectionOptions,
   endpoint: string,
   instanceKey?: string,
 ): McpClientConnectionDefinition {
+  const { headers } = options;
   return defineMcpClientConnection({
     url: endpoint,
     ...(instanceKey === undefined ? {} : { instanceKey }),
-    description: options.description,
+    description: options.description ?? DEFAULT_DESCRIPTION,
+    ...(headers === undefined ? {} : { headers: typeof headers === "function" ? () => headers() : headers }),
     auth: {
       principalType: "app",
       getToken: async () => ({ token: await tokenFor(options) }),
@@ -156,23 +197,117 @@ async function enabled(when: ConnectaPredicate | undefined, ctx: DynamicContext)
   }
 }
 
-/** Connecta's MCP `instructions` for one endpoint, or null when unavailable. */
+/** The neutral endpoint facts Connecta advertises in `capabilities.extensions`. */
+interface EndpointFacts {
+  surface: "meta" | "native";
+  executeCode: boolean;
+  connectors: { id: string; title?: string; readFirst?: string }[];
+}
+
+/** Older servers omit the extension; anything malformed reads the same way. */
+function endpointFacts(value: unknown): EndpointFacts | undefined {
+  const facts = value as Partial<EndpointFacts> | null | undefined;
+  if (facts?.surface !== "meta" && facts?.surface !== "native") return undefined;
+  if (typeof facts.executeCode !== "boolean" || !Array.isArray(facts.connectors)) return undefined;
+  const text = (field: unknown) => (typeof field === "string" ? field.replace(/\s+/g, " ").trim() : "");
+  return {
+    surface: facts.surface,
+    executeCode: facts.executeCode,
+    connectors: facts.connectors.flatMap((connector) => {
+      const id = text(connector?.id);
+      if (!id) return [];
+      const title = text(connector.title);
+      const readFirst = text(connector.readFirst);
+      return [{ id, ...(title ? { title } : {}), ...(readFirst ? { readFirst } : {}) }];
+    }),
+  };
+}
+
+const ROSTER_MAX_BYTES = 512;
+
+/** Detail degrades before names do, as the server's own inventory does. */
+function connectorRoster(facts: EndpointFacts, prefix: string): string {
+  const fits = (line: string) => new TextEncoder().encode(line).length <= ROSTER_MAX_BYTES;
+  const entry = ({ id, title, readFirst }: EndpointFacts["connectors"][number], withTitle: boolean) => {
+    const notes = [
+      ...(withTitle && title ? [title] : []),
+      // A native tool's description already carries its guide pointer.
+      ...(readFirst && facts.surface === "meta" ? [`read first: ${prefix}skills { name: "${readFirst}" }`] : []),
+    ];
+    return notes.length ? `${id} (${notes.join("; ")})` : id;
+  };
+  for (const withTitle of [true, false]) {
+    const line = facts.connectors.map((connector) => entry(connector, withTitle)).join(", ");
+    if (fits(line)) return line;
+  }
+  const entries = facts.connectors.map((connector) => entry(connector, false));
+  let shown = 0;
+  while (fits(`${entries.slice(0, shown + 1).join(", ")}; +${entries.length - shown - 1} more`)) shown++;
+  return `${entries.slice(0, shown).join(", ")}${shown ? "; " : ""}+${entries.length - shown} more`;
+}
+
+/**
+ * How Eve's deferred catalog reaches this endpoint's tools. Connecta's own text
+ * names tools as MCP lists them; Eve adds the connection prefix and hides them
+ * behind `eve__tool`, and its search covers listed tools only.
+ */
+function eveGuide(connection: string, facts: EndpointFacts | undefined): string {
+  const prefix = `${connection}__`;
+  if (!facts) {
+    return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<tool>", input }). Names in this guidance and in nextAction omit the "${prefix}" prefix.`;
+  }
+  const roster = facts.connectors.length ? connectorRoster(facts, prefix) : undefined;
+  if (facts.surface === "meta") {
+    return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<tool>", input }). Names in this guidance and in nextAction omit the "${prefix}" prefix. Go straight to ${prefix}execute_code without eve__search, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }. eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program.${roster ? ` Reachable: ${roster}.` : ""}`;
+  }
+  return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<connector>__<tool>", input }). Find them with eve__search; scope one connector with "${prefix}<connector>__", not "<connector>__". Names in this guidance and in nextAction omit "${prefix}".${facts.executeCode ? ` For several, dependent or reduced calls, go straight to ${prefix}execute_code with { code: "async () => { ... }" }, using the program address ending each tool's description.` : ""} Missing tools: ${prefix}authorize_connector. Tool lists refresh every step, so no reconnect is needed.${roster ? ` Connectors: ${roster}.` : ""}`;
+}
+
+/** Release lines a helper and server must share; a patch difference is compatible. */
+const releaseLine = (version: unknown) =>
+  typeof version === "string" ? /^(\d+\.\d+)\./.exec(version)?.[1] : undefined;
+
+/** A deployment that renamed its server may version it independently, so only `connecta` is compared. */
+function warnOnVersionSkew(endpoint: string, server: { name?: unknown; version?: unknown } | undefined): void {
+  if (server?.name !== "connecta") return;
+  const line = releaseLine(server.version);
+  if (line === undefined || line === releaseLine(CONNECTA_VERSION)) return;
+  console.warn(
+    `[connecta-eve] Helper ${CONNECTA_VERSION} and Connecta ${String(server.version)} at ${endpoint} are different releases. Install the helper matching your server.`,
+  );
+}
+
+/** Headers for a guidance request. The caller's extras can never replace what the request itself needs. */
+async function guidanceHeaders(options: Pick<ConnectaEndpointOptions, "headers">, own: Record<string, string>) {
+  const extra = typeof options.headers === "function" ? await options.headers() : options.headers;
+  const headers = new Headers(extra);
+  for (const [name, value] of Object.entries(own)) headers.set(name, value);
+  return Object.fromEntries(headers);
+}
+
+interface EndpointGuidance {
+  instructions: string;
+  facts: EndpointFacts | undefined;
+  server: { name?: unknown; version?: unknown } | undefined;
+}
+
+/** Connecta's MCP `instructions` and endpoint facts for one endpoint, or null when unavailable. */
 async function instructionRequest(
   options: ConnectaInstructionsOptions,
   endpoint: string,
   method: "server/discover" | "initialize",
   signal: AbortSignal,
-) {
+): Promise<EndpointGuidance | null> {
   const modern = method === "server/discover";
   const clientInfo = { name: options.clientName ?? "connecta-eve-instructions", version: "1" };
   const response = await (options.fetch ?? fetch)(endpoint, {
     method: "POST",
-    headers: {
+    headers: await guidanceHeaders(options, {
       Authorization: `Bearer ${await tokenFor(options)}`,
       "Content-Type": "application/json",
       Accept: "application/json, text/event-stream",
       ...(modern ? { "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": method } : {}),
-    },
+    }),
     body: JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
@@ -203,15 +338,28 @@ async function instructionRequest(
         .find((line) => line.startsWith("data:"))
         ?.slice("data:".length);
   if (!json) return null;
-  const instructions = (JSON.parse(json) as { result?: { instructions?: unknown } }).result?.instructions;
-  return typeof instructions === "string" && instructions.trim() ? instructions.trim() : null;
+  const { result } = JSON.parse(json) as {
+    result?: {
+      instructions?: unknown;
+      capabilities?: { extensions?: Record<string, unknown> };
+      serverInfo?: EndpointGuidance["server"];
+      _meta?: Record<string, unknown>;
+    };
+  };
+  const instructions = result?.instructions;
+  if (typeof instructions !== "string" || !instructions.trim()) return null;
+  return {
+    instructions: instructions.trim(),
+    facts: endpointFacts(result?.capabilities?.extensions?.["dev.connecta/endpoint"]),
+    server: (result?._meta?.["io.modelcontextprotocol/serverInfo"] as EndpointGuidance["server"]) ?? result?.serverInfo,
+  };
 }
 
 async function fetchConnectaInstructions(
   options: ConnectaInstructionsOptions,
   endpoint: string,
   signal: AbortSignal,
-): Promise<string | null> {
+): Promise<EndpointGuidance | null> {
   // Only a completed discovery response can justify legacy negotiation.
   // Network failures and timeouts propagate to the resolver's fail-open path.
   const discovered = await instructionRequest(options, endpoint, "server/discover", signal);
@@ -228,7 +376,14 @@ async function fetchConnectaInstructions(
  */
 export function connectaInstructions(options: ConnectaInstructionsOptions = {}) {
   const ttlMs = options.ttlMs ?? 600_000;
-  const endpoints = new Map<string, { cached?: { at: number; content: string }; retryAfter: number }>();
+  const connection = options.connection ?? "connecta";
+  if (!/^[A-Za-z0-9._-]+$/.test(connection)) {
+    throw new Error(`Connecta connection "${connection}" must be the file name under agent/connections.`);
+  }
+  const endpoints = new Map<
+    string,
+    { cached?: { at: number; content: string }; retryAfter: number; versionChecked?: boolean }
+  >();
   const current = async (endpoint: string, signal: AbortSignal): Promise<string | null> => {
     signal.throwIfAborted();
     let state = endpoints.get(endpoint);
@@ -238,7 +393,13 @@ export function connectaInstructions(options: ConnectaInstructionsOptions = {}) 
     if (Date.now() < retryAfter) return cached?.content ?? null;
     let fresh: string | null;
     try {
-      fresh = await fetchConnectaInstructions(options, endpoint, signal);
+      const guidance = await fetchConnectaInstructions(options, endpoint, signal);
+      if (guidance && !state.versionChecked) {
+        state.versionChecked = true;
+        warnOnVersionSkew(endpoint, guidance.server);
+      }
+      // Eve's half comes first: it says how to read every name in Connecta's own text.
+      fresh = guidance && `${eveGuide(connection, guidance.facts)}\n${guidance.instructions}`;
     } catch {
       // Eve's cancellation is not an endpoint failure: rethrowing keeps it out
       // of the memo and the backoff, which every session of this resolver shares.
@@ -273,7 +434,7 @@ export function connectaInstructions(options: ConnectaInstructionsOptions = {}) 
 }
 
 /** One explicitly selected Connecta guide projected as a deferred Eve skill. */
-export interface ConnectaSkillOptions extends ConnectaInstructionsOptions {
+export interface ConnectaSkillOptions extends Omit<ConnectaInstructionsOptions, "connection"> {
   /** Exact skills-tool name, for example `connector:crm`. */
   name: string;
   /** Short task selector Eve can search without loading the guide. */
@@ -300,14 +461,14 @@ export function connectaSkill(options: ConnectaSkillOptions) {
         try {
           const response = await (options.fetch ?? fetch)(endpoint, {
             method: "POST",
-            headers: {
+            headers: await guidanceHeaders(options, {
               Authorization: `Bearer ${await tokenFor(options)}`,
               "Content-Type": "application/json",
               Accept: "application/json, text/event-stream",
               "MCP-Protocol-Version": "2026-07-28",
               "Mcp-Method": "tools/call",
               "Mcp-Name": "skills",
-            },
+            }),
             body: JSON.stringify({
               jsonrpc: "2.0",
               id: 1,

@@ -35,7 +35,7 @@ import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import type { ConnectorCaller } from "../connector-caller.js";
-import { endpointInstructions } from "../skills.js";
+import { ENDPOINT_EXTENSION, endpointExtension, endpointInstructions } from "../skills.js";
 import { NATIVE_TOOLS_LIST_TTL_MS, NativeSurface, nativeRequestHint, type NativeRequestHint } from "../native-tools.js";
 import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
@@ -448,18 +448,30 @@ function serveMcp(
         requestScope,
         defer: runtimeContext?.waitUntil?.bind(runtimeContext),
       });
+      const connectors = registry.listConnectors();
+      const effectiveReadOnly =
+        readOnly || (connectors.length > 0 && connectors.every((connector) => connector.readOnly === true));
       const server = new McpServer(opts.config.serverInfo, {
         // A request-local server cannot publish catalog changes. Set this before
         // tool registration, whose SDK default otherwise advertises listChanged.
-        capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
+        capabilities: {
+          tools: { listChanged: false },
+          extensions: {
+            "io.modelcontextprotocol/skills": {},
+            [ENDPOINT_EXTENSION]: endpointExtension(
+              connectors,
+              native !== undefined,
+              native?.executeCode ?? true,
+              effectiveReadOnly,
+            ),
+          },
+        },
         // Instructions reflect the admitted pool and effective write policy. Every cache hint below is private, so a client keeps
         // what it learned per endpoint URL and never shares it across them.
         instructions: endpointInstructions(
           pool !== undefined ? opts.pools.get(pool)?.description : undefined,
           native,
-          readOnly ||
-            (registry.listConnectors().length > 0 &&
-              registry.listConnectors().every((connector) => connector.readOnly === true)),
+          effectiveReadOnly,
         ),
         inputRequired: { legacyShim: false },
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },

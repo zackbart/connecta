@@ -62,6 +62,7 @@ import { executorProgram } from "./runtime/executor.js";
 import {
   connectorGuide,
   connectorGuideRequired,
+  connectorInventoryTitle,
   connectorSkillName,
   hasConnectorGuides,
   SkillsRegistry,
@@ -1854,19 +1855,6 @@ function discardedEmits(emitted: EmitCollector): {
   return emitted.blocks.length > 0 ? { emittedDiscarded: emitted.blocks.length } : {};
 }
 
-const inventoryWords = (text: string) =>
-  text
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
-
-/** A title that only respells the id ("Google Calendar" for google_calendar) adds nothing. */
-function titleAddsInformation(id: string, title: string): boolean {
-  const words = inventoryWords(title);
-  const idWords = inventoryWords(id);
-  return words.join("") !== idWords.join("") && words.some((word) => !idWords.includes(word));
-}
-
 /**
  * Every configured connector, from configuration alone. Detail degrades before
  * names do: titles go first, then optional guide pointers, and only past the
@@ -1878,8 +1866,8 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
   const fits = (line: string) => boundedEchoText(line, CONNECTOR_INVENTORY_MAX_BYTES) === line;
   const entry = (connector: (typeof connectors)[number], detail: number): string => {
     const notes: string[] = [];
-    const title = connector.title?.replace(/\s+/g, " ").trim();
-    if (detail >= 2 && title && titleAddsInformation(connector.id, title)) notes.push(boundedEchoText(title, 45));
+    const title = connectorInventoryTitle(connector);
+    if (detail >= 2 && title) notes.push(title);
     const required = connectorGuideRequired(connector);
     if (connectorGuide(connector) && (required || detail >= 1)) {
       const fetch = `skills({name:"${connectorSkillName(connector.id)}"})`;

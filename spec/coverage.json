@@ -56,8 +56,8 @@
       "id": "server-discovery",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/discover",
-      "notes": "server/discover advertises supported modern revisions, tools and skill resources capabilities, the served Skills extension map, configured server identity, and private one-hour cache hints.",
-      "evidence": ["test/server.test.ts", "test/mcp-core.test.ts"]
+      "notes": "server/discover advertises supported modern revisions, tools and skill resources capabilities, the served Skills extension map, the caller-scoped dev.connecta/endpoint vendor extension on discovery and legacy initialize, configured server identity, and private one-hour cache hints.",
+      "evidence": ["test/server.test.ts", "test/mcp-core.test.ts", "test/identity-scope.test.ts"]
     },
     {
       "id": "streamable-http",

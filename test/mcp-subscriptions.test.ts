@@ -67,7 +67,10 @@ describe("MCP subscriptions", () => {
       expect(body.result.capabilities).toEqual({
         tools: { listChanged: false },
         resources: {},
-        extensions: { "io.modelcontextprotocol/skills": {} },
+        extensions: {
+          "io.modelcontextprotocol/skills": {},
+          "dev.connecta/endpoint": expect.objectContaining({ surface: "meta" }),
+        },
       });
     } finally {
       await c.close();
