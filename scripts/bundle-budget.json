@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-04: Lexical search ranks on summaries, with title, summary and tail zones, summaries and a small abbreviation map. Measured on one machine against origin/main at 25e9e940, this adds 891 B to the root and 1,218 B to examples/worker; gzip output differs by machine, so these are deltas, not CI sizes. Added to CI's 422,175 B and 806,117 B they estimate 423,066 B and 807,335 B. The caps move to 423,400 B and 807,700 B, keeping about the same headroom as before.",
     "2026-11-03: The performance, security and guidance batch has landed, so its temporary headroom ends. CI at 0d89ea9c measures the root at 422,175 B and examples/worker at 806,117 B, up from 415,751 B and 796,900 B at Release 0.40.0 (+6,424 B and +9,217 B). The caps move to 422,500 B and 806,500 B, leaving 325 B and 383 B for later changes.",
     "2026-11-03: More temporary batch headroom. CI measured root at 419,015 B and examples/worker at 801,303 B on #1280, with more of the batch still open. The root cap moves to 425,000 B and the examples/worker cap to 808,000 B. These get tightened to measured sizes plus normal headroom when the batch lands.",
     "2026-11-03: The opt-in timing trace (#1270) puts the root at 418,224 B on CI before merging later main changes, over the 418,000 B batch cap. The root cap moves to 420,000 B, under the same plan: tighten to measured sizes when the batch lands.",
@@ -57,7 +58,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 422500
+      "maxGzip": 423400
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -140,7 +141,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 806500
+      "maxGzip": 807700
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
