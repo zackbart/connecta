@@ -16,6 +16,7 @@ import {
   checkQueuedWriteAtExhaustion,
   checkCompletedOutputs,
   checkCompletedPrivacy,
+  checkReadDeadlineCancels,
   checkReadDeadlineUtilities,
   checkSharedPreludes,
   checkStashAuthority,
@@ -183,6 +184,10 @@ describe("guest API contract (QuickJS executor)", () => {
   it("[R4, R9] INV-2 INV-3 INV-4: a failed run's stash rechecks identity, endpoint, pool and live authentication", async () => {
     await checkStashAuthority(executor, false, true);
   });
+
+  it("[L3] a read the cap ends stops its downstream work before the program hears", async () => {
+    await checkReadDeadlineCancels(readDeadlineExecutor);
+  }, 60_000);
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
     const outcome = await contractHarness().run(

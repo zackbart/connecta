@@ -911,14 +911,19 @@ function sandboxProvider(
   // `cancelled` instead of holding the program until its probe deadline.
   // Policy failures use the same thrown vocabulary as calls and utilities;
   // the transport below reconstructs their code inside the guest.
-  const discovery = <T>(operation: "search" | "describe", read: () => Promise<T>): Effect.Effect<unknown, unknown> =>
+  const discovery = <T>(
+    operation: "search" | "describe",
+    read: () => Effect.Effect<T, unknown>,
+  ): Effect.Effect<unknown, unknown> =>
     Effect.suspend(() => {
       const started = Date.now();
       const cancelled = () => guestFailure("cancelled", `connecta.${operation} was cancelled because the run ended.`);
-      const reading = Effect.tryPromise({
-        try: read,
-        catch: (err) => (err instanceof DiscoveryPolicyError ? guestFailure(err.code, err.message) : err),
-      });
+      // In the race itself, not behind a Promise: losing interrupts the catalog
+      // work and aborts its listing before the program hears the outcome (L3).
+      const reading = Effect.suspend(read).pipe(
+        Effect.catchDefect((err) => Effect.fail(err)),
+        Effect.mapError((err) => (err instanceof DiscoveryPolicyError ? guestFailure(err.code, err.message) : err)),
+      );
       const contenders: Array<Effect.Effect<unknown, unknown>> = [reading];
       // A catalog probe may outlast the run; end it as a catchable timeout first.
       if (limits.readDeadlineAt !== undefined)
@@ -1154,7 +1159,7 @@ function sandboxProvider(
         catch: (err) => err,
       }),
     search: (raw) =>
-      discovery("search", async () => {
+      discovery("search", () => {
         const args = (raw ?? {}) as {
           query?: string;
           connector?: string;
@@ -1165,42 +1170,50 @@ function sandboxProvider(
           includeSchemas?: "compact" | "json" | "typescript";
           includeSchemaKeys?: boolean;
         };
-        const result = flatSearchResult(
-          await catalog.search(
+        return catalog
+          .searchEffect(
             {
               ...args,
               includeSchemas: args.includeSchemas ?? "typescript",
               includeSchemaKeys: args.includeSchemaKeys !== false,
             },
             catalogDependency,
-          ),
-        );
-        boundedDiscoveryText(
-          result,
-          "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
-        );
-        return result;
+          )
+          .pipe(
+            Effect.map((page) => {
+              const result = flatSearchResult(page);
+              boundedDiscoveryText(
+                result,
+                "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
+              );
+              return result;
+            }),
+          );
       }),
     describe: (raw) =>
-      discovery("describe", async () => {
+      discovery("describe", () => {
         const args = (raw ?? {}) as {
           address?: unknown;
           addresses?: unknown;
           format?: "compact" | "json" | "typescript";
           fullDescriptions?: boolean;
         };
-        const result = { tools: await catalog.describe({ ...args, format: args.format ?? "json" }) };
-        boundedDiscoveryText(result, 'Split the address list or use format: "compact".');
-        for (const tool of result.tools) {
-          if (!tool.error) catalogAddressDependency(tool.address);
-          else {
-            const resolved = registry.resolveAddress(tool.address);
-            if (resolved) catalogDependency(resolved.connector.id);
-            for (const connector of tool.errorDetails?.configuredConnectors ?? []) catalogDependency(connector);
-            for (const suggestion of tool.errorDetails?.suggestions ?? []) catalogAddressDependency(suggestion);
-          }
-        }
-        return result;
+        return catalog.describeEffect({ ...args, format: args.format ?? "json" }).pipe(
+          Effect.map((tools) => {
+            const result = { tools };
+            boundedDiscoveryText(result, 'Split the address list or use format: "compact".');
+            for (const tool of result.tools) {
+              if (!tool.error) catalogAddressDependency(tool.address);
+              else {
+                const resolved = registry.resolveAddress(tool.address);
+                if (resolved) catalogDependency(resolved.connector.id);
+                for (const connector of tool.errorDetails?.configuredConnectors ?? []) catalogDependency(connector);
+                for (const suggestion of tool.errorDetails?.suggestions ?? []) catalogAddressDependency(suggestion);
+              }
+            }
+            return result;
+          }),
+        );
       }),
   };
   // Recoverable failures remain typed at the host-owned executor bridge. Terminal host-budget exhaustion bypasses it.

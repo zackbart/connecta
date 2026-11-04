@@ -1188,6 +1188,91 @@ export async function checkCompletedPrivacy(executor: Executor): Promise<void> {
   expect(events.length).toBeGreaterThan(0);
 }
 
+/**
+ * The cap ends the work, not only the wait: the downstream signal aborts before
+ * the program hears `timeout`, on every read path it covers, and the run is still
+ * going when that happens, so teardown is not what aborted it.
+ */
+export async function checkReadDeadlineCancels(executor: Executor): Promise<void> {
+  const operations = [
+    { name: "search", code: `connecta.search({ connector: "slow" })` },
+    { name: "describe", code: `connecta.describe({ address: "slow.read" })` },
+    { name: "call", code: `connecta.call("slow.read", {}, { timeoutMs: 600000 })` },
+    { name: "read", code: `connecta.read("resource://slow/" + encodeURIComponent("docs://hanging"))` },
+    { name: "skill", code: `connecta.skill(${JSON.stringify(downstreamSkillUri("slow", "skill://guide/SKILL.md"))})` },
+    { name: "result", code: `connecta.result(RESULT_ID)` },
+  ];
+  for (const { name, code } of operations) {
+    let hang = false;
+    let aborts = 0;
+    let startedWork = 0;
+    let settledAfterAborts: number | undefined;
+    const hanging = (signal: AbortSignal | undefined) => {
+      startedWork++;
+      signal?.addEventListener("abort", () => aborts++, { once: true });
+      return new Promise<never>(() => {});
+    };
+    const slow: Connector = {
+      id: "slow",
+      kind: "api",
+      async listTools(ctx) {
+        return hang ? hanging(ctx.signal) : [readOnly("read")];
+      },
+      async readResource(_uri, ctx) {
+        return hanging(ctx.signal);
+      },
+      downstreamSkills: {
+        list: (ctx) => hanging(ctx.signal),
+        read: (_uri, ctx) => hanging(ctx.signal),
+      },
+      async callTool() {
+        return { padding: "x".repeat(30_000) };
+      },
+    };
+    const observed = customExecutor(
+      {
+        deadlineMs: required(executor.deadlineMs),
+        execute: (program, providers) =>
+          executor.execute(
+            program,
+            providers.map((provider) => ({
+              ...provider,
+              fns: Object.fromEntries(
+                Object.entries(provider.fns).map(([fn, call]) => [
+                  fn,
+                  (...args: unknown[]) =>
+                    call(...args).finally(() => {
+                      if (fn === name) settledAfterAborts = aborts;
+                    }),
+                ]),
+              ),
+            })),
+          ),
+      },
+      { lifecycle: "self-managed" },
+    );
+    const execute = createExecuteTool(makeRegistry([slow]), CONTRACT_BASE, observed, silentLogger);
+    let program = code;
+    if (name === "result") {
+      // An id from a run with a working catalog; reading it rechecks access.
+      const stored = await execute({ code: `async () => (await connecta.call("slow.read")).data` });
+      const { resultId } = required(stored.structuredContent).result as { resultId: string };
+      program = code.replace("RESULT_ID", JSON.stringify(resultId));
+    }
+    hang = true;
+    const outcome = await execute({
+      code: `async () => {
+        const failed = await ${program}.catch((error) => error);
+        return { code: failed.code, retryable: failed.retryable };
+      }`,
+    });
+    expect(outcome.isError, `${name}: ${outcome.content[0]?.text}`).toBeFalsy();
+    expect(required(outcome.structuredContent).result, name).toEqual({ code: "timeout", retryable: true });
+    expect(startedWork, `${name} reached downstream work`).toBeGreaterThan(0);
+    expect(settledAfterAborts, `${name}'s downstream signal aborted before the program heard`).toBe(startedWork);
+  }
+}
+
 export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {
   let releaseRead!: () => void;
   const blocked = new Promise<void>((resolve) => {
