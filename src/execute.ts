@@ -765,7 +765,7 @@ function sandboxProvider(
             kind: "refuse",
             error: {
               code: "invalid_args",
-              message: `${target.connector.id}.${target.toolName} was not sent: its arguments match a credential this request sent, and a write is never sent altered. If the value is genuine, send it as its own direct call.`,
+              message: `${target.connector.id}.${target.toolName} was not sent: its arguments hold a credential this request sent, and a write is never sent altered. If the value is genuine, send it as its own direct call.`,
               retryable: false,
             },
           };
@@ -1683,7 +1683,10 @@ export function createExecuteTool(
             Effect.map((unfinished) => {
               // Every response, including intake refusals, crosses accounting and
               // exactly one envelope check at this operation boundary.
-              const result = redactAgentOutput(sentSecrets, programWrites.finish(unfinished));
+              const result = redactAgentOutput(
+                sentSecrets,
+                programWrites.finish(unfinished, sentSecrets, maxResultChars),
+              );
               // Calls abandoned by the guest are failed when the run cancels them.
               // Connecta attaches its own integers after the envelope check.
               const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };

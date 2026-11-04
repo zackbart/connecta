@@ -85,7 +85,7 @@ the resulting fake state; targets without one claim no write. `node-fakes` and
 `worker-fakes` also run sequential writes through one `execute_code` program on
 one connection: two land, the tool refuses the third with its own error, and the
 fourth never leaves. The check reads the fake's state, its count of physical writes,
-and the `write_outcome_unknown` result, which must report the tool's words. Steps are bounded
+and the `write_outcome_unknown` result, which must lead with the tool's words. Steps are bounded
 to two minutes, child process groups stop on exit or signal, and any failed
 check exits nonzero with the results JSON. Install Chromium once with
 `pnpm run test:browser:install`.

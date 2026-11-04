@@ -1212,16 +1212,41 @@ that reaches accounting after the program settles is not sent. An unanswered
 write makes the run fail `write_outcome_unknown` with
 `writes: { succeeded, failed, unknown }`, regardless of its return value. Its
 `unknownWrites` lists at most ten such writes, each with `address` when resolved,
-`code`, the redacted `message` the program saw, and `toolAnswered: true` when the
-downstream tool itself answered `isError`; `unknownWritesTruncated` marks more.
-The tool's words say why it answered as it did, not that nothing applied, so read
-them and reconcile before repeating anything.
-Program arguments pass through the credentials this request has already sent. A
-read that matches one is sent with the match replaced. A write that matches one
+`code`, the redacted `message`, and `toolAnswered: true` when the downstream tool
+itself answered `isError`. `unknownWritesTruncated` marks a write left out or a
+message dropped. When a tool answered, the error's `message` leads with
+`<address> answered: <the tool's words>`, and that entry carries no second copy.
+An authorization verdict keeps its own lead, with the words in its entry. The
+words say why the tool answered as it did, not that nothing applied, so read them
+and check the target before acting. Give the user any approval link or request id
+they hold. Never rerun the program: writes it already sent would repeat. If the
+tool's words call for a further call, such as one carrying a provider's approval
+token, send only that operation, as a new call. Connecta does not block it.
+
+A tool's words reach any agent up to 4,096 UTF-8 bytes, on direct and native calls
+too. A longer text is cut between tokens and ends `… [truncated]`, so a link
+arrives whole or not at all. A tighter result cap on a direct call cuts it further.
+A program's report is redacted against the run's final credentials before any cut,
+holds at most 4,096 serialized bytes per message and 8,192 in all, and stays inside
+`execute.maxResultChars`. Activity and logs never receive these words.
+
+Program arguments pass through the credentials this request has already sent. The
+check matches a whole credential or eight consecutive characters of what follows
+its public framing: an auth scheme, a vendor prefix such as `sk_test_`, or a JWT's
+header segment. Naming a prefix is no match, an identifier sent beside a credential
+(a client ID, a Basic username) is no match, and a private `writeOnly` value is
+no match. A read that matches is sent with the match replaced. A write that matches
 is refused before dispatch with `invalid_args`, because it is never sent altered:
 nothing leaves, and a value that is genuine can go as its own direct call. A
 program's first call has no such credentials yet, so this can first appear on a
-later call.
+later call. Otherwise a refusal needs one of these: a value that shares eight
+characters past the prefix with a credential, such as a publishable key beside its
+secret key; a credential configured from a non-secret field, or a header or query
+parameter whose name looks sensitive; or text the check cannot finish (escaping
+nested past eight layers, or past its work budget). The check is a backstop: fewer
+than eight characters past a prefix pass it, and a program never receives what
+output redaction withheld.
+
 A failed program that already wrote carries those counts on its error. The
 write-budget refusal is `execute_code write budget exceeded (10 writes per run); <address> was not sent.`,
 followed by checking the run's writes count and sending only the remaining writes

@@ -59,7 +59,11 @@ type Answer =
   | "refused"
   | "timeout"
   | "deadline"
-  | "isError";
+  | "isError"
+  | "isErrorLong";
+
+const APPROVAL_TEXT = "Request apr_7Hq2: https://vendor.example/approve/apr_7Hq2?sig=c0ffee0123456789";
+const LONG_TOOL_ERROR = `Approval required. ${"This write needs a person. ".repeat(40)}${APPROVAL_TEXT} then call again.`;
 
 function setup(
   options: {
@@ -75,6 +79,8 @@ function setup(
     versionNegotiation?: "legacy" | "auto";
     /** Runs as a tools/call is answered 401, before the answer reaches connecta. */
     onUnauthorized?: () => void;
+    /** What an `isErrorLong` answer says instead of the default long error. */
+    toolError?: string;
   } = {},
 ) {
   const applied: string[] = [];
@@ -99,6 +105,7 @@ function setup(
   });
   /** Every tools/call POST that left connecta, by tool name and bearer token. */
   const sent: Array<{ name: string; authorization: string | null }> = [];
+  const sentArgs: unknown[] = [];
   let refreshes = 0;
   const requests: { url: string; headers: Headers }[] = [];
   /** How the next tools/call per tool is answered; "pass" lets it through. */
@@ -148,6 +155,7 @@ function setup(
     const answer = answers.get(name) ?? "pass";
     if (answer === "refused") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
     sent.push({ name, authorization });
+    sentArgs.push((rpc.params as { arguments?: unknown }).arguments);
     if (answer === 401 && (options.public || authorization === `Bearer ${STALE}`)) {
       options.onUnauthorized?.();
       return new Response(null, {
@@ -167,7 +175,7 @@ function setup(
     const reply = await downstream.fetch(downstream.url, init);
     if (answer === "pass" || answer === 401) return reply;
     // The handler ran, then the tool answers for call 2: "isError" names calls by `id`.
-    if (answer === "isError") {
+    if (answer === "isError" || answer === "isErrorLong") {
       if ((rpc.params as { arguments?: { id?: number } }).arguments?.id !== 2) return reply;
       await reply.body?.cancel();
       return Response.json({
@@ -175,7 +183,15 @@ function setup(
         id: (rpc as { id?: unknown }).id,
         result: {
           isError: true,
-          content: [{ type: "text", text: "Vendor refused: HEADER_CREDENTIAL is not allowed" }],
+          content: [
+            {
+              type: "text",
+              text:
+                answer === "isError"
+                  ? "Vendor refused: HEADER_CREDENTIAL is not allowed"
+                  : (options.toolError ?? LONG_TOOL_ERROR),
+            },
+          ],
         },
       });
     }
@@ -325,6 +341,7 @@ function setup(
     applied,
     answers,
     sent: (name: string) => sent.filter((entry) => entry.name === name),
+    sentArgs: () => sentArgs,
     resumed: () => resumed,
     refreshes: () => refreshes,
   };
@@ -1092,7 +1109,7 @@ describe("remote MCP writes whose tool answers isError", () => {
     const [failure, ...others] = result.error.unknownWrites;
     expect(others).toEqual([]);
     expect(failure).toMatchObject({ address: "svc.create_item", code: "connector_call_failed", toolAnswered: true });
-    expect(failure.message).toContain("Vendor refused");
+    expect(result.error.message.startsWith("svc.create_item answered: Vendor refused")).toBe(true);
     expect(JSON.stringify(result)).not.toContain("HEADER_CREDENTIAL");
     // Each write left once, and this tool's handler ran even for the one it refused.
     expect(flow.sent("create_item")).toHaveLength(3);
@@ -1107,6 +1124,64 @@ describe("remote MCP writes whose tool answers isError", () => {
     expect(failed.error).toMatchObject({ retryable: false, writeOutcome: "unknown", toolAnswered: true });
     expect(failed.error!.message).toContain("Vendor refused");
     expect(flow.sent("create_item")).toHaveLength(1);
+  });
+});
+
+describe("a long tool error holding an approval link", () => {
+  it("INV-9: a program's result leads with the tool's words, whole, and offers no rerun", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isErrorLong");
+    const result = await flow.program(true, 3);
+    const { message, unknownWrites } = result.error;
+    expect(result.error).toMatchObject({ code: "write_outcome_unknown", writes: { succeeded: 2, unknown: 1 } });
+    expect(message.startsWith("svc.create_item answered: Approval required.")).toBe(true);
+    expect(message).toContain(APPROVAL_TEXT);
+    expect(message).toContain("unknown outcome");
+    expect(message).toContain("Read its target");
+    expect(message).toContain("Give the user any approval link");
+    expect(message).toContain("Do not rerun this program");
+    // The words appear once: the entry they came from points at the failure, not a copy.
+    expect(unknownWrites).toEqual([{ address: "svc.create_item", code: "connector_call_failed", toolAnswered: true }]);
+    expect(flow.sent("create_item")).toHaveLength(3);
+  });
+
+  it("INV-9: a direct write gets the link whole, says its outcome is unknown, and sends once", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isErrorLong");
+    const failed = await flow.outcome("create_item", { id: 2 });
+    expect(failed.error).toMatchObject({ retryable: false, writeOutcome: "unknown", toolAnswered: true });
+    expect(failed.error!.message).toContain(APPROVAL_TEXT);
+    expect((failed.error as { retry?: string }).retry).toContain("Give the user any approval link");
+    expect(flow.sent("create_item")).toHaveLength(1);
+  });
+
+  it("a link crossing the bound is left out whole, with the cut marked, never cut in the middle", async () => {
+    const lead = "Approval required. ".repeat(215);
+    const flow = setup({ toolError: `${lead}${APPROVAL_TEXT}` });
+    flow.answers.set("create_item", "isErrorLong");
+    for (const message of [
+      (await flow.outcome("create_item", { id: 2 })).error!.message,
+      (await flow.program(true, 2)).error.message,
+    ]) {
+      expect(new TextEncoder().encode(message.split("\n\n")[0]!).length).toBeLessThan(4_200);
+      expect(message).toContain("… [truncated]");
+      expect(message).not.toContain("apr_7Hq2");
+      expect(message).not.toContain("https://vendor");
+    }
+  });
+
+  it("INV-9: the provider's approval_token is a new deliberate call, sent as written, whichever route it takes", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isErrorLong");
+    expect((await flow.outcome("create_item", { id: 2 })).error?.writeOutcome).toBe("unknown");
+    flow.answers.clear();
+    const args = { id: 2, approval_token: "apt_8Kd3mQz1Vb7Yx0Lp" };
+    expect((await flow.outcome("create_item", args)).error).toBeUndefined();
+    expect(flow.sentArgs().at(-1)).toEqual(args);
+    const program = await flow.program(false, 2, "create_item", () => ({ approval_token: args.approval_token }));
+    expect(program.error).toBeUndefined();
+    expect(flow.sentArgs().at(-1)).toEqual({ ...args });
+    expect(flow.sent("create_item")).toHaveLength(4);
   });
 });
 

@@ -246,6 +246,35 @@ export function boundedEchoText(value: string, maxBytes: number = MAX_ECHOED_BYT
 }
 
 /**
+ * How much of a tool's own `isError` text reaches the agent. A refusal can be the
+ * only copy of what to do next: a paragraph of instructions, a request id and a
+ * signed approval URL, which alone commonly run to a couple of kilobytes. Four
+ * kilobytes holds those, and in a direct result's two copies stays well inside the
+ * default result cap; a tighter cap shrinks it further.
+ */
+export const MAX_TOOL_ERROR_BYTES = 4_096;
+
+const CLIPPED = "… [truncated]";
+const CLIPPED_BYTES = echoEncoder.encode(CLIPPED).length;
+
+/**
+ * Clamp downstream prose to a UTF-8 byte budget, marker included, without cutting
+ * a token. The cut backs off to a byte no URL or credential holds, so a link arrives
+ * whole or not at all, and no prefix of a credential registered later stays behind.
+ * Each such byte is ASCII, so no codepoint is split.
+ */
+export function clipText(value: string, maxBytes: number = MAX_TOOL_ERROR_BYTES): string {
+  const bytes = echoEncoder.encode(value);
+  if (bytes.length <= maxBytes) return value;
+  let end = Math.max(0, maxBytes - CLIPPED_BYTES);
+  while (end > 0 && !TOKEN_END.has(bytes[end]!)) end--;
+  return `${echoDecoder.decode(bytes.slice(0, end)).trimEnd()}${end > 0 ? " " : ""}${CLIPPED}`;
+}
+
+/** Whitespace and the quotes and brackets that delimit a link in text, HTML and JSON. */
+const TOKEN_END = new Set([0x09, 0x0a, 0x0d, 0x20, 0x22, 0x3c, 0x3e, 0x60]);
+
+/**
  * Snapshot the caller's arguments after bounded schema-aware writeOnly omission,
  * then apply the shared byte budget without clipping. Unresolved sensitivity
  * omits the entire echo. argsRedacted marks partial or withheld arguments as

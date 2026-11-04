@@ -75,6 +75,14 @@ export default async function setup(project: TestProject) {
               }
             : rpc.method === "tools/call" && written === "refused"
               ? { isError: true, content: [{ type: "text", text: "Vendor refused this request" }] }
+              : rpc.method === "tools/call" && written === "approval"
+                ? {
+                    isError: true,
+                    content: [
+                      { type: "text", text: `Approval required. ${"This write needs a person. ".repeat(40)}` },
+                      { type: "text", text: "Request apr_7Hq2: https://vendor.example/approve/apr_7Hq2?sig=c0ffee" },
+                    ],
+                  }
               : rpc.method === "tools/call"
                 ? { content: [{ type: "text", text: JSON.stringify({ created: written }) }] }
                 : undefined;

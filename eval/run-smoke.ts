@@ -188,20 +188,16 @@ function trackerProgramWrites(world: World): NonNullable<Battery["programWrites"
   return {
     code: `async () => { const out = []; for (const id of ${JSON.stringify(ids)}) out.push(await connecta.call("tracker.close_issue", { id })); return out; }`,
     verify: (error) => {
+      const message = (error as { message?: string } | undefined)?.message;
+      if (!message?.startsWith("tracker.close_issue answered: issue WEB-404 not found"))
+        throw new Error(`the tool's words do not lead: ${message?.slice(0, 200)}`);
       assert.deepEqual(
         error,
         {
           code: "write_outcome_unknown",
-          message: (error as { message?: unknown } | undefined)?.message,
+          message,
           retryable: false,
-          unknownWrites: [
-            {
-              address: "tracker.close_issue",
-              code: "connector_call_failed",
-              message: "issue WEB-404 not found",
-              toolAnswered: true,
-            },
-          ],
+          unknownWrites: [{ address: "tracker.close_issue", code: "connector_call_failed", toolAnswered: true }],
           writes: { succeeded: 2, failed: 0, unknown: 1 },
         },
         "program error",

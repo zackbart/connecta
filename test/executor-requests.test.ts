@@ -80,14 +80,8 @@ describe.skipIf(!worker)("execute_code across separate Worker requests", () => {
       code: "write_outcome_unknown",
       retryable: false,
       writes: { succeeded: 1, failed: 0, unknown: 1 },
-      unknownWrites: [
-        {
-          address: "iserror.create",
-          code: "connector_call_failed",
-          message: expect.stringContaining("Vendor refused this request"),
-          toolAnswered: true,
-        },
-      ],
+      message: expect.stringMatching(/^iserror\.create answered: Vendor refused this request\n/),
+      unknownWrites: [{ address: "iserror.create", code: "connector_call_failed", toolAnswered: true }],
     });
     expect(await (await fetch(`${await fixtureOrigin()}/executor/mcp/iserror/writes`)).json()).toEqual([
       "first",
@@ -102,6 +96,16 @@ describe.skipIf(!worker)("execute_code across separate Worker requests", () => {
     expect(logged).toMatchObject({ code: "connector_call_failed", errorClass: "DownstreamToolError" });
     expect(logged).not.toHaveProperty("step");
     expect(logged).not.toHaveProperty("httpStatus");
+  }, 30_000);
+
+  it("INV-6: a long tool error's approval link reaches a Worker program's result whole and no operator record", async () => {
+    const result = await run("approval", sequentialWrites("iserror", ["approval", "never"]), "/writer/mcp");
+    expect(result.structuredContent.error).toMatchObject({
+      code: "write_outcome_unknown",
+      message: expect.stringContaining("Request apr_7Hq2: https://vendor.example/approve/apr_7Hq2?sig=c0ffee\n"),
+      writes: { succeeded: 0, failed: 0, unknown: 1 },
+    });
+    expect(await (await worker!.fetch("http://localhost/call-failures")).text()).not.toContain("apr_7Hq2");
   }, 30_000);
 
   it("INV-7: the fixture's request binding refuses another request's entry with or without its token, as workerd does", async () => {

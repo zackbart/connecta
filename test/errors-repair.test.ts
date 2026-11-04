@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { schemaExample } from "../src/validate.js";
 import { CatalogService } from "../src/catalog-service.js";
-import { ConnectorCallError } from "../src/errors.js";
+import { clipText, ConnectorCallError } from "../src/errors.js";
 import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { connectorWith } from "./fixtures/connectors.js";
@@ -9,6 +9,24 @@ import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./
 import { machineAuth } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
+
+describe("clipping a tool's words", () => {
+  it("keeps what fits exactly, and cuts only between tokens with the cut marked", () => {
+    expect(clipText("short", 5)).toBe("short");
+    const clipped = clipText("see https://vendor.example/approve?sig=abc now", 30);
+    expect(clipped).toBe("see … [truncated]");
+    expect(clipText(`{"url":"https://vendor.example/a","next":"https://vendor.example/b"}`, 60)).toBe(
+      `{"url":"https://vendor.example/a","next": … [truncated]`,
+    );
+  });
+
+  it("withholds a token with no boundary rather than leave a prefix of it, and splits no codepoint", () => {
+    expect(clipText("x".repeat(100), 50)).toBe("… [truncated]");
+    const clipped = clipText(`é ${"é".repeat(60)}`, 40);
+    expect(clipped).toBe("é … [truncated]");
+    expect(clipped).not.toContain("\ufffd");
+  });
+});
 
 describe("repairing error envelopes", () => {
   it("INV-5: unresolved catalog recovery requires original arguments without echoing them", async () => {
