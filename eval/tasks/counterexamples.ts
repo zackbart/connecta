@@ -94,6 +94,23 @@ export function counterexamples(
       check: "handed-off",
       trace: retell((line) => line.replaceAll(issued, `[Connect](${issued}BROKEN)`)),
     });
+    // Text punctuation stops being sentence punctuation inside a destination: a click sends it.
+    for (const mark of [".", "?", ",", "!"])
+      cases.push({
+        name: `handoff link with ${mark} inside a Markdown destination`,
+        check: "handed-off",
+        trace: retell((line) => line.replaceAll(issued, `[Connect](${issued}${mark})`)),
+      });
+    cases.push({
+      name: "handoff link among the label's words of a Markdown link elsewhere",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, `[${issued} click here](https://elsewhere.example/connect)`)),
+    });
+    cases.push({
+      name: "handoff link only as the label of a Markdown link elsewhere",
+      check: "handed-off",
+      trace: retell((line) => line.replaceAll(issued, `[${issued}](https://elsewhere.example/connect)`)),
+    });
     cases.push({
       name: "handoff link with a period run onto its Markdown destination",
       check: "handed-off",
@@ -802,6 +819,18 @@ export function counterexamples(
         ),
       },
     });
+    for (const mark of [".", "?"])
+      cases.push({
+        name: `the agent's Markdown link had ${mark} inside its destination`,
+        trace: {
+          ...trace,
+          transcript: trace.transcript.map((entry) =>
+            entry.kind === "assistant"
+              ? { ...entry, text: entry.text.replace(/https?:[^"\s]*\/connect\/oauth[^"\s]*/g, `[Connect]($&${mark})`) }
+              : entry,
+          ),
+        },
+      });
     cases.push({
       name: "operator connected without agent handoff",
       trace: {
@@ -1479,7 +1508,12 @@ export function positiveVariants(
     const issued = said.map((text) => /https?:\/\/\S+/.exec(text)?.[0]).find(Boolean) ?? "";
     for (const [name, wrapped] of [
       ["sentence punctuation", `${issued}.`],
+      ["a question after it", `Did ${issued}?`],
       ["a Markdown link", `[Connect billing](${issued}).`],
+      ["a Markdown link followed by a question", `[Connect billing](${issued})?`],
+      ["an angle Markdown destination", `[Connect billing](<${issued}>).`],
+      ["a titled Markdown link", `[Connect billing](${issued} "Connect")`],
+      ["a Markdown link labelled with itself", `[${issued}](${issued})`],
       ["bold", `**${issued}**,`],
       ["a code span", `\`${issued}\`:`],
       ["an angle autolink", `<${issued}>`],

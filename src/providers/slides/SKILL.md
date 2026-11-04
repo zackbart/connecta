@@ -5,86 +5,52 @@
 }
 ---
 
-## Find and read a deck
+## Find and read
 
-Slides cannot search or list decks. Find the file through Drive, or take the
-presentation id from `/presentation/d/<id>/` in its URL. A presentation is a
-Drive file; finding one does not grant permission to open it. A user-given id
-works as is; no Drive lookup is needed to use it.
+Slides cannot search decks: use Drive, the id in `/presentation/d/<id>/`, or an
+id the person gives, which works as is. Finding a deck does not grant access.
+Slide `index` is zero-based. Before filling a new slide, resolve placeholders
+with `list_layouts` and `get_page`.
 
-`get_presentation` reads text in page order, with speaker notes, alt text and
-placeholder ids. `get_page` opens groups and reads a slide, layout, master or
-notes page. A slide's `index` is zero-based. Resolve a layout's placeholders
-with `list_layouts` and `get_page` before filling a new slide.
-Named-read `fields` narrows data while preserving `page` and `truncated` cut disclosures.
+Continuation is per content kind: `textCursor` or `elementsCursor` goes to
+`get_page` with that slide's id, `notesCursor` with its `notesPageId`,
+`layoutsCursor` to `list_layouts`. Cursors bind to the deck's revision, so a
+changed deck needs a fresh read. Follow them even when a result has fewer rows
+than requested.
 
-Text and notes have independent continuation. Pass an element's `textCursor`
-or a slide's `elementsCursor` to `get_page` with that slide's id; pass a
-`notesCursor` with its `notesPageId`. A deck's `layoutsCursor` continues in
-`list_layouts`. Content cursors bind to the deck's revision and the text they
-continue; a changed deck requires a fresh read. Follow continuation even when
-a result contains fewer rows than requested.
+`slides_api_read` covers styles, transforms and full structure. It returns
+`{status,data}` with the vendor presentation in `data`; a program call nests that
+in its own `data`. In operation details, presentations.get names its path
+parameter `presentationsId`; pages and batch updates use `presentationId`. Spell
+colons literally and encode other reserved characters within one id segment.
 
-For styles, transforms, HTML comment content, anchors' ranges or other full
-structural JSON, use `slides_api_read`. Operation details use the legacy
-`presentationsId` spelling for presentations.get; pages and batch updates use
-`presentationId`. These are path parameter names, not query arguments.
-Spell colons and unreserved characters literally in hatch paths; encode other
-characters within one id segment. Named tools handle their own id encoding.
+`get_slide_thumbnail` returns a link that opens as the delegated person: keep it
+private. Generic thumbnail and preview operations are refused.
 
-`slides_api_read` with `{path: "/presentations/<id>"}` returns `{status,data}`;
-the vendor presentation is `data`. A Connecta call's result delivery wraps that
-tool value in its own `data`; follow its result handle for large JSON.
-Content cursors belong to the named reading tools and are separate from that delivery handle.
+`commentId` names a thread; its posts have their own `postId`. Speaker-note
+comments belong to the notes page. A view-only account may be refused; that is not
+an empty list.
 
-`get_slide_thumbnail` returns a link that opens as the delegated person for
-about 30 minutes. Keep it private. Generic thumbnail/preview operations are
-refused; use the named thumbnail workflow.
-
+<!-- when: writes -->
 ## Edit at the version you read
 
-Read before editing and use its `revisionId` as the write precondition.
-Revision ids are preconditions, not replay keys. `create_slide` adds an empty
-slide; read its placeholder ids before inserting text. `replace_all_text`
-replaces literal text, with `matchCase` and an optional `requiredRevisionId`.
-Each write returns the new `revisionId` for the next one. A `conflict` means
-the deck changed since your read: re-read, rebuild the requests, and send them
-with the new `revisionId`. A failure that says the write applied means Google
-answered 2xx: do not repeat it; re-read. No Slides tool shares, moves or deletes
-the deck file.
+Pass the `revisionId` you read as the write precondition; each write returns the
+next one. It is a precondition, not a replay key. On `conflict`, re-read, rebuild
+the requests and send them with the new id. A failure saying the write applied
+means Google answered 2xx: re-read, never repeat. `create_slide` adds no text, so
+read its placeholder ids first. No Slides tool shares, moves or deletes the file.
 
-`batch_update_presentation` takes the existing reviewed Request kinds.
-The generic batch hatch uses `POST /presentations/deck1:batchUpdate` with
-`body: {requests: [{insertText: {objectId: "shape1", text: "Hello"}}],
-writeControl: {requiredRevisionId: "revision-from-read"}}`. It retains the
-same request-kind and revision guards. No additional preview capabilities are
-admitted by indexing the complete Discovery document.
+The generic batch is `POST /presentations/<id>:batchUpdate` with
+`body: {requests, writeControl: {requiredRevisionId}}`, under the same guards.
 
-## Comments can save separately
+## Comments save separately
 
-A comment thread's `commentId` identifies the thread; its head post and
-replies have their own `postId`. Authors' `user` ids are stable; display names
-are labels. Anchors join to page and object ids; speaker-note comments belong
-to the notes page. Reading comments requires comment access. A view-only
-account may be refused rather than receiving an apparently empty list.
-
-Resolve, reopen or reassign a thread with `update_comment_thread`; edit its
-text with `update_comment_post`. Reassignment requires content. Only the
-post's author can edit or delete that post. Comments notify people as in the
-Slides editor.
-
-`create_comment` sends one `insertComment` by itself. When one edit changes
-the deck and adds or changes comments, send it as one `batch_update_presentation`
-call: `insertComment`, `addCommentReply`, `updateCommentPost`, `deleteComment`
-and `deleteCommentReply` are Request kinds and share a batch with deck kinds
-such as `updateTextStyle`, under the same `requiredRevisionId`. Slides saves
-the deck part and the comment part separately, so a successful mixed batch can
-save the deck without confirming the comments. When `commentUpdateState` is not
-`ALL_SAVED`, or the result says comment saves are unconfirmed, read the deck and
-`list_comments`, report the deck part and the comment part each as saved or
-unconfirmed, and send neither the batch nor its comment part again. Keep every
-created id for reconciliation.
-
-`create_comment_reply` sends one reply by itself. The write hatch keeps
-comment-save state and advice in envelope-level `warnings`, even with
-`fields: ["replies"]`; Google's own state remains in vendor `data` when supplied.
+Comments notify people as in the editor. When one edit changes the deck and
+comments, send one `batch_update_presentation` under one `requiredRevisionId`;
+comment changes are Request kinds. Slides saves the two parts separately, so success
+can leave comments unconfirmed. If `commentUpdateState` is not `ALL_SAVED`, or the
+result says saves are unconfirmed: read the deck and `list_comments`, report each
+part as saved or unconfirmed, keep every created id, and resend neither the batch
+nor its comment part. The write hatch reports this state in envelope `warnings`,
+even when `fields` narrows.
+<!-- end -->

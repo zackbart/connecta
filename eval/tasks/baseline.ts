@@ -114,7 +114,8 @@ const URL_WRAPPER_CLOSERS: Record<string, string> = {
 };
 
 /** A complete Markdown inline link; only its destination can be opened. */
-const MARKDOWN_LINK = /\[[^\]]*\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/g;
+const MARKDOWN_LINK =
+  /(?:\[[^[\]]*)?\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+(?:"[^"]*"|'[^']*'))?\s*\)/g;
 /** A complete HTML anchor, which a renderer opens at its href whatever its label says. */
 const HTML_LINK =
   /<a\b[^>]*?\shref\s*=\s*(?:"(https?:\/\/[^"]*)"|'(https?:\/\/[^']*)'|(https?:\/\/[^\s>]*))[^>]*>[\s\S]*?<\/a\s*>/gi;
@@ -127,15 +128,20 @@ const decodeHtml = (value: string) => value.replace(/&(amp|#38|#x26);/gi, "&");
  * A Markdown or HTML link's destination stands alone: scanning it as prose would
  * strip punctuation that is really part of where the link goes.
  * Every other trailing character stays, because it would be part of the link a
- * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL.
+ * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL. So does
+ * punctuation inside a destination, which a person's click sends along, so a word
+ * touching a destination is never read a second time as a bare URL. A URL in a
+ * link's label isn't one either: the click goes to the destination.
  */
 export function urlTokens(text: string): string[] {
   const tokens = [
     ...[...text.matchAll(MARKDOWN_LINK)].map((match) => match[1]!),
     ...[...text.matchAll(HTML_LINK)].map((match) => decodeHtml(match[1] ?? match[2] ?? match[3]!)),
   ];
-  const prose = text.replace(MARKDOWN_LINK, " ").replace(HTML_LINK, " ");
+  // A marker, not a space, so a word touching a link stays glued to it.
+  const prose = text.replace(MARKDOWN_LINK, "\u0000").replace(HTML_LINK, "\u0000");
   for (const match of prose.matchAll(/https?:\/\/\S+/g)) {
+    if (match[0].includes("\u0000")) continue;
     const before = prose.slice(0, match.index);
     // Glued to a preceding word, this is a part of another URL, like a proxy's `?u=`.
     if (before && !/[\s([<"'`*_:\u201C\u2018\u00AB]$/.test(before)) continue;

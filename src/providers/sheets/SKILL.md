@@ -31,6 +31,7 @@ whole-sheet reference may be re-read and earlier rows skipped; rowOffset is
 relative to Google's echoed range. Reduce amounts inside execute_code before
 returning them. Read an oversized cell separately to recover its full text.
 
+<!-- when: writes -->
 ## Edit and reconcile
 
 Use RAW for external data; USER_ENTERED can turn leading equals signs into
@@ -51,3 +52,4 @@ inspect the workbook to recover details. Preview comment mutations and
 external data-source configuration, refresh and administration are outside
 this connection. Developer-metadata searches and data-filter reads are
 read-only even though their wire method is POST.
+<!-- end -->

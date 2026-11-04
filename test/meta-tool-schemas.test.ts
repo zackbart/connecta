@@ -1,7 +1,7 @@
 import { CATALOG_SEARCH_RESULT_SCHEMA, CatalogService, flatSearchResult } from "../src/catalog-service.js";
 import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
 import { makeRegistry } from "./helpers.js";
-import { SEARCH_OUTPUT } from "../src/meta-output.js";
+import { EXECUTE_OUTPUT, SEARCH_OUTPUT } from "../src/meta-output.js";
 // Golden: the input schema of every meta-tool exactly as `tools/list` renders
 // it today, from the zod definitions in meta-tools.ts and execute.ts.
 //
@@ -93,10 +93,10 @@ const GOLDEN: Record<string, unknown> = {
       code: {
         type: "string",
         description:
-          "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
+          "Source text of one zero-argument JavaScript async arrow: async () => { ...; return answer; }. Pass a string, even from a JavaScript host. Use the connecta global. At most 65,536 UTF-8 bytes.",
       },
       diagnostics: {
-        description: "Add request-local, payload-free timing and result-size summaries.",
+        description: "Add timing and result-size summaries.",
         type: "boolean",
       },
     },
@@ -140,7 +140,9 @@ describe("meta-tool output schemas", () => {
       expect(list.result.tools).toHaveLength(6);
       for (const tool of list.result.tools) {
         const directCall = tool.name === "call_tool" || tool.name === "call_destructive_tool";
-        if (directCall) expect(tool.outputSchema, tool.name).toBeUndefined();
+        // Guidance is text-only, so skills cannot promise a structured result.
+        const undeclared = directCall || tool.name === "skills";
+        if (undeclared) expect(tool.outputSchema, tool.name).toBeUndefined();
         else expect(tool.outputSchema, tool.name).toMatchObject({ type: "object", properties: expect.any(Object) });
         const response = await readJsonRpc(
           await mcpRpc(app, "tools/call", { name: tool.name, arguments: cases[tool.name] }, { token: TOKEN }),
@@ -150,15 +152,25 @@ describe("meta-tool output schemas", () => {
         if (directCall) {
           expect(JSON.parse(response.result.content[0].text), tool.name).toEqual(response.result.structuredContent);
         }
-        if (!directCall) {
+        if (!undeclared) {
           expect(new Validator(tool.outputSchema).validate(response.result.structuredContent).valid, tool.name).toBe(
             true,
           );
         }
       }
+      // Advertised schemas state required keys and top-level types and leave every other field open.
+      const advertised = list.result.tools.flatMap((tool: { outputSchema?: object }) =>
+        tool.outputSchema ? [JSON.stringify(tool.outputSchema)] : [],
+      );
+      expect(advertised).toHaveLength(3);
+      for (const schema of advertised) {
+        expect(schema).not.toContain("additionalProperties");
+        expect(schema).not.toContain("$ref");
+        expect(schema).not.toContain("$defs");
+      }
       const search = list.result.tools.find((tool: { name: string }) => tool.name === "search_tools");
-      expect(search.outputSchema).toEqual(CATALOG_SEARCH_RESULT_SCHEMA);
       const searchValidator = new Validator(search.outputSchema);
+      const accepts = (page: object) => !("issues" in SEARCH_OUTPUT["~standard"].validate(page));
       const flat = { catalogErrors: [], tools: [], total: 0, offset: 0, limit: 8, hasMore: false };
       expect(searchValidator.validate(flat).valid).toBe(true);
       expect(searchValidator.validate({ connectors: [], total: 0 }).valid).toBe(false);
@@ -166,20 +178,26 @@ describe("meta-tool output schemas", () => {
         const incomplete = { ...flat } as Record<string, unknown>;
         delete incomplete[key];
         expect(searchValidator.validate(incomplete).valid, key).toBe(false);
-        expect(SEARCH_OUTPUT["~standard"].validate(incomplete)).toHaveProperty("issues");
+        expect(accepts(incomplete), key).toBe(false);
       }
+      expect(searchValidator.validate({ ...flat, tools: [{ name: "add" }] }).valid).toBe(false);
+      // The typed failure stays closed on the server, which checks every page it sends.
       const failure = { connector: "calc", code: "unavailable", message: "Down", retryable: true };
-      expect(searchValidator.validate({ ...flat, catalogErrors: [failure] }).valid).toBe(true);
+      expect(accepts(flat)).toBe(true);
+      expect(accepts({ ...flat, catalogErrors: [failure] })).toBe(true);
       const { connector: _connector, ...unscoped } = failure;
-      expect(searchValidator.validate({ ...flat, catalogErrors: [unscoped] }).valid).toBe(false);
-      expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(false);
+      expect(accepts({ ...flat, catalogErrors: [unscoped] })).toBe(false);
+      expect(accepts({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] })).toBe(false);
+      expect(accepts({ ...flat, tools: [{ name: "add", address: "calc.add", extra: 1 }] })).toBe(false);
+      // A client's copy stays open to the same pages.
+      expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(true);
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
+      // The paging rule no guide repeats: stop before the limit and resume in the next program.
+      expect(execute.description).toContain("Near the host-call limit, return page.nextCursor to resume next program.");
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
-      expect(
-        new Validator(execute.outputSchema).validate({
-          hostCalls: { attempted: -1, admitted: 0, succeeded: 0, failed: 0 },
-        }).valid,
-      ).toBe(false);
+      const hostCalls = { attempted: -1, admitted: 0, succeeded: 0, failed: 0 };
+      expect(new Validator(execute.outputSchema).validate({ hostCalls }).valid).toBe(true);
+      expect(await EXECUTE_OUTPUT["~standard"].validate({ hostCalls })).toHaveProperty("issues");
     } finally {
       await app.close();
     }
@@ -193,22 +211,23 @@ describe("meta-tool output schemas", () => {
 // execute_code description varies with connector count, so the fixture below
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
-  total: 14_900,
-  instructions: 1_050,
+  total: 8_800,
+  // The pinned fixture's instructions, then the most a pool can serve: a
+  // 500-unit description plus a connector list at its 120-byte cap.
+  instructions: 460,
+  instructionsPeak: 1_040,
   description: {
-    skills: 220,
-    search_tools: 650,
-    call_tool: 260,
+    skills: 150,
+    search_tools: 480,
+    call_tool: 240,
     call_destructive_tool: 300,
-    authorize_connector: 460,
+    // Grew to say when no call is needed: an auth error that already carries its link.
+    authorize_connector: 510,
     execute_code: 2_850,
   },
-  // search_tools grew for readyCalls, the complete reads that save the
-  // details and operation-search host calls; its reasons enum is now shared.
-  // It grew again for catalogErrors' stale and ageMs, which report a stale listing.
-  // Declaring descriptionTruncated adds 37 bytes.
-  outputSchema: { skills: 660, search_tools: 4_240, authorize_connector: 420, execute_code: 1_070 },
-  usage: 5_700,
+  // Open summaries: the full contracts stay on the server, in meta-output.ts.
+  outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170 },
+  usage: 5_500,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
   searchPage: { default: 470, compact: 730 },
@@ -299,13 +318,18 @@ describe("search_tools output schema", () => {
       ];
       expect(pages[0].catalogErrors[0]).toMatchObject({ connector: "service", recovery: expect.any(String) });
       expect(pages[1].queryAnalysis.catalogError).toMatchObject({ recovery: expect.any(String) });
-      // Typed handoff fields stay typed through the shared definition.
+      // Typed handoff fields stay typed on the server, through the shared definition.
       const mistyped = structuredClone(pages[0]);
       mistyped.catalogErrors[0].recovery = "anything";
+      expect(SEARCH_OUTPUT["~standard"].validate(mistyped)).toHaveProperty("issues");
       for (const draft of ["2020-12", "2019-09", "7", "4"] as const) {
-        const validator = new Validator(schema, draft);
-        for (const page of pages) expect(validator.validate(page).errors, draft).toEqual([]);
-        expect(validator.validate(mistyped).valid, draft).toBe(false);
+        const advertised = new Validator(schema, draft);
+        const full = new Validator(CATALOG_SEARCH_RESULT_SCHEMA as never, draft);
+        for (const page of pages) {
+          expect(advertised.validate(page).errors, draft).toEqual([]);
+          expect(full.validate(page).errors, draft).toEqual([]);
+        }
+        expect(full.validate(mistyped).valid, draft).toBe(false);
       }
     } finally {
       await flow.app.close();
@@ -338,7 +362,7 @@ describe("always-loaded agent surface budgets", () => {
           else expect(JSON.stringify(tool.outputSchema).length, name).toBeLessThanOrEqual(schemaBudget!);
         }
         const usage = await callTool(app, "skills", { name: "usage" });
-        expect(usage.structuredContent.text.length).toBeLessThanOrEqual(BUDGETS.usage);
+        expect(usage.content[0].text.length).toBeLessThanOrEqual(BUDGETS.usage);
         for (const mode of ["default", "compact"] as const) {
           const page = await callTool(app, "search_tools", {
             connector: "crm",
@@ -418,8 +442,9 @@ it("names the right call shape when a direct call uses MCP's own argument names,
 });
 
 it("front-loads configured scope and guidance within the instructions budget", async () => {
-  const { endpointInstructions, CONNECTA_INSTRUCTIONS } = await import("../src/skills.js");
-  expect(endpointInstructions()).toBe(CONNECTA_INSTRUCTIONS);
+  const { endpointInstructions } = await import("../src/skills.js");
+  // The largest id list the cap admits, so this is the peak a pool can serve.
+  const connectorIds = Array.from({ length: 40 }, (_, index) => `service_${String(index).padStart(2, "0")}`);
   for (const native of [undefined, { executeCode: true }, { executeCode: false }]) {
     for (const description of ["x".repeat(500), "😀".repeat(250), "a😀".repeat(166) + "ab"]) {
       const app = makeDeployment({
@@ -429,11 +454,10 @@ it("front-loads configured scope and guidance within the instructions budget", a
       });
       await app.close();
       for (const readOnly of [false, true]) {
-        const instructions = endpointInstructions(description, native, readOnly);
-        expect(instructions.slice(0, 512)).toContain(description);
-        expect(instructions.slice(0, 512)).toContain("Use skills.");
-        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
-        expect(endpointInstructions(description, native, readOnly)).toBe(instructions);
+        const instructions = endpointInstructions(description, native, readOnly, connectorIds);
+        expect(instructions.startsWith(`${description} `)).toBe(true);
+        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructionsPeak);
+        expect(endpointInstructions(description, native, readOnly, connectorIds)).toBe(instructions);
       }
     }
   }

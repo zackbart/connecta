@@ -24,7 +24,7 @@ export const StandardPage = Schema.Struct({
 
 /** The input field that carries a cursor back. */
 export const Cursor = Schema.String.check(Schema.isMinLength(1)).annotate({
-  description: "Opaque nextCursor from the previous page. Pass it back unchanged.",
+  description: "Opaque page.nextCursor from the previous page. Pass it back unchanged with the same arguments.",
 });
 
 export interface Page<Row> {

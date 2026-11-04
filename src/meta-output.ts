@@ -1,8 +1,7 @@
-import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import { Validator } from "@cfworker/json-schema";
 import { CATALOG_SEARCH_RESULT_SCHEMA, type CatalogSearchResult } from "./catalog-service.js";
 import * as z from "zod";
-import { advertisedSchema } from "./advertised-schema.js";
+import { advertisedSchema, openOutputSchema } from "./advertised-schema.js";
 
 const error = z
   .object({
@@ -11,7 +10,6 @@ const error = z
     retryable: z.boolean(),
   })
   .passthrough();
-const format = z.enum(["json", "text"]);
 const counts = z.object({
   attempted: z.number().int().nonnegative(),
   admitted: z.number().int().nonnegative(),
@@ -19,56 +17,69 @@ const counts = z.object({
   failed: z.number().int().nonnegative(),
 });
 
-export const EXECUTE_OUTPUT = advertisedSchema(
-  z
-    .object({
-      result: z.unknown().optional(),
-      error: error.optional(),
-      hostCalls: counts,
-      logs: z.string().optional(),
-      emitted: z.number().int().nonnegative().optional(),
-      emittedDiscarded: z.number().int().nonnegative().optional(),
-      diagnostics: z.record(z.string(), z.unknown()).optional(),
-    })
-    .passthrough(),
+export const EXECUTE_OUTPUT = openOutputSchema(
+  advertisedSchema(
+    z
+      .object({
+        result: z.unknown().optional(),
+        error: error.optional(),
+        hostCalls: counts,
+        logs: z.string().optional(),
+        emitted: z.number().int().nonnegative().optional(),
+        emittedDiscarded: z.number().int().nonnegative().optional(),
+        diagnostics: z.record(z.string(), z.unknown()).optional(),
+      })
+      .passthrough(),
+  ),
+  {
+    type: "object",
+    required: ["hostCalls"],
+    properties: { result: {}, error: { type: "object" }, hostCalls: { type: "object" }, logs: { type: "string" } },
+  },
 );
 
-export const SKILLS_OUTPUT = advertisedSchema(
-  z
-    .object({
-      name: z.string().optional(),
-      text: z.string().optional(),
-      format: format.optional(),
-      skills: z.array(z.object({ name: z.string(), uri: z.string(), description: z.string() })).optional(),
-      error: error.optional(),
-    })
-    .passthrough(),
-);
-
-// Catalog publication, SDK advertisement and validation share one schema.
+// The server validates every page against the full catalog contract; clients get the open summary.
 const searchValidator = new Validator(CATALOG_SEARCH_RESULT_SCHEMA as never, "2020-12", false);
-export const SEARCH_OUTPUT: StandardSchemaWithJSON<CatalogSearchResult, CatalogSearchResult> = {
-  "~standard": {
-    version: 1,
-    vendor: "connecta",
-    validate: (value) =>
-      searchValidator.validate(value).valid
-        ? { value: value as CatalogSearchResult }
-        : { issues: [{ message: "Expected a CatalogSearchResult." }] },
-    jsonSchema: {
-      input: () => CATALOG_SEARCH_RESULT_SCHEMA,
-      output: () => CATALOG_SEARCH_RESULT_SCHEMA,
+export const SEARCH_OUTPUT = openOutputSchema<CatalogSearchResult, CatalogSearchResult>(
+  {
+    "~standard": {
+      version: 1,
+      vendor: "connecta",
+      validate: (value) =>
+        searchValidator.validate(value).valid
+          ? { value: value as CatalogSearchResult }
+          : { issues: [{ message: "Expected a CatalogSearchResult." }] },
+      jsonSchema: {
+        input: () => CATALOG_SEARCH_RESULT_SCHEMA,
+        output: () => CATALOG_SEARCH_RESULT_SCHEMA,
+      },
     },
   },
-};
+  {
+    type: "object",
+    required: ["catalogErrors", "tools", "total", "offset", "limit", "hasMore"],
+    properties: {
+      catalogErrors: { type: "array" },
+      tools: { type: "array", items: { type: "object", required: ["name", "address"] } },
+      total: { type: "integer" },
+      offset: { type: "integer" },
+      limit: { type: "integer" },
+      hasMore: { type: "boolean" },
+      nextOffset: { type: "integer" },
+    },
+  },
+);
 
-export const AUTHORIZE_OUTPUT = advertisedSchema(
-  z
-    .object({
-      connector: z.string().optional(),
-      recovery: z.string().optional(),
-      message: z.string().optional(),
-      error: error.optional(),
-    })
-    .passthrough(),
+export const AUTHORIZE_OUTPUT = openOutputSchema(
+  advertisedSchema(
+    z
+      .object({
+        connector: z.string().optional(),
+        recovery: z.string().optional(),
+        message: z.string().optional(),
+        error: error.optional(),
+      })
+      .passthrough(),
+  ),
+  { type: "object", properties: { connector: { type: "string" }, message: { type: "string" } } },
 );

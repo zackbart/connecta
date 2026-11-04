@@ -981,7 +981,7 @@ admitted.
 | Refusal      | A person with zero or several memberships at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer` (zero memberships), `ambiguous_pool` (several memberships), `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                            |
 | Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                                                                                            |
 | Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the six meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                                                                                             |
-| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` prefix the MCP instructions with `Use skills. ` and the description before routing rules; a maintainer at plain `/mcp` and a pool without one serve the shared instructions unchanged. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                            |
+| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` place the description before the rest of the MCP instructions; a maintainer at plain `/mcp` and a pool without one serve none. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                                                                    |
 | Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, mixed people and agent membership (a `ConfigError` naming the pool), unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 UTF-16 code units of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
 | Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                                                                                                 |
 | Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                                                                                                    |
@@ -2617,13 +2617,28 @@ decline and cancel. Concurrent or repeated consumption is refused before
 dispatch, so retries cannot fork into sibling forced connection links.
 A decline or cancel returns one fresh link, issued only after that state verifies
 and the same management check as the prompt passes, so a refusal offers nothing
-this caller could not already request. The link is sealed like the prompt's, keeps
-the prompt's force, and stays bound to a pending forced start.
-A refused `force: true` flow retires its unspent links through the same CAS before
-issuing that link, so one link can begin the reset however late a browser arrives.
-Opening a retired prompt link starts nothing and returns the invalid-link refusal;
-the link in the refusal performs the restart. A link already claimed in a browser
-keeps its reset, and the refusal's link continues it. An unforced prompt link stays open.
+this caller could not already request. The link is sealed like the prompt's and
+keeps the prompt's force.
+
+URL `accept` is consent to the interaction, not evidence that a browser navigated:
+the retry normally reaches Connecta before any visit does. So every link a flow
+issues stays live until it is visited or expires, whichever round or refusal
+issued it. A `force: true` flow resets once, through one atomic claim on an identity
+its links share:
+
+| A verified visit finds the reset | The visit                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------- |
+| Unclaimed                        | Claims it and runs `startAuth({ force: true })`                                 |
+| Still running in another visit   | Returns 409 and spends nothing, so reloading the same link retries              |
+| Started                          | Spends its link and runs `startAuth({ force: false })`, continuing that consent |
+| Failed                           | Claims it again and starts afresh, so a failure never reuses the old grant      |
+
+A failed link is spent, but the flow is not: its other links, or the next prompt's,
+take over. The record outlives every link the flow can issue. If the process holding
+the claim dies, nothing settles it, so the flow's links keep returning 409 for up to
+thirty minutes, and that response says to start a new connection request. A new
+`force: true` call is a new flow with its own reset, so it recovers at once. Each link still works
+once. An unforced flow's links stay independent and never reset.
 The host records each entered call's classification, catalog freshness and
 classification digest in private invocation state, along with auth failure origins. Writes may elicit only
 when Connecta's own credential resolution fails before invoking the connector:
@@ -2658,14 +2673,11 @@ reads this key; connector contexts and guest APIs cannot reach the vault.
 Explicit authorization retries require a completed browser start (including
 its reset and consent binding), valid stored credential fields where declared,
 and a healthy passive connector status where available before completing.
-An in-progress start cannot complete against an old grant. A forced flow switches to
-Continue after that visit, so another prompt cannot restart pending consent.
-Failed starts remain single-use but do not block a later successful attempt.
-Before checking completion, unspent links in the retry flow are atomically
-retired so an older forced link cannot begin a reset during the status check.
-A Continue link issued during a pending forced start is bound to that
-predecessor and cannot be consumed unless the predecessor starts successfully.
-If it fails, the next prompt requests a fresh restart instead of reusing the old grant.
+An in-progress start cannot complete against an old grant: only a link whose start
+finished counts toward completion, and the next prompt carries the same flow, so it
+cannot restart pending consent. Failed starts remain single-use but do not block a later
+successful attempt. A link visited during the completion check continues the
+attempt that check is judging, and cannot reset it.
 
 The `/connect` link issued by the elicitation boundary encrypts its browser
 handoff with the vault's `seal`/`open` methods before signing it. The URL carries
@@ -2734,12 +2746,13 @@ still serve configured credentials. Both routes accept only GET, otherwise retur
 `form_post` is unsupported. Clerk's session-only policy applies regardless of method.
 
 The fifteen-minute signed handoff carries connector ownership, initiating principal, deployment origin, nonce,
-restart mode, and any predecessor link binding. New links use versioned, length-prefixed fields instead of
+restart mode, and, for a forced flow's later links, the flow they share a reset with. New links use versioned, length-prefixed fields instead of
 JSON, with unpadded base64url payload and signature segments. Ordinary handoffs use an opaque wire encoding,
 not encryption; URL elicitation also seals those fields as described above. Copy the complete URL unchanged.
 The signature authenticates the exact version and payload text. Tampered or re-encoded links return
 `Invalid or expired connection link. Request a new link from connecta.` Pre-upgrade signed JSON and sealed
-v2 links still verify against their original text and expire after their original fifteen minutes.
+v2 links still verify against their original text and expire after their original fifteen minutes. A link from
+an earlier version that names a predecessor link, in any format, returns the same refusal, and a new link replaces it.
 
 Configure `vault: encryptedCredentialVault(storage, key)`, which derives its HMAC key with HKDF. Custom vaults need `signOAuthHandoff` and `verifyOAuthHandoff`; without a signing vault, links cannot be
 issued or accepted. A link grants no identity. After identity and permissions pass, its nonce is consumed

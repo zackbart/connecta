@@ -358,6 +358,13 @@ reader. `program-result.ts` owns executor-independent byte limits;
 values through provider preludes. Cursors hold only an ID and offset for the
 current run. Result bytes, expiry, authority and capacity charges stay in the
 existing storage and ledger; no executor-specific store or storage key is added.
+`result-seal.ts` keeps a run's results unreadable to other requests until they pass
+its final secret set ([`R4a`](./code-mode.md#results-and-projection)): chunk 0 waits in a
+request-owned ledger, and absence of chunk 0 is the refusal, so every exit leaves
+unpublished entries unreadable with no further write. Sealing waits for the work that can
+add to the set (`HeldResults.track` for the run's host calls, `RequestOwner.credentialReads`
+for credential reads, which outlast a caller that stopped waiting), then publishes each
+entry that passes. Stored bytes are never rewritten.
 
 ## Admission, in two places
 
@@ -1401,15 +1408,15 @@ guide (G) violations before writing. It derives `drift.json` version 2's
 `generated` block from kit operations and evidence digests, and the guide's
 `## Conventions` from definition declarations into `skill.generated.ts`.
 The generator requires `fixtures.ts` to export `createAuthored()` with a
-nonempty offline `staticTools` catalog. Its input/output schemas derive one
-paging convention, including `get_*`, hatch search and details, excluding
-tools whose `page.hasMore` is always false. The convention distinguishes
-top-level `cursor` from `query[page.param]` or `body[page.param]` continuation
-and tells agents to return `page.nextCursor` before the call that would exceed
-the per-program call limit, then continue in the next program. The Hatch line
-reports a nonzero explicit refusal count with singular/plural wording and
-points to the actual prefixed details tool with method/path lookup; it never
-embeds the refusal table. Unreviewed operations remain refused.
+nonempty offline `staticTools` catalog, which the installed inventory lists.
+Conventions render only provider-specific declarations: the vendor envelope
+root, the hatch's tools and refusal count, the `idempotencyKey` rule where a
+provider has one, and the Errors line. Paging, `fields`, withheld-value and
+write-once rules live at the agent's point of use, and
+`test/provider-conventions.test.ts` asserts each paged tool's continuation there.
+The Hatch line reports a nonzero explicit refusal count with singular/plural
+wording and points to the actual prefixed details tool with method/path lookup;
+it never embeds the refusal table. Unreviewed operations remain refused.
 `ProviderContext.usageGuide` selects a guide's `<!-- when: <key> -->` blocks
 with the definition's `blocks`. Maintained drift records use version 2;
 `providers:check` retains version-1 endpoint/manual record parsing for historical
@@ -2656,11 +2663,9 @@ this declaration keep parameter-based continuation.
 An explicit initialAnchor adapter on parameter-based paging can retain a numeric
 timestamp as a first-page time-window anchor; opaque string continuations still
 require a signed token.
-The generated Paging convention follows the read tool's input schema: tools
-that take `cursor` restore `page.nextCursor` as that top-level argument; tools
-without it restore the token in `query[page.param]` or `body[page.param]`, as
-`page.in` specifies. `kit.hatch.paging` still validates declared mode values as
-a sanity check; it does not select the generated continuation instruction.
+A read tool's input schema states how to continue: tools that take `cursor`
+restore `page.nextCursor` as that top-level argument; tools without it restore
+the token in `query[page.param]` or `body[page.param]`, as `page.in` specifies.
 An unsafe continuation keeps the safe page data with `hasMore: true` and no
 `nextCursor`.
 A reviewed `HatchBinding` can supply vendor encoding/origin routing through
@@ -2709,7 +2714,8 @@ contracts, `Summary` annotations and lenient success schemas become the
 index's parameters, bodies, summaries and declared fields (optional
 `OpenApiData.fields`). Kit facts carry the vendor's declared
 `VendorErrors.meanings` and an `idempotencyKey` checked against the write
-builders at construction, which the generated Conventions state.
+builders at construction; the generated Conventions state the key rule only where
+a provider has one, and the Errors line always.
 
 Hatch request paths and query keys/values refuse any containment of the shared
 `[redacted]` marker, including decoded spellings. Body fields and kit write
@@ -2720,8 +2726,7 @@ Admission iteratively visits keys and values before the write program runs;
 it checks agent arguments, not whole bodies later composed from internal
 reads. The kit connection also checks actual typed path parameters and query
 values before transport. Legacy non-kit tools retain their link-only admission;
-arbitrary binary/base64 bytes are not decoded by this scalar rule. The kit
-sets `refusesWithheld` for the standard hatch, enabling the generated convention.
+arbitrary binary/base64 bytes are not decoded by this scalar rule.
 Declared error-code facts use the closed `ConnectorCallErrorCode` set at
 construction (INV-11); classification callbacks are not run at construction.
 

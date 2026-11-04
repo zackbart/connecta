@@ -502,25 +502,37 @@ export function wrapViewCredentials(view: ConnectorContext): void {
   if (!view.credential || entry.credentialWrapped) return;
   entry.credentialWrapped = true;
   const access = view.credential;
+  // A read outlives a caller that stopped waiting and registers when it lands, so the
+  // request counts it until then: a sealing run must not publish ahead of that.
+  const read = async <A>(value: () => Promise<A>, values: (result: A) => ConnectorCredentialValues | null) => {
+    const done = requestOf(entry.request).credentialReads.begin();
+    try {
+      const result = await value();
+      registerCredentialValues(viewSecrets(view), values(result));
+      return result;
+    } finally {
+      done();
+    }
+  };
   view.credential = {
     get: (field) =>
       settleOnClose(
         view,
-        async () => {
-          const value = await access.get(field);
-          registerCredentialValues(viewSecrets(view), value === null ? null : { [field ?? "value"]: value });
-          return value;
-        },
+        () =>
+          read(
+            () => access.get(field),
+            (value) => (value === null ? null : { [field ?? "value"]: value }),
+          ),
         true,
       ),
     getAll: () =>
       settleOnClose(
         view,
-        async () => {
-          const values = await access.getAll();
-          registerCredentialValues(viewSecrets(view), values);
-          return values;
-        },
+        () =>
+          read(
+            () => access.getAll(),
+            (values) => values,
+          ),
         true,
       ),
   };
