@@ -277,7 +277,7 @@ export default { async fetch(request) {
     await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
     for (const cleanup of ["close", "killAll"] as const) {
       await writeFile(main, 'export default { fetch: () => new Response("ok") };\n');
-      const dev = await wranglerDev({ name: "connecta-workerd-control", main, bootMs: 60_000 });
+      const dev = await wranglerDev({ name: "connecta-workerd-control", main, bootMs: 60_000, freeze: true });
       // Source edits cannot invalidate a running trial's token or model evidence.
       await writeFile(main, 'export default { fetch: () => new Response("changed") };\n');
       await new Promise((resolve) => setTimeout(resolve, 1200));

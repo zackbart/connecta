@@ -7,8 +7,33 @@ import { connectMcp } from "./support/mcp.js";
 import { assertSurface, parseSurface, type Surface } from "./agent/surface.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 import { gradeTask, passes } from "./tasks/grading.js";
-import { parseTrace } from "./agent/trace.js";
+import { downstreamMetrics, parseTrace } from "./agent/trace.js";
+import { connectionLost } from "./agent/infra.js";
+import { restoreGradeInputs, saveGradeInputs } from "./agent/saved.js";
+import { deliveredValues } from "./tasks/correctness.js";
+import type { ActiveTask } from "./tasks/types.js";
 import { taskForSurface } from "./tasks/surface.js";
+
+/** A distractor read is reported, a distractor write fails, and neither enters the task ledger. */
+async function distractorControls(arm: Surface, task: ActiveTask, world: World, write: () => Promise<void>) {
+  const grade = () => {
+    const trace = parseTrace([], [], []);
+    trace.finalAnswer = "CI run 4812 failed, commit 9f2c1ab.";
+    return gradeTask(taskForSurface(task, arm), { world, trace }, arm, "outcome");
+  };
+  const check = () => grade().find((candidate) => candidate.id === "no-distractor-writes");
+  assert.equal(world.injected.catalogCalls.length, 1);
+  assert.equal(world.injected.catalogCalls[0]?.kind, "read");
+  assert.equal(check()?.pass, true);
+  const before = world.ledger.calls.length;
+  await write();
+  assert.equal(world.ledger.calls.length, before);
+  assert.equal(downstreamMetrics(world.injected.catalogCalls, []).writes, 1);
+  assert.equal(check()?.pass, false);
+  assert.equal(passes(grade(), "outcome"), false);
+  const restored = restoreGradeInputs(structuredClone(saveGradeInputs(world, parseTrace([], [], []))));
+  assert.equal(restored.world.injected.catalogCalls.length, 2);
+}
 
 async function nativeControls() {
   assert.throws(() => parseSurface("wrong"));
@@ -92,6 +117,77 @@ async function nativeControls() {
   }
 }
 await nativeControls();
+
+// A real retained result: rows reach the agent only after every read_result page.
+{
+  const base = ACTIVE_TASKS.find((task) => task.id === "overflow-donor-paging")!;
+  const task = { ...base, deployment: { ...base.deployment, calls: { maxResultBytes: 1024 } } };
+  await playReference(
+    task,
+    {
+      mode: "noop",
+      target: "node",
+      surface: "native-no-code",
+      before: async ({ session, toolUses }) => {
+        const listed = (await session.listTools()).find((tool) => tool.address === "overflow.list_donors")!;
+        const first = await session.call(listed.name, {});
+        toolUses.push({
+          id: "first",
+          turn: 1,
+          tool: listed.name,
+          input: {},
+          native: { address: listed.address!, readOnly: true },
+          isError: first.isError,
+          resultText: first.text,
+          resultBlocks: first.content,
+        });
+        let next = JSON.parse(first.text.split("\n")[0]!).nextAction.arguments;
+        while (next) {
+          const page = await session.call("read_result", next);
+          toolUses.push({
+            id: `page-${toolUses.length}`,
+            turn: 1,
+            tool: "read_result",
+            input: next,
+            isError: page.isError,
+            resultText: page.text,
+            resultBlocks: page.content,
+          });
+          const header = JSON.parse(page.text.split("\n")[0]!);
+          next = header.hasMore ? { id: header.resultId, offset: header.nextOffset } : undefined;
+        }
+      },
+    },
+    ({ trace }) => {
+      assert.ok(trace.toolUses.length > 2, "the fixture must actually page");
+      const rows = (t: typeof trace) => deliveredValues(t).filter((row) => row?.id);
+      assert.ok(rows(trace).length > 0, "complete pages must deliver rows");
+      const partial = { ...trace, toolUses: trace.toolUses.slice(0, -1) };
+      assert.equal(rows(partial).length, 0, "a partial read proves nothing");
+    },
+  );
+  console.log("ok read_result: complete pages deliver rows, partial pages deliver none");
+}
+
+// The host's token is checked against the real deployment at trial end.
+for (const target of ["node", "worker"] as const) {
+  const task = ACTIVE_TASKS.find((task) => task.id === "p5-known-read-routing")!;
+  const world = new World(task.world);
+  await world.start();
+  const deployment = await startDeployment(target, world, task, "six");
+  try {
+    assert.equal(await connectionLost(deployment.mcpUrl, deployment.token), undefined);
+    assert.match(
+      (await connectionLost(deployment.mcpUrl, "cta_revoked_by_a_reload")) ?? "",
+      /rejected the agent's token .*HTTP 401/,
+    );
+    console.log(`ok ${target}: a rejected token at trial end is reported as lost`);
+  } finally {
+    await deployment.close();
+    await world.stop();
+  }
+}
+
 for (const surface of ["native", "native-no-code"] as const) {
   for (const id of ["pco-step2-filtered-people", "pco-step2-plan-join", "pco-step2-update-recovery"]) {
     const task = ACTIVE_TASKS.find((task) => task.id === id)!;
@@ -150,6 +246,8 @@ for (const target of ["node", "worker"] as const) {
         const guide = await mcp.call("skills", { name: "usage" });
         assert.doesNotMatch(guide.text, /search_tools/);
         assert.doesNotMatch(JSON.stringify(await mcp.readResource("skill://connecta/usage")), /search_tools/);
+        // The usage guide on this arm is the product's, not the code arm's.
+        assert.doesNotMatch(JSON.stringify(await mcp.listResources()), /Use Connecta programs for discovery/);
         const before = world.ledger.calls.length;
         await assert.rejects(() => mcp!.call("search_tools", { query: "issues" }), /eval_unavailable_tool/);
         assert.equal(world.ledger.calls.length, before);
@@ -178,8 +276,13 @@ for (const target of ["node", "worker"] as const) {
         const padding = tools.filter((tool) => ids.has(tool.address?.split(".")[0] ?? ""));
         assert.equal(padding.length, 132);
         const before = world.ledger.calls.length;
-        assert.equal((await mcp.call(padding[0]!.name, {})).isError, false);
+        const read = padding.find((tool) => tool.readOnly)!;
+        assert.equal((await mcp.call(read.name, {})).isError, false);
         assert.equal(world.ledger.calls.length, before);
+        await distractorControls(arm, task, world, async () => {
+          const write = padding.find((tool) => !tool.readOnly)!;
+          assert.equal((await mcp!.call(write.name, {})).isError, false);
+        });
       } else {
         let found = 0;
         for (const connector of ids) {
@@ -197,6 +300,10 @@ for (const target of ["node", "worker"] as const) {
         const before = world.ledger.calls.length;
         assert.equal((await mcp.call("call_tool", { address: "billing_ops.list_issues_1", args: {} })).isError, false);
         assert.equal(world.ledger.calls.length, before);
+        await distractorControls(arm, task, world, async () => {
+          const write = { address: "billing_ops.archive_issues_1", args: {} };
+          assert.equal((await mcp!.call("call_destructive_tool", write)).isError, false);
+        });
       }
       console.log(`ok ${target} ${arm}: padded catalog, private ledger and surface refusal/text`);
     } finally {

@@ -16,6 +16,7 @@
  */
 import { catalogServices } from "./catalog.js";
 import { serveFetch, type Served } from "../support/serve.js";
+import { Ledger, type CallRecord } from "./service.js";
 import type { ConnectorSpec } from "./world.js";
 
 export interface Injection {
@@ -93,11 +94,14 @@ export function describeInjection(injection: Injection): string {
 /** The injected connectors' servers, owned by one world. */
 export class InjectedConnectors {
   private readonly catalog;
+  private readonly catalogLedger = new Ledger();
+  /** Calls to catalog padding, kept out of the world's ledger; graders read them separately. */
+  readonly catalogCalls: CallRecord[] = this.catalogLedger.calls;
   private hung?: Served;
   hungRequests = 0;
   private revoked?: Served;
   constructor(private readonly injection: Injection) {
-    this.catalog = catalogServices(injection.catalogTools ?? 0);
+    this.catalog = catalogServices(injection.catalogTools ?? 0, this.catalogLedger);
   }
 
   async start(): Promise<void> {

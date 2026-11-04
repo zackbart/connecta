@@ -25,6 +25,7 @@ export interface McpSession {
   instructions: string | undefined;
   listTools(): Promise<ListedTool[]>;
   readResource(uri: string): Promise<unknown>;
+  listResources(): Promise<{ uri: string; description?: string | undefined }[]>;
   call(name: string, args: Record<string, unknown>): Promise<ToolResult>;
   close(): Promise<void>;
 }
@@ -50,6 +51,7 @@ export async function connectMcp(url: string, headers: Record<string, string>): 
       }));
     },
     readResource: (uri) => client.readResource({ uri }),
+    listResources: async () => (await client.listResources()).resources,
     async call(name, args) {
       const result = await client.callTool({ name, arguments: args });
       const content = Array.isArray(result.content) ? result.content : [];

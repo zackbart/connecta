@@ -187,6 +187,8 @@ export async function startWorkerDeployment(
       // Bound as hidden secrets: never echoed in wrangler's output or its log.
       secrets,
       publicUrlVar: true,
+      // A reload would rotate the token the agent's host already holds.
+      freeze: true,
     });
     const origin = dev.origin;
     const control = async (path: string, init?: RequestInit) => {

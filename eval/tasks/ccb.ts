@@ -5,7 +5,7 @@ import type { AgentTrace } from "../agent/trace.js";
 import { REST_TOOL_KINDS } from "../deploy/rest-tools.js";
 import { ccbState, CCB_TARGET, CCB_NEW_EMAIL } from "../fakes/ccb.js";
 import { check } from "./baseline.js";
-import { deliveredValues } from "./correctness.js";
+import { deliveredReducedCount, deliveredValues } from "./correctness.js";
 
 const ids = [
   "ccb-filtered-individuals",
@@ -46,13 +46,11 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
   if (i === 3) {
     destination = reached("/search/individuals/results");
     evidence &&= new RegExp(`ANSWER:\\s*${inactive}\\b`, "i").test(answer);
-    // A page envelope's total is pagination metadata, not a delivered record fact.
-    const delivered = deliveredValues(trace, ["page"]);
+    const delivered = deliveredValues(trace);
     add(
       "delivered-data",
       seed.people.filter((p) => !p.active).every((p) => delivered.some((row) => row?.id === p.id)) ||
-        // A program's reduced count is delivered however it names the field.
-        delivered.includes(inactive),
+        deliveredReducedCount(trace, inactive),
     );
   }
   if (i === 4) {

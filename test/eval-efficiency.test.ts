@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { TrialResult } from "../eval/agent/run.js";
 import {
   batchEfficiency,
@@ -289,4 +289,97 @@ it("records first-request cache input once, permits host search, and preserves u
   expect([e.firstTurnInputTokens, e.hostSearchCalls, e.toolErrorsBeforeFirstSuccess]).toEqual([60, 1, 2]);
   expect(efficiencyLines(batchEfficiency([t], 1).models).join("\n")).toContain("first request 60");
   expect(trialEfficiency(trial({ legacy: true })).firstTurnInputTokens).toBeUndefined();
+});
+
+it("counts errors up to the first downstream success and reports distractor calls per trial", async () => {
+  const { errorsBeforeFirstDownstreamSuccess } = await import("../eval/agent/trace.js");
+  const use = (tool: string, isError: boolean, extra: object = {}) =>
+    ({ id: tool, turn: 1, tool, input: {}, isError, resultText: "", ...extra }) as never;
+  const discovery = { code: "search", calls: [{ name: "connecta.search", outcome: "ok" }] };
+  const reached = { code: "reach", calls: [{ name: "connecta.call", outcome: "ok" }] };
+  const code = (source: string, isError: boolean) => use("execute_code", isError, { input: { code: source } });
+  // Discovery and guides succeed without stopping the count.
+  expect(
+    errorsBeforeFirstDownstreamSuccess(
+      [
+        use("search_tools", false),
+        use("call_tool", true),
+        use("skills", false),
+        use("call_tool", true),
+        use("call_tool", false),
+        use("call_tool", true),
+      ],
+      [],
+    ),
+  ).toBe(2);
+  // A program counts only once it reaches a downstream tool, even if it later failed.
+  expect(
+    errorsBeforeFirstDownstreamSuccess(
+      [code("search", false), code("broken", true), code("reach", true), code("broken", true)],
+      [discovery, reached],
+    ),
+  ).toBe(1);
+  // Native calls carry the listed address; local tools do not.
+  const native = { native: { address: "ci.get_run", readOnly: true } };
+  expect(
+    errorsBeforeFirstDownstreamSuccess(
+      [
+        use("authorize_connector", false),
+        use("ci__get_run", true, native),
+        use("ci__get_run", false, native),
+        use("ci__get_run", true, native),
+      ],
+      [],
+    ),
+  ).toBe(1);
+  expect(errorsBeforeFirstDownstreamSuccess([use("skills", false), use("call_tool", true)], [])).toBe(1);
+  // A retry of identical code: the later success must not credit the earlier failure.
+  expect(
+    errorsBeforeFirstDownstreamSuccess(
+      [code("async () => 1", true), code("async () => 1", false)],
+      [
+        { code: "async () => 1", calls: [{ name: "connecta.call", outcome: "error" }] },
+        { code: "async () => 1", calls: [{ name: "connecta.call", outcome: "ok" }] },
+      ],
+    ),
+  ).toBe(1);
+
+  const t = trial();
+  Object.assign(t.metrics, {
+    distractors: { reads: 1, writes: 1, byTool: { "billing_ops.archive_invoices_1": 1, "helpdesk.list_logs_1": 1 } },
+  });
+  const summary = batchEfficiency([t], 1).models[0]!;
+  expect(summary.distractors).toEqual([expect.objectContaining({ task: t.task, reads: 1, writes: 1 })]);
+  expect(efficiencyLines([summary]).join("\n")).toContain(
+    "1 read(s), 1 write(s): billing_ops.archive_invoices_1 ×1, helpdesk.list_logs_1 ×1",
+  );
+  expect(batchEfficiency([trial()], 1).models[0]!.distractors).toEqual([]);
+});
+
+it("treats a rejected or unreachable token at trial end as lost, and a slow or healthy one as not", async () => {
+  const { connectionLost } = await import("../eval/agent/infra.js");
+  const seen: unknown[] = [];
+  const answer = (outcome: number | Error) =>
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      seen.push(new Headers(init.headers).get("authorization"));
+      if (outcome instanceof Error) throw outcome;
+      return new Response(null, { status: outcome });
+    });
+  try {
+    answer(401);
+    await expect(connectionLost("http://fake/mcp", "t")).resolves.toMatch(/rejected the agent's token .*HTTP 401/);
+    answer(403);
+    await expect(connectionLost("http://fake/mcp", "t")).resolves.toMatch(/HTTP 403/);
+    for (const healthy of [200, 202, 405]) {
+      answer(healthy);
+      await expect(connectionLost("http://fake/mcp", "t")).resolves.toBeUndefined();
+    }
+    answer(new DOMException("slow", "TimeoutError"));
+    await expect(connectionLost("http://fake/mcp", "t")).resolves.toBeUndefined();
+    answer(new TypeError("fetch failed"));
+    await expect(connectionLost("http://fake/mcp", "t")).resolves.toMatch(/unreachable at trial end: fetch failed/);
+    expect(seen.every((header) => header === "Bearer t")).toBe(true);
+  } finally {
+    vi.unstubAllGlobals();
+  }
 });

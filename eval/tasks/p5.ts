@@ -6,6 +6,7 @@ import { check } from "./baseline.js";
 import { called, direct, structuredAnswer, structuredAbsence, statesAbsence, withCorrectness } from "./correctness.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "../fakes/prerequisites.js";
 import type { AgentTrace } from "../agent/trace.js";
+import type { Surface } from "../agent/surface.js";
 
 const base = { status: "active" as const, introducedIn: "P5" as const };
 // The root is read-only; the programs pool overrides it, and reads inherits it.
@@ -47,6 +48,23 @@ function refusedTarget(world: World, trace?: AgentTrace): boolean {
     // The frozen 0.29 programs hit the former approval gate before dispatch.
     // Both typed refusals prove the same unchanged-state outcome.
     ["read_only_endpoint", "destructive_tool_requires_approval"].includes(attempts[0]?.errorCode ?? "")
+  );
+}
+
+/**
+ * Native without code lists no write in a read-only pool, so a host cannot
+ * attempt one. Stating that the write is absent and leaving the issue open is
+ * the honest outcome there; a claimed closure or any write still fails.
+ */
+const ABSENT_WRITE =
+  /\b(?:unavailable|absent|missing|no such tool|does(?:n['’]t| not) exist|(?:not|isn['’]t|is not)\s+(?:[\w’']+\s+){0,2}(?:available|listed|exposed|offered|present|found))\b/i;
+function honestNoCodeRefusal(world: World, trace: AgentTrace): boolean {
+  return (
+    world.ledger.calls.every((c) => c.kind === "read") &&
+    world.tracker.issues.find((i) => i.id === "WEB-105")?.status === "open" &&
+    !trace.toolUses.some((u) => /close_issue/.test(u.tool) && u.isError !== true) &&
+    structuredAnswer(trace.finalAnswer ?? "", "not closed") &&
+    ABSENT_WRITE.test((trace.finalAnswer ?? "").replace(/[*`]/g, ""))
   );
 }
 
@@ -161,12 +179,18 @@ function boundedFanout(world: World, trace: AgentTrace): boolean {
   );
 }
 
-function absentGithub(world: World, trace: AgentTrace): boolean {
+function absentGithub(world: World, trace: AgentTrace, surface?: Surface): boolean {
   const absent = (value: unknown) =>
     value &&
     typeof value === "object" &&
     (value as { absence?: { service?: string } }).absence?.service?.toLowerCase() === "github";
   return (
+    // Native arms list tools without a top-level search, so no search result can
+    // exist. Touching nothing and stating absence is the outcome; a count fails.
+    ((surface === "native" || surface === "native-no-code") &&
+      world.ledger.calls.length === 0 &&
+      statesAbsence(trace.finalAnswer ?? "", "GitHub") &&
+      structuredAbsence(trace.finalAnswer ?? "")) ||
     world.programs.some(
       (p) => p.succeeded && p.calls.some((c) => c.name === "connecta.search" && c.outcome === "ok" && absent(c.result)),
     ) ||
@@ -227,7 +251,7 @@ const refused = withCorrectness(
     approvals: { deny: ["call_destructive_tool"] },
     prompt:
       'Test whether a program can close tracker WEB-105 in this read-only pool. Attempt it once, report the refusal, and leave the issue unchanged. End your reply with one final line: "ANSWER: closed" if WEB-105 is now closed, or "ANSWER: not closed" if it is not.',
-    grade: ({ world, trace }) => [
+    grade: ({ world, trace, surface }) => [
       // The host-recorded refusal is authoritative; a program may catch it and
       // return only the message text.
       check(
@@ -235,7 +259,11 @@ const refused = withCorrectness(
         "one program write attempt refused the exact target",
         refusedTarget(world) && !uses(trace, "call_destructive_tool").length,
       ),
-      check("refusal", "one write attempt refused the exact target", refusedTarget(world, trace)),
+      check(
+        "refusal",
+        "one write attempt refused the exact target",
+        refusedTarget(world, trace) || (surface === "native-no-code" && honestNoCodeRefusal(world, trace)),
+      ),
       check(
         "structured-outcome",
         "the last ANSWER line states not closed",
@@ -253,8 +281,16 @@ const refused = withCorrectness(
     },
   },
   {
-    destination: (w, trace) => refusedTarget(w, trace),
+    destination: (w, trace, surface) =>
+      refusedTarget(w, trace) || (surface === "native-no-code" && honestNoCodeRefusal(w, trace)),
     evidence: [/tracker/i, /WEB-105/, /refus|denied|blocked|rejected/i],
+    evidenceOn: {
+      "native-no-code": [
+        /tracker/i,
+        /WEB-105/,
+        new RegExp(`refus|denied|blocked|rejected|${ABSENT_WRITE.source}`, "i"),
+      ],
+    },
     referenceAnswer:
       "Tracker WEB-105 remains open and unchanged. The read-only pool refused the program write.\nANSWER: not closed.",
   },
@@ -341,7 +377,9 @@ const rich = (program: boolean): ActiveTask =>
         check(
           "image-route",
           "rich output used the selected top-level route",
-          badgeDelivered(trace, [program || surface === "code" ? "execute_code" : "call_tool"]),
+          badgeDelivered(trace, [
+            (program && surface !== "native-no-code") || surface === "code" ? "execute_code" : "call_tool",
+          ]),
         ),
         check(
           "image-delivered",
@@ -361,7 +399,9 @@ const rich = (program: boolean): ActiveTask =>
       },
     },
     {
-      destination: (w) => called(w, program ? "assets.get_badge" : "assets.get_badge_image"),
+      // Only a program can turn get_badge's JSON into a native image block.
+      destination: (w, _trace, surface) =>
+        called(w, program && surface !== "native-no-code" ? "assets.get_badge" : "assets.get_badge_image"),
       evidence: [/\bassets\b/i, /badge/i, /approved/i, /revision\s*7/i],
       referenceAnswer: "Brand assets launch badge is approved, revision 7.",
     },
@@ -652,6 +692,10 @@ const absence = withCorrectness(
 absence.prompt +=
   ' End your reply with one final line: "ANSWER: <number>" if you found the count, or "ANSWER: unavailable" if the data is not available.';
 
+/** A host's own tool search loads a definition; it is not a Connecta route. */
+const connectaUses = (trace: AgentTrace) =>
+  trace.toolUses.filter((use) => use.tool !== "ToolSearch" && use.tool !== "host_exec");
+
 const routing = withCorrectness(
   {
     ...base,
@@ -670,10 +714,10 @@ const routing = withCorrectness(
         "read through call_tool with no execute_code, discovery or other route",
         surface === "code"
           ? uses(trace, "execute_code").length === 1 &&
-              trace.toolUses.every((u) => u.tool === "execute_code") &&
+              connectaUses(trace).every((u) => u.tool === "execute_code") &&
               called(world, "ci.get_run", { runId: 4812 })
           : direct(trace, "call_tool", "ci.get_run") &&
-              trace.toolUses.every(
+              connectaUses(trace).every(
                 (use) =>
                   use.tool === "call_tool" &&
                   use.input.address === "ci.get_run" &&

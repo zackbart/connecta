@@ -17,7 +17,7 @@ const FIELDS = [
   "tags",
   "metadata",
 ];
-export function catalogServices(count: number): FakeService[] {
+export function catalogServices(count: number, ledger: Ledger): FakeService[] {
   return IDS.flatMap((id, connector) => {
     const tools: FakeTool[] = [];
     for (let i = connector; i < count; i += IDS.length) {
@@ -58,7 +58,7 @@ export function catalogServices(count: number): FakeService[] {
       });
     }
     return tools.length
-      ? [new FakeService(id, `Operational ${id} catalog for workspace records and reporting.`, tools, new Ledger())]
+      ? [new FakeService(id, `Operational ${id} catalog for workspace records and reporting.`, tools, ledger)]
       : [];
   });
 }

@@ -112,6 +112,33 @@ describe("call_tool", () => {
     expect(tool.error.nextAction.arguments.connector).toBe("calc");
     expect(tool.error.nextAction.arguments.query.length).toBeLessThan(600);
 
+    // A typo names the near tool, as describe does, and a read-only scope never names a write.
+    const nearby = makeRegistry([
+      {
+        id: "tickets",
+        kind: "api",
+        listTools: async () => [
+          { name: "get_ticket", annotations: { readOnlyHint: true } },
+          { name: "set_ticket", annotations: { readOnlyHint: false } },
+        ],
+        callTool: async () => null,
+      },
+    ]);
+    const typo = { address: "tickets.get_tickt" };
+    const suggested = textOf(await createMetaTools(nearby, BASE).callTool(typo)) as {
+      error: { code: string; suggestions?: string[] };
+    };
+    expect(suggested.error.code).toBe("unknown_tool");
+    expect(suggested.error.suggestions).toEqual(["tickets.get_ticket", "tickets.set_ticket"]);
+    const readOnly = textOf(await createMetaTools(nearby, BASE, { readOnly: true }).callTool(typo)) as {
+      error: { suggestions?: string[] };
+    };
+    expect(readOnly.error.suggestions).toEqual(["tickets.get_ticket"]);
+    const distant = textOf(await createMetaTools(nearby, BASE).callTool({ address: "tickets.zzzzzzzzzzzzzzzzzz" })) as {
+      error: Record<string, unknown>;
+    };
+    expect(distant.error).not.toHaveProperty("suggestions");
+
     // The common case must stay exact — a short address is corrected verbatim.
     const short = textOf(await mt.callTool({ address: "ghost.read_items" })) as {
       error: { message: string; nextAction: { arguments: { query: string } } };

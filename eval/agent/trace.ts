@@ -326,6 +326,36 @@ export function downstreamMetrics(calls: CallRecord[], requests: RequestRecord[]
   return metrics;
 }
 
+/**
+ * Tool errors before the first call that reached a downstream tool successfully,
+ * or every error when none did. Discovery, guides and authorization never stop
+ * the count, so arms with different discovery routes stay comparable.
+ */
+export function errorsBeforeFirstDownstreamSuccess(
+  uses: ToolUse[],
+  programs: { code: string; calls: { name: string; outcome: string }[] }[],
+): number {
+  // Programs are observed in execution order, so each invocation pairs with the next
+  // observation of its code; a retry of identical code must not credit the earlier failure.
+  let nextProgram = 0;
+  const reached = (use: ToolUse): boolean => {
+    if (use.tool !== "execute_code")
+      return (
+        use.isError === false &&
+        (Boolean(use.native) || use.tool === "call_tool" || use.tool === "call_destructive_tool")
+      );
+    if (typeof use.input.code !== "string") return false;
+    const code = use.input.code;
+    const offset = programs.slice(nextProgram).findIndex((program) => program.code.includes(code));
+    if (offset < 0) return false;
+    const program = programs[nextProgram + offset]!;
+    nextProgram += offset + 1;
+    return program.calls.some((call) => call.name === "connecta.call" && call.outcome === "ok");
+  };
+  const first = uses.findIndex(reached);
+  return (first < 0 ? uses : uses.slice(0, first)).filter((use) => use.isError === true).length;
+}
+
 export function countBy<T>(items: T[], key: (item: T) => string): Record<string, number> {
   const counts: Record<string, number> = {};
   for (const item of items) counts[key(item)] = (counts[key(item)] ?? 0) + 1;

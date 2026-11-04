@@ -100,9 +100,7 @@ interface CatalogSearchFailure extends CatalogFailureDetail {
   connector: string;
   nextAction?: Extract<
     NonNullable<CallErrorDetails["nextAction"]>,
-    {
-      tool: "authorize_connector";
-    }
+    { tool: "authorize_connector" } | { url: string } | { action: string }
   >;
   retry?: string;
 }
@@ -155,6 +153,7 @@ interface CatalogDescription {
   schemaFormat?: "json" | "text";
   name?: string;
   description?: string;
+  descriptionTruncated?: true;
   guide?: string;
   guideSummary?: string;
   guideRequired?: true;
@@ -173,6 +172,7 @@ type CatalogSearchTool = {
   name: string;
   address: string;
   description?: string;
+  descriptionTruncated?: true;
   inputSchema?: unknown;
   outputSchema?: unknown;
   signature?: string;

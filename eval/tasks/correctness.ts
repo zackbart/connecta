@@ -2,39 +2,119 @@
 import type { ActiveTask, Check } from "./types.js";
 import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
+import type { Surface } from "../agent/surface.js";
+
+const DELIVERED_TOOLS = ["call_tool", "call_destructive_tool", "execute_code", "read_result"];
+const PAGING_KEYS = new Set(["page", "pagination", "paging"]);
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    // Prose or a partial preview cannot establish record facts.
+    return undefined;
+  }
+}
+
+function resultTexts(use: AgentTrace["toolUses"][number]): string[] {
+  const texts = use.resultBlocks?.flatMap((block) =>
+    block.type === "text" && typeof block.text === "string" ? [block.text] : [],
+  );
+  // Emitted prose and the returned JSON are separate MCP blocks. Old saved
+  // traces may only have their single serialized resultText.
+  return texts?.length ? texts : [use.resultText ?? ""];
+}
+
+/**
+ * Whole retained results rebuilt from a truncation notice's preview and its
+ * read_result pages. A range with a gap or no final page proves nothing.
+ */
+function reassembledResults(trace: AgentTrace): unknown[] {
+  const encoder = new TextEncoder();
+  const chunks = new Map<string, Map<number, { text: string; last: boolean }>>();
+  const chunk = (id: string, offset: number, text: string, last: boolean) => {
+    if (!chunks.has(id)) chunks.set(id, new Map());
+    chunks.get(id)!.set(offset, { text, last });
+  };
+  for (const use of trace.toolUses) {
+    if (use.isError) continue;
+    // A notice-first result: one JSON header, then raw text in the next block
+    // or, for a legacy saved trace, on the following lines.
+    const texts = resultTexts(use);
+    const [first, ...rest] = texts.length > 1 ? texts : (texts[0] ?? "").split(/\n([\s\S]*)/);
+    const header = parseJson(first ?? "") as Record<string, unknown> | undefined;
+    if (header?.resultId === undefined || typeof header.resultId !== "string") continue;
+    if (use.tool === "read_result")
+      chunk(header.resultId, Number(header.offset), rest.join(""), header.hasMore === false);
+    else if (header.truncated === true && Number(header.nextOffset) > 0)
+      chunk(header.resultId, 0, rest.join(""), false);
+  }
+  return [...chunks.values()].flatMap((pages) => {
+    let joined = "";
+    let offset = 0;
+    for (;;) {
+      const next = pages.get(offset);
+      if (!next) return [];
+      joined += next.text;
+      if (next.last) break;
+      const length = encoder.encode(next.text).length;
+      if (!length) return [];
+      offset += length;
+    }
+    const value = parseJson(joined);
+    return value === undefined ? [] : [value];
+  });
+}
 
 /** Facts actually returned to the agent, excluding discovery and final prose. */
-export function deliveredValues(trace: AgentTrace, omitKeys: string[] = []): any[] {
+export function deliveredValues(trace: AgentTrace): any[] {
   const values: any[] = [];
   const visit = (value: unknown) => {
     values.push(value);
     if (Array.isArray(value)) value.forEach(visit);
-    else if (value && typeof value === "object")
-      for (const [key, child] of Object.entries(value)) if (!omitKeys.includes(key)) visit(child);
+    else if (value && typeof value === "object") Object.values(value).forEach(visit);
   };
   for (const use of trace.toolUses) {
-    if (use.isError || !["call_tool", "call_destructive_tool", "execute_code", "read_result"].includes(use.tool))
-      continue;
-    const texts = use.resultBlocks?.flatMap((block) =>
-      block.type === "text" && typeof block.text === "string" ? [block.text] : [],
-    );
-    // Emitted prose and the returned JSON are separate MCP blocks. Old saved
-    // traces may only have their single serialized resultText.
-    for (const text of texts?.length ? texts : [use.resultText ?? ""]) {
-      try {
-        visit(JSON.parse(text));
-      } catch {
-        // Prose or a partial preview cannot establish record facts.
-      }
+    if (use.isError || !DELIVERED_TOOLS.includes(use.tool)) continue;
+    for (const text of resultTexts(use)) {
+      const value = parseJson(text);
+      if (value !== undefined) visit(value);
     }
   }
+  reassembledResults(trace).forEach(visit);
   return values;
 }
 
+/**
+ * Whether a program reduced its records to this count, under any field name.
+ * Only the program's own return counts: paging metadata such as a retained
+ * `page.total` and the envelope's host-call counters describe no reduction.
+ */
+export function deliveredReducedCount(trace: AgentTrace, count: number): boolean {
+  const found = (value: unknown): boolean =>
+    value === count ||
+    (Array.isArray(value)
+      ? value.some(found)
+      : Boolean(value) &&
+        typeof value === "object" &&
+        Object.entries(value as object).some(([key, item]) => !PAGING_KEYS.has(key) && found(item)));
+  return trace.toolUses.some(
+    (use) =>
+      use.tool === "execute_code" &&
+      !use.isError &&
+      resultTexts(use).some((text) => {
+        const body = parseJson(text) as { result?: unknown } | undefined;
+        return found(body && typeof body === "object" && "result" in body ? body.result : body);
+      }),
+  );
+}
+
 export interface Correctness {
-  destination(world: World, trace: AgentTrace): boolean;
+  destination(world: World, trace: AgentTrace, surface?: Surface): boolean;
   /** Every expression must match the final answer, never the tool output. */
   evidence: RegExp[];
+  /** Replaces `evidence` on an arm where the same outcome is worded differently. */
+  evidenceOn?: Partial<Record<Surface, RegExp[]>>;
   /** Required record facts, checked against every multi-field clause. */
   records?: EvidenceRecord[];
   /** Full fake record set recognizes facts from unrequested records too. */
@@ -202,19 +282,20 @@ export function direct(trace: AgentTrace, tool: string, address: string): boolea
   return trace.toolUses.some((use) => use.tool === tool && use.input.address === address && use.isError === false);
 }
 
-function correctnessChecks(spec: Correctness, world: World, trace: AgentTrace): Check[] {
+function correctnessChecks(spec: Correctness, world: World, trace: AgentTrace, surface?: Surface): Check[] {
   const answer = (trace.finalAnswer ?? "").replace(/[*`]/g, "");
+  const evidence = (surface && spec.evidenceOn?.[surface]) ?? spec.evidence;
   return [
     {
       id: "correct-destination",
       description: "used the requested connector, tool and target",
-      pass: spec.destination(world, trace),
+      pass: spec.destination(world, trace, surface),
     },
     {
       id: "answer-evidence",
       description: "the final answer cites every required fake fact",
       pass:
-        spec.evidence.every((pattern) => pattern.test(answer)) &&
+        evidence.every((pattern) => pattern.test(answer)) &&
         (!spec.records || recordEvidence(answer, spec.records, spec.recordUniverse?.(world))) &&
         (!spec.consistentAnswer || spec.consistentAnswer(world, answer)),
       detail: answer.slice(0, 500),
@@ -226,7 +307,7 @@ export function withCorrectness(task: ActiveTask, spec: Correctness): ActiveTask
   return {
     ...task,
     prompt: `${task.prompt} Finish with the source system, record ids, and facts supporting your answer.`,
-    grade: (ctx) => [...task.grade(ctx), ...correctnessChecks(spec, ctx.world, ctx.trace)],
+    grade: (ctx) => [...task.grade(ctx), ...correctnessChecks(spec, ctx.world, ctx.trace, ctx.surface)],
     reference: async (ctx) => {
       await task.reference(ctx);
       ctx.answer(spec.referenceAnswer);

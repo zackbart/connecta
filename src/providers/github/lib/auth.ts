@@ -18,11 +18,18 @@ export interface GitHubApp {
   privateKey?: string;
 }
 export type Permissions = Readonly<Record<string, "read" | "write">>;
+/** Reviewed permission names only, in GitHub's own `name=access` spelling. */
+export const permissionWords = (permissions: Permissions): string =>
+  Object.entries(permissions)
+    .map(([name, access]) => `${name}=${access}`)
+    .join(" and ");
 interface Installation {
   id: number;
   owner: string;
   all: boolean;
   organization: boolean;
+  /** GitHub's own record of what this installation holds; absent when unreadable. */
+  permissions?: Readonly<Record<string, string>>;
   expires: number;
 }
 interface Token {
@@ -41,6 +48,7 @@ const MAX_ENTRIES = 256;
 const REFRESH_MARGIN = 60_000;
 const INSTALLATION_TTL = 300_000;
 const REPOSITORY_TTL = 300_000;
+const MAX_NAMED = 3;
 
 function boundedSet<T>(map: Map<string, T>, key: string, value: T): void {
   if (!map.has(key) && map.size >= MAX_ENTRIES) map.delete(map.keys().next().value!);
@@ -49,6 +57,29 @@ function boundedSet<T>(map: Map<string, T>, key: string, value: T): void {
 
 function record(value: unknown): Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
+}
+
+const ACCESS: Readonly<Record<string, number>> = { read: 1, write: 2, admin: 3 };
+
+/** Well-formed entries only; an empty or malformed record proves nothing. */
+function heldPermissions(value: unknown): Readonly<Record<string, string>> | undefined {
+  const held = Object.entries(record(value)).filter(
+    (entry): entry is [string, string] => typeof entry[1] === "string" && ACCESS[entry[1]] !== undefined,
+  );
+  return held.length > 0 ? Object.fromEntries(held) : undefined;
+}
+
+/**
+ * Requested permissions the installation's own record lacks, the only evidence
+ * that names a refused mint a permission gap. Metadata read is implicit for every App.
+ */
+function missingPermissions(installation: Installation, requested: Permissions): Permissions | undefined {
+  const held = installation.permissions;
+  if (!held) return undefined;
+  const missing = Object.entries(requested).filter(
+    ([name, access]) => name !== "metadata" && (ACCESS[held[name] ?? ""] ?? 0) < ACCESS[access]!,
+  );
+  return missing.length > 0 ? Object.fromEntries(missing) : undefined;
 }
 
 export class AppAuth {
@@ -123,7 +154,13 @@ export class AppAuth {
   }
 
   /** `write` sends the request once: a failure that may follow the change is not retryable. */
-  async json(request: GuardedRequest, bearer: string, ctx: ConnectorContext, write = false): Promise<unknown> {
+  async json(
+    request: GuardedRequest,
+    bearer: string,
+    ctx: ConnectorContext,
+    write = false,
+    context?: Readonly<Record<string, string>>,
+  ): Promise<unknown> {
     ctx.signal?.throwIfAborted();
     return this.send(
       {
@@ -142,7 +179,7 @@ export class AppAuth {
               status: response.status,
               headers: response.headers,
               body: undefined,
-              operation: { method: request.method, template: request.path },
+              operation: { method: request.method, template: request.path, ...(context ? { context } : {}) },
             }),
             captureClassifierFacts(undefined, errors, response.headers),
           );
@@ -207,13 +244,18 @@ export class AppAuth {
         const account = record(row.account);
         if (typeof account.login !== "string" || account.login.toLowerCase() !== owner) continue;
         if (!Number.isSafeInteger(row.id) || Number(row.id) <= 0 || row.suspended_at != null) {
-          throw new ConnectorCallError("auth_required", "Install or unsuspend the GitHub App on the configured owner.");
+          throw new ConnectorCallError(
+            "provider_permission_denied",
+            "Install or unsuspend the GitHub App on the configured owner. The App credential works, so resetting it will not help.",
+          );
         }
+        const permissions = heldPermissions(row.permissions);
         found = {
           id: Number(row.id),
           owner,
           all: row.repository_selection === "all",
           organization: account.type === "Organization",
+          ...(permissions ? { permissions } : {}),
           expires: Date.now() + INSTALLATION_TTL,
         };
       }
@@ -226,12 +268,12 @@ export class AppAuth {
     }
     if (!found)
       throw new ConnectorCallError(
-        "auth_required",
-        "Install the GitHub App on the configured owner and grant the configured repositories.",
+        "provider_permission_denied",
+        "Install the GitHub App on the configured owner and grant the configured repositories. The App credential works, so resetting it will not help.",
       );
     if (this.policy.repositories(owner) === undefined && (!found.all || !found.organization)) {
       throw new ConnectorCallError(
-        "auth_required",
+        "provider_permission_denied",
         "Org scopes require an organization installation with All repositories selected, including future repositories.",
       );
     }
@@ -244,7 +286,7 @@ export class AppAuth {
       const bound = this.orgInstallations.get(owner);
       if (bound !== undefined && bound !== resolved.id)
         throw new ConnectorCallError(
-          "auth_required",
+          "provider_permission_denied",
           "The organization grant is bound to a different installation. Reconfigure after reviewing the replacement installation.",
         );
       this.orgInstallations.set(owner, resolved.id);
@@ -267,7 +309,7 @@ export class AppAuth {
     // GitHub requires an installation token for /installation/repositories.
     // Mint with the App JWT, metadata only, and never give this resolver token
     // to the hosted server or a caller-selected REST operation.
-    const resolver = await this.mint(owner, installation, key, undefined, { metadata: "read" }, ctx, "resolver");
+    const resolver = await this.mint(owner, installation, key, undefined, { metadata: "read" }, ctx, owner, "resolver");
     const found = new Map<string, Repository>();
     const configured = this.policy.scopes.filter((scope) => scope.repo?.startsWith(`${owner}/`));
     for (let page = 1; page <= 100; page++) {
@@ -312,8 +354,8 @@ export class AppAuth {
       if (!this.grants.has(grant.repo!) && repo) this.grants.set(grant.repo!, repo.id);
       if (!this.grants.has(grant.repo!))
         throw new ConnectorCallError(
-          "auth_required",
-          "A configured repository grant could not be bound in this installation.",
+          "provider_permission_denied",
+          `The configured grant ${grant.repo} could not be bound in this installation: select that repository for the GitHub App, or remove the grant. Until then this owner's repositories stay unavailable. The App credential works, so resetting it will not help.`,
         );
       if (!repo) {
         const renamed = [...found.values()].find((candidate) => candidate.id === this.grants.get(grant.repo!));
@@ -329,8 +371,8 @@ export class AppAuth {
     const resolved = this.repositories.get(cacheKey);
     if (!resolved || resolved.expires <= Date.now())
       throw new ConnectorCallError(
-        "auth_required",
-        "The repository is not reachable in the configured installation. Verify its selection or current name.",
+        "provider_permission_denied",
+        "This repository is not reachable in the configured installation. Verify its selection or current name; other repositories may still work. The App credential works, so resetting it will not help.",
       );
     return resolved;
   }
@@ -387,7 +429,9 @@ export class AppAuth {
         ids.push(repo.id);
       }
     const repositorySet = names ? [...new Set(ids)].sort((a, b) => a - b) : undefined;
-    return this.mint(owner, installation, key, repositorySet, permissions, ctx);
+    // Each name is now bound to a repository this installation returned.
+    const named = names && names.length <= MAX_NAMED ? names.map((name) => `${owner}/${name}`).join(", ") : owner;
+    return this.mint(owner, installation, key, repositorySet, permissions, ctx, named);
   }
 
   private async mint(
@@ -397,6 +441,7 @@ export class AppAuth {
     repositorySet: readonly number[] | undefined,
     permissions: Permissions,
     ctx: ConnectorContext,
+    repository: string,
     purpose = "operation",
   ): Promise<string> {
     const permissionSet = Object.fromEntries(Object.entries(permissions).sort(([a], [b]) => a.localeCompare(b)));
@@ -409,6 +454,7 @@ export class AppAuth {
     } catch {
       throw new ConnectorCallError("auth_required", "The GitHub App key could not sign an RS256 JWT. Replace the key.");
     }
+    const missing = missingPermissions(installation, permissionSet);
     let response: Record<string, unknown>;
     try {
       response = record(
@@ -421,6 +467,12 @@ export class AppAuth {
           },
           jwt,
           ctx,
+          false,
+          {
+            repository,
+            permissions: permissionWords(permissionSet),
+            ...(missing ? { missing: permissionWords(missing) } : {}),
+          },
         ),
       );
     } catch (error) {
