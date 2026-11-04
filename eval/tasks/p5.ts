@@ -792,6 +792,76 @@ const resourceRead = withCorrectness(
   },
 );
 
+/**
+ * One read beside another that outlasts the run. The short run deadline keeps
+ * the task fast enough to play on every PR, and the description states it.
+ */
+export const SLOW_READ_TASK = withCorrectness(
+  {
+    ...base,
+    id: "p5-slow-read",
+    title: "A slow read costs only itself",
+    measures: "A read that outlasts the run ends as its own failure, so a fast read's data survives with no re-run.",
+    deployment: { readOnly: true, executorTimeoutMs: 6_000 },
+    faults: [1, 2, 3, 4].map((nth) => ({
+      service: "ci" as const,
+      fault: { tool: "get_run_log", nth, kind: "delay" as const, delayMs: 8_000 },
+    })),
+    prompt:
+      "Before the release call I need two things: the status of tracker issue WEB-105, and the failing test named in CI run 4812's log. " +
+      "CI has been slow today. Report what you can get, and if something did not come back, say so rather than guessing.",
+    grade: ({ world, trace }) => {
+      const reads = (tool: string) => world.ledger.calls.filter((c) => c.tool === tool);
+      const issueReads = reads("get_issue").filter((c) => c.args.id === "WEB-105");
+      const answer = trace.finalAnswer ?? "";
+      const delivered = (pattern: RegExp) =>
+        trace.toolUses.some((use) => !use.isError && pattern.test(use.resultText ?? ""));
+      return [
+        check(
+          "fast-read-once",
+          "WEB-105 was read exactly once",
+          issueReads.length === 1,
+          `${issueReads.length} read(s)`,
+        ),
+        check(
+          "slow-read-attempted",
+          "the slow CI log was actually requested",
+          reads("get_run_log").some((c) => c.args.runId === 4812),
+        ),
+        check("fast-data-delivered", "a successful result carried WEB-105's status", delivered(/\bopen\b/i)),
+        check(
+          "no-invented-log",
+          "the answer names the failing test only if the log really arrived",
+          !/refund\.test/.test(answer) || delivered(/refund\.test/),
+          answer.slice(0, 300),
+        ),
+        check(
+          "no-writes",
+          "nothing was written",
+          world.ledger.calls.every((c) => c.kind !== "write"),
+        ),
+      ];
+    },
+    reference: async ({ call }) => {
+      await call("execute_code", {
+        code: `async () => {
+          const [issue, log] = await Promise.allSettled([
+            connecta.call("tracker.get_issue", { id: "WEB-105" }),
+            connecta.call("ci.get_run_log", { runId: 4812 }),
+          ]);
+          return { status: issue.value.data.status, log: log.reason?.code ?? "arrived" };
+        }`,
+      });
+    },
+  },
+  {
+    destination: (w) => called(w, "tracker.get_issue", { id: "WEB-105" }),
+    evidence: [/tracker/i, /WEB-105/, /\bopen\b/i, /4812/],
+    referenceAnswer:
+      "Tracker WEB-105 is open. CI run 4812's log did not come back in time, so its failing test is unknown.",
+  },
+);
+
 export const P5_TASKS: ActiveTask[] = [
   trusted,
   refused,

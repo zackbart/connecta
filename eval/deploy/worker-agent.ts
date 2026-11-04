@@ -71,7 +71,9 @@ async function setup(env: Env): Promise<Live> {
   );
   await presetCredentials(vault, composition.connectors);
   const previous: ProgramObservation[] = [];
-  let observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface);
+  const timeout = composition.extra.executorTimeoutMs as number | undefined;
+  const executor = () => workerExecutor({ loader: env.LOADER, ...(timeout === undefined ? {} : { timeout }) });
+  let observed = observePrograms(executor(), composition.surface);
   let readOnly = composition.readOnly;
   const build = () =>
     createConnecta(
@@ -97,7 +99,7 @@ async function setup(env: Env): Promise<Live> {
     programs: () => [...previous, ...observed.programs],
     observeNext: () => {
       previous.push(...observed.programs);
-      observed = observePrograms(workerExecutor({ loader: env.LOADER }), composition.surface);
+      observed = observePrograms(executor(), composition.surface);
     },
     setReadOnly: (value) => {
       readOnly = value;

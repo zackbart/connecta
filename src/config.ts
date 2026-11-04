@@ -123,7 +123,8 @@ const calls = {
   /**
    * Deadline (ms) for `call_tool`/`call_destructive_tool` calls that pass no
    * `timeoutMs`. An explicit per-call value wins. Unset by default, when those
-   * calls fall back to `execute.hostCallTimeoutMs`.
+   * calls fall back to `execute.hostCallTimeoutMs`. `execute.watchdogMs` caps
+   * every one of them.
    *
    * Each call makes one attempt. `connecta.call` inside `execute_code` uses
    * it too, ahead of `execute.hostCallTimeoutMs`; `connecta.result`,
@@ -161,16 +162,19 @@ const execute = {
    * `connecta.read`, in milliseconds. Default 15_000. Discovery uses
    * `discovery.probeTimeoutMs`. `connecta.call` and the direct call tools use it only when
    * `calls.defaultTimeoutMs` is unset, and an explicit per-call `timeoutMs`
-   * always wins. Raise it for providers whose legitimate calls run longer,
-   * such as analytics queries.
+   * wins, up to `execute.watchdogMs`. Raise it for providers whose legitimate
+   * calls run longer, such as analytics queries.
    */
   hostCallTimeoutMs: whole({ min: 1, default: D.execute.hostCallTimeoutMs }),
   /**
-   * Hard ceiling on one execution, in milliseconds, enforced outside the
-   * sandbox. Default 120_000, above both executors' own deadlines (QuickJS
-   * 30_000, the Dynamic Worker 60_000), so it only ends a run whose executor
-   * never settled; that run fails as unresponsive and its admission slot is
-   * released. Keep it above any raised executor deadline.
+   * Ceiling on one `execute_code` or direct call response, in milliseconds,
+   * counted from the request's arrival and enforced outside the sandbox.
+   * Default 55_000: MCP clients commonly abandon a request at 60_000, and only
+   * a response sent before that reaches the agent as a typed result. It sits
+   * above both executors' own deadlines (QuickJS 30_000, the Dynamic Worker
+   * 50_000), so a run ends here only if its executor never settled, or if
+   * queueing spent its time. An explicit `timeoutMs` above it is cut to it. Raise it,
+   * and any executor deadline with it, only for clients whose own limit is raised.
    */
   watchdogMs: whole({ min: 1, default: D.execute.watchdogMs }),
   /**
