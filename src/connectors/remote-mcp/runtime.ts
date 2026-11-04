@@ -12,7 +12,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import type { Effect } from "effect";
 import type { KvOAuthProvider, OAuthRefreshCoordinator } from "../../auth/downstream-oauth.js";
-import type { catalogClientOptions } from "../../catalog-cache.js";
+import type { CatalogPeekEntry, catalogClientOptions } from "../../catalog-cache.js";
 import type { ConnectorCallError } from "../../errors.js";
 import type { RequestPrincipal } from "../../request-token.js";
 import type {
@@ -22,6 +22,7 @@ import type {
   ConnectorSkillResourceContents,
   Logger,
   ToolDef,
+  ConnectorCatalogPeek,
 } from "../../types.js";
 import type { ResourceTemplateRefusal } from "../resource-uri.js";
 import type { RemoteMcpConfig } from "./config.js";
@@ -75,6 +76,7 @@ export interface RemoteMcpShared {
   reset: (state: ConnectionState) => void;
   closeHalf: (state: ConnectionState) => void;
   cachedCatalog: (ctx: ConnectorContext) => Promise<Preread & { tools?: Tool[] }>;
+  peekCatalog: (ctx: ConnectorContext) => Promise<CatalogPeekEntry | undefined>;
   ensureConnected: (ctx: ConnectorContext, state: ConnectionState, preread?: Preread | undefined) => Promise<Client>;
   // ./oauth.ts
   boundOAuthFlows: (
@@ -97,6 +99,7 @@ export interface RemoteMcpShared {
     cache: Awaited<ReturnType<typeof catalogClientOptions>>,
   ) => void;
   listToolsOperation: (ctx: ConnectorContext) => Promise<ToolDef[]>;
+  peekCatalogOperation: (ctx: ConnectorContext) => Promise<ConnectorCatalogPeek | undefined>;
   // ./resources.ts
   resourceTemplateRefusals: Set<ResourceTemplateRefusal>;
   listSkills: (ctx: ConnectorContext) => Promise<ConnectorSkill[]>;
