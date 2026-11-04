@@ -429,6 +429,8 @@ function serveMcp(
     authFlow<McpServer>(function* () {
       // A native pool's text uses the native contract's wording.
       const routes = native ? routeNames(native.executeCode ? "native-code" : "native") : opts.routes;
+      // Direct-call and handoff text names the program route read follow-ups should take.
+      const directRoutes = readRoute ? routeNames("read-route") : routes;
       const authElicitation = new AuthElicitation({
         vault: opts.config.vault,
         publicUrl: opts.config.publicUrl,
@@ -459,7 +461,7 @@ function serveMcp(
         unavailable: oauthConnectUnavailable(opts),
         credentialUi: Boolean(opts.config.ui && opts.config.vault),
         credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
-        routes,
+        routes: directRoutes,
         requestSignal,
         requestScope,
         defer: runtimeContext?.waitUntil?.bind(runtimeContext),
@@ -516,7 +518,7 @@ function serveMcp(
         : undefined;
       const nativeRoute = registerMetaTools(server, registry, {
         native: diagnostics,
-        routes: readRoute ? routeNames("read-route") : routes,
+        routes: directRoutes,
         authElicitation,
         client,
         baseUrl,
