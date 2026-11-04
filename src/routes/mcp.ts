@@ -36,7 +36,13 @@ import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import type { ConnectorCaller } from "../connector-caller.js";
 import { endpointInstructions } from "../skills.js";
-import { NATIVE_TOOLS_LIST_TTL_MS, NativeSurface, nativeRequestHint, type NativeRequestHint } from "../native-tools.js";
+import {
+  NATIVE_DEGRADED_TOOLS_LIST_TTL_MS,
+  NATIVE_TOOLS_LIST_TTL_MS,
+  NativeSurface,
+  nativeRequestHint,
+  type NativeRequestHint,
+} from "../native-tools.js";
 import { registerSkills } from "./skills.js";
 import { failureRecord, logFailure } from "../operator-record.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "../sent-secrets.js";
@@ -452,6 +458,8 @@ function serveMcp(
         requestScope,
         defer: runtimeContext?.waitUntil?.bind(runtimeContext),
       });
+      // Read as this request's response is built, so a degraded native listing can shorten it.
+      const toolsListHint = { ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000, cacheScope: "private" as const };
       const server = new McpServer(opts.config.serverInfo, {
         // A request-local server cannot publish catalog changes. Set this before
         // tool registration, whose SDK default otherwise advertises listChanged.
@@ -469,10 +477,7 @@ function serveMcp(
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },
         cacheHints: {
           "server/discover": { ttlMs: 3_600_000, cacheScope: "private" },
-          "tools/list": {
-            ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000,
-            cacheScope: "private",
-          },
+          "tools/list": toolsListHint,
         },
       });
       servers.push(server);
@@ -499,7 +504,9 @@ function serveMcp(
         probeTimeoutMs: opts.config.discovery.probeTimeoutMs,
         ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
       });
-      const diagnostics = native ? { ...native, catalogErrors: [] as string[] } : undefined;
+      const diagnostics = native
+        ? { ...native, catalogErrors: [] as string[], staleCatalogs: [] as string[] }
+        : undefined;
       const nativeRoute = registerMetaTools(server, registry, {
         native: diagnostics,
         routes,
@@ -550,6 +557,10 @@ function serveMcp(
               route: nativeRoute,
               bind: (context) => authElicitation.bind(context),
               catalogErrors: diagnostics!.catalogErrors,
+              staleCatalogs: diagnostics!.staleCatalogs,
+              onDegradedListing: () => {
+                toolsListHint.ttlMs = NATIVE_DEGRADED_TOOLS_LIST_TTL_MS;
+              },
               logger: opts.config.logger,
               requestScope,
               requestSignal,

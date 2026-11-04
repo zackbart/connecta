@@ -10,7 +10,30 @@ export function markCatalogFreshness(tools: ToolDef[], freshUntil: number): Tool
 }
 
 export function carryCatalogFreshness(source: readonly ToolDef[], copy: ToolDef[]): ToolDef[] {
+  const stale = staleCatalogs.get(source);
+  if (stale) staleCatalogs.set(copy, stale);
   return markCatalogFreshness(copy, deadlines.get(source) ?? 0);
+}
+
+/** Why a request served a catalog older than its TTL, and how old it is. */
+export interface CatalogStaleness {
+  code: string;
+  /** Milliseconds since the downstream last confirmed this catalog. */
+  ageMs: number;
+  retryAfterMs?: number;
+  /** `retryAfterMs` is the downstream's own request, not when discovery next asks. */
+  downstreamWait?: true;
+}
+const staleCatalogs = new WeakMap<readonly ToolDef[], CatalogStaleness>();
+
+/** Host-only, beside freshness: a stale listing is never fresh and never grants anything. */
+export function markCatalogStale(tools: ToolDef[], staleness: CatalogStaleness): ToolDef[] {
+  staleCatalogs.set(tools, staleness);
+  return tools;
+}
+
+export function catalogStaleness(tools: readonly ToolDef[]): CatalogStaleness | undefined {
+  return staleCatalogs.get(tools);
 }
 
 export function catalogIsFresh(tools: readonly ToolDef[]): boolean {

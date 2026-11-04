@@ -419,6 +419,7 @@ export type {
   ConnectorCredentialAccess,
   ConnectorCredentialConfig,
   ConnectorCredentialFieldConfig,
+  ConnectorCatalogPeek,
   ConnectorCredentialValues,
   AgentRouteNames,
   ConnectorContext,
