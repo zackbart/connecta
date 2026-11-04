@@ -301,6 +301,15 @@ export interface InvocationContext<T> {
   activityFriction?: (value: T) => AgentFriction | undefined;
   /** Account for an admitted write after validation and before admission. */
   beforeWrite?: (target: ResolvedCatalogTool, args: unknown) => Effect.Effect<WriteDecision>;
+  /** The caller already knows this call may not start: nothing resolves or dispatches. */
+  refusal?: CallErrorDetails | undefined;
+  /**
+   * The absolute time past which this call may not reach its connector, and what
+   * it answers then. The deadline timer cannot enforce this: synchronous work in
+   * resolution, admission or auth can cross the time before the timer runs, and a
+   * program write's timer runs past it by design (`writeTimeoutMs`).
+   */
+  dispatchDeadline?: { at: number; refusal: (address: string) => CallErrorDetails } | undefined;
 }
 
 export { InvocationFailure } from "./invocation-failure.js";
@@ -786,6 +795,11 @@ export class InvocationService {
       // classified like a failure, as the async body this replaced did.
       const dispatch = (callSignal?: AbortSignal): Effect.Effect<CallErrorDetails | undefined, unknown> =>
         Effect.gen({ self: this }, function* () {
+          if (context.refusal) {
+            gateRefused = true;
+            return context.refusal;
+          }
+          let pastDeadline: CallErrorDetails | undefined;
           const admissionSignal = context.dispatchSignal
             ? AbortSignal.any([context.dispatchSignal, ...(callSignal ? [callSignal] : [])])
             : callSignal;
@@ -947,8 +961,20 @@ export class InvocationService {
                   }),
                 ),
               );
-              // Cancellation can arrive during admission or context construction.
+              // Reflect.apply, never the function's own `call` or `apply`
+              // property, which anyone holding the function could replace.
+              const options = { definition: cloneTool(target.definition), ...defined({ input }) };
+              const entry = callEntry(connector, callTool);
+              // The final gate. Cancellation can arrive during admission or context
+              // construction, and resolution, admission or auth can spend the deadline.
+              // Nothing is awaited from here to the connector call below, so a call
+              // refused here is proven unsent and one let through left in time (INV-9).
               if (admissionSignal?.aborted) throw admissionSignal.reason;
+              if (context.dispatchDeadline && Date.now() >= context.dispatchDeadline.at) {
+                gateRefused = true;
+                pastDeadline = context.dispatchDeadline.refusal(canonicalAddress);
+                return undefined;
+              }
               dispatchedToConnector = true;
               recordCallEntry(
                 this.catalog.requestScope,
@@ -959,10 +985,6 @@ export class InvocationService {
                 },
                 target.definition,
               );
-              // Reflect.apply, never the function's own `call` or `apply`
-              // property, which anyone holding the function could replace.
-              const options = { definition: cloneTool(target.definition), ...defined({ input }) };
-              const entry = callEntry(connector, callTool);
               if (entry)
                 return yield* entry(target.toolName, args ?? {}, options).pipe(
                   Effect.provideContext(viewServices(connectorContext)),
@@ -999,6 +1021,7 @@ export class InvocationService {
                 const reply = yield* timed((elapsed) => {
                   connectorMs += elapsed;
                 }, call(permit));
+                if (pastDeadline) return { pastDeadline };
                 if (target.connector.kind === "mcp" && isDownstreamInputResult(reply)) {
                   // The downstream suspended for input. A handler asks for
                   // input from inside its run, so a write may already have
@@ -1047,6 +1070,7 @@ export class InvocationService {
             if (failureWrite && !answered) forgetProviderFailure(details);
             return details;
           }
+          if ("pastDeadline" in attempt.value) return attempt.value.pastDeadline;
           if ("inputRequired" in attempt.value) {
             inputRequiredValue = { value: attempt.value.value as T };
             return undefined;

@@ -780,12 +780,12 @@ describe("execute_code registration (code mode)", () => {
       auth: machineAuth(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
-      executor: { deadlineMs: 60_000, execute: async () => ({ result: undefined }) },
+      executor: { deadlineMs: 50_000, execute: async () => ({ result: undefined }) },
     });
     const listedDeadline = await readJsonRpc(await mcpRpc(runDeadline, "tools/list", {}, { token: TOKEN }));
     expect(
       listedDeadline.result.tools.find((tool: { name: string }) => tool.name === "execute_code").description,
-    ).toContain("Limits: 20 host calls, 10 writes, 15s/host call, 60s/run.");
+    ).toContain("Limits: 20 host calls, 10 writes, 15s/host call, 50s/run.");
     expect(
       await executeDescription({
         maxHostCalls: 7,
