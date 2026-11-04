@@ -1681,7 +1681,7 @@ If the refresh fails instead, whatever it met (a dead grant, a waiter
 deadline, the caller leaving), or hands back the token the API just
 rejected, the 401's verdict stays:
 `downstream_oauth_required`, never retryable, with `reconciliationRequired`
-and `writeOutcome: "unknown"`, and an `authorize_connector` handoff that says
+and `writeOutcome: "unknown"`, and a handoff that says
 to re-read the target before any fresh call. A read is refreshed and sent
 once more. MCP sends a tool only once when either its effective classification
 or its original server hints say write. A deployment write-to-read override
@@ -2962,12 +2962,12 @@ owner's access token as `Authorization: Bearer` with these rules:
 - Whatever that recovery meets, a write's failure is never retryable and its
   outcome is unknown. Until a refresh succeeds the 401's verdict stands:
   `downstream_oauth_required`, which the invocation marks
-  `reconciliationRequired`, with the `authorize_connector` handoff, whether
+  `reconciliationRequired`, with the authorization handoff, whether
   the refresh was [dead](#refresh-failures), lost after it was sent, raced
   by a disconnect or reset, failed in storage or contention, or handed back
   the token the API just rejected, which renews nothing.
 - No grant, a second 401, or a [dead refresh](#refresh-failures) means
-  `downstream_oauth_required`, directing `authorize_connector`. Refresh waiter deadlines
+  `downstream_oauth_required`, carrying the authorization handoff. Refresh waiter deadlines
   return retryable `unavailable` for a read. Latch second 401s for the request scope,
   preventing repeated refreshes by later program calls.
 - Handlers can name no storage, sealing, or owner partition; the registry owns them.

@@ -58,7 +58,7 @@ export const GUEST_FUNCTIONS = [
     budget: "emission",
     declaration: "emit(block: Block | Native | Exclude<Result, Paged>): PromiseLike<void>;",
   },
-  /** Tells the host a failed program read a result field off an unawaited call. */
+  /** Tells the host a program read a result field off an unawaited call. */
   {
     name: "unawaited",
     budget: "once",

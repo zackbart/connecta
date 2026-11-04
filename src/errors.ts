@@ -684,6 +684,8 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
    * {@link ConnectorCallError.writeOutcome}). Check its target before repeating it.
    */
   writeOutcome?: "unknown";
+  /** On `unknown_tool`: nearby canonical addresses on the same connector. */
+  suggestions?: string[];
   /** The single model-facing entry point for every credential class. */
   nextAction?:
     | { tool: "skills"; arguments: Record<string, never>; purpose: string }
@@ -695,6 +697,11 @@ export interface CallErrorDetails extends Partial<AuthorizationHandoff> {
         tool: "authorize_connector";
         arguments: { connector: string };
         operatorHandoff: string;
+      }
+    | {
+        /** An error that carries its handoff: pass this link on; no tool call is needed. */
+        url: string;
+        purpose: string;
       }
     | {
         tool: "search_tools";

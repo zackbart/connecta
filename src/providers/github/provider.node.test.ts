@@ -128,7 +128,7 @@ describe("GitHub App provider", () => {
     ]);
     for (const path of ["/fields/0", "/terms", "/scopes/0"]) expect(message).toContain(path);
     // The example is the schema's own valid call; nothing the caller sent comes back.
-    expect(validation?.example).toEqual({ terms: "x", kind: "repositories" });
+    expect(validation?.example).toEqual({ terms: "<terms>", kind: "repositories" });
     expect(JSON.stringify([message, validation])).not.toMatch(/bug|crash|other|"one"|number/);
   });
 
