@@ -433,6 +433,12 @@ it("INV-5 INV-6 INV-10: proxies the real downstream MCP transport through the pr
   }
 });
 
+/** What tool readers return for a local skill: the body after Connecta's frontmatter. */
+const localBody = (file: string) => {
+  expect(file).toMatch(/^---\n/);
+  return file.replace(/^---\n[\s\S]*?\n---\n\n/, "");
+};
+
 it("INV-3 INV-4: serves only advertised skill files and keeps all four readers in parity", async () => {
   const root = makeRegistry([guided("local"), downstream()]);
   const c = createTestConnecta({ connectors: root.listConnectors(), logger: silentLogger });
@@ -458,14 +464,14 @@ it("INV-3 INV-4: serves only advertised skill files and keeps all four readers i
     expect(mt.content[0]?.text).toBe(
       uri.startsWith("skill://downstream/")
         ? `Third-party guidance from connector "remote".\n\n${read.result.contents[0].text}`
-        : read.result.contents[0].text,
+        : localBody(read.result.contents[0].text),
     );
     expect(skill.text).toBe(mt.content[0]?.text);
     expect(read.result.cacheScope).toBe("private");
   }
   const alias = await createMetaTools(root, BASE).skills({ name: "connector:local" });
   const canonical = await rpc(c, "resources/read", { uri: "skill://connecta/connectors/local/SKILL.md" });
-  expect(alias.content[0]?.text).toBe(canonical.result.contents[0].text);
+  expect(alias.content[0]?.text).toBe(localBody(canonical.result.contents[0].text));
   const resources = await rpc(c, "resources/list");
   expect(resources.result.cacheScope).toBe("private");
   const forbidden = await rpc(c, "resources/read", { uri: "https://vendor.test/arbitrary" });
@@ -696,13 +702,14 @@ it("reserves configured IDs and canonical identities before compatibility aliase
       for (const key of [readable, legacy, "crm-alice-" + digest.slice(0, 12) + "-1"]) {
         const entry = entries.find((entry) => entry.frontmatter.name === key)!;
         expect(entry).toBeDefined();
-        const text = (await registry.read(entry.uri)).contents[0]!.text;
+        const file = (await registry.read(entry.uri)).contents[0]!.text!;
+        const text = localBody(file);
         expect(await registry.text(key)).toBe(text);
         expect((await createMetaTools(root, BASE).skills({ name: key })).content[0]?.text).toBe(text);
         const guest = (await buildSandboxProviders(root, BASE, silentLogger))[0]!.fns;
         expect(((await guest.skill!(key)) as { text: string }).text).toBe(text);
         expect((await rpc(c, "skills/get", { uri: entry.uri })).result.skill.uri).toBe(entry.uri);
-        expect((await rpc(c, "resources/read", { uri: entry.uri })).result.contents[0].text).toBe(text);
+        expect((await rpc(c, "resources/read", { uri: entry.uri })).result.contents[0].text).toBe(file);
       }
     } finally {
       await c.close();
