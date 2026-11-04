@@ -248,9 +248,7 @@ Read the matching skill before that work: [add-provider](./.claude/skills/add-pr
 Use Sol (GPT-6.1-Sol through T3 `delegate_task`: `codex`, `gpt-6.1-sol`) for
 building, fix rounds, rebases and independent reviews, as authorized by #703.
 The builder never reviews its own PR; an independent Sol may review a Sol-built
-PR. Security reviews run at xhigh reasoning. Use Opus (`claudeAgent`,
-`claude-opus-5-5`) sparingly for orchestration and design-heavy or cross-cutting
-work where Sol has stalled. Run at most about four concurrent Opus agents.
+PR. Security reviews run at xhigh reasoning.
 Every PR gets an independent review before merge, in at most two rounds: a full first round, then a diff-only second round in which only production-reachable defects block.
 Parallel builders use separate worktrees off `origin/main`, or off the lower item's branch when stacked. A build may stack on an unmerged lower item; merges stay in plan order.
 One checklist item is one PR; reference its owning issue in the body.
