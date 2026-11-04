@@ -18,18 +18,38 @@ import { connectMcp } from "./support/mcp.js";
 import { claudeWrapper, scriptedClaudeModel } from "./support/scripted-model.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 
-/** Fixed before any ranking was seen: the words a model would lift from each paraphrase task. */
-const QUERIES: { query: string; expect: string[] }[] = [
-  { query: "pipeline green red main branch", expect: ["ci__list_runs", "ci__get_run"] },
-  { query: "latest pipeline status", expect: ["ci__list_runs", "ci__get_run"] },
-  { query: "build failed", expect: ["ci__list_runs", "ci__get_run"] },
-  { query: "owe overdue balance", expect: ["billing__list_invoices"] },
-  { query: "unpaid bills customer", expect: ["billing__list_invoices"] },
-  { query: "mark ticket done", expect: ["tracker__close_issue"] },
-  { query: "resolve ticket", expect: ["tracker__close_issue"] },
-  { query: "tell room announce", expect: ["chat__post_message"] },
-  { query: "send message channel", expect: ["chat__post_message"] },
-  { query: "post to chat", expect: ["chat__post_message"] },
+const CI = ["ci__list_runs", "ci__get_run"];
+const BILLING = ["billing__list_invoices"];
+const CLOSE = ["tracker__close_issue"];
+const POST = ["chat__post_message"];
+/**
+ * `blind` came from a writer who saw only the paraphrase task prompts, never the
+ * catalog or hints. `authored` came from someone who had seen some hints, so it
+ * is an optimistic check on the same ranking and not evidence on its own.
+ */
+const QUERIES: { query: string; expect: string[]; set: "blind" | "authored" }[] = [
+  { set: "blind", query: "latest pipeline status branch", expect: CI },
+  { set: "blind", query: "get CI pipeline main", expect: CI },
+  { set: "blind", query: "build status commit sha", expect: CI },
+  { set: "blind", query: "list unpaid invoices customer", expect: BILLING },
+  { set: "blind", query: "customer outstanding balance", expect: BILLING },
+  { set: "blind", query: "overdue invoices accounts receivable", expect: BILLING },
+  { set: "blind", query: "update issue status", expect: CLOSE },
+  { set: "blind", query: "transition ticket done", expect: CLOSE },
+  { set: "blind", query: "close issue WEB-105", expect: CLOSE },
+  { set: "blind", query: "send channel message", expect: POST },
+  { set: "blind", query: "post message to room", expect: POST },
+  { set: "blind", query: "chat message channel eng", expect: POST },
+  { set: "authored", query: "pipeline green red main branch", expect: CI },
+  { set: "authored", query: "latest pipeline status", expect: CI },
+  { set: "authored", query: "build failed", expect: CI },
+  { set: "authored", query: "owe overdue balance", expect: BILLING },
+  { set: "authored", query: "unpaid bills customer", expect: BILLING },
+  { set: "authored", query: "mark ticket done", expect: CLOSE },
+  { set: "authored", query: "resolve ticket", expect: CLOSE },
+  { set: "authored", query: "tell room announce", expect: POST },
+  { set: "authored", query: "send message channel", expect: POST },
+  { set: "authored", query: "post to chat", expect: POST },
 ];
 
 const TASK = ACTIVE_TASKS.find((task) => task.id === "p5-known-read-routing")!;
@@ -46,7 +66,7 @@ for (const surface of (args.get("surfaces") ?? "native,native-hints").split(",")
   // A found tool stops being deferred and leaves later searches, so each query gets a fresh host.
   const ranks = [];
   let offered: boolean | undefined;
-  for (const { query, expect } of QUERIES) {
+  for (const { query, expect, set } of QUERIES) {
     const model = await scriptedClaudeModel([[{ tool: "ToolSearch", input: { query, max_results: 5 } }]]);
     await runClaude({
       model: "claude-sonnet-5-5",
@@ -65,7 +85,7 @@ for (const surface of (args.get("surfaces") ?? "native,native-hints").split(",")
       (match) => match[1]!,
     );
     const rank = found.findIndex((name) => expect.includes(name));
-    ranks.push({ query, rank: rank < 0 ? null : rank + 1, top: found.slice(0, 5) });
+    ranks.push({ set, query, rank: rank < 0 ? null : rank + 1, top: found.slice(0, 5) });
     await model.close();
   }
   console.log(
@@ -73,9 +93,11 @@ for (const surface of (args.get("surfaces") ?? "native,native-hints").split(",")
       surface,
       catalogTools,
       offeredToolSearch: offered,
-      hitsInTop5: ranks.filter((rank) => rank.rank !== null).length,
-      hitsAtTop: ranks.filter((rank) => rank.rank === 1).length,
-      of: ranks.length,
+      blindTop1: ranks.filter((rank) => rank.set === "blind" && rank.rank === 1).length,
+      blindTop5: ranks.filter((rank) => rank.set === "blind" && rank.rank !== null).length,
+      authoredTop1: ranks.filter((rank) => rank.set === "authored" && rank.rank === 1).length,
+      authoredTop5: ranks.filter((rank) => rank.set === "authored" && rank.rank !== null).length,
+      of: { blind: 12, authored: 10 },
       ranks,
     }),
   );
