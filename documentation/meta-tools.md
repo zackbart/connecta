@@ -1180,13 +1180,19 @@ support (`connector`, `recovery`, `authorizationUrl` or `operatorUrl`,
 Give that link to the user once, then stop. Do not prompt again, retry, or reach
 the service another way until they confirm. If they already refused this
 connection in the conversation, only mention that the link is available.
-A failed signing or storage step leaves the refusal without a link. Connecta
+A failed signing or storage step leaves the refusal without a link. Its message
+says so: unless the user refused this connection, repeat the request once for a
+new link, then give that link to them, and stop if that repeat also fails. Connecta
 keeps no record of which clients refuse, so each new prompt to such a client
 ends the same way. Three prompts are allowed
 within one ten-minute retry window, then `auth_round_limit` ends the flow.
 Each state can be consumed once; concurrent or repeated retries are refused
-before dispatch. A Continue link from a pending restart requires that restart
-to start successfully before the browser can consume it.
+before dispatch. Accept does not mean a browser has opened the link, so every link
+in a flow stays live. A `force: true` flow's links, including a refusal's, share one
+reset: the first verified visit performs it and later visits continue it. A visit
+during a running start returns 409 without spending its link, and says to start a new
+connection request if it persists, because a new call is a new flow. A failed start
+lets the flow's next visit begin again.
 Host-owned invocation facts record the auth failure's origin and entry into
 all calls, including each classification, catalog freshness and classification
 digest. Raw fetches and custom connector transports cannot establish recovery

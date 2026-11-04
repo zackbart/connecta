@@ -33,6 +33,8 @@ paging, one Stripe refund, reconciliation after a committed refund answered
 HTTP 500, a read-only pool's refusal, the identity-checked `/connect` handoff,
 that handoff from a client that auto-declines URL elicitation (its controls fail
 a refusal with no link, a second prompt and a read from another connector),
+a host that dispatches `accept` before its browser visit lands (a control for a
+forced reconnect and an auth-gated read: every link works, with one forced start),
 a secret rotation that never reads a value, and the QuickBooks accounting
 and named-write journeys, plus a Granola workspace meeting dossier. Provider journeys also cover
 CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped

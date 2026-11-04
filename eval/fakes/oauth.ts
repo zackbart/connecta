@@ -5,6 +5,7 @@ import type { Ledger } from "./service.js";
 export class FakeOAuth {
   connected = false;
   starts = 0;
+  forcedStarts = 0;
   visits = 0;
   readonly token = "eval-human-token";
   constructor(private readonly ledger: Ledger) {}
@@ -44,8 +45,9 @@ export class FakeOAuth {
         },
       ],
       status: async () => ({ state: this.connected ? "ok" : "auth_required" }),
-      startAuth: async () => {
+      startAuth: async (_ctx, options) => {
         this.starts += 1;
+        if (options?.force) this.forcedStarts += 1;
         // No real consent URL or third-party request. Opening /connect is
         // the operator's consent for this deterministic service.
         this.connected = true;
