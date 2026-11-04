@@ -21,6 +21,8 @@ export interface CatalogStaleness {
   /** Milliseconds since the downstream last confirmed this catalog. */
   ageMs: number;
   retryAfterMs?: number;
+  /** `retryAfterMs` is the downstream's own request, not when discovery next asks. */
+  downstreamWait?: true;
 }
 const staleCatalogs = new WeakMap<readonly ToolDef[], CatalogStaleness>();
 

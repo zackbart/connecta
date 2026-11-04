@@ -22,7 +22,9 @@
 //
 // After its retry time a record lingers, so exactly one request can claim the
 // next probe by compare-and-set as it dispatches it; the others keep skipping
-// until that probe settles or its lease lapses. A success, or an auth failure that proves the
+// until that probe settles or its lease lapses. Every write is conditional on
+// the record its request read, so concurrent failures record once and a lease
+// is never overwritten. A success, or an auth failure that proves the
 // connector answers, clears the record. A fast failure is not recorded:
 // asking again costs the next search nothing. Caller cancellation and a probe cut
 // short by the discovery budget record nothing.
@@ -34,7 +36,7 @@ import { failureRecord, logFailure } from "./operator-record.js";
 import type { RegistryView } from "./registry.js";
 import { causeError } from "./runtime/run.js";
 import { Storage } from "./runtime/services.js";
-import { storageCompareAndSet, storageGetMany, storageSet } from "./runtime/storage.js";
+import { storageCompareAndSet, storageGetMany } from "./runtime/storage.js";
 import { connectorHealthKeys, CONNECTOR_HEALTH_LINGER_MS } from "./storage/keys.js";
 import type { KVStorage, Logger } from "./types.js";
 
@@ -65,6 +67,8 @@ export interface HealthSlot {
 export interface HealthVerdict {
   readonly slot?: HealthSlot;
   readonly skip?: { readonly code: ClassificationCode; readonly retryAt: number };
+  /** This request's settlement wrote the record it describes, so only it may follow up with a refresh. */
+  readonly recorded?: boolean;
 }
 
 interface HealthFact {
@@ -174,12 +178,22 @@ export function readDiscoveryHealth(
  * dispatched: one compare-and-set against the record this request read, with
  * a lease to the absolute time `leaseUntil`, past the claimant's whole
  * discovery budget. Others keep skipping until the lease lapses or the probe
- * settles. False when another request holds it, or the record changed.
+ * settles. An absent record is claimed the same way, by creating it. False when
+ * another request holds it, or the record changed.
  */
 export function claimDiscoveryProbe(slot: HealthSlot, leaseUntil: number): Effect.Effect<boolean> {
   return Effect.suspend(() => {
-    const fact = parseFact(slot.raw);
-    if (!fact) return Effect.succeed(slot.raw === null);
+    const fact =
+      slot.raw === null
+        ? ({
+            v: 1,
+            code: "timeout",
+            observedAt: Date.now(),
+            retryAt: leaseUntil,
+            generation: slot.generation,
+          } satisfies HealthFact)
+        : parseFact(slot.raw);
+    if (!fact) return Effect.succeed(false);
     const claim = encodeFact({ ...fact, retryAt: leaseUntil });
     return storageCompareAndSet(slot.key, slot.raw, claim.raw, { expiresAtMs: claim.expiresAtMs }).pipe(
       Effect.provideService(Storage, slot.storage),
@@ -253,11 +267,13 @@ export function settleDiscoveryHealth(
     }
     const encoded = encodeFact(fact);
     const skip = { code: fact.code, retryAt: fact.retryAt };
-    return storageSet(slot.key, encoded.raw, { expiresAtMs: encoded.expiresAtMs }).pipe(
+    // Against the record this request read: a concurrent failure or a held
+    // lease stays, and this request learns it does not own what follows.
+    return storageCompareAndSet(slot.key, slot.raw, encoded.raw, { expiresAtMs: encoded.expiresAtMs }).pipe(
       Effect.provideService(Storage, slot.storage),
-      Effect.map(() => {
-        slot.raw = encoded.raw;
-        return { slot, skip };
+      Effect.map((recorded) => {
+        if (recorded) slot.raw = encoded.raw;
+        return { slot, skip, recorded };
       }),
       Effect.catchCause((cause) =>
         Effect.sync(() => {

@@ -508,6 +508,7 @@ export type FailureEvent =
   | "call failed"
   | "input schema unusable; arguments are not validated"
   | "catalog chunk cleanup failed"
+  | "catalog fence failed"
   | "catalog read failed"
   | "catalog persistence failed"
   | "catalog invalidation failed"

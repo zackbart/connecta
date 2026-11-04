@@ -800,7 +800,8 @@ retain a complete private fallback, and static catalogs remain
 in configuration. After a transient first-page tool listing failure, ordinary calls
 may use a complete catalog for up to five minutes after its expiry in the same
 auth partition. Partial walks, permission and auth failures do not use this
-fallback. Resources require unexpired inventories.
+fallback, and a refusal keeps later failures from using it until a listing succeeds.
+Resources require unexpired inventories.
 
 **Stale listings.** Discovery alone may list a tool catalog up to 24 hours past
 its expiry (`STALE_DISCOVERY_MS`), so chunks and manifests keep that storage TTL
@@ -815,9 +816,39 @@ the failures [meta-tools](./meta-tools.md#lexical-discovery) lists, marked in ho
 provenance (`markCatalogStale`). It stays out of the request's retained catalogs,
 so `resolve` and every call read the live one. A probe that exhausts its own
 deadline hands one refresh to `defer`: a listing in a new request scope, with its
-own signal and transport, under the longer deadline (at most 20 seconds, within
-Workers' `waitUntil`), closed in that scope and settling the health record it
-leased. Nothing of the original request reaches it (INV-7).
+own signal and transport, closed in that scope and settling the health record it
+leased. Nothing of the original request reaches it (INV-7). One clock, started as
+it is scheduled, bounds its whole tail at 20 seconds, inside Workers' `waitUntil`:
+queueing and the claim spend it, the listing gets what remains less a second for
+settlement and two for cleanup, and a claim that spends it all dispatches nothing.
+Only the request whose settlement wrote the health record takes that refresh;
+settlement and the claim are compare-and-set against the record the request read,
+including creating an absent one, so concurrent failures start one refresh.
+
+A peek read before a wait is not served after it. Once a probe or a slot has kept
+the request waiting, the entry is read again through every fence, so an invalidation
+or a refusal in the meantime retires it, in this isolate or another.
+
+**Refusal fences.** `auth_required`, `downstream_oauth_required` or
+`provider_permission_denied` from a listing or its handshake writes one key
+(`fenceTools`) in the namespace of the catalog's current generation, addressed by
+the owner partition and credential identity, or by the auth partition alone on a
+shared connector, whose credential gets one answer whoever asks. A tool listing that
+sees it misses, fresh or stale, so `peekTools` and the five-minute fallback have
+nothing to serve; both also read it fresh before serving an expired entry. A listing
+that succeeds lifts by compare-and-set only the fence it first saw, so a refusal
+that lands while it runs stays. The key outlives every entry it guards
+(`CATALOG_FENCE_TTL_SECONDS`) and the generation's rotation discards it with them.
+It adds no round trip to a read: it travels in the catalog snapshot or the manifest
+read. Timeouts and retryable failures write nothing here, and neither does a
+caller-local refusal repeated within one request.
+
+The 24-hour limit stays because of these. Everything that can end a caller's access
+and that Connecta can observe (a refusal, a credential change, a disconnect, an
+invalidation) now retires the catalog at once. What remains is a revocation behind a
+connector that has not answered since: tool names and schemas that caller was
+already shown, marked stale, granting nothing, for at most a day. The first answer
+ends it.
 
 Host-only provenance carries each catalog's original fetch time, TTL and expiry,
 and whether it was a fallback, through classification and request-local copies.
@@ -2362,8 +2393,9 @@ late publication from an invalidated request unreachable. Missing chunks,
 expired entries, storage errors, or a failed page trigger a fresh complete
 listing. A transient first-page tool-listing failure may use a complete catalog
 within five minutes of expiry in the same auth partition. Partial walks and
-auth or permission failures refuse fallback; resources require unexpired
-inventories, and stale fallback cannot authorize post-entry auth recovery.
+auth or permission failures refuse fallback, and a refusal fences later fallback
+until a listing succeeds; resources require unexpired inventories, and stale
+fallback cannot authorize post-entry auth recovery.
 Discovery's [stale listing](#storage-credentials-and-connectors) reads the same
 entries and answers no call.
 

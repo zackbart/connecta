@@ -18,6 +18,7 @@ import {
   catalogFetchedAt,
   customCatalogFallback,
   customCatalogPeek,
+  fenceCustomCatalog,
   invalidateCatalogCache,
   observeUncachedCatalogRefresh,
   retainedCatalogIdentity,
@@ -32,7 +33,7 @@ import { forwardsPrincipal } from "./request-principal.js";
 import { canonicalJson } from "./canonical-json.js";
 import type { CredentialVault } from "./credential-contract.js";
 import { storedCredentialShape } from "./credential-rules.js";
-import { ConnectorCallError } from "./errors.js";
+import { ConnectorCallError, isAccessRefusal } from "./errors.js";
 import { attachOAuthPartition, oauthPartitionIdle } from "./oauth-partition.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "./oauth-sealing.js";
 import { boundedStatus, failureRecord, failureStatus, logFailure, ownStatus } from "./operator-record.js";
@@ -1033,7 +1034,16 @@ export class Registry implements RegistryView {
       const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
       const listed = yield* authInvoke<ToolDef[]>(connector, "listTools", [ctx]).pipe(
         Effect.catch((error) =>
-          Effect.gen(function* () {
+          Effect.gen({ self: this }, function* () {
+            // `remoteMcp()` fences its own refusals, knowing how it was refused.
+            if (!connector.peekCatalog && isAccessRefusal(error))
+              yield* authCall<void>(fenceCustomCatalog, [ctx, id]).pipe(
+                Effect.catch((failure) =>
+                  Effect.sync(() =>
+                    logFailure(this.opts.logger, "catalog fence failed", failureRecord({ connector: id }, failure)),
+                  ),
+                ),
+              );
             const fallback =
               error instanceof ConnectorCallError && error.code === "unavailable"
                 ? yield* authCall<ToolDef[] | undefined>(customCatalogFallback, [ctx, id]).pipe(

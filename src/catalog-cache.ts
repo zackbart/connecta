@@ -448,8 +448,22 @@ const STALE_FALLBACK_MS = 300_000;
  * connector does not answer discovery in time. The listing only: a call always
  * resolves through STALE_FALLBACK_MS at most. One day matches the longest TTL a
  * deployment can configure, so this retains nothing it could not already hold.
+ * A refusal retires it sooner, for that credential: see `fenceTools`.
  */
 const STALE_DISCOVERY_MS = 86_400_000;
+/** A fence outlives every entry it could be keeping from reuse. */
+const CATALOG_FENCE_TTL_SECONDS = (MAX_CACHE_TTL_MS + STALE_DISCOVERY_MS) / 1000;
+/** What a refusal's fence is keyed by, beside the catalog: one credential's slot within one generation. */
+const catalogFenceFingerprint = (
+  sharing: "private" | "shared",
+  partition: string,
+  authPartition: string,
+  credentialIdentity: string | undefined,
+) =>
+  authCall<{ fingerprint: string }>(fingerprintSerializedCatalog, [
+    // A shared credential gets one answer whoever asks, so one fence covers all its callers.
+    JSON.stringify(["fence", sharing === "shared" ? authPartition : partition, credentialIdentity ?? null]),
+  ]);
 /** Catalog chunks one storage read fetches together. */
 const CHUNKS_PER_READ = 8;
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void {
@@ -711,6 +725,8 @@ interface Listing {
   /** Whether the generation was read from storage rather than newly drawn. */
   generationStored?: boolean;
   manifests?: Map<string, string | null>;
+  /** The fence this listing first saw, and so the only one its success can lift. */
+  fence?: string | null;
 }
 interface CacheOperation {
   ctx: ConnectorContext;
@@ -770,7 +786,9 @@ export const prefetchCatalog = authMethod(
         configHash: string;
       }>(catalogLocation, [ctx, config, authPartition]);
       const slots = sharing === "shared" ? [partition, sharedPartition] : [partition];
-      const suffixes: string[] = [];
+      const suffixes: string[] = [
+        (yield catalogFenceFingerprint(sharing, partition, authPartition, credentialIdentity)).fingerprint,
+      ];
       for (const slot of slots)
         suffixes.push(
           (yield authCall<{ fingerprint: string }>(fingerprintSerializedCatalog, [
@@ -821,6 +839,7 @@ export function catalogClientOptions(
     fallbackTools: () => Promise<ListToolsResult | undefined>;
     cachedTools: (ctx: ConnectorContext) => Promise<ListToolsResult | undefined>;
     peekTools: (ctx: ConnectorContext, serverIdentity?: string) => Promise<CatalogPeekEntry | undefined>;
+    fenceTools: (ctx: ConnectorContext) => Promise<void>;
   }
 > {
   return runEdge(
@@ -997,6 +1016,64 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
           return stopped() ? undefined : responseCacheKeys.entry(prefix, digest);
         }),
       );
+      const fenceKey = cacheMethod((operation: CacheOperation, generation: string) =>
+        authFlow<string>(function* () {
+          const { fingerprint } = (yield catalogFenceFingerprint(
+            sharing,
+            partition,
+            authPartition,
+            operation.credentialIdentity,
+          )) as { fingerprint: string };
+          return responseCacheKeys.entry(responseCacheKeys.namespace(connectorId, configHash, generation), fingerprint);
+        }),
+      );
+      // Whether an expired catalog may stand in now. Read past this request's
+      // memo: a refusal or invalidation in another isolate retires it at once.
+      const staleAllowed = cacheMethod((operation: CacheOperation) =>
+        authFlow<boolean>(function* () {
+          if (operation.stopped() || !((yield authCall(namespace, [operation])) as string | undefined)) return false;
+          const key = (yield authCall(fenceKey, [operation, operation.generation.value!])) as string;
+          const fence = (yield authCall(operation.io, [
+            cacheMethod(() =>
+              reads.read(
+                storage,
+                key,
+                authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>,
+                true,
+              ),
+            ),
+          ])) as string | null;
+          return fence === null && !operation.stopped();
+        }),
+      );
+      // A complete listing's answer lifts the fence it first saw, and only that
+      // one: a refusal that landed while it ran wrote another, which stays.
+      const liftFence = cacheMethod((operation: CacheOperation) =>
+        authFlow<void>(function* () {
+          const { listing, stopped, io } = operation;
+          if (!listing || stopped()) return;
+          try {
+            const key = (yield authCall(fenceKey, [operation, operation.generation.value!])) as string;
+            if (listing.fence === undefined)
+              listing.fence = (yield authCall(io, [
+                cacheMethod(() =>
+                  reads.read(storage, key, authStorage(storage, "get", [key]) as Effect.Effect<string | null, unknown>),
+                ),
+              ])) as string | null;
+            if (!listing.fence || stopped()) return;
+            const lifted = (yield authCall(io, [
+              cacheMethod(
+                () =>
+                  authStorage(storage, "compareAndSet", [key, listing.fence, null]) as Effect.Effect<boolean, unknown>,
+              ),
+            ])) as boolean;
+            if (lifted) listing.fence = null;
+          } catch (error) {
+            if (!stopped())
+              logFailure(ctx.logger, "catalog fence failed", failureRecord({ connector: connectorId }, error));
+          }
+        }),
+      );
       const manifest = (raw: string | null): Manifest | undefined => {
         if (!raw) return undefined;
         try {
@@ -1119,10 +1196,17 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                   ),
                 );
               }
+              const fence = (yield authCall(fenceKey, [operation, operation.generation.value!])) as string;
               yield reads.prefetch(
-                roots.map((key) => ({ storage, key })),
+                [...roots, fence].map((key) => ({ storage, key })),
                 (storage, keys) => authStorageMany(storage, keys),
               );
+              if (listing.fence === undefined)
+                listing.fence = yield reads.read(
+                  storage,
+                  fence,
+                  authStorage(storage, "get", [fence]) as Effect.Effect<string | null, unknown>,
+                );
               const values: (string | null)[] = [];
               for (const root of roots)
                 values.push(
@@ -1135,6 +1219,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               listing.manifests ??= new Map();
               roots.forEach((root, i) => listing.manifests!.set(root, values[i] ?? null));
             }
+            // A refused credential is listed anew, whatever its catalog's age.
+            if (listing?.fence && key.method === "tools/list") return undefined;
             const m = manifest(
               listing?.manifests?.has(root)
                 ? listing.manifests.get(root)!
@@ -1246,6 +1332,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                   (yield authCall(io, [
                     cacheMethod(() => authStorage(storage, "delete", [root]) as Effect.Effect<void, unknown>),
                   ])) as void;
+                if (method === "tools/list") (yield authCall(liftFence, [operation])) as void;
                 return 0;
               }
               if (
@@ -1356,6 +1443,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                         );
                     }
                   }
+                  if (method === "tools/list") (yield authCall(liftFence, [operation])) as void;
                   return stamp;
                 }
               }
@@ -1537,13 +1625,42 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               const operation = capture();
               if (
                 !stale ||
-                operation.stopped() ||
-                !((yield authCall(namespace, [operation])) as string | undefined) ||
-                operation.stopped() ||
+                !((yield authCall(staleAllowed, [operation])) as boolean) ||
                 stale.manifest.expiresAt + STALE_DISCOVERY_MS <= Date.now()
               )
                 return undefined;
               return { result: stale.result, fetchedAt: stale.manifest.fetchedAt, expiresAt: stale.manifest.expiresAt };
+            }),
+          ),
+        ]),
+      );
+      // The downstream refused this credential, which says more than a TTL can:
+      // nothing cached for it may stand in again until a listing succeeds. One
+      // key beside the catalog, durable across requests and isolates, in the
+      // namespace of the current generation, so a change of credential or a
+      // disconnect discards it with the entries it guards. Nothing is stored
+      // while no generation is, since then nothing is cached to retire.
+      const fenceTools = cacheMethod((listingCtx: ConnectorContext) =>
+        authCall<void>(withListing, [
+          listingCtx,
+          cacheMethod(() =>
+            authFlow<void>(function* () {
+              const operation = capture();
+              const generation = (yield authCall(operation.io, [cacheMethod(() => generationRead(false))])) as
+                | string
+                | null;
+              if (!generation || operation.stopped()) return;
+              const key = (yield authCall(fenceKey, [operation, generation])) as string;
+              (yield authCall(operation.io, [
+                cacheMethod(
+                  () =>
+                    authStorage(storage, "set", [
+                      key,
+                      crypto.randomUUID(),
+                      { ttlSeconds: CATALOG_FENCE_TTL_SECONDS },
+                    ]) as Effect.Effect<void, unknown>,
+                ),
+              ])) as void;
             }),
           ),
         ]),
@@ -1553,9 +1670,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
           const operation = capture();
           if (
             !staleTools ||
-            operation.stopped() ||
-            !((yield authCall(namespace, [operation])) as string | undefined) ||
-            operation.stopped() ||
+            !((yield authCall(staleAllowed, [operation])) as boolean) ||
             staleTools.manifest.expiresAt + STALE_FALLBACK_MS <= Date.now()
           )
             return;
@@ -1577,6 +1692,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         fallbackTools,
         cachedTools,
         peekTools,
+        fenceTools,
         responseCacheStore: store,
         cachePartition: partition,
         defaultCacheTtlMs: policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000,
@@ -1691,6 +1807,21 @@ const customCatalogPeekNative = /* @__PURE__ */ registerAuth(
       return entry
         ? { tools: entry.result.tools as ToolDef[], fetchedAt: entry.fetchedAt, expiresAt: entry.expiresAt }
         : undefined;
+    }),
+);
+/** A custom connector's refusal: its retained catalog stands in for nothing until a listing succeeds. */
+export function fenceCustomCatalog(ctx: ConnectorContext, connectorId: string): Promise<void> {
+  return runEdge(authProgram<void>(fenceCustomCatalogNative, [ctx, connectorId]));
+}
+const fenceCustomCatalogNative = /* @__PURE__ */ registerAuth(
+  fenceCustomCatalog,
+  (ctx: ConnectorContext, connectorId: string) =>
+    authFlow<void>(function* () {
+      if (!callerOf(ctx)?.authenticated) return;
+      const { cache } = (yield authCall(customCatalogCache, [ctx, connectorId])) as {
+        cache: Awaited<ReturnType<typeof catalogClientOptions>>;
+      };
+      (yield authInvoke(cache, "fenceTools", [ctx])) as void;
     }),
 );
 export function customCatalogFallback(ctx: ConnectorContext, connectorId: string): Promise<ToolDef[] | undefined> {

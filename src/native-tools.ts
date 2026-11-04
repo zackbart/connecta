@@ -291,7 +291,15 @@ export class NativeSurface {
           ? {
               _meta: {
                 "dev.connecta/address": `${entry.connector.id}.${entry.tool.name}`,
-                ...(entry.stale ? { "dev.connecta/stale": { code: entry.stale.code, ageMs: entry.stale.ageMs } } : {}),
+                ...(entry.stale
+                  ? {
+                      "dev.connecta/stale": {
+                        code: entry.stale.code,
+                        ageMs: entry.stale.ageMs,
+                        ...(entry.stale.retryAfterMs === undefined ? {} : { retryAfterMs: entry.stale.retryAfterMs }),
+                      },
+                    }
+                  : {}),
               },
             }
           : {}),

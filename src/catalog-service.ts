@@ -74,8 +74,15 @@ const SETTLE_RESERVE_MS = 500;
 const CATALOG_PEEK_CONCURRENCY = 16;
 /** The longest a stale catalog's read holds up a finished probe, and the least any peek gets. */
 const STALE_READ_TIMEOUT_MS = 1_000;
-/** One deferred refresh's whole deadline. Inside the 30 seconds Workers keeps `waitUntil` alive. */
+/**
+ * One deferred refresh's whole tail, from being scheduled to the end of its
+ * cleanup: queueing, claim, listing, settlement and close. Inside the 30 seconds
+ * Workers keeps `waitUntil` alive.
+ */
 const CATALOG_REFRESH_TIMEOUT_MS = 20_000;
+/** The end of that tail no listing may use: the record's settlement, then connector cleanup. */
+const REFRESH_SETTLE_MS = 1_000;
+const REFRESH_CLOSE_MS = 2_000;
 /**
  * Failures that say the connector did not answer, so its last complete catalog
  * can stand in for the listing. Auth and permission failures, refusals and
@@ -484,10 +491,15 @@ interface CatalogSearchFailure extends CatalogFailureDetail {
 
 /** Fixed text and typed facts only: nothing here comes from the connector. */
 function staleCatalogFailure(connector: string, stale: CatalogStaleness): CatalogSearchFailure {
+  // A downstream that asked for time gets it: asking now would only be refused again.
+  const advice =
+    stale.code === "rate_limited" || stale.downstreamWait
+      ? `Wait${stale.retryAfterMs === undefined ? "" : ` ${stale.retryAfterMs} ms`} before searching with connector "${connector}".`
+      : `Search with connector "${connector}" to try it now.`;
   return {
     connector,
     code: stale.code,
-    message: `Connector "${connector}" did not answer discovery (${stale.code}), so its tools are listed from its last complete catalog. Calls still check the live catalog. Search with connector "${connector}" to try it now.`,
+    message: `Connector "${connector}" did not answer discovery (${stale.code}), so its tools are listed from its last complete catalog. Calls still check the live catalog. ${advice}`,
     retryable: true,
     ...(stale.retryAfterMs === undefined ? {} : { retryAfterMs: stale.retryAfterMs }),
     stale: true,
@@ -1045,15 +1057,11 @@ export class CatalogService {
     id: string,
     peek: CatalogPeek,
     includeWrites: boolean,
-    failure: { code: string; retryAfterMs?: number },
+    failure: Omit<CatalogStaleness, "ageMs">,
   ): ToolDef[] {
     const source = markCatalogStale(
       peek.tools.map((tool) => cloneTool(tool)),
-      {
-        code: failure.code,
-        ageMs: Math.max(0, Date.now() - peek.fetchedAt),
-        ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs }),
-      },
+      { ...failure, ageMs: Math.max(0, Date.now() - peek.fetchedAt) },
     );
     return this.searchView(id, source, includeWrites, "all");
   }
@@ -1067,22 +1075,36 @@ export class CatalogService {
    * a partial walk publishes nothing (INV-8) and no authorization starts
    * (INV-10). The health record's lease keeps other requests from starting
    * another while this one runs, and its result settles that record.
+   *
+   * Every step answers to one clock, started as it is scheduled, so queueing,
+   * a slow claim and a slow settlement spend the same tail. Waiting on storage
+   * stops at its limit; a write already sent is left to land or to lapse.
    */
   private refreshLater(id: string, slot: HealthSlot, spentMs: number): void {
-    const timeoutMs = Math.min(this.probeTimeoutMs, CATALOG_REFRESH_TIMEOUT_MS);
-    if (!this.defer || this.refreshed.has(id) || timeoutMs <= spentMs) return;
+    const tailMs = Math.min(this.probeTimeoutMs, CATALOG_REFRESH_TIMEOUT_MS);
+    const closeMs = Math.min(REFRESH_CLOSE_MS, Math.floor(tailMs / 4));
+    const settleMs = Math.min(REFRESH_SETTLE_MS, Math.floor(tailMs / 4));
+    if (!this.defer || this.refreshed.has(id) || tailMs - closeMs - settleMs <= spentMs) return;
     this.refreshed.add(id);
     const scope = {};
     const connector = this.registry.getConnector(id);
-    // Measured from now: time queued behind other refreshes counts, so every
-    // refresh of this request ends inside the runtime's tail.
-    const endsAt = Date.now() + timeoutMs;
+    const endsAt = Date.now() + tailMs;
+    const listEnd = endsAt - closeMs - settleMs;
+    const timeoutError = new ConnectorCallError("timeout", `catalog refresh of "${id}" timed out`);
+    const until = <A>(limit: number, storage: Effect.Effect<A>, otherwise: A): Effect.Effect<A> =>
+      Effect.suspend(() =>
+        limit <= Date.now()
+          ? Effect.succeed(otherwise)
+          : withDeadlineEffect(() => storage, { timeoutMs: limit - Date.now(), timeoutError }).pipe(
+              Effect.catchCause(() => Effect.succeed(otherwise)),
+            ),
+      );
     const refresh = Effect.gen({ self: this }, function* () {
-      const timeoutMs = endsAt - Date.now();
-      if (timeoutMs <= 0) return;
-      const claimed = yield* claimDiscoveryProbe(slot, endsAt + CLAIM_MARGIN_MS);
-      if (!claimed || !connector) return;
-      const timeoutError = new ConnectorCallError("timeout", `catalog refresh of "${id}" timed out`);
+      const claimed = yield* until(listEnd, claimDiscoveryProbe(slot, endsAt + CLAIM_MARGIN_MS), false);
+      // Only what the claim left: a claim that spent it all dispatches nothing,
+      // and its lease lapses by itself.
+      const timeoutMs = listEnd - Date.now();
+      if (!claimed || !connector || timeoutMs <= 0) return;
       const started = Date.now();
       const result = yield* Effect.result(
         withDeadlineEffect(
@@ -1095,16 +1117,20 @@ export class CatalogService {
           { timeoutMs, timeoutError },
         ),
       );
-      yield* settleDiscoveryHealth(
-        slot,
-        Result.isSuccess(result)
-          ? { ok: true }
-          : {
-              ok: false,
-              failure: result.failure,
-              timedOut: result.failure === timeoutError,
-              elapsedMs: Date.now() - started,
-            },
+      yield* until(
+        endsAt - closeMs,
+        settleDiscoveryHealth(
+          slot,
+          Result.isSuccess(result)
+            ? { ok: true }
+            : {
+                ok: false,
+                failure: result.failure,
+                timedOut: result.failure === timeoutError,
+                elapsedMs: Date.now() - started,
+              },
+        ),
+        undefined,
       );
     });
     this.refreshSlots ??= Semaphore.makeUnsafe(this.concurrency);
@@ -1254,19 +1280,23 @@ export class CatalogService {
               : undefined;
           const verdict = scoped ? undefined : this.health.get(id);
           const skip = verdict?.skip;
-          const staleAnswer = (failure: { code: string; retryAfterMs?: number }) =>
+          // A peek is only as good as the moment it was read. After any wait for
+          // a slot or a probe it is read again, through every acceptance fence,
+          // so an invalidation, a rotated credential or a refusal in the
+          // meantime retires it, in this isolate or another.
+          const staleAnswer = (failure: Omit<CatalogStaleness, "ageMs">, waited = true) =>
             Effect.gen({ self: this }, function* () {
               // Caller cancellation is not a connector that failed to answer.
               if (scoped || this.requestSignal?.aborted) return undefined;
-              // A custom connector's first peek, or another try at one that ran out of time.
-              peek ??= yield* this.peek(id, STALE_READ_TIMEOUT_MS);
+              if (waited) this.peeks.delete(id);
+              if (waited || !peek) peek = yield* this.peek(id, STALE_READ_TIMEOUT_MS);
               return peek ? this.staleListing(id, peek, includeWrites, failure) : undefined;
             });
           if (skip && skip.retryAt > Date.now() && !peek?.fresh) {
             const retryAfterMs = Math.ceil(skip.retryAt - Date.now());
             // Discovery health records only timeouts and retryable failures.
             if (staleListingAllowed(skip.code, true)) {
-              const stale = yield* staleAnswer({ code: skip.code, retryAfterMs });
+              const stale = yield* staleAnswer({ code: skip.code, retryAfterMs }, false);
               if (stale) return { id, result: Result.succeed(stale) };
             }
             // A native listing has no search to come back through: it still asks.
@@ -1351,15 +1381,22 @@ export class CatalogService {
           // A probe that ran out of time: its abort left nothing cached, so ask
           // again past this request, under the longer deadline the runtime's tail allows.
           if (failure === plan.timeoutError && !plan.budgetCut) {
-            const slot = this.health.get(id)?.slot;
-            if (slot) this.refreshLater(id, slot, plan.timeoutMs);
+            // Only the request whose settlement recorded this: anyone else lost
+            // to a record that already has an owner, or wrote nothing at all.
+            const recorded = this.health.get(id);
+            if (recorded?.slot && recorded.recorded) this.refreshLater(id, recorded.slot, plan.timeoutMs);
           }
-          const classified =
+          const classified: Pick<CallErrorDetails, "code" | "retryable" | "retryAfterMs"> =
             failure === plan.timeoutError
               ? { code: "timeout", retryable: true }
               : classifyCallError(failure, "catalog_lookup_failed");
           if (staleListingAllowed(classified.code, classified.retryable)) {
-            const stale = yield* staleAnswer({ code: classified.code });
+            const stale = yield* staleAnswer({
+              code: classified.code,
+              ...(classified.retryAfterMs === undefined
+                ? {}
+                : { retryAfterMs: classified.retryAfterMs, downstreamWait: true as const }),
+            });
             if (stale) return { id, result: Result.succeed(stale) };
           }
           return { id, result };

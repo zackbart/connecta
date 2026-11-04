@@ -155,6 +155,7 @@ export function remoteMcpConnection(
   | "requestOptions"
   | "cachedCatalog"
   | "peekCatalog"
+  | "fenceCatalog"
   | "cacheOwner"
   | "reset"
   | "states"
@@ -463,7 +464,7 @@ export function remoteMcpConnection(
    * same cache through the SDK, so it skips this read. What was already read
    * is handed to that connect, so a resolver runs once per listing.
    */
-  const readCatalog = authMethod((ctx: ConnectorContext, peek: boolean) =>
+  const readCatalog = authMethod((ctx: ConnectorContext, use: "list" | "peek" | "fence") =>
     authFlow<Preread & { tools?: Tool[]; peek?: CatalogPeekEntry }>(function* () {
       const principal = principalPolicy
         ? requestPrincipalFor(
@@ -505,7 +506,7 @@ export function remoteMcpConnection(
             }),
           );
         }
-        if (opts.versionNegotiation !== "legacy") {
+        if (opts.versionNegotiation !== "legacy" && use !== "fence") {
           const digest = (yield authCall(negotiationKey, [ctx, credentialDigest, epoch])) as string;
           // Both reads only locate cached data. Acceptance and dispatch keep
           // their fresh generation and credential checks.
@@ -520,7 +521,7 @@ export function remoteMcpConnection(
           ]);
           const prior = (yield authCall(readNegotiation, [ctx, digest])) as PriorDiscovery | undefined;
           preread.negotiation = { digest, prior };
-          if (prior?.kind === "modern" && !peek) return preread;
+          if (prior?.kind === "modern" && use === "list") return preread;
         }
         const cache = (yield authCall(catalogClientOptions, [
           ctx,
@@ -533,7 +534,11 @@ export function remoteMcpConnection(
           identity,
           true,
         ])) as Awaited<ReturnType<typeof catalogClientOptions>>;
-        if (peek) {
+        if (use === "fence") {
+          (yield authInvoke(cache, "fenceTools", [ctx])) as void;
+          return preread;
+        }
+        if (use === "peek") {
           const entry = (yield authInvoke(cache, "peekTools", [ctx])) as CatalogPeekEntry | undefined;
           return entry ? { ...preread, peek: entry } : preread;
         }
@@ -557,7 +562,7 @@ export function remoteMcpConnection(
     authFlow<CatalogPeekEntry | undefined>(function* () {
       // A connector known to need authorization is never listed from a cache.
       if (stateFor(ctx).authRequired) return undefined;
-      const read = (yield authCall(readCatalog, [ctx, true])) as Preread & { peek?: CatalogPeekEntry };
+      const read = (yield authCall(readCatalog, [ctx, "peek"])) as Preread & { peek?: CatalogPeekEntry };
       peeks.set(ctx.requestScope ?? ctx, { identity: retainedCatalogIdentity(ctx), read });
       return read.peek;
     }),
@@ -568,7 +573,7 @@ export function remoteMcpConnection(
       const handed = peeks.get(scope);
       peeks.delete(scope);
       if (!handed || handed.identity !== retainedCatalogIdentity(ctx))
-        return (yield authCall(readCatalog, [ctx, false])) as Preread & { tools?: Tool[] };
+        return (yield authCall(readCatalog, [ctx, "list"])) as Preread & { tools?: Tool[] };
       const { peek, ...preread } = handed.read;
       if (!peek || peek.expiresAt <= Date.now()) return preread;
       // The listing's own view keeps the provenance a direct read would record.
@@ -580,6 +585,19 @@ export function remoteMcpConnection(
         peek.expiresAt,
       );
       return { tools: peek.result.tools };
+    }),
+  );
+
+  // After a refusal, addressed exactly as the peek it must stop. It never masks
+  // the refusal: a credential that cannot be read has no catalog a peek could
+  // reach, and a storage failure was logged where it happened.
+  const fenceCatalog = authMethod((ctx: ConnectorContext) =>
+    authFlow<void>(function* () {
+      try {
+        (yield authCall(readCatalog, [ctx, "fence"])) as unknown;
+      } catch {
+        return;
+      }
     }),
   );
 
@@ -1030,6 +1048,7 @@ export function remoteMcpConnection(
     requestOptions,
     cachedCatalog,
     peekCatalog,
+    fenceCatalog,
     cacheOwner,
     reset,
     states,

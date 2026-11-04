@@ -25,7 +25,7 @@ import {
   observeCatalogExpiry,
   type CatalogPeekEntry,
 } from "../../catalog-cache.js";
-import { ConnectorCallError, msg } from "../../errors.js";
+import { ConnectorCallError, isAccessRefusal, msg } from "../../errors.js";
 import { carryFailureFacts, failureRecord, logFailure } from "../../operator-record.js";
 import { assertDownstreamOutputSafe } from "../../downstream-input-context.js";
 import type { ConnectorCatalogPeek, ConnectorContext, ToolDef } from "../../types.js";
@@ -385,6 +385,8 @@ export function remoteMcpCatalog(
   const listToolsOperation = authMethod((ctx: ConnectorContext) =>
     authFlow<ToolDef[]>(function* () {
       const state = rt.stateFor(ctx);
+      // Known already, from a refusal this request has fenced.
+      const refused = state.authRequired;
       // Without a connection in this scope, a complete cached catalog is
       // served as it stands. A live connection reads the same cache through
       // the SDK, and a credential test always lists live.
@@ -395,7 +397,14 @@ export function remoteMcpCatalog(
       let clean: ListToolsResult["tools"];
       if (cached.tools) clean = redactCatalog(ctx, cached.tools);
       else {
-        const client = (yield authCall(rt.ensureConnected, [ctx, state, cached])) as Client;
+        let client: Client;
+        try {
+          client = (yield authCall(rt.ensureConnected, [ctx, state, cached])) as Client;
+        } catch (err) {
+          if (!refused && (requiresAuthorization(err) || isAccessRefusal(err)))
+            (yield authCall(rt.fenceCatalog, [ctx])) as void;
+          throw err;
+        }
         // A credential test must observe the downstream answer itself, never
         // the SDK cache a modern connection reads without any request.
         const options: CacheableRequestOptions = {
@@ -409,6 +418,8 @@ export function remoteMcpCatalog(
         } catch (err) {
           if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
           const bounded = rt.atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
+          if (!refused && (requiresAuthorization(bounded) || isAccessRefusal(bounded)))
+            (yield authCall(rt.fenceCatalog, [ctx])) as void;
           if (requiresAuthorization(bounded)) {
             if (state.client === client) state.authRequired = true;
             if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, rt.authRequiredError(ctx));

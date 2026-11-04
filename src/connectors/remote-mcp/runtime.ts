@@ -77,6 +77,7 @@ export interface RemoteMcpShared {
   closeHalf: (state: ConnectionState) => void;
   cachedCatalog: (ctx: ConnectorContext) => Promise<Preread & { tools?: Tool[] }>;
   peekCatalog: (ctx: ConnectorContext) => Promise<CatalogPeekEntry | undefined>;
+  fenceCatalog: (ctx: ConnectorContext) => Promise<void>;
   ensureConnected: (ctx: ConnectorContext, state: ConnectionState, preread?: Preread | undefined) => Promise<Client>;
   // ./oauth.ts
   boundOAuthFlows: (

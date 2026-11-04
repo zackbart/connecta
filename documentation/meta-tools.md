@@ -802,7 +802,9 @@ connector's last complete catalog if the same owner, credential and catalog
 generation have one no more than 24 hours past its expiry. Its `catalogErrors`
 entry then adds `stale: true` and `ageMs`, the milliseconds since the downstream
 last confirmed that catalog, and keeps `code`, `retryable` and any
-`retryAfterMs`:
+`retryAfterMs`. A downstream's own retry delay stays as it named it, and the
+message then says to wait rather than to search again. A skipped connector's
+`retryAfterMs` is when discovery next asks it, at most 60 seconds:
 
 ```json
 {
@@ -823,6 +825,15 @@ stale listing as they do to a live one. Authorization and permission failures,
 refusals and malformed catalogs never list a stale catalog, and a partial catalog
 is never stored or listed. An entry without `stale` lists no tools for that
 connector. `queryAnalysis.catalogError` holds failures only.
+
+An authorization or permission refusal also retires that credential's catalog
+for later requests, in every isolate: it is neither listed nor reused, fresh or
+stale, by discovery or by a call's five-minute fallback, until a listing
+succeeds. On a connector with a shared credential this covers everyone using
+that credential; on any other connector, only the caller refused. A credential
+change, OAuth connect or disconnect, or operator invalidation has the same effect
+at once for every owner. A stale listing is read again after its probe fails, so
+any of these during the probe also takes the tools out of that search.
 
 `total` counts this response's matches. Offsets are stateless, so it stays the
 same across a browse's pages while each catalog is unchanged, including one
@@ -1627,10 +1638,10 @@ complete catalog, under the same limit and partitioning as
 [stale listings](#lexical-discovery). Such a connector gets the 5-second deadline, or
 `discovery.probeTimeoutMs` when shorter, and is skipped for up to 60 seconds after
 a failure; one with nothing to fall back on keeps the full deadline. Each of its
-tools carries `_meta["dev.connecta/stale"]` with `code` and `ageMs`, and
-`readOnlyHint: false, destructiveHint: true` whatever its stored classification,
-because an old catalog cannot vouch for a read (INV-1). The `skills` tool's
-`dev.connecta/surface` metadata names these connectors in `staleCatalogs`. A
+tools carries `_meta["dev.connecta/stale"]` with `code`, `ageMs` and any
+`retryAfterMs`, and `readOnlyHint: false, destructiveHint: true` whatever its stored
+classification, because an old catalog cannot vouch for a read (INV-1). The `skills`
+tool's `dev.connecta/surface` metadata names these connectors in `staleCatalogs`. A
 `tools/call` always resolves a live catalog, under the verdict it finds.
 
 A connector whose catalog cannot load and has no stale catalog, or that fails
@@ -1672,8 +1683,9 @@ connectors remain listed. Correct the schema or use the meta surface.
 
 **Diagnostics.** `connecta doctor --pool assistant` recognizes the configured
 surface and code setting from the local `skills` tool's
-`_meta["dev.connecta/surface"]`. It checks the required local tools, reports
-unavailable connector catalogs and listing-cap errors, and runs only a constant
+`_meta["dev.connecta/surface"]`. It checks the required local tools, fails on
+unavailable connector catalogs, listing-cap errors and connectors listed stale
+(`Native discovery degraded`), and runs only a constant
 program when code is enabled. It never dispatches a downstream tool. The
 metadata's `catalogErrors` exposes this request's failing connector ids,
 including connectors with unrepresentable schemas, to every client of the pool.
