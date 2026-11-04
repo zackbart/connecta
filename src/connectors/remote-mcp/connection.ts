@@ -830,26 +830,27 @@ export function remoteMcpConnection(
           ),
         );
         if (!owned()) return yield* Effect.fail(rt.scopeEndedError());
-        // What a refused handshake refuses: the credential this attempt sends
-        // and its generation, as they are now. Without a usable binding there is
-        // no catalog to retire (an OAuth grant with no tokens has none).
+        // The generation a refused handshake is about, as it is now. Read from
+        // this connect's memo, so a connect that is not refused costs no I/O.
         const handshakeBinding = yield* promised(
-          authMethod(() =>
-            authFlow<ListingBinding | undefined>(function* () {
-              let pinned: string | undefined;
-              if (provider) {
-                const grant = (yield authInvoke(provider, "peekGrant", [])) as { epoch: string; tokens?: OAuthTokens };
-                if (grant.epoch !== genAtStart || !grant.tokens) return undefined;
-                pinned = yield authCall<string>(secretDigest, [ctx, JSON.stringify(grant.tokens)]);
-              }
-              return (yield authInvoke(cacheOptions, "bindListing", [
-                ctx,
-                { credentialIdentity: pinned },
-              ])) as ListingBinding;
-            }),
-          ),
+          authMethod(() => authInvoke(cacheOptions, "bindListing", [ctx, { credentialIdentity: undefined }])),
         ).pipe(Effect.catch(() => Effect.succeed(undefined)));
         if (!owned()) return yield* Effect.fail(rt.scopeEndedError());
+        // What the attempt sent, in memory: never the grant as it is by now. A
+        // provider that read no tokens in this epoch sent none and has no catalog.
+        const fenceHandshake = authMethod(() =>
+          authFlow<void>(function* () {
+            let credentialIdentity: string | undefined;
+            if (provider) {
+              if (!provider.observedTokens || provider.observed?.epoch !== genAtStart) return;
+              credentialIdentity = yield authCall<string>(secretDigest, [ctx, JSON.stringify(provider.observedTokens)]);
+            }
+            (yield authInvoke(cacheOptions, "fenceTools", [
+              ctx,
+              { ...(handshakeBinding as ListingBinding), credentialIdentity },
+            ])) as void;
+          }),
+        );
         const makeClient = () => {
           const {
             intake: _intake,
@@ -961,9 +962,7 @@ export function remoteMcpConnection(
           // the failure after it, and it never replaces the refusal.
           Effect.tapError((error) =>
             handshakeBinding && (requiresAuthorization(error) || isAccessRefusal(error))
-              ? (authInvoke(cacheOptions, "fenceTools", [ctx, handshakeBinding]) as Effect.Effect<void, unknown>).pipe(
-                  Effect.catch(() => Effect.void),
-                )
+              ? promised(fenceHandshake).pipe(Effect.catch(() => Effect.void))
               : Effect.void,
           ),
         );

@@ -2812,6 +2812,43 @@ describe("pre-connect cached catalogs", () => {
     return { store, downstream, grantKey, grant, search };
   }
 
+  it("INV-5: a refused OAuth handshake fences the tokens it sent, not the grant current when it answers", async () => {
+    const d = await oauthDeployment();
+    const time = { now: Date.now() };
+    vi.spyOn(Date, "now").mockImplementation(() => time.now);
+    await d.grant("access-1");
+    expect((await d.search()).entries).toHaveLength(1);
+    await d.grant("access-2");
+    expect((await d.search()).entries).toHaveLength(1);
+    await d.grant("access-1");
+    time.now += 301_000;
+    const started = deferred<void>();
+    const released = deferred<void>();
+    let refuse = true;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (!refuse) return new Response(null, { status: 503 });
+      started.resolve();
+      await released.promise;
+      return new Response("Refused", { status: 403 });
+    });
+    const refused = d.search();
+    await started.promise;
+    await d.grant("access-2");
+    released.resolve();
+    expect((await refused).catalogErrors).toEqual([expect.objectContaining({ code: "provider_permission_denied" })]);
+    refuse = false;
+    // The next searches have no answer, so what they list is what stands in for each grant.
+    time.now += 61_000;
+    const unrefused = await d.search();
+    expect(unrefused.entries).toHaveLength(1);
+    expect(unrefused.catalogErrors[0]).toMatchObject({ stale: true });
+    await d.grant("access-1");
+    time.now += 61_000;
+    const fenced = await d.search();
+    expect(fenced.entries).toEqual([]);
+    expect(fenced.catalogErrors[0]?.stale).toBeUndefined();
+  });
+
   it.each([
     ["path", (token: string) => `https://client.test/${encodeURIComponent(token)}/client.json`],
     ["query", (token: string) => `https://client.test/connecta/client.json?key=${token}`],
