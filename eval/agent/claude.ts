@@ -59,7 +59,8 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       "--model",
       options.model,
       "--tools",
-      "",
+      // ToolSearch is on by default in real Claude Code; it defers MCP schemas.
+      "ToolSearch",
       "--setting-sources",
       "",
       "--disable-slash-commands",
@@ -72,6 +73,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
           "cc-plugin-agents-md@builtin": false,
           "cc-plugin-telemetry@builtin": false,
           "cc-plugin-plugin-authoring@builtin": false,
+          "cc-plugin-privacy@builtin": false,
         },
       }),
       "--strict-mcp-config",
@@ -83,7 +85,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       "--permission-prompts",
       "none",
       "--allowedTools",
-      options.allowedTools.map((tool) => `mcp__connecta__${tool}`).join(","),
+      ["ToolSearch", ...options.allowedTools.map((tool) => `mcp__connecta__${tool}`)].join(","),
       ...(options.deniedTools.length
         ? ["--disallowedTools", options.deniedTools.map((tool) => `mcp__connecta__${tool}`).join(",")]
         : []),
@@ -152,7 +154,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
           // tool, unrelated server, or retired meta-tool is allowed.
           assertSurface(
             [
-              ...loadedTools,
+              ...loadedTools.filter((tool) => tool !== "ToolSearch"),
               ...options.deniedTools.map((t) => `mcp__connecta__${t}`).filter((t) => !loadedTools.includes(t)),
             ],
             options.surface,

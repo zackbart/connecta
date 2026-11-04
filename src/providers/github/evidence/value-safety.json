@@ -3301,8 +3301,41 @@
         "workflow_runs[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
         "workflow_runs[].repository.temp_clone_token"
       ],
+      "GET /repos/{owner}/{repo}/check-suites/{check_suite_id}": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
       "GET /repos/{owner}/{repo}/commits": ["[].commit.verification.signature"],
       "GET /repos/{owner}/{repo}/commits/{ref}": ["commit.verification.signature"],
+      "GET /repos/{owner}/{repo}/commits/{ref}/check-suites": [
+        "check_suites[].repository.security_and_analysis.advanced_security",
+        "check_suites[].repository.security_and_analysis.secret_scanning",
+        "check_suites[].repository.security_and_analysis.secret_scanning_ai_detection",
+        "check_suites[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "check_suites[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "check_suites[].repository.temp_clone_token"
+      ],
+      "GET /repos/{owner}/{repo}/commits/{ref}/status": [
+        "repository.security_and_analysis.advanced_security",
+        "repository.security_and_analysis.secret_scanning",
+        "repository.security_and_analysis.secret_scanning_ai_detection",
+        "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+        "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+        "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+        "repository.temp_clone_token"
+      ],
       "GET /repos/{owner}/{repo}/compare/{basehead}": [
         "base_commit.commit.verification.signature",
         "commits[].commit.verification.signature",

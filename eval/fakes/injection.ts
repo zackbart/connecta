@@ -14,7 +14,9 @@
  * Their requests never enter the world's ledger; graders see only the task's
  * own vendors.
  */
+import { catalogServices } from "./catalog.js";
 import { serveFetch, type Served } from "../support/serve.js";
+import { Ledger, type CallRecord } from "./service.js";
 import type { ConnectorSpec } from "./world.js";
 
 export interface Injection {
@@ -22,6 +24,7 @@ export interface Injection {
   hungConnector: boolean;
   unauthorizedConnector: boolean;
   d1LatencyMs: number;
+  catalogTools: number;
 }
 
 export const NO_INJECTION: Injection = Object.freeze({
@@ -29,6 +32,7 @@ export const NO_INJECTION: Injection = Object.freeze({
   hungConnector: false,
   unauthorizedConnector: false,
   d1LatencyMs: 0,
+  catalogTools: 0,
 });
 
 const HUNG_CONNECTOR = "stalled";
@@ -70,12 +74,14 @@ export function parseInjection(args: Map<string, string>): Injection {
     hungConnector: toggle("hung-connector"),
     unauthorizedConnector: toggle("unauthorized-connector"),
     d1LatencyMs: ms("d1-latency-ms"),
+    catalogTools: ms("catalog-tools"),
   };
 }
 
 export function describeInjection(injection: Injection): string {
   if (!isInjected(injection)) return "no injection";
   return [
+    injection.catalogTools ? `catalog padding ${injection.catalogTools} tools` : "",
     injection.latencyMs ? `downstream latency ${injection.latencyMs} ms` : "",
     injection.hungConnector ? `hung connector ${HUNG_CONNECTOR}` : "",
     injection.unauthorizedConnector ? `401 connector ${UNAUTHORIZED_CONNECTOR}` : "",
@@ -87,12 +93,19 @@ export function describeInjection(injection: Injection): string {
 
 /** The injected connectors' servers, owned by one world. */
 export class InjectedConnectors {
+  private readonly catalog;
+  private readonly catalogLedger = new Ledger();
+  /** Calls to catalog padding, kept out of the world's ledger; graders read them separately. */
+  readonly catalogCalls: CallRecord[] = this.catalogLedger.calls;
   private hung?: Served;
   hungRequests = 0;
   private revoked?: Served;
-  constructor(private readonly injection: Injection) {}
+  constructor(private readonly injection: Injection) {
+    this.catalog = catalogServices(injection.catalogTools ?? 0, this.catalogLedger);
+  }
 
   async start(): Promise<void> {
+    await Promise.all(this.catalog.map((service) => service.start()));
     if (this.injection.hungConnector)
       this.hung = await serveFetch(() => {
         this.hungRequests++;
@@ -109,11 +122,17 @@ export class InjectedConnectors {
   }
 
   async stop(): Promise<void> {
-    await Promise.all([this.hung?.close(), this.revoked?.close()]);
+    await Promise.all([this.hung?.close(), this.revoked?.close(), ...this.catalog.map((service) => service.stop())]);
   }
 
   specs(): ConnectorSpec[] {
     return [
+      ...this.catalog.map((service) => ({
+        id: service.name,
+        title: service.name,
+        description: service.description,
+        url: service.url,
+      })),
       ...(this.hung
         ? [
             {

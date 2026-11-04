@@ -244,18 +244,21 @@ export function routeToolInPlace(
   }
 }
 
-const programRouteConfigs = new WeakMap<object, true>();
+const programRouteConfigs = new WeakMap<object, AgentRouteNames>();
 
 /**
  * Eval only: serve this configuration's text with program-form route names.
  * No package entry exports it and no configuration key selects it; the eval
  * code arm marks the configuration object it passes to createConnecta.
  */
-export function renderRoutesAsPrograms(config: object): void {
-  programRouteConfigs.set(config, true);
+export function renderRoutesAsPrograms(config: object, searchOnly = false): void {
+  programRouteConfigs.set(
+    config,
+    searchOnly ? { ...META_ROUTES, search: routeNames("code").search } : routeNames("code"),
+  );
 }
 
 /** The names every reply of a deployment built from `config` uses outside native pools. */
 export function deploymentRoutes(config: object): AgentRouteNames {
-  return programRouteConfigs.has(config) ? routeNames("code") : META_ROUTES;
+  return programRouteConfigs.get(config) ?? META_ROUTES;
 }
