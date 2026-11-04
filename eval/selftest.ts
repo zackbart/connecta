@@ -512,9 +512,9 @@ async function play(
           });
           mutate("wrong host mode", (saved) => {
             saved.trace.urlElicitations =
-              task.host?.urlElicitation === "capable" ? [] : [{ connector: "oauth", action: "accept", url: "wrong" }];
+              task.host?.urlElicitation === "incapable" ? [{ connector: "oauth", action: "accept", url: "wrong" }] : [];
           });
-          if (task.host?.urlElicitation === "incapable")
+          if (task.host?.urlElicitation !== "capable")
             mutate("missing agent auth handoff", (saved) => {
               saved.trace.transcript = saved.trace.transcript.filter(
                 (e) => e.kind !== "assistant" || !e.text.includes("/connect/oauth"),
@@ -816,8 +816,8 @@ if (only) process.exit();
       throw new Error("Code tool descriptions differ from the registered guidance");
     for (const name of ["usage", "skill://connecta/usage", "skill://connecta/usage/SKILL.md"]) {
       const direct = await session.call("skills", { name });
-      if (direct.text !== CODE_USAGE || (direct.structured as { text: string }).text !== CODE_USAGE)
-        throw new Error(`Code usage text/structured parity failed for ${name}`);
+      if (direct.text !== CODE_USAGE || direct.structured !== undefined)
+        throw new Error(`Code usage is not text-only for ${name}`);
       const guest = await session.call("execute_code", {
         code: `async () => await connecta.skill(${JSON.stringify(name)})`,
       });
@@ -839,11 +839,10 @@ if (only) process.exit();
       }),
     ]) {
       if (hidden.test(result.text)) throw new Error("Code skill/error leaked a hidden route");
-      const textValue = result.isError
-        ? JSON.parse(result.text)
-        : { name: "connector:revenuecat", format: "text", text: result.text };
-      if (JSON.stringify(textValue) !== JSON.stringify(result.structured))
-        throw new Error("Connector skill/error text and structured guidance differ");
+      if (result.isError) {
+        if (JSON.stringify(JSON.parse(result.text)) !== JSON.stringify(result.structured))
+          throw new Error("Error text and structured envelope differ");
+      } else if (result.structured !== undefined) throw new Error("Connector guidance is not text-only");
     }
     const refusal = await session.call("execute_code", {
       code: 'async () => await connecta.call("tracker.close_issue", { id: "WEB-105" })',

@@ -145,14 +145,10 @@ export interface ProviderGuideBlocks<O> {
 export interface ProviderKitFacts {
   /** `manifest(vendor)`: every operation the provider's tools send, as `"METHOD /path"`. */
   readonly operations: readonly string[];
-  /** The `limit` default and maximum every paged read declares. */
-  readonly pageSize?: { readonly default: number; readonly max: number };
   /** The hatch's tool prefix and its reviewed verdict per `"METHOD /path"`. */
   readonly hatch?: {
     readonly name: string;
     readonly verdicts: Readonly<Record<string, "read" | "write" | "destructive" | "refuse">>;
-    /** Separate-cursor paging opts into the generated hatch paging convention. */
-    readonly paging?: "argument" | "parameter";
     readonly fieldsRoot?: string;
   };
   /**
@@ -167,12 +163,6 @@ export interface ProviderKitFacts {
   };
   /** Whether a write takes an idempotency key the vendor honors, checked against the built tools. */
   readonly idempotencyKey?: boolean;
-  /**
-   * Set only when the hatch refuses a write carrying a withheld placeholder
-   * value; the Withheld values convention promises exactly that. The kit sets
-   * it for its standard hatch; kit write builders refuse the same markers.
-   */
-  readonly refusesWithheld?: true;
 }
 
 /** Connection facts a provider renders around its maintained guide. */
@@ -296,13 +286,11 @@ function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
   }
   return Object.freeze({
     operations: Object.freeze([...kit.operations]),
-    ...(kit.pageSize ? { pageSize: Object.freeze({ ...kit.pageSize }) } : {}),
     ...(kit.hatch
       ? {
           hatch: Object.freeze({
             name: kit.hatch.name,
             verdicts: Object.freeze({ ...kit.hatch.verdicts }),
-            ...(kit.hatch.paging ? { paging: kit.hatch.paging } : {}),
             ...(kit.hatch.fieldsRoot ? { fieldsRoot: kit.hatch.fieldsRoot } : {}),
           }),
         }
@@ -311,7 +299,6 @@ function kitFacts(kit: ProviderKitFacts): ProviderKitFacts {
       ? { errors: Object.freeze({ ...kit.errors, conflicts: Object.freeze([...kit.errors.conflicts]) }) }
       : {}),
     ...(kit.idempotencyKey !== undefined ? { idempotencyKey: kit.idempotencyKey } : {}),
-    ...(kit.refusesWithheld ? { refusesWithheld: true as const } : {}),
   });
 }
 

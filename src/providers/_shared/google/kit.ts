@@ -10,7 +10,7 @@ import { asRecord, asArray } from "../json.js";
 
 import { Effect, Option } from "effect";
 import { deriveContext } from "../../../derived-context.js";
-import { ConnectorCallError } from "../../../errors.js";
+import { ConnectorCallError, tokenPrefix } from "../../../errors.js";
 import {
   Refusal,
   StatusFailure,
@@ -102,7 +102,7 @@ export function googleErrors(
     detail: ({ status, body }) => {
       const message = asRecord(asRecord(body)["error"])["message"];
       // The body arrives redacted whole, before anything here cuts it.
-      const said = typeof message === "string" ? message.trim().slice(0, 500) : "";
+      const said = typeof message === "string" ? tokenPrefix(message.trim(), 500) : "";
       return said ? `${provider}: ${said}${/[.!?]$/.test(said) ? "" : "."}` : `${provider} returned HTTP ${status}.`;
     },
     classify: [

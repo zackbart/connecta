@@ -100,10 +100,11 @@ function setup(
       action?: string;
       user?: string;
       pool?: string;
+      elicitation?: Record<string, unknown>;
     } = {},
   ) => {
     if (options.native && (name === "call_tool" || name === "call_destructive_tool")) {
-      name = String(args.address).replace(".", "__");
+      name = String(args.address).replace(".", name === "call_tool" ? "__" : "__WRITE__");
       args = args.args as Record<string, unknown>;
     }
     const params = {
@@ -117,7 +118,7 @@ function setup(
       _meta: {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientInfo": { name: "auth-test", version: "1" },
-        "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {} } },
+        "io.modelcontextprotocol/clientCapabilities": { elicitation: opts.elicitation ?? { url: {} } },
       },
     });
     request.headers.set("MCP-Protocol-Version", "2026-07-28");
@@ -162,7 +163,7 @@ describe("native auth URL elicitation", { tags: ["workers"] }, () => {
       const first = (await flow.rpc()).result;
       expect(first.resultType).toBe("input_required");
       for (const [name, args] of [
-        ["service__write", { id: 1 }],
+        ["service__WRITE__write", { id: 1 }],
         ["service__read", { id: 2 }],
       ] as const) {
         const changed = await flow.rpc(name, args, { state: first.requestState, action });
@@ -232,10 +233,16 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     const state = (await first.rpc()).result.requestState;
     expect(state).toBeTypeOf("string");
     const moved = setup({ routed: true, storage, poolName: "other" });
+    const sign = vi.spyOn(moved.vault, "signOAuthHandoff");
+    expect((await moved.rpc(undefined, undefined, { state, action: "decline" })).error).toMatchObject({
+      code: -32602,
+      data: { reason: "invalid_request_state" },
+    });
     expect((await moved.rpc(undefined, undefined, { state, action: "accept" })).error).toMatchObject({
       code: -32602,
       data: { reason: "invalid_request_state" },
     });
+    expect(sign).not.toHaveBeenCalled();
     expect(moved.call).not.toHaveBeenCalled();
   });
 
@@ -248,6 +255,198 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
       expect(retry.structuredContent.error.code).toBe(action === "decline" ? "auth_declined" : "auth_cancelled");
       expect(flow.call).toHaveBeenCalledOnce();
     }
+  });
+
+  it("INV-4 INV-5 INV-10: a refused prompt hands off one identity-checked link and starts nothing", async () => {
+    for (const action of ["decline", "cancel"]) {
+      const flow = setup();
+      const sign = vi.spyOn(flow.vault, "signOAuthHandoff");
+      const first = (await flow.rpc()).result;
+      const retry = (await flow.rpc(undefined, undefined, { state: first.requestState, action })).result;
+      const error = retry.structuredContent.error;
+      expect(retry.isError).toBe(true);
+      expect(error).toMatchObject({
+        code: action === "decline" ? "auth_declined" : "auth_cancelled",
+        retryable: false,
+        connector: "service",
+        recovery: "oauth",
+        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=v4.`),
+        nextAction: { url: error.authorizationUrl, purpose: expect.stringMatching(/once.*stop/s) },
+      });
+      // Neither claims a person refused nor invites another prompt.
+      expect(error.message).toMatch(/possibly automatically/);
+      expect(error.message).not.toMatch(/^Connection was/);
+      expect(error.authorizationUrl).not.toBe(first.inputRequests.connecta_auth.params.url);
+      expect(JSON.stringify(retry)).not.toMatch(/alice|DOWNSTREAM_PRIVATE_TEXT|downstream\.test|authorize_connector/);
+      // Issuing the link dispatches nothing and starts no consent.
+      expect(flow.call).toHaveBeenCalledOnce();
+      expect(flow.connector.startAuth).not.toHaveBeenCalled();
+      expect(sign).toHaveBeenCalledTimes(2);
+
+      // The state stays one-shot, so a client cannot farm links from one prompt,
+      // and discovery with that state issues none.
+      const replay = await flow.rpc(undefined, undefined, { state: first.requestState, action });
+      expect(replay.result.structuredContent.error.code).toBe("invalid_request_state");
+      const search = await flow.rpc("search_tools", { query: "read" }, { state: first.requestState, action });
+      expect(JSON.stringify(search)).not.toContain("/connect/");
+      expect(sign).toHaveBeenCalledTimes(2);
+
+      const bob = await flow.app.fetch(new Request(error.authorizationUrl, { headers: { Cookie: "__session=bob" } }));
+      expect(bob.status).toBe(403);
+      expect(flow.connector.startAuth).not.toHaveBeenCalled();
+      expect((await flow.browser(error.authorizationUrl)).status).toBeLessThan(400);
+      expect(flow.connector.startAuth).toHaveBeenCalledOnce();
+    }
+  });
+
+  it("INV-4: a refused prompt offers no handoff the caller lacked on an incapable host", async () => {
+    const flow = setup();
+    const ordinary = (await flow.rpc(undefined, undefined, { elicitation: { form: {} } })).result.structuredContent
+      .error;
+    const first = (await flow.rpc()).result;
+    const refused = (await flow.rpc(undefined, undefined, { state: first.requestState, action: "decline" })).result
+      .structuredContent.error;
+    for (const field of ["connector", "recovery", "status", "instructions"])
+      expect(refused[field]).toEqual(ordinary[field]);
+    expect(new URL(refused.authorizationUrl).pathname).toBe(new URL(ordinary.authorizationUrl).pathname);
+    // The agent now sees this link, and the sealed form does not name the principal.
+    expect(new URL(refused.authorizationUrl).searchParams.get("h")).toMatch(/^v4\./);
+    expect(new URL(ordinary.authorizationUrl).searchParams.get("h")).toMatch(/^v3\./);
+  });
+
+  it("INV-4: a refused prompt on a native pool names no route and keeps the handoff", async () => {
+    const flow = setup({ native: true });
+    const first = (await flow.rpc()).result;
+    const retry = (await flow.rpc(undefined, undefined, { state: first.requestState, action: "decline" })).result;
+    const error = retry.structuredContent.error;
+    expect(error.nextAction).toMatchObject({ url: error.authorizationUrl });
+    expect(JSON.parse(retry.content[0].text).error.authorizationUrl).toBe(error.authorizationUrl);
+    expect(JSON.stringify(retry)).not.toMatch(/authorize_connector|search_tools|call_tool/);
+  });
+
+  it("INV-4 INV-5: a refused credential prompt returns the operator handoff without values", async () => {
+    const flow = setup({ credential: true, uiPath: "/operator" });
+    const args = { connector: "service" };
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    const error = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "cancel" })).result
+      .structuredContent.error;
+    expect(error).toMatchObject({
+      code: "auth_cancelled",
+      recovery: "operator_config",
+      operatorUrl: "/operator",
+      credential: { label: "Service token" },
+      nextAction: { url: "/operator" },
+    });
+    expect(error.authorizationUrl).toBeUndefined();
+  });
+
+  it("INV-4 INV-5: a signing failure leaves the refusal without a link", async () => {
+    const flow = setup();
+    const first = (await flow.rpc()).result;
+    vi.spyOn(flow.vault, "signOAuthHandoff").mockRejectedValue(new Error("SIGNING_KEY_PRIVATE_TEXT"));
+    const retry = (await flow.rpc(undefined, undefined, { state: first.requestState, action: "decline" })).result;
+    expect(retry.structuredContent).toEqual({
+      ok: false,
+      error: { code: "auth_declined", message: expect.stringMatching(/possibly automatically/), retryable: false },
+    });
+    expect(JSON.stringify(retry)).not.toContain("SIGNING_KEY_PRIVATE_TEXT");
+  });
+
+  it("INV-4 INV-9: a refused restart keeps its force and never resets a started attempt", async () => {
+    const args = { connector: "service", force: true };
+    const flow = setup();
+    flow.connect();
+    const first = (await flow.rpc("authorize_connector", args)).result;
+    const refused = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "decline" }))
+      .result.structuredContent.error;
+    expect((await flow.browser(refused.authorizationUrl)).status).toBeLessThan(400);
+    expect(flow.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
+
+    const pending = setup();
+    pending.connect();
+    let resume!: () => void;
+    let entered!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    const starting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    vi.mocked(pending.connector.startAuth!).mockImplementationOnce(async () => {
+      entered();
+      await paused;
+      return { state: "auth_required", authorizationUrl: "https://downstream.test/secret" };
+    });
+    const opening = (await pending.rpc("authorize_connector", args)).result;
+    const browser = pending.browser(opening.inputRequests.connecta_auth.params.url);
+    await starting;
+    try {
+      const declined = (
+        await pending.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" })
+      ).result.structuredContent.error;
+      // The pending start owns the reset, so this link waits on it and cannot begin another.
+      expect((await pending.browser(declined.authorizationUrl)).status).toBe(400);
+      expect(pending.connector.startAuth).toHaveBeenCalledOnce();
+    } finally {
+      resume();
+    }
+    await browser;
+  });
+
+  it("INV-4 INV-9: a refused restart leaves one link able to reset, in either visit order", async () => {
+    const args = { connector: "service", force: true };
+    const forcedStarts = (flow: ReturnType<typeof setup>) =>
+      vi.mocked(flow.connector.startAuth!).mock.calls.filter(([, options]) => options?.force === true).length;
+    const refuse = async (flow: ReturnType<typeof setup>) => {
+      flow.connect();
+      const opening = (await flow.rpc("authorize_connector", args)).result;
+      const refused = (await flow.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" }))
+        .result.structuredContent.error;
+      return { original: opening.inputRequests.connecta_auth.params.url as string, fallback: refused.authorizationUrl };
+    };
+
+    // A late visit to the declined prompt's link is refused out loud and resets nothing, so
+    // consent begun from the link the agent relayed survives it, and the restart still runs.
+    const lateOriginal = setup();
+    const first = await refuse(lateOriginal);
+    const denied = await lateOriginal.browser(first.original);
+    expect(denied.status).toBe(400);
+    expect(await denied.json()).toEqual({
+      error: "Invalid or expired connection link. Request a new link from connecta.",
+    });
+    expect(lateOriginal.connector.startAuth).not.toHaveBeenCalled();
+    expect((await lateOriginal.browser(first.fallback)).status).toBe(302);
+    expect((await lateOriginal.browser(first.original)).status).toBe(400);
+    expect(forcedStarts(lateOriginal)).toBe(1);
+
+    const lateFallback = setup();
+    const second = await refuse(lateFallback);
+    expect((await lateFallback.browser(second.fallback)).status).toBe(302);
+    expect((await lateFallback.browser(second.original)).status).toBe(400);
+    expect(forcedStarts(lateFallback)).toBe(1);
+
+    // Another isolate holds nothing but the shared storage, and its visit sees the same retirement.
+    const storage = memoryStorage();
+    const declining = setup({ storage });
+    const isolate = setup({ storage });
+    const third = await refuse(declining);
+    expect((await isolate.browser(third.original)).status).toBe(400);
+    expect(isolate.connector.startAuth).not.toHaveBeenCalled();
+    expect((await isolate.browser(third.fallback)).status).toBe(302);
+    expect(forcedStarts(isolate)).toBe(1);
+    expect(declining.connector.startAuth).not.toHaveBeenCalled();
+
+    // A visit that won before the refusal keeps its reset: the agent's link continues it.
+    const visited = setup();
+    visited.connect();
+    const opening = (await visited.rpc("authorize_connector", args)).result;
+    expect((await visited.browser(opening.inputRequests.connecta_auth.params.url)).status).toBe(302);
+    const continued = (
+      await visited.rpc("authorize_connector", args, { state: opening.requestState, action: "decline" })
+    ).result.structuredContent.error;
+    expect((await visited.browser(continued.authorizationUrl)).status).toBe(302);
+    expect(forcedStarts(visited)).toBe(1);
+    expect(visited.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: false });
   });
 
   it("INV-4: bounds rounds while accept does not claim consent completed", async () => {

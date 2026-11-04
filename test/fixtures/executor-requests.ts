@@ -1,6 +1,7 @@
 import { ownedByThisRequest, requestToken } from "./request-bound-async-resource.js";
-import { createConnecta, type Connector } from "../../src/index.js";
+import { createConnecta, remoteMcp, type Connector } from "../../src/index.js";
 import { workerExecutor } from "../../src/worker.js";
+import { sentSecretsFor } from "../../src/sent-secrets.js";
 import type { AdmittingExecutor } from "../../src/types.js";
 
 interface Env {
@@ -13,6 +14,9 @@ interface Env {
 // uses the Worker executor's default admission; `/tight/mcp` a one-slot pool
 // with a short queue, for refusals.
 let apps: { standard: ReturnType<typeof createConnecta>; tight: ReturnType<typeof createConnecta> } | undefined;
+// A writable endpoint with remote MCP connectors over TCP, and what it logged.
+let writer: ReturnType<typeof createConnecta> | undefined;
+const callFailures: unknown[] = [];
 let executors: { standard: AdmittingExecutor; tight: AdmittingExecutor } | undefined;
 // A host call that ran outside the request owning its program, or failed.
 const failures: string[] = [];
@@ -47,6 +51,31 @@ function probeRoute(url: URL): Response {
     return Response.json({ outcome: requestToken.exit(() => enter(created)) });
   }
   return Response.json({ outcome: probe ? enter(probe) : "no probe" });
+}
+
+// A tool error holding a credential that another connector sends only later in the run.
+const LATE_SECRET = "Zqx79UVW_LATE_SECRET";
+function lateCredentialSource(): Connector {
+  const text = `${"a ".repeat(996)}x${LATE_SECRET}${" trailing ".repeat(10)}`;
+  return {
+    id: "source",
+    kind: "mcp",
+    description: "Answers with a tool error",
+    listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+    callTool: async () => ({ isError: true, content: [{ type: "text", text }] }),
+  };
+}
+function lateCredentialVault(): Connector {
+  return {
+    id: "vault",
+    kind: "api",
+    description: "Sends a credential",
+    listTools: async () => [{ name: "read", annotations: { readOnlyHint: true } }],
+    callTool: async (_name, _args, context) => {
+      sentSecretsFor(context).secret(LATE_SECRET);
+      return { ok: true };
+    },
+  };
 }
 
 function slowConnector(env: Env): Connector {
@@ -112,6 +141,31 @@ function serve(request: Request, url: URL, env: Env, ctx: ExecutionContext): Res
       tight: executors.tight.admissionSnapshot?.(),
       failures,
     });
+  }
+  if (url.pathname === "/call-failures") return Response.json(callFailures);
+  if (url.pathname === "/origin") return Response.json({ origin: env.ORIGIN });
+  if (url.pathname === "/writer/mcp") {
+    writer ??= createConnecta({
+      readOnly: false,
+      publicUrl: "http://localhost",
+      logger: {
+        debug() {},
+        info() {},
+        error() {},
+        warn(message, record) {
+          if (String(message).includes("call failed")) callFailures.push(record);
+        },
+      },
+      executor: executors.standard,
+      connectors: [
+        ...["sequential", "iserror"].map((mode) =>
+          remoteMcp(mode, { url: `${env.ORIGIN}/executor/mcp/${mode}`, description: "Program write fixture" }),
+        ),
+        lateCredentialSource(),
+        lateCredentialVault(),
+      ],
+    });
+    return writer.fetch(new Request(new URL("/mcp", url), request), env, ctx);
   }
   const program = request.headers.get("X-Program");
   if (program) owned.set(program, new AbortController().signal);

@@ -3,7 +3,7 @@ import { pathWithholds } from "../_shared/rest/value-safety.js";
 import { asRecord } from "../_shared/json.js";
 // Breeze's reviewed GET-only vendor. HTTP methods do not establish safety: see tools.ts.
 import { type Context, Effect, Schema } from "effect";
-import { ConnectorCallError, resendAdvice } from "../../errors.js";
+import { ConnectorCallError, resendAdvice, tokenPrefix } from "../../errors.js";
 import { Refusal, type HttpFailure, type VendorErrors, type OperationRef } from "../../http/errors.js";
 import { Credentials, RequestSecrets } from "../../http/services.js";
 import { get, Summary, vendor, type Vendor } from "../../http/vendor.js";
@@ -635,7 +635,7 @@ function shortText(value: unknown, secrets: Context.Service.Shape<typeof Request
   // The kit redacted the answer's values and kept its keys; serialized, a key is text
   // the cut below could split, so the whole text is checked before it is cut.
   const text = secrets.redact(JSON.stringify(value));
-  return text.length > 300 ? `${text.slice(0, 300)}…` : text;
+  return text.length > 300 ? `${tokenPrefix(text, 300)}…` : text;
 }
 
 /**

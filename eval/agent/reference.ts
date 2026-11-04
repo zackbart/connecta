@@ -76,9 +76,7 @@ export async function playReference<T>(
       ? await options.deploy(world)
       : await startDeployment(options.target ?? "node", world, task, surface);
     const hostEvents: StreamEvent[] = [];
-    host = task.host
-      ? await startAuthHost(deployment, task.host.urlElicitation === "capable", (e) => hostEvents.push(e))
-      : undefined;
+    host = task.host ? await startAuthHost(deployment, task.host.urlElicitation, (e) => hostEvents.push(e)) : undefined;
     session = await connectMcp(host?.mcpUrl ?? deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
     if (!task.world?.oauth && !/^cta_[A-Za-z0-9_-]{43}$/.test(deployment.token)) {
       throw new Error("Node eval did not provision a managed machine token");

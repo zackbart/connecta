@@ -85,7 +85,7 @@ export interface ActiveTask {
   /** Omitted tasks stay visible in reports. Explicit opt-in is needed to run them. */
   skip?: { flag: string; reason: string };
   runnerSkips?: Partial<Record<"claude" | "codex", TrialSkip>>;
-  host?: { urlElicitation: "capable" | "incapable" };
+  host?: { urlElicitation: "capable" | "incapable" | "auto-decline" };
   /** What behaviour the task isolates, in one sentence. */
   measures: string;
   world?: WorldOptions;

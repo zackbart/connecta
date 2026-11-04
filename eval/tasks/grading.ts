@@ -236,6 +236,10 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "p5-program-image": { route: ["image-route"], outcome: ["image-delivered"] },
   "p5-auth-url-capable": { route: [], outcome: ["connect-visited", "host-mode", "zero-writes"] },
   "p5-auth-connect-incapable": { route: [], outcome: ["connect-visited", "host-mode", "agent-handoff", "zero-writes"] },
+  "p5-auth-url-auto-decline": {
+    route: [],
+    outcome: ["connect-visited", "host-mode", "agent-handoff", "no-switch", "zero-writes"],
+  },
   // These check actual budget, prerequisite, URI and discovery behavior, not a top-level route.
   "p5-fanout-over-budget": { route: [], outcome: ["bounded-fanout", "terminal-budget", "reads-only"] },
   "p5-revenuecat-text": { route: [], outcome: ["resolved-project", "authoritative-access"] },

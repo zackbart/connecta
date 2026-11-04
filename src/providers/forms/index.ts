@@ -107,6 +107,7 @@ export const forms = defineApiProvider<FormsOptions>({
   errors,
   safety: () => safety,
   probe,
+  blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,

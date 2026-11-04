@@ -162,6 +162,7 @@ function usageGuide(options: Readonly<TithelyOptions>): ProviderGuideInput {
 
 /** A maintained Tithe.ly giving connection over the v1 REST API. */
 export const tithely = defineApiProvider<TithelyOptions>({
+  blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
   name: "tithely",
   title: "Tithe.ly",
   readme: "Tithe.ly",
