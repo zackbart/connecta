@@ -1737,7 +1737,7 @@ describe("stale catalog listing", () => {
       await running.cache.withListing(running.ctx, async () => {
         await running.store.get(running.key);
         const other = await instance();
-        await other.cache.fenceTools(other.ctx);
+        await other.cache.fenceTools(other.ctx, await other.cache.bindListing(other.ctx));
         await publish(running);
       });
       const fenced = await instance();
@@ -1750,6 +1750,336 @@ describe("stale catalog listing", () => {
         await publish(next);
       });
       expect(await read(await instance())).toBeDefined();
+    });
+
+    // Holds the next wire request of this method; it is answered as the mode says once released.
+    const holdNext = (method: string) => {
+      const inner = globalThis.fetch;
+      const started = deferred<void>();
+      const released = deferred<void>();
+      let held = false;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const request = new Request(input, init);
+        const body = request.method === "POST" ? ((await request.clone().json()) as { method?: string }) : undefined;
+        if (!held && body?.method === method) {
+          held = true;
+          started.resolve();
+          await released.promise;
+        }
+        return inner(input, init);
+      });
+      return { started: started.promise, release: () => released.resolve() };
+    };
+
+    it("INV-5 INV-8: a remote listing begun before a refusal elsewhere cannot lift it", async () => {
+      const f = await fixture({ ttl: 1_000 });
+      const time = clock();
+      const root = f.registry();
+      await f.read(root);
+      time.now += 2_000;
+      const hold = holdNext("tools/list");
+      const running = f.read(root);
+      await hold.started;
+      f.mode("error");
+      const refused = await f.discover(f.viewFor(f.registry(f.newConnector())), search, generous);
+      expect(refused.catalogErrors).toEqual([expect.objectContaining({ code: "provider_permission_denied" })]);
+      f.mode("ok");
+      hold.release();
+      await running;
+      f.mode("stalled");
+      const after = await f.discover(f.viewFor(f.registry(f.newConnector())), search);
+      expect(after.entries).toEqual([]);
+      expect(after.catalogErrors[0]?.stale).toBeUndefined();
+    });
+
+    it.each([
+      ["tools/list", "tools/list", "error", {}],
+      ["the handshake", "initialize", "denied", { legacy: true }],
+    ] as const)(
+      "INV-5: a refusal of %s fences the credential that attempt sent, not the one current when it answers",
+      async (_name, method, mode, options) => {
+        const f = await fixture({ ttl: 1_000, ...options });
+        const time = clock();
+        const root = f.registry();
+        await f.read(root);
+        f.rotate(TOKEN_B);
+        await f.read(root);
+        f.rotate(TOKEN_A);
+        time.now += 2_000;
+        f.mode(mode);
+        const hold = holdNext(method);
+        const attempt = f.read(root);
+        await hold.started;
+        f.rotate(TOKEN_B);
+        hold.release();
+        await expect(attempt).rejects.toMatchObject({ code: "provider_permission_denied" });
+        // B was never refused, so its catalog still stands in for it.
+        f.mode("stalled");
+        const unrefused = await f.discover(f.viewFor(root), search);
+        expect(unrefused.entries).toHaveLength(1);
+        expect(unrefused.catalogErrors[0]).toMatchObject({ stale: true });
+        // A was, so neither a later failure nor a timeout brings its catalog back.
+        f.rotate(TOKEN_A);
+        f.mode("transient");
+        await expect(f.read(root)).rejects.toMatchObject({ code: "connector_call_failed" });
+        f.mode("stalled");
+        const fenced = await f.discover(f.viewFor(f.registry(f.newConnector())), search);
+        expect(fenced.entries).toEqual([]);
+        expect(fenced.catalogErrors[0]?.stale).toBeUndefined();
+      },
+    );
+
+    const cacheFixture = async (identity?: () => string) => {
+      const store = await storage();
+      const id = `fence_${crypto.randomUUID().replaceAll("-", "")}`;
+      await invalidateCatalogCache(store, id);
+      const open = async () => {
+        const ctx = { ...connectorContext(store), requestScope: {} };
+        const cache = await catalogClientOptions(
+          ctx,
+          id,
+          "configuration",
+          "grant",
+          undefined,
+          undefined,
+          "private",
+          identity ? async () => identity() : undefined,
+        );
+        const key = { method: "tools/list", partition: JSON.stringify(["server", cache.cachePartition]) };
+        return { ctx, cache, key, store: cache.responseCacheStore! };
+      };
+      type Open = Awaited<ReturnType<typeof open>>;
+      const publish = async (a: Open) =>
+        await a.store.set(a.key, {
+          value: JSON.stringify({ tools: [{ name: "read", inputSchema: { type: "object" } }], ttlMs: 60_000 }),
+          expiresAt: Date.now() + 60_000,
+        });
+      const list = (a: Open) => a.cache.withListing(a.ctx, () => a.store.get(a.key) as Promise<unknown>);
+      const refused = async () => {
+        const other = await open();
+        await other.cache.fenceTools(other.ctx, await other.cache.bindListing(other.ctx));
+      };
+      return { open, publish, list, refused };
+    };
+
+    it("INV-5 INV-8: a listing that skips the cache read lifts only the fence captured before it dispatched", async () => {
+      const f = await cacheFixture();
+      // With nothing captured a publication lifts nothing, whatever it reads at the end.
+      const first = await f.open();
+      await first.cache.withListing(first.ctx, async () => {
+        await f.refused();
+        await f.publish(first);
+      });
+      expect(await f.list(await f.open())).toBeUndefined();
+      // What an SDK refresh captures before it asks: the fence already there is lifted.
+      const refresh = await f.open();
+      await refresh.cache.withListing(refresh.ctx, async () => {
+        await refresh.cache.captureFence();
+        await f.publish(refresh);
+      });
+      expect(await f.list(await f.open())).toBeDefined();
+      // And one landing after that capture stays.
+      const raced = await f.open();
+      await raced.cache.withListing(raced.ctx, async () => {
+        await raced.cache.captureFence();
+        await f.refused();
+        await f.publish(raced);
+      });
+      expect(await f.list(await f.open())).toBeUndefined();
+    });
+
+    it("INV-5: a fence keeps the identity and generation its attempt was bound to", async () => {
+      let identity = "tokens-a";
+      const f = await cacheFixture(() => identity);
+      const seed = async () => {
+        const a = await f.open();
+        await a.cache.withListing(a.ctx, () => f.publish(a));
+      };
+      const reads = async (value: string) => {
+        identity = value;
+        return (await f.list(await f.open())) !== undefined;
+      };
+      await seed();
+      identity = "tokens-b";
+      await seed();
+      // A listing's own refusal, after the grant moved on.
+      identity = "tokens-a";
+      const running = await f.open();
+      await running.cache.withListing(running.ctx, async () => {
+        identity = "tokens-b";
+        await running.cache.fenceListing();
+      });
+      expect(await reads("tokens-b")).toBe(true);
+      expect(await reads("tokens-a")).toBe(false);
+      // A handshake's: the credential read for it is pinned, and the resolver is not asked again.
+      const handshake = await f.open();
+      identity = "tokens-c";
+      const bound = await handshake.cache.bindListing(handshake.ctx, { credentialIdentity: "tokens-b" });
+      await handshake.cache.fenceTools(handshake.ctx, bound);
+      expect(await reads("tokens-c")).toBe(false);
+      expect(await reads("tokens-b")).toBe(false);
+      // An invalidation since retired that generation, so its fence reaches nothing newer.
+      identity = "tokens-d";
+      await seed();
+      const late = await f.open();
+      const older = await late.cache.bindListing(late.ctx);
+      await late.cache.fenceTools(late.ctx, { ...older, generation: crypto.randomUUID() });
+      expect(await reads("tokens-d")).toBe(true);
+    });
+
+    const customFixture = async () => {
+      const store = await storage();
+      const id = `custom_${crypto.randomUUID().replaceAll("-", "")}`;
+      const vault = new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(9))));
+      await vault.set(id, TOKEN_A, "operator");
+      const tools = [{ name: "read", inputSchema: { type: "object" as const }, annotations: { readOnlyHint: true } }];
+      const denied = () => new ConnectorCallError("provider_permission_denied", "Refused.");
+      let answer = async (_ctx: ConnectorContext) => tools as typeof tools;
+      const root = new Registry(
+        [
+          {
+            id,
+            kind: "mcp" as const,
+            credential: { label: "Key" },
+            listTools: (ctx) => answer(ctx),
+            callTool: async () => ({}),
+          },
+        ],
+        { storage: store, logger: silentLogger, credentialVault: vault },
+      );
+      const view = root.scoped({
+        connectorIds: [id],
+        principalKey: "a",
+        caller: {
+          identity: { actor: { kind: "human", id: "a", namespace: "test" }, interactive: true },
+          authenticated: true,
+          pool: "one",
+        },
+      });
+      const list = () => view.getTools(id, BASE, {});
+      // The connector hangs, so what discovery lists is whatever stands in for it.
+      const hungSearch = async () => {
+        const before = answer;
+        answer = () => new Promise<never>(() => undefined);
+        try {
+          return await search(
+            new CatalogService(view, BASE, { requestScope: {}, probeTimeoutMs: 60, unscopedProbeTimeoutMs: 60 }),
+          );
+        } finally {
+          answer = before;
+        }
+      };
+      // The next listing waits for release; `started` says it has been dispatched.
+      const holdNext = (outcome: () => Promise<typeof tools>) => {
+        const started = deferred<void>();
+        const released = deferred<void>();
+        const healthy = answer;
+        answer = async () => {
+          answer = healthy;
+          started.resolve();
+          await released.promise;
+          return outcome();
+        };
+        return { started: started.promise, release: () => released.resolve() };
+      };
+      return {
+        id,
+        vault,
+        tools,
+        denied,
+        list,
+        hungSearch,
+        holdNext,
+        refuseNext: () => {
+          const healthy = answer;
+          answer = async () => {
+            answer = healthy;
+            throw denied();
+          };
+        },
+        // A skip from the last hung search must not stand between tests of one store.
+        clearHealth: async () => {
+          for (const key of await store.list("connector-health:")) await store.delete(key);
+        },
+      };
+    };
+
+    it("INV-5 INV-8: a custom listing begun before a refusal cannot lift it, and one begun after can", async () => {
+      const f = await customFixture();
+      await f.list();
+      expect((await f.hungSearch()).entries).toHaveLength(1);
+      const running = f.holdNext(async () => f.tools);
+      const older = f.list();
+      await running.started;
+      f.refuseNext();
+      await expect(f.list()).rejects.toMatchObject({ code: "provider_permission_denied" });
+      running.release();
+      await older;
+      await f.clearHealth();
+      const fenced = await f.hungSearch();
+      expect(fenced.entries).toEqual([]);
+      expect(fenced.catalogErrors[0]?.stale).toBeUndefined();
+      await f.list();
+      await f.clearHealth();
+      const restored = await f.hungSearch();
+      expect(restored.entries).toHaveLength(1);
+      expect(restored.catalogErrors[0]).toMatchObject({ stale: true });
+    });
+
+    it("INV-5: a custom refusal fences the credential that listing was dispatched under", async () => {
+      const f = await customFixture();
+      await f.list();
+      await f.vault.set(f.id, TOKEN_B, "operator");
+      await f.list();
+      await f.vault.set(f.id, TOKEN_A, "operator");
+      const refused = f.holdNext(async () => {
+        throw f.denied();
+      });
+      const attempt = f.list();
+      await refused.started;
+      await f.vault.set(f.id, TOKEN_B, "operator");
+      refused.release();
+      await expect(attempt).rejects.toMatchObject({ code: "provider_permission_denied" });
+      await f.clearHealth();
+      const unrefused = await f.hungSearch();
+      expect(unrefused.entries).toHaveLength(1);
+      expect(unrefused.catalogErrors[0]).toMatchObject({ stale: true });
+      await f.vault.set(f.id, TOKEN_A, "operator");
+      await f.clearHealth();
+      const fenced = await f.hungSearch();
+      expect(fenced.entries).toEqual([]);
+      expect(fenced.catalogErrors[0]?.stale).toBeUndefined();
+    });
+
+    it("INV-5 INV-8: a custom answer outlived by its credential is retained for neither credential", async () => {
+      const f = await customFixture();
+      const running = f.holdNext(async () => f.tools);
+      const attempt = f.list();
+      await running.started;
+      await f.vault.set(f.id, TOKEN_B, "operator");
+      running.release();
+      await attempt;
+      expect((await f.hungSearch()).entries).toEqual([]);
+      await f.vault.set(f.id, TOKEN_A, "operator");
+      await f.clearHealth();
+      expect((await f.hungSearch()).entries).toEqual([]);
+    });
+
+    it("a fence write that fails is logged and never replaces the refusal", async () => {
+      const f = await fixture({ ttl: 1_000 });
+      const time = clock();
+      const warning = vi.spyOn(silentLogger, "warn");
+      const root = f.registry();
+      await f.read(root);
+      time.now += 2_000;
+      const set = f.store.set.bind(f.store);
+      vi.spyOn(f.store, "set").mockImplementation((key, ...rest) =>
+        key.startsWith("response-cache:") ? Promise.reject(new Error(`Write refused ${TOKEN_A}`)) : set(key, ...rest),
+      );
+      f.mode("error");
+      await expect(f.read(root)).rejects.toMatchObject({ code: "provider_permission_denied" });
+      expect(warning.mock.calls.map(([message]) => message)).toContain("[connecta] catalog fence failed");
+      expect(JSON.stringify(warning.mock.calls)).not.toContain(TOKEN_A);
     });
 
     it("INV-10: a refusal writes one key beside the catalog, and a success with no fence writes none", async () => {

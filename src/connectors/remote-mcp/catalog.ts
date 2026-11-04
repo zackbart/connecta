@@ -141,6 +141,9 @@ export function remoteMcpCatalog(
           authMethod(() =>
             authFlow<ListToolsResult>(function* () {
               const before = toolPages;
+              // The one write that follows no cache read, which is what
+              // otherwise captures the fence this listing may lift.
+              if (options?.cacheMode === "refresh") (yield authInvoke(cache, "captureFence", [])) as void;
               let result: ListToolsResult;
               try {
                 result = (yield authCall(listTools, [params, options])) as ListToolsResult;
@@ -148,6 +151,9 @@ export function remoteMcpCatalog(
                 const bounded = rt.atMcpBoundary(cache.currentContext(), error, "tools/list", client.transport, [
                   cache.currentContext().signal,
                 ]);
+                // Fenced as this listing was bound, whatever is current by now.
+                if (requiresAuthorization(bounded) || isAccessRefusal(bounded))
+                  (yield authInvoke(cache, "fenceListing", [])) as void;
                 const transient =
                   (error instanceof SdkHttpError && [502, 503, 504].includes(error.status)) ||
                   (bounded instanceof ConnectorCallError && bounded.code === "unavailable");
@@ -385,8 +391,6 @@ export function remoteMcpCatalog(
   const listToolsOperation = authMethod((ctx: ConnectorContext) =>
     authFlow<ToolDef[]>(function* () {
       const state = rt.stateFor(ctx);
-      // Known already, from a refusal this request has fenced.
-      const refused = state.authRequired;
       // Without a connection in this scope, a complete cached catalog is
       // served as it stands. A live connection reads the same cache through
       // the SDK, and a credential test always lists live.
@@ -397,14 +401,7 @@ export function remoteMcpCatalog(
       let clean: ListToolsResult["tools"];
       if (cached.tools) clean = redactCatalog(ctx, cached.tools);
       else {
-        let client: Client;
-        try {
-          client = (yield authCall(rt.ensureConnected, [ctx, state, cached])) as Client;
-        } catch (err) {
-          if (!refused && (requiresAuthorization(err) || isAccessRefusal(err)))
-            (yield authCall(rt.fenceCatalog, [ctx])) as void;
-          throw err;
-        }
+        const client = (yield authCall(rt.ensureConnected, [ctx, state, cached])) as Client;
         // A credential test must observe the downstream answer itself, never
         // the SDK cache a modern connection reads without any request.
         const options: CacheableRequestOptions = {
@@ -418,8 +415,6 @@ export function remoteMcpCatalog(
         } catch (err) {
           if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
           const bounded = rt.atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
-          if (!refused && (requiresAuthorization(bounded) || isAccessRefusal(bounded)))
-            (yield authCall(rt.fenceCatalog, [ctx])) as void;
           if (requiresAuthorization(bounded)) {
             if (state.client === client) state.authRequired = true;
             if (bounded instanceof UnauthorizedError) throw carryFailureFacts(bounded, rt.authRequiredError(ctx));

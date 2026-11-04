@@ -26,8 +26,9 @@ import {
   prefetchCatalog,
   retainedCatalogIdentity,
   type CatalogPeekEntry,
+  type ListingBinding,
 } from "../../catalog-cache.js";
-import { ConnectorCallError, resendAdvice } from "../../errors.js";
+import { ConnectorCallError, isAccessRefusal, resendAdvice } from "../../errors.js";
 import { carryFailureFacts, failureRecord, logFailure } from "../../operator-record.js";
 import { CONNECTA_VERSION } from "../../version.js";
 import { oauthSealerFor } from "../../oauth-sealing.js";
@@ -155,7 +156,6 @@ export function remoteMcpConnection(
   | "requestOptions"
   | "cachedCatalog"
   | "peekCatalog"
-  | "fenceCatalog"
   | "cacheOwner"
   | "reset"
   | "states"
@@ -464,7 +464,7 @@ export function remoteMcpConnection(
    * same cache through the SDK, so it skips this read. What was already read
    * is handed to that connect, so a resolver runs once per listing.
    */
-  const readCatalog = authMethod((ctx: ConnectorContext, use: "list" | "peek" | "fence") =>
+  const readCatalog = authMethod((ctx: ConnectorContext, use: "list" | "peek") =>
     authFlow<Preread & { tools?: Tool[]; peek?: CatalogPeekEntry }>(function* () {
       const principal = principalPolicy
         ? requestPrincipalFor(
@@ -506,7 +506,7 @@ export function remoteMcpConnection(
             }),
           );
         }
-        if (opts.versionNegotiation !== "legacy" && use !== "fence") {
+        if (opts.versionNegotiation !== "legacy") {
           const digest = (yield authCall(negotiationKey, [ctx, credentialDigest, epoch])) as string;
           // Both reads only locate cached data. Acceptance and dispatch keep
           // their fresh generation and credential checks.
@@ -534,10 +534,6 @@ export function remoteMcpConnection(
           identity,
           true,
         ])) as Awaited<ReturnType<typeof catalogClientOptions>>;
-        if (use === "fence") {
-          (yield authInvoke(cache, "fenceTools", [ctx])) as void;
-          return preread;
-        }
         if (use === "peek") {
           const entry = (yield authInvoke(cache, "peekTools", [ctx])) as CatalogPeekEntry | undefined;
           return entry ? { ...preread, peek: entry } : preread;
@@ -585,19 +581,6 @@ export function remoteMcpConnection(
         peek.expiresAt,
       );
       return { tools: peek.result.tools };
-    }),
-  );
-
-  // After a refusal, addressed exactly as the peek it must stop. It never masks
-  // the refusal: a credential that cannot be read has no catalog a peek could
-  // reach, and a storage failure was logged where it happened.
-  const fenceCatalog = authMethod((ctx: ConnectorContext) =>
-    authFlow<void>(function* () {
-      try {
-        (yield authCall(readCatalog, [ctx, "fence"])) as unknown;
-      } catch {
-        return;
-      }
     }),
   );
 
@@ -847,6 +830,26 @@ export function remoteMcpConnection(
           ),
         );
         if (!owned()) return yield* Effect.fail(rt.scopeEndedError());
+        // What a refused handshake refuses: the credential this attempt sends
+        // and its generation, as they are now. Without a usable binding there is
+        // no catalog to retire (an OAuth grant with no tokens has none).
+        const handshakeBinding = yield* promised(
+          authMethod(() =>
+            authFlow<ListingBinding | undefined>(function* () {
+              let pinned: string | undefined;
+              if (provider) {
+                const grant = (yield authInvoke(provider, "peekGrant", [])) as { epoch: string; tokens?: OAuthTokens };
+                if (grant.epoch !== genAtStart || !grant.tokens) return undefined;
+                pinned = yield authCall<string>(secretDigest, [ctx, JSON.stringify(grant.tokens)]);
+              }
+              return (yield authInvoke(cacheOptions, "bindListing", [
+                ctx,
+                { credentialIdentity: pinned },
+              ])) as ListingBinding;
+            }),
+          ),
+        ).pipe(Effect.catch(() => Effect.succeed(undefined)));
+        if (!owned()) return yield* Effect.fail(rt.scopeEndedError());
         const makeClient = () => {
           const {
             intake: _intake,
@@ -954,6 +957,15 @@ export function remoteMcpConnection(
               [ctx.signal, connectionAbort.signal, handshakeAbort.signal],
             ),
           ),
+          // Before the lease closes the signal this write runs under. Waiters see
+          // the failure after it, and it never replaces the refusal.
+          Effect.tapError((error) =>
+            handshakeBinding && (requiresAuthorization(error) || isAccessRefusal(error))
+              ? (authInvoke(cacheOptions, "fenceTools", [ctx, handshakeBinding]) as Effect.Effect<void, unknown>).pipe(
+                  Effect.catch(() => Effect.void),
+                )
+              : Effect.void,
+          ),
         );
         held.client = c;
         // A probe deadline can end its scope while connect is still in flight.
@@ -1048,7 +1060,6 @@ export function remoteMcpConnection(
     requestOptions,
     cachedCatalog,
     peekCatalog,
-    fenceCatalog,
     cacheOwner,
     reset,
     states,

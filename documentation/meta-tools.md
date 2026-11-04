@@ -853,6 +853,24 @@ change, OAuth connect or disconnect, or operator invalidation has the same effec
 at once for every owner. A stale listing is read again after its probe fails, so
 any of these during the probe also takes the tools out of that search.
 
+A refusal retires the catalog of the credential, OAuth identity and catalog
+generation its attempt was dispatched under, whichever are current when it
+answers, so another credential's catalog keeps working. A listing lifts only the
+retirement it read before it asked the downstream; a refusal that lands while it
+runs stays until a later listing succeeds. A custom connector's answer is
+retained only if its credential did not change while it was listing.
+
+Two limits follow:
+
+- A retirement that cannot be written is logged as `catalog fence failed` and the
+  refusal is still returned. The catalog stays reusable until a later refusal is
+  recorded, a listing replaces it or its stale limit passes.
+- A connector whose `tools/list` keeps answering 401 or 403 has no catalog to
+  fall back on, so every call that must resolve a tool through its catalog fails
+  with that refusal until a listing succeeds. This includes a credential that may
+  call tools but not list them, and the five-minute fallback does not apply while
+  the catalog is retired.
+
 `total` counts this response's matches. Offsets are stateless, so it stays the
 same across a browse's pages while each catalog is unchanged, including one
 listed stale, and can change if a catalog refreshes between pages or a connector

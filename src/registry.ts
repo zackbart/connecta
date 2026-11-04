@@ -16,6 +16,7 @@ import {
   attachCatalogCache,
   catalogExpiry,
   catalogFetchedAt,
+  bindCustomCatalogListing,
   customCatalogFallback,
   customCatalogPeek,
   fenceCustomCatalog,
@@ -24,6 +25,7 @@ import {
   retainedCatalogIdentity,
   storeCustomCatalogFallback,
   type CatalogToolFingerprint,
+  type CustomCatalogListing,
 } from "./catalog-cache.js";
 import { carryCatalogFreshness, markCatalogFreshness, markCatalogStale } from "./catalog-freshness.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
@@ -1032,12 +1034,22 @@ export class Registry implements RegistryView {
       if (!connector) throw new Error(`Unknown connector "${id}"`);
       if (connector.staticTools) return markCatalogFreshness(connector.staticTools, Infinity);
       const ctx = this.contextFor(id, baseUrl, requestScope, callOptions, scope);
+      // `remoteMcp()` binds and fences its own attempts, knowing how each was made.
+      const customListing = connector.peekCatalog
+        ? undefined
+        : yield* authCall<CustomCatalogListing | undefined>(bindCustomCatalogListing, [ctx, id]).pipe(
+            Effect.catch((failure) =>
+              Effect.sync(() => {
+                logFailure(this.opts.logger, "catalog read failed", failureRecord({ connector: id }, failure));
+                return undefined;
+              }),
+            ),
+          );
       const listed = yield* authInvoke<ToolDef[]>(connector, "listTools", [ctx]).pipe(
         Effect.catch((error) =>
           Effect.gen({ self: this }, function* () {
-            // `remoteMcp()` fences its own refusals, knowing how it was refused.
-            if (!connector.peekCatalog && isAccessRefusal(error))
-              yield* authCall<void>(fenceCustomCatalog, [ctx, id]).pipe(
+            if (customListing && isAccessRefusal(error))
+              yield* authCall<void>(fenceCustomCatalog, [ctx, customListing]).pipe(
                 Effect.catch((failure) =>
                   Effect.sync(() =>
                     logFailure(this.opts.logger, "catalog fence failed", failureRecord({ connector: id }, failure)),
@@ -1070,8 +1082,11 @@ export class Registry implements RegistryView {
       const facts = frozenFacts(structuredClone(tools));
       const accepted = this.acceptToolNames(facts);
       if (catalogFetchedAt(ctx) === undefined) {
-        for (const observe of [storeCustomCatalogFallback, observeUncachedCatalogRefresh]) {
-          yield* authCall<void>(observe, [ctx, id, facts]).pipe(
+        for (const observe of [
+          authCall<void>(storeCustomCatalogFallback, [ctx, facts, customListing]),
+          authCall<void>(observeUncachedCatalogRefresh, [ctx, id, facts]),
+        ]) {
+          yield* observe.pipe(
             Effect.catch((error) =>
               Effect.sync(() =>
                 logFailure(
