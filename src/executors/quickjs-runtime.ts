@@ -13,7 +13,7 @@ import type { CallErrorDetails } from "../errors.js";
 import { getQuickJS, type QuickJSContext, type QuickJSDeferredPromise, type QuickJSHandle } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
 import { InvocationFailure } from "../invocation-failure.js";
-import { msg } from "../errors.js";
+import { msg, tokenPrefix } from "../errors.js";
 import { withoutProgramTerminator } from "../program-source.js";
 import { hostCallLabel, MAX_QUICKJS_LOG_TRANSPORT_BYTES, serializedBytes } from "./quickjs-protocol.js";
 
@@ -191,7 +191,7 @@ function installBridge(
     // but slicing here keeps only a bounded string alive in `logs`.
     let entry = ctx.getString(h);
     if (entry.length > MAX_LOG_ENTRY_CHARS) {
-      entry = `${entry.slice(0, MAX_LOG_ENTRY_CHARS)}…[entry truncated]`;
+      entry = `${tokenPrefix(entry, MAX_LOG_ENTRY_CHARS)}…[entry truncated]`;
     }
     const entryTransportBytes = logTransportBytes(entry);
     if (
@@ -253,7 +253,7 @@ function installBridge(
           h.dispose();
         } else {
           const error = ctx.newError();
-          const message = ctx.unwrapResult(ctx.evalCode(JSON.stringify(msg(reply.error).slice(0, 4_000))));
+          const message = ctx.unwrapResult(ctx.evalCode(JSON.stringify(tokenPrefix(msg(reply.error), 4_000))));
           ctx.setProp(error, "message", message);
           message.dispose();
           if (reply.error instanceof InvocationFailure) {
@@ -373,7 +373,7 @@ export async function executeQuickJs(
     const call = bridge.failures.find((failure) => ctx.eq(failure.error, error))?.call;
     let description: unknown = { name: "Error", message: "Program threw a value." };
     const type = ctx.typeof(error);
-    if (type === "string") description = ctx.getString(error).slice(0, 4000);
+    if (type === "string") description = tokenPrefix(ctx.getString(error), 4000);
     else if (type === "number") description = ctx.getNumber(error);
     else if (type === "undefined") description = "undefined";
     else if (type === "boolean") description = ctx.eq(error, ctx.true);
@@ -383,7 +383,9 @@ export async function executeQuickJs(
       const described = runGuest(() => ctx.callFunction(describe, ctx.undefined, error));
       if (described.error) described.error.dispose();
       else {
-        description = JSON.parse(ctx.getString(described.value)) ?? description;
+        const parsed = JSON.parse(ctx.getString(described.value)) as { name?: unknown } | null;
+        if (typeof parsed?.name === "string") parsed.name = tokenPrefix(parsed.name, 64);
+        description = parsed ?? description;
         described.value.dispose();
       }
       if (wallInterrupted || Date.now() >= deadline) return timedOut();
@@ -400,7 +402,7 @@ export async function executeQuickJs(
     const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
     return {
       result: undefined,
-      error: formatGuestError(description).slice(0, 4000),
+      error: tokenPrefix(formatGuestError(description), 4000),
       failure: {
         name,
         ...(call ? { call } : {}),
@@ -448,8 +450,9 @@ export async function executeQuickJs(
           for (let i = 0; i < prototypes.length; i++) {
             if (prototype === prototypes[i][0]) { name = prototypes[i][1]; break; }
           }
-          return stringify({ __proto__: null, name: text("name", name, 64),
-            message: text("message", "Program threw a value.", 4000), stack: text("stack", "", 1000) });
+          // One unit past the host's cuts, which read it to tell a finished token from an open one.
+          return stringify({ __proto__: null, name: text("name", name, 65),
+            message: text("message", "Program threw a value.", 4001), stack: text("stack", "", 1000) });
         };
       })()`),
   );

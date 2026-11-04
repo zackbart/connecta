@@ -14,8 +14,9 @@ import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
 import { writeStateOf } from "../src/program-writes.js";
+import { sentSecretsFor } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
+import type { Connector, ConnectorContext, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.program-writes";
@@ -58,7 +59,11 @@ interface WorldOptions {
   /** The tracker stands for a boundary, so its own refusal marks hold (round 13). */
   provesRefusals?: boolean;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
-  read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
+  read?: (name: string, args: Record<string, unknown>, context: ConnectorContext) => Promise<unknown> | unknown;
+  /** The tracker answers as a hosted MCP tool does, so `isError` is its own answer. */
+  trackerKind?: "mcp";
+  maxResultChars?: number;
+  logger?: typeof silentLogger;
 }
 
 function world(options: WorldOptions = {}) {
@@ -74,15 +79,15 @@ function world(options: WorldOptions = {}) {
       const readOnly: Partial<ToolDef> = { annotations: { readOnlyHint: true } };
       return [{ name: "get", ...readOnly }];
     },
-    async callTool(name, args) {
+    async callTool(name, args, context) {
       count(`reader.${name}`, args);
-      if (options.read) return await options.read(name, args as Record<string, unknown>);
+      if (options.read) return await options.read(name, args as Record<string, unknown>, context);
       return { id: (args as { id?: number }).id, title: "An issue" };
     },
   };
   const tracker: Connector = {
     id: "tracker",
-    kind: "api",
+    kind: options.trackerKind ?? "api",
     description: "Writes issues",
     async listTools() {
       return [
@@ -110,9 +115,17 @@ function world(options: WorldOptions = {}) {
     logger: silentLogger,
   };
   const programs = new Map<string, Program>();
-  const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, activity, {
-    readOnly: options.readOnly,
-  });
+  const execute = createExecuteTool(
+    registry,
+    BASE,
+    scriptedExecutor(programs),
+    options.logger ?? silentLogger,
+    activity,
+    {
+      readOnly: options.readOnly,
+      ...(options.maxResultChars !== undefined ? { maxResultChars: options.maxResultChars } : {}),
+    },
+  );
   let next = 0;
   return {
     registry,
@@ -124,12 +137,252 @@ function world(options: WorldOptions = {}) {
       return execute({ code });
     },
     writes: () => calls.filter((call) => call.address.startsWith("tracker.")),
+    reads: () => calls.filter((call) => call.address.startsWith("reader.")),
   };
 }
 
 function value(result: { structuredContent?: Record<string, unknown> }): Record<string, any> {
   return required(result.structuredContent, "structured result") as Record<string, any>;
 }
+
+const LATE_SECRET = "Zqx79UVW_LATE_SECRET";
+const toolError = (text: string) => ({ isError: true, content: [{ type: "text", text }] });
+const registerLate =
+  (credential = LATE_SECRET) =>
+  (_name: string, _args: Record<string, unknown>, context: ConnectorContext) => {
+    sentSecretsFor(context).secret(credential);
+    return { ok: true };
+  };
+const attempt = async (call: () => Promise<unknown>) => {
+  try {
+    await call();
+  } catch {
+    // The program carries on, as one that catches a failed write can.
+  }
+};
+const programResult = (result: { content: { text?: string }[] }) => JSON.stringify(result);
+
+describe("what a program's unknown writes report", () => {
+  it.each([
+    ["a connector's error", "api", `${"x ".repeat(252)}${LATE_SECRET}`],
+    ["a connector's error far past the clip", "api", `${"x ".repeat(2_500)}${LATE_SECRET} tail`],
+    ["a tool's error", "mcp", `${"x ".repeat(252)}${LATE_SECRET}`],
+    ["a tool's error crossing the clip", "mcp", `${"x ".repeat(2_043)}${LATE_SECRET} tail`],
+    ["a tool's error with no boundary before it", "mcp", `${"x".repeat(4_090)}${LATE_SECRET} tail`],
+  ] as const)("INV-5: a credential a later call registers leaves no fragment of %s", async (_label, kind, text) => {
+    const w = world({
+      readOnly: false,
+      ...(kind === "mcp" ? { trackerKind: "mcp" as const } : {}),
+      write: () => {
+        if (kind === "mcp") return toolError(text);
+        throw new Error(text);
+      },
+      read: registerLate(),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      await connecta.call!("reader.get", {});
+      return "done";
+    });
+    const rendered = programResult(result);
+    expect(value(result).error.code).toBe("write_outcome_unknown");
+    expect(rendered).not.toContain("Zqx7");
+    expect(rendered).not.toContain("LATE_SECRET");
+  });
+
+  it("INV-5: a retained text cut through a credential shrinks to no fragment of it", async () => {
+    const long = `Zqx79UVW${"s".repeat(192)}`;
+    const w = world({
+      readOnly: false,
+      write: () => Promise.reject(new Error(`${long} `.repeat(90))),
+      read: registerLate(long),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      await connecta.call!("reader.get", {});
+      return "done";
+    });
+    const rendered = programResult(result);
+    expect(value(result).error.code).toBe("write_outcome_unknown");
+    expect(rendered).not.toContain("Zqx7");
+    expect(rendered).not.toContain("sssssss");
+  });
+
+  it("a connector's long failure fits the deployment's result limit and marks the cut", async () => {
+    const w = world({
+      readOnly: false,
+      maxResultChars: 1_024,
+      write: () => Promise.reject(new Error("word ".repeat(4_800))),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      return "done";
+    });
+    const { error } = value(result);
+    expect(new TextEncoder().encode(JSON.stringify(value(result))).length).toBeLessThanOrEqual(1_024);
+    expect(error.unknownWrites[0].message).toContain("… [truncated]");
+  });
+
+  it("marks what a limit too small for any report leaves out", async () => {
+    const w = world({
+      readOnly: false,
+      maxResultChars: 600,
+      write: () => Promise.reject(new Error("word ".repeat(4_800))),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      return "done";
+    });
+    const { error } = value(result);
+    expect(error.code).toBe("write_outcome_unknown");
+    expect(error.message).toContain("unknown outcome");
+    expect(error.unknownWritesTruncated).toBe(true);
+    expect(JSON.stringify(error)).not.toContain("word word word");
+  });
+
+  it("bounds every entry and the whole report, however many writes fail", async () => {
+    const w = world({ readOnly: false, write: () => Promise.reject(new Error(`"${"quoted word ".repeat(2_000)}"`)) });
+    const result = await w.run(async (connecta) => {
+      for (let index = 0; index < 10; index++) await attempt(() => connecta.call!("tracker.post", {}));
+      return "done";
+    });
+    const { error } = value(result);
+    expect(error.writes).toMatchObject({ unknown: 10 });
+    expect(new TextEncoder().encode(JSON.stringify(error.unknownWrites)).length).toBeLessThanOrEqual(8_192);
+    for (const entry of error.unknownWrites)
+      expect(new TextEncoder().encode(JSON.stringify(entry.message ?? "")).length).toBeLessThanOrEqual(4_096);
+    expect(error.unknownWrites[0].message).toContain("… [truncated]");
+    expect(error.unknownWritesTruncated).toBe(true);
+    expect(w.writes()).toHaveLength(10);
+  });
+
+  it("INV-6: the tool's words stay out of activity and the operator's log", async () => {
+    const logged: unknown[] = [];
+    const logger = {
+      ...silentLogger,
+      warn: (...args: unknown[]) => void logged.push(args),
+      error: (...args: unknown[]) => void logged.push(args),
+    };
+    const w = world({
+      readOnly: false,
+      trackerKind: "mcp",
+      logger,
+      write: () => toolError("Approve at https://vendor.example/apr_7Hq2"),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      return "done";
+    });
+    expect(value(result).error.message).toContain("https://vendor.example/apr_7Hq2");
+    expect(w.events.length).toBeGreaterThan(0);
+    expect(JSON.stringify(w.events)).not.toContain("apr_7Hq2");
+    expect(JSON.stringify(logged)).not.toContain("apr_7Hq2");
+  });
+});
+
+describe("the credential check on a program's outbound arguments", () => {
+  const STRIPE_STYLE = "sk_test_51Hq7ZpLm9TxV2bNw";
+  const afterCredential = async (credential: string, note: unknown, tool = "tracker.post") => {
+    const w = world({ readOnly: false, read: registerLate(credential) });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("reader.get", {});
+      return await connecta.call!(tool, { note });
+    });
+    return { result: value(result), sent: w.writes(), calls: w };
+  };
+
+  it.each([
+    ["names the public prefix", "Document the sk_test_ prefix"],
+    ["names only a prefix among other words", "keys look like sk_test_ or sk_live_ here"],
+    ["looks like a header line", "x-api-key: rotate this one"],
+  ])("INV-9: a write that %s is sent exactly as written", async (_label, note) => {
+    const { result, sent } = await afterCredential(STRIPE_STYLE, note);
+    expect(result.error).toBeUndefined();
+    expect(sent).toEqual([{ address: "tracker.post", args: { note } }]);
+  });
+
+  it.each([
+    ["the whole credential", STRIPE_STYLE],
+    ["it in framing", `Authorization: Bearer ${STRIPE_STYLE}`],
+    ["eight units past the prefix", "sk_test_51Hq7ZpL"],
+    ["eight units of its value alone", "51Hq7ZpL"],
+    ["its encoding", btoa(STRIPE_STYLE)],
+    ["its percent encoding inside a URL", `https://example.com/?k=${encodeURIComponent(`Bearer ${STRIPE_STYLE}`)}`],
+    ["it nested in JSON text", JSON.stringify({ deep: JSON.stringify({ key: STRIPE_STYLE }) })],
+  ])("INV-5: a write holding %s stays unsent", async (_label, note) => {
+    const { result, sent } = await afterCredential(STRIPE_STYLE, note);
+    expect(result.error.code).toBe("invalid_args");
+    expect(result.error.message).toContain("tracker.post was not sent");
+    expect(sent).toEqual([]);
+  });
+
+  it("states the limit: fewer than eight units past a public prefix are not a match", async () => {
+    const { result, sent } = await afterCredential(STRIPE_STYLE, "sk_test_51Hq7Zp");
+    expect(result.error).toBeUndefined();
+    expect(sent).toHaveLength(1);
+  });
+
+  it("a credential that is only its label and a short value matches whole", async () => {
+    expect((await afterCredential("sk_live_short12", "the sk_live_ prefix")).sent).toHaveLength(1);
+    expect((await afterCredential("sk_live_short12", "sk_live_short12")).sent).toEqual([]);
+  });
+
+  it("a JWT's public header segment is not a match; its payload is", async () => {
+    const header = "eyJhbGciOiJIUzI1NiJ9";
+    const token = `${header}.eyJzdWIiOiJhbGljZSJ9.c2lnbmF0dXJlLWJ5dGVz`;
+    expect((await afterCredential(token, `another token ${header}.eyJvdGhlciI6dHJ1ZX0.b3RoZXI`)).sent).toHaveLength(1);
+    expect((await afterCredential(token, token)).sent).toEqual([]);
+  });
+
+  it("an identifier sent beside a credential is public: a write naming it is sent", async () => {
+    const w = world({
+      readOnly: false,
+      read: (_name, _args, context) => {
+        sentSecretsFor(context).identifier("alice@example.com");
+        return { ok: true };
+      },
+    });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("reader.get", {});
+      return await connecta.call!("tracker.post", { assignee: "alice@example.com" });
+    });
+    expect(value(result).error).toBeUndefined();
+    expect(w.writes()).toEqual([{ address: "tracker.post", args: { assignee: "alice@example.com" } }]);
+  });
+
+  it("a private value an earlier call submitted never refuses a later write repeating it", async () => {
+    const w = world({
+      readOnly: false,
+      read: (_name, _args, context) => {
+        sentSecretsFor(context).arguments(
+          { note: "our ordinary repeated sentence" },
+          { type: "object", properties: { note: { type: "string", writeOnly: true } } },
+        );
+        return { ok: true };
+      },
+    });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("reader.get", {});
+      return await connecta.call!("tracker.post", { note: "our ordinary repeated sentence" });
+    });
+    expect(value(result).error).toBeUndefined();
+    expect(w.writes()).toEqual([{ address: "tracker.post", args: { note: "our ordinary repeated sentence" } }]);
+  });
+
+  it("a read sends a public prefix as written and still has a real match replaced", async () => {
+    const w = world({ readOnly: false, read: registerLate(STRIPE_STYLE) });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("reader.get", {});
+      await connecta.call!("reader.get", { query: "the sk_test_ prefix" });
+      await connecta.call!("reader.get", { query: `leaked ${STRIPE_STYLE}` });
+      return "done";
+    });
+    const reads = w.reads();
+    expect(value(result).error).toBeUndefined();
+    expect(reads[1]!.args).toEqual({ query: "the sk_test_ prefix" });
+    expect(JSON.stringify(reads[2]!.args)).not.toContain("51Hq7ZpL");
+  });
+});
 
 describe("writable-endpoint programs (#706, #820)", () => {
   it.each([

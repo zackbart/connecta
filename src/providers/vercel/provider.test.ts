@@ -706,6 +706,8 @@ describe("vercel() over an access token", () => {
     const unsafeNext = await call(connector, "vercel_api_read", { path: "/v7/deployments" });
     expect(unsafeNext.data.deployments).toEqual([{ uid: "dpl_keep" }]);
     expect(unsafeNext.page).toEqual({ hasMore: true, param: "until", in: "query" });
+    // A page that cannot continue says so in the result, not only in a guide.
+    expect(unsafeNext.warnings).toEqual(["This result is incomplete: more data exists and continuation was withheld."]);
     respond = () => Response.json({ data: [], pagination: { next: "opaque:continuation" } });
     const labelPath = "/v1/projects/web/feature-flags/labels";
     const labelQuery = { entityKind: "user", attributeKey: "name" };
