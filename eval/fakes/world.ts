@@ -80,7 +80,7 @@ export interface WorldOptions extends Partial<Record<ProviderFakeName, boolean>>
   quickbooks?: boolean;
   google?: GoogleOptions;
   restVendor?: RestVendor;
-  github?: { fault?: "search-503" };
+  github?: { fault?: "search-503" | "ci-scope-gap" };
   breeze?: { fault?: "update-500" };
   ccb?: { fault?: "update-500" };
   planningCenter?: { fault?: "update-500" };
