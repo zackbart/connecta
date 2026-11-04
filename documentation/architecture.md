@@ -3371,7 +3371,7 @@ compiling and configuring the real thing.
   is not a declared refusal standing for the whole call makes the call
   unknown, never retryable, with no wait and no resend or key-reuse advice;
   while any such 401 is unrenewed the verdict keeps an authorization code,
-  so invocation keeps the `authorize_connector` handoff and picks its
+  so invocation keeps the authorization handoff and picks its
   reconcile-first words. Its code and words are the failure's when that is an
   authorization verdict, else the 401's own recorded verdict, else
   `auth_required`, with a sentence saying the write was sent before the

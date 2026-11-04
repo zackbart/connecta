@@ -538,7 +538,7 @@ interface SandboxLimits {
   completedCalls?: CompletedCalls | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
-  /** Set when a failed program had read a result field off an unawaited host call. */
+  /** Set when a program read a result field off an unawaited host call. */
   unawaited?: { read: boolean } | undefined;
 }
 
@@ -555,7 +555,7 @@ class HostCallBudgetExceeded extends InvocationFailure {
   ) {
     super({
       code: "budget_exceeded",
-      message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
+      message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum); the run returned nothing. Split the rest across programs of at most ${maxHostCalls} calls each; do not resend any write it sent.`,
       retryable: false,
     });
   }
@@ -693,6 +693,7 @@ function sandboxProvider(
               valueFormat,
               secrets,
               requestScope,
+              { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
             ]);
           const envelope =
@@ -814,7 +815,7 @@ function sandboxProvider(
             kind: "refuse",
             error: {
               code: "budget_exceeded",
-              message: `execute_code write budget exceeded (${maxWrites} writes maximum, execute.maxWrites); ${target.connector.id}.${target.toolName} was not sent`,
+              message: `execute_code write budget exceeded (${maxWrites} writes per run); ${target.connector.id}.${target.toolName} was not sent. Check the run's writes count, then send only the rest in a new program; do not resend those that succeeded.`,
               retryable: false,
             },
           };
@@ -990,7 +991,7 @@ function sandboxProvider(
     if (resolved) catalogDependency(resolved.connector.id, resolved.toolName);
   };
   const operations: GuestBindings = {
-    // Uncounted: a failed program read a result field off an unawaited host call.
+    // Uncounted: a program read a result field off an unawaited host call.
     unawaited: () => {
       if (limits.unawaited) limits.unawaited.read = true;
     },
@@ -1539,6 +1540,7 @@ export function createExecuteTool(
     programWrites: ProgramWrites,
     completedCalls: CompletedCalls,
     resultDependencies: ProgramResultDependency[],
+    unawaited: { read: boolean },
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
@@ -1549,7 +1551,6 @@ export function createExecuteTool(
         diagnostics,
         maxResultChars,
       );
-      const unawaited = { read: false };
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
       let budgetFailure: InvocationFailure | undefined;
@@ -1743,6 +1744,7 @@ export function createExecuteTool(
         const programWrites = new ProgramWrites();
         const completedCalls = new CompletedCalls();
         const resultDependencies: ProgramResultDependency[] = [];
+        const unawaited = { read: false };
         const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
           // that first so a huge direct-call string is never encoded in full.
@@ -1764,6 +1766,7 @@ export function createExecuteTool(
             programWrites,
             completedCalls,
             resultDependencies,
+            unawaited,
           );
         });
         // Every failure, however it ended, so write accounting replacing the
@@ -1842,7 +1845,12 @@ export function createExecuteTool(
               // Calls abandoned by the guest are failed when the run cancels them.
               // Connecta attaches its own integers after the envelope check.
               const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
-              result.structuredContent = { ...result.structuredContent, hostCalls: counts };
+              const note = finishedRunNote(result, hostCalls.attempted, programWrites.sent, unawaited.read);
+              result.structuredContent = {
+                ...result.structuredContent,
+                ...(note ? { note } : {}),
+                hostCalls: counts,
+              };
               if (result.content[0]?.type === "text") result.content[0].text = JSON.stringify(result.structuredContent);
               return result;
             }),
@@ -1853,6 +1861,29 @@ export function createExecuteTool(
         );
       }),
   );
+}
+
+const UNAWAITED_HINT = "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.";
+const SENT_NOTE =
+  "Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.";
+
+/**
+ * A completed run that gave the agent nothing to read looks like nothing
+ * happened, and a write inside it is exactly what must not run again (INV-9).
+ * Fixed text only: attached after the envelope check, like the counters.
+ */
+function finishedRunNote(
+  result: ToolResult,
+  attempted: number,
+  wrote: boolean,
+  unawaited: boolean,
+): string | undefined {
+  if (result.isError) return undefined;
+  if (unawaited) return wrote ? `${UNAWAITED_HINT} ${SENT_NOTE}` : UNAWAITED_HINT;
+  const body = result.structuredContent;
+  if (body?.result !== undefined || body?.emitted !== undefined) return undefined;
+  if (wrote) return `Program returned nothing. ${SENT_NOTE}`;
+  return `Program returned nothing${attempted > 0 ? ", though its calls ran" : " and made no host calls"}. Add a return.`;
 }
 
 interface RunReport {

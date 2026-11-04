@@ -689,16 +689,25 @@ notice is `data` itself, with no preview and a next action at offset 0.
 The hint says what to do next. For a call not explicitly annotated read-only it
 opens with “This write already ran: do not call it again to see its result.”
 The approved write happened; repeating it to look again is how one export
-becomes three. For an explicitly read-only call, repeating is the better route,
-so the hint offers it first: to find something specific, repeat the read inside
-`execute_code` with `connecta.call` and filter or search the result there; to
-read it in full, page with `connecta.result`. Inside a program the inline cap does
-not apply to a host call's result, only to what the program returns (`L6` in
-[code mode](./code-mode.md) bounds a host call far higher), so the reduction
-sees the whole result at once. When the hint named paging alone, the eval's
-weakest model read a 185 KB CI log in 24,000-byte pages, skipped the range
-holding the real failure, and named the flaky test near the top; before the
-notice was visible, it had reduced the log in a program and found the failure.
+becomes three. For an explicitly read-only call, the hint offers reduction first:
+to find something specific, loop `connecta.result` over the retained result in
+one `execute_code` program, filter there and return the matches; to read
+on, run `nextAction`. A reduction must see the whole value at once, because
+page-by-page reading in the model misses things: when the hint named paging
+alone, the eval's weakest model read a 185 KB CI log in 24,000-byte pages, skipped
+the range holding the real failure, and named the flaky test near the top. The
+loop keeps that whole-value reduction without fetching from the downstream a
+second time. The hint names the result ID and that the result is retained for 15
+minutes.
+
+The loop is offered only when one program can finish it: every page at the
+connector's cap (at most the 32 KiB bridge ceiling), plus two host calls spare,
+must fit `execute.maxHostCalls`. At the defaults that is about 432 KB. Past that
+a loop would end in `budget_exceeded` with nothing returned, so the hint says to
+repeat the read inside `execute_code` with `connecta.call` and reduce it there;
+a host call's result is not bound by the inline cap, only what the program returns
+(`L6` in [code mode](./code-mode.md)). A value over `L6`'s host-call bound returns
+a paged handle instead, whose own hint is sized the same way.
 When paging is available, `nextAction` is the page handle for either kind of call, because paging is
 the one next step connecta can spell out exactly, while a reduction is a
 program the agent has to write. `resultId` stays beside the exact `nextAction`,
@@ -713,17 +722,26 @@ no paging route.
 
 Meta endpoints page inside a program. Native pools without code list `read_result` for the same bound handles. Program calls also
 return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
+A read's handle says to loop `connecta.result(handle, { offset })` until `!hasMore`
+only when every page at the connector's cap, plus two host calls spare, fits the
+calls its program has left. A handle's value is usually over 1 MiB, so at the
+default 20 calls and 24,000-byte cap it doesn't: its hint then gives the pages
+to read in this program and in each new one, and says to return the reduction so
+far with `nextOffset` and continue from both, by `resultId`, inside the 15-minute
+retention. A loop past the budget ends in `budget_exceeded` with nothing returned.
+A write's handle says the write already ran and not to repeat it.
 `connecta.result(handle, { page: 0 })` accepts those handles alongside direct
 result IDs. Numbered pages are zero-based and mutually exclusive with offset.
 Keep maxBytes fixed while incrementing pages. A direct call's
 notice carries a `resultId`, `nextOffset`, and an executable `execute_code`
-recovery action. Read and reduce the result in one program:
+recovery action. When the hint offers the loop, read and reduce the result in one
+program. Leave `maxBytes` unset, because a smaller page spends more host calls:
 
 ```js
 async () => {
   let text = "", offset = 0, page;
   do {
-    page = await connecta.result("result-id", { offset, maxBytes: 8_000 });
+    page = await connecta.result("result-id", { offset });
     text += page.text;
     offset = page.nextOffset;
   } while (page.hasMore);
@@ -1042,11 +1060,10 @@ An OAuth call failure uses this envelope:
   "operation": "service.read",
   "recovery": "oauth",
   "authorizationUrl": "https://connecta.example/connect/service?h=...",
-  "instructions": "Copy authorizationUrl exactly as returned and sign in as the initiating user.",
+  "instructions": "For the person opening this link: sign in as the user who requested this connection; ...",
   "nextAction": {
-    "tool": "authorize_connector",
-    "arguments": { "connector": "service" },
-    "operatorHandoff": "Give the URL and instructions it returns to the operator."
+    "url": "https://connecta.example/connect/service?h=...",
+    "purpose": "Give this link to the user, unchanged, then stop. Retry after they confirm."
   },
   "retry": "Retry service.read after the operator completes recovery."
 }
@@ -1058,7 +1075,26 @@ returns for the admitted user, connector, and pool. Direct calls include them in
 `error`; program `connecta.call` failures include them in `error.data` and
 `error.details`. Search `catalogErrors` and scoped `queryAnalysis.catalogError`,
 and describe `errorDetails`, carry them too. When an auth error includes a
-handoff, give it to the user or operator. The class-specific handoff is:
+handoff, give it to the user or operator. An error that carries a handoff says
+so in `nextAction`, because calling `authorize_connector` would only return the
+same thing:
+
+- a link: `{ url, purpose }`, with `url` equal to `authorizationUrl` or `operatorUrl`;
+- no link (`unavailable`): `{ action: "contact_operator", purpose }`, with the
+  repair in `instructions`;
+- after a write of unknown outcome, either `purpose` says to re-read the write's
+  target once they confirm, never to retry.
+
+`message` drops its route text the same way. The typed fields are unchanged:
+`nextAction` repeats a link, it does not replace `authorizationUrl`, `operatorUrl`,
+`credential` or `instructions`. `nextAction` keeps
+`{ tool: "authorize_connector", arguments: { connector } }` in two cases: when no
+handoff could be attached, as for a request that has no handoff factory or whose
+signing failed, and in a program's terminal `write_outcome_unknown`-family result,
+which carries no handoff fields and so holds no link. A URL-elicitation host's
+call that falls back to a link gets the same `{ url, purpose }`.
+
+The class-specific handoff is:
 
 - `oauth`: an `authorizationUrl` to connecta's `/connect/<connector>?h=...` route
   and instructions to sign in as the initiating user;
@@ -1108,7 +1144,9 @@ way to call a tool. On a writable endpoint, `call_tool` reaching an unannotated,
 write-capable, or destructive tool returns `destructive_tool_requires_approval`
 with `nextAction` for `call_destructive_tool` and the canonical address. On a
 read-only endpoint every write path returns `read_only_endpoint` with no
-`nextAction`. Nothing is executed by these records.
+`nextAction`. Its message says no write route exists, not to try another route,
+to tell the user, and that only the operator can provide a writable connection.
+Nothing is executed by these records.
 
 `connecta.describe` keeps its failures inline instead, so one miss cannot
 discard the other schemas; each failed entry carries a human `error`, typed
@@ -1298,9 +1336,16 @@ its received types and schema facts. A custom connector's own findings must
 follow the same rule. Operator records contain only checked failure facts,
 never findings or examples.
 
-`nextAction` points to discovery scoped to the same connector and tool name when
-the compact schema is needed, routed like any other miss: a program to
-`connecta.search`, a top-level call to `search_tools`. `retry` says to correct
+When `issues` and `acceptedKeys` are present and nothing was truncated, the
+findings name the fix, so the envelope has no `nextAction` and `retry` leads.
+Otherwise `nextAction` points to discovery scoped to the same connector and tool
+name, with the purpose "Only if the validation above is not enough: inspect the
+schema.", routed like any other miss: a program to `connecta.search`, a top-level
+call to `search_tools`. `example` is synthesized from the published schema and
+checked against its validator; a plain required string reads as a named
+placeholder such as `"<id>"` rather than an empty string, which would pass local
+validation and reach the downstream. A schema that refuses the placeholder, and a
+`writeOnly` position, keep the plain sample. `retry` says to correct
 the listed arguments and reissue the original operation. What the local
 validator declines to evaluate is [code mode](./code-mode.md#errors)'s `E8`.
 
@@ -1312,6 +1357,15 @@ folds `repair` into `validation`.
 Unknown-address errors list `configuredConnectors` from the current endpoint's
 scoped registry, including an empty list when none are accessible. They never
 list connectors from another pool or identity's grants.
+
+An `unknown_tool` error from a direct call or a program carries `suggestions`
+when the connector has a tool with a near name: canonical addresses ranked as
+describe ranks them, and only reads on a read-only endpoint or connector.
+
+A direct call whose arguments do not match `call_tool` or `call_destructive_tool`
+fails input validation before anything is resolved. The message names the shape:
+`Send { address, args }`, with the tool's own arguments inside `args`. Neither
+tool accepts MCP's `name` or `arguments` keys.
 
 A write that times out after dispatch without complete auxiliary-only proof
 returns `write_outcome_unknown` with
@@ -1435,7 +1489,7 @@ resent. It is never retryable and carries no wait. Until the credential is
 renewed, the failure keeps its authorization code (`auth_required`, or
 `downstream_oauth_required` for an OAuth connector) with
 `writeOutcome: "unknown"`, `reconciliationRequired: true`, and the
-`authorize_connector` handoff, whose `instructions` say to authorize and then
+authorization handoff, whose `instructions` and `nextAction` say to authorize and then
 re-read the target before any fresh call. That holds whatever renewal meets: a
 refused or unreachable token endpoint, a disconnect, or the caller leaving. It
 also holds whatever the call met after the 401: a body past the response
@@ -1604,8 +1658,8 @@ Repair and validation fields retain the exact constraint details.
 Discovery `nextAction` points to the host's tool search (`host: "search"`), with
 only a `query` argument. Retry actions and retry text name the native tool,
 never a meta wrapper; a program on a native pool sees the same native wording
-in a failure it catches. An unknown name is reported as sent. Auth actions carry `authorizationUrl` or `operatorUrl`;
-give the returned URL and instructions to the user or operator. Capable modern
+in a failure it catches. An unknown name is reported as sent. Auth actions carry the link as `nextAction.url`,
+beside `authorizationUrl` or `operatorUrl`; give it and the instructions to the user or operator. Capable modern
 clients may resume native auth and downstream form/URL input with the same
 wire name, arguments and returned `requestState`. Changed names, targets or
 arguments, expired state and spent retry nonces are refused. Never resend a

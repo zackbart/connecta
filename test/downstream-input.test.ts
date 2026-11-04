@@ -1018,11 +1018,7 @@ describe("downstream input relay", { tags: ["node"] }, () => {
         expect(result.structuredContent.error).toMatchObject({
           code: "downstream_oauth_required",
           reconciliationRequired: true,
-          nextAction: {
-            tool: "authorize_connector",
-            arguments: { connector: "service" },
-            operatorHandoff: "Give the URL and instructions it returns to the operator.",
-          },
+          nextAction: { url: expect.stringContaining("/connect/service"), purpose: expect.stringContaining("re-read") },
           retry:
             "This write may have partially run. Reconcile its target before retrying after the operator completes recovery.",
         });
@@ -1146,11 +1142,7 @@ describe("downstream input relay", { tags: ["node"] }, () => {
     expect(result.structuredContent.error).toMatchObject({
       code: "auth_required",
       retryable: false,
-      nextAction: {
-        tool: "authorize_connector",
-        arguments: { connector: "service" },
-        operatorHandoff: "Give the URL and instructions it returns to the operator.",
-      },
+      nextAction: { action: "contact_operator", purpose: expect.stringContaining("Retry after") },
       retry: "Retry service.read after the operator completes recovery.",
     });
     expect(flow.continuationSend).toHaveBeenCalledOnce();

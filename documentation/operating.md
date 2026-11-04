@@ -22,7 +22,7 @@ instructions and `skills` usage guide for deployment-specific context.
 | Discover a tool, chain calls, combine services, or reduce a result | `execute_code`                                            |
 | One known write on a writable endpoint                             | `call_destructive_tool`                                   |
 | Obtain connector instructions                                      | `skills` with the returned guide name                     |
-| Start a required authentication handoff                            | `authorize_connector`, using the returned recovery action |
+| Start an authentication handoff no error has given you             | `authorize_connector`, using the returned recovery action |
 
 Whether the endpoint is read-only or writable is part of its tool
 descriptions. On a writable endpoint, programs and `call_destructive_tool` may
@@ -132,7 +132,9 @@ before it failed. Read their outputs with `connecta.result(error.completed.resul
 in a new program instead of repeating any of them
 ([`R9`](./code-mode.md#results-and-projection)).
 
-Read typed failures and their `nextAction`. Authorization recovery can point
+Read typed failures and their `nextAction`. An auth error that carries a link
+says so in `nextAction.url`: give that link to the user unchanged and stop, with
+no further call. Authorization recovery can point
 to consent, operator credential setup, or deployment configuration. Discovery
 and status do not begin consent on their own. Follow
 [authorization recovery](./meta-tools.md#authorization-recovery),
