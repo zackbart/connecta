@@ -1776,9 +1776,12 @@ a table.
 Remote MCP tools classify from server annotations and deployment policy.
 Only `readOnlyHint === true` with `destructiveHint !== true` establishes a
 source read; missing or contradictory hints mean write. Deployment overrides
-in `ConnectaConfig.classification` choose effective `read`, `write`, or `hidden`.
-They cannot relax source replay safety. Effective or source write makes a call
-write-like on every resend and recovery path. Source classifications travel in
+in `ConnectaConfig.classification` choose effective `read`, `write`, or `hidden`,
+except that `read` cannot change a tool the source explicitly declares a write:
+a host may resend a read-annotated call, so that tool stays a write. They cannot
+relax source replay safety. Effective or source write makes a call
+write-like on every resend and recovery path. Source facts, including whether a
+source write was declared or only silent, travel in
 private metadata with host-owned tool clones and stay out of persisted catalogs.
 A leftover `classify` throws and names `ConnectaConfig.classification`.
 There are no hosted review maps, pins, drift comparisons or review UI fields.

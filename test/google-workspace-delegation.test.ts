@@ -1645,24 +1645,32 @@ describe("Workspace served classification on unauthorized requests", () => {
     }
   });
 
-  it("INV-9: a served read-classified POST is never replayed after 401", NODE, async () => {
-    apiReplies.push(
-      () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
-      () => Response.json({ id: "draft-1", message: { id: "message-1", threadId: "thread-1" } }),
-    );
-    const connector = gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" });
-    const registry = makeRegistry([connector], { classification: { gmail: { create_draft: "read" } } });
-    const result = await createMetaTools(registry, "https://connecta.example").callTool({
-      address: "gmail.create_draft",
-      args: { body: "Draft text" },
-    });
-    expect(result.structuredContent).toMatchObject({ ok: false, error: { code: "auth_required", retryable: false } });
-    expect(apiCalls.map(({ method, authorization }) => ({ method, authorization }))).toEqual([
-      { method: "POST", authorization: "Bearer token-1" },
-    ]);
-    expect(apiCalls[0]!.body).toBeTypeOf("string");
-    expect(tokenCalls).toHaveLength(1);
-  });
+  it(
+    "INV-1 INV-9: a read override on a declared write POST still sends once and never replays after 401",
+    NODE,
+    async () => {
+      apiReplies.push(
+        () => Response.json({ error: { code: 401, message: "Invalid Credentials" } }, { status: 401 }),
+        () => Response.json({ id: "draft-1", message: { id: "message-1", threadId: "thread-1" } }),
+      );
+      const connector = gmail("gmail", { purpose: "Mail", serviceAccount: account(), subject: "alice@example.com" });
+      const registry = makeRegistry([connector], { classification: { gmail: { create_draft: "read" } } });
+      const tools = createMetaTools(registry, "https://connecta.example");
+      const refused = await tools.callTool({ address: "gmail.create_draft", args: { body: "Draft text" } });
+      expect(refused.structuredContent).toMatchObject({ error: { code: "destructive_tool_requires_approval" } });
+      expect(apiCalls).toEqual([]);
+      const result = await tools.callDestructiveTool({
+        address: "gmail.create_draft",
+        args: { body: "Draft text" },
+      });
+      expect(result.structuredContent).toMatchObject({ ok: false, error: { code: "auth_required", retryable: false } });
+      expect(apiCalls.map(({ method, authorization }) => ({ method, authorization }))).toEqual([
+        { method: "POST", authorization: "Bearer token-1" },
+      ]);
+      expect(apiCalls[0]!.body).toBeTypeOf("string");
+      expect(tokenCalls).toHaveLength(1);
+    },
+  );
 
   it.each([503, "reset"] as const)(
     "INV-9: a write-classified Google GET's %s stays an unknown outcome",
