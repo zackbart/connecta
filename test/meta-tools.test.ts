@@ -131,8 +131,7 @@ Prefer \`notes.search\` over listing databases.
     expect((await mt.skills({})).structuredContent).toHaveProperty("skills");
     expect((await mt.skills({ name: "connector:missing" })).structuredContent).toHaveProperty("error");
     const usage = textFrom(await mt.skills({ name: "usage" }));
-    expect(usage.startsWith("# Connecta usage
-")).toBe(true);
+    expect(usage.startsWith("# Connecta usage\n")).toBe(true);
   });
 
   it("states the effective read-only endpoint policy without editing guide procedures", async () => {

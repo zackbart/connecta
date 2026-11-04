@@ -177,9 +177,7 @@ describe("meta-tool output schemas", () => {
       expect(searchValidator.validate({ ...flat, catalogErrors: [{ ...failure, extra: 1 }] }).valid).toBe(false);
       const execute = list.result.tools.find((tool: { name: string }) => tool.name === "execute_code");
       // The paging rule no guide repeats: stop before the limit and resume in the next program.
-      expect(execute.description).toContain(
-        "Near the host-call limit, return page.nextCursor and resume in the next program.",
-      );
+      expect(execute.description).toContain("Near the host-call limit, return page.nextCursor to resume next program.");
       expect(new Validator(execute.outputSchema).validate({ result: null }).valid).toBe(false);
       expect(
         new Validator(execute.outputSchema).validate({
