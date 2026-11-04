@@ -1049,7 +1049,7 @@ export class Registry implements RegistryView {
         Effect.catch((error) =>
           Effect.gen({ self: this }, function* () {
             if (customListing && isAccessRefusal(error))
-              yield* authCall<void>(fenceCustomCatalog, [ctx, customListing]).pipe(
+              yield* authCall<void>(fenceCustomCatalog, [ctx, id, customListing]).pipe(
                 Effect.catch((failure) =>
                   Effect.sync(() =>
                     logFailure(this.opts.logger, "catalog fence failed", failureRecord({ connector: id }, failure)),

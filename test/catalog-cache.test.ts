@@ -1970,15 +1970,15 @@ describe("stale catalog listing", () => {
         }
       };
       // The next listing waits for release; `started` says it has been dispatched.
-      const holdNext = (outcome: () => Promise<typeof tools>) => {
+      const holdNext = (outcome: (ctx: ConnectorContext) => Promise<typeof tools>) => {
         const started = deferred<void>();
         const released = deferred<void>();
         const healthy = answer;
-        answer = async () => {
+        answer = async (ctx) => {
           answer = healthy;
           started.resolve();
           await released.promise;
-          return outcome();
+          return outcome(ctx);
         };
         return { started: started.promise, release: () => released.resolve() };
       };
@@ -2026,20 +2026,15 @@ describe("stale catalog listing", () => {
       expect(restored.catalogErrors[0]).toMatchObject({ stale: true });
     });
 
-    it("INV-5: a custom refusal fences the credential that listing was dispatched under", async () => {
+    it("INV-5: a custom refusal with an unchanged credential fences only that credential", async () => {
       const f = await customFixture();
       await f.list();
       await f.vault.set(f.id, TOKEN_B, "operator");
       await f.list();
       await f.vault.set(f.id, TOKEN_A, "operator");
-      const refused = f.holdNext(async () => {
-        throw f.denied();
-      });
-      const attempt = f.list();
-      await refused.started;
+      f.refuseNext();
+      await expect(f.list()).rejects.toMatchObject({ code: "provider_permission_denied" });
       await f.vault.set(f.id, TOKEN_B, "operator");
-      refused.release();
-      await expect(attempt).rejects.toMatchObject({ code: "provider_permission_denied" });
       await f.clearHealth();
       const unrefused = await f.hungSearch();
       expect(unrefused.entries).toHaveLength(1);
@@ -2050,6 +2045,43 @@ describe("stale catalog listing", () => {
       expect(fenced.entries).toEqual([]);
       expect(fenced.catalogErrors[0]?.stale).toBeUndefined();
     });
+
+    it.each<[string, (f: Awaited<ReturnType<typeof customFixture>>, ctx: ConnectorContext) => Promise<unknown>]>([
+      ["ctx.credential.getAll", (_f, ctx) => ctx.credential!.getAll()],
+      ["ctx.credential.get", (_f, ctx) => ctx.credential!.get()],
+      ["its own read of the vault", (f) => f.vault.getAll(f.id, undefined)],
+    ])(
+      "INV-5 INV-8: a credential rotated before a custom connector reads it through %s retires both catalogs",
+      async (_route, read) => {
+        const f = await customFixture();
+        await f.list();
+        await f.vault.set(f.id, TOKEN_B, "operator");
+        await f.list();
+        await f.vault.set(f.id, TOKEN_A, "operator");
+        const refused = f.holdNext(async (ctx) => {
+          expect(JSON.stringify(await read(f, ctx))).toContain(TOKEN_B);
+          throw f.denied();
+        });
+        const attempt = f.list();
+        await refused.started;
+        await f.vault.set(f.id, TOKEN_B, "operator");
+        refused.release();
+        await expect(attempt).rejects.toMatchObject({ code: "provider_permission_denied" });
+        for (const token of [TOKEN_B, TOKEN_A]) {
+          await f.vault.set(f.id, token, "operator");
+          await f.clearHealth();
+          const retired = await f.hungSearch();
+          expect(retired.entries).toEqual([]);
+          expect(retired.catalogErrors[0]?.stale).toBeUndefined();
+        }
+        await f.vault.set(f.id, TOKEN_B, "operator");
+        await f.list();
+        await f.clearHealth();
+        const restored = await f.hungSearch();
+        expect(restored.entries).toHaveLength(1);
+        expect(restored.catalogErrors[0]).toMatchObject({ stale: true });
+      },
+    );
 
     it("INV-5 INV-8: a custom answer outlived by its credential is retained for neither credential", async () => {
       const f = await customFixture();

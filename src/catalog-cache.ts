@@ -1913,14 +1913,33 @@ const customCatalogPeekNative = /* @__PURE__ */ registerAuth(
         : undefined;
     }),
 );
-/** A custom connector's refusal: the catalog of the credential it was listed under stands in for nothing until a listing succeeds. */
-export function fenceCustomCatalog(ctx: ConnectorContext, listing: CustomCatalogListing): Promise<void> {
-  return runEdge(authProgram<void>(fenceCustomCatalogNative, [ctx, listing]));
+/**
+ * A custom connector's refusal. It reads its own credential, by any route, so
+ * only one unchanged since the ticket identifies what was refused: that
+ * catalog stands in for nothing until a listing succeeds. A change, or a failed
+ * read, leaves it unknown, so every catalog retained for this connector goes.
+ */
+export function fenceCustomCatalog(
+  ctx: ConnectorContext,
+  connectorId: string,
+  listing: CustomCatalogListing,
+): Promise<void> {
+  return runEdge(authProgram<void>(fenceCustomCatalogNative, [ctx, connectorId, listing]));
 }
 const fenceCustomCatalogNative = /* @__PURE__ */ registerAuth(
   fenceCustomCatalog,
-  (ctx: ConnectorContext, listing: CustomCatalogListing) =>
-    authInvoke(listing.cache, "fenceTools", [ctx, listing.bound]) as Effect.Effect<void, unknown>,
+  (ctx: ConnectorContext, connectorId: string, listing: CustomCatalogListing) =>
+    authFlow<void>(function* () {
+      const current = (yield (authCall(customCatalogAuth, [ctx]) as Effect.Effect<string, unknown>).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      )) as string | undefined;
+      if (current === listing.auth) (yield authInvoke(listing.cache, "fenceTools", [ctx, listing.bound])) as void;
+      else
+        (yield authCall(invalidateCatalogCache, [
+          serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage,
+          connectorId,
+        ])) as void;
+    }),
 );
 export function customCatalogFallback(ctx: ConnectorContext, connectorId: string): Promise<ToolDef[] | undefined> {
   return runEdge(authProgram<ToolDef[] | undefined>(customCatalogFallbackNative, [ctx, connectorId]));

@@ -859,10 +859,18 @@ generation its attempt was dispatched under, whichever are current when it
 answers, so another credential's catalog keeps working. A listing lifts only the
 retirement it read before it asked the downstream; a refusal that lands while it
 runs stays until a later listing succeeds. A custom connector's answer is
-retained only if its credential did not change while it was listing.
+retained only if its credential did not change while it was listing. Connecta
+cannot see which credential a custom connector sent, so a refusal whose
+credential changed while it was listing, or cannot be read afterwards, retires
+that connector's catalogs for every credential and owner.
 
-Two limits follow:
+Three limits follow:
 
+- A custom connector's credential is compared when its listing begins and when
+  it is refused. A change back to the same credential between them goes unseen,
+  as does a connector sending a credential it kept from earlier. The credential
+  actually refused is then not retired: its catalog can be listed stale if it
+  becomes current again, until its first answer.
 - A retirement that cannot be written is logged as `catalog fence failed` and the
   refusal is still returned. The catalog stays reusable until a later refusal is
   recorded, a listing replaces it or its stale limit passes.
