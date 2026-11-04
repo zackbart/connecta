@@ -243,6 +243,8 @@ describe("read programs (execute_read_code)", () => {
     const w = readProgram();
     const result = value(await w.run(async () => "x".repeat(MAX_EXECUTE_RESULT_CHARS + 1))).result;
     expect(result.nextAction).toMatchObject({ tool: "execute_read_code" });
+  });
+});
 
 const LATE_SECRET = "Zqx79UVW_LATE_SECRET";
 const toolError = (text: string) => ({ isError: true, content: [{ type: "text", text }] });
