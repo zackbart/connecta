@@ -243,7 +243,7 @@ export const responseCacheKeys = {
     codec: textCodec,
     ttl: {
       kind: "configured",
-      by: "bounded downstream ttlMs; generations and hash refresh baselines expire after 48 hours",
+      by: "bounded downstream ttlMs; generations, refusal fences and hash refresh baselines expire after 48 hours",
     },
     durable: false,
   },

@@ -259,6 +259,11 @@ async function doctor() {
       throw new Error(
         `Native catalogs unavailable: ${surface.catalogErrors.join(", ")}. Inspect connector status and authentication.`,
       );
+    // Tools are listed, from an older catalog, so nothing above notices that the connector did not answer.
+    if (native && surface.staleCatalogs?.length)
+      throw new Error(
+        `Native discovery degraded: ${surface.staleCatalogs.join(", ")} did not answer and listed from an older catalog. Inspect connector status.`,
+      );
     // A writable human endpoint also lists the read program route, unless the deployment turned it off.
     readRoute = !native && actual.includes(READ_PROGRAM_TOOL);
     const expected = native

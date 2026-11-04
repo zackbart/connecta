@@ -808,6 +808,60 @@ describe("native tool surface", () => {
     }
   });
 
+  it("INV-1 INV-8: lists a slow connector's stale catalog fail-closed, briefly, and a call never resolves through it", async () => {
+    const storage = memoryStorage();
+    let hung = false;
+    let dispatched = 0;
+    const app = createTestConnecta({
+      connectors: [
+        {
+          id: "crm",
+          kind: "mcp" as const,
+          listTools: (ctx) =>
+            hung
+              ? new Promise((_, reject) =>
+                  ctx.signal!.addEventListener("abort", () => reject(ctx.signal!.reason), { once: true }),
+                )
+              : Promise.resolve([
+                  { name: "get", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } },
+                ]),
+          callTool: async () => {
+            dispatched++;
+            return {};
+          },
+        },
+      ],
+      agents: ["assistant"],
+      pools: { native: { tools: ["crm"], members: ["agent:assistant"], surface: "native" } },
+      discovery: { probeTimeoutMs: 100 },
+      storage,
+      accessTokens: accessTokens(storage),
+      logger: silentLogger,
+    });
+    try {
+      const token = await issueAgentToken(storage, "assistant");
+      const fresh = await rpc(app, token, "native", "tools/list", {});
+      const tool = (listing: typeof fresh) =>
+        listing.result.tools.find((candidate: { name: string }) => candidate.name === "crm__get");
+      expect(tool(fresh).annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+      expect(fresh.result.ttlMs).toBe(300_000);
+      hung = true;
+      const stale = await rpc(app, token, "native", "tools/list", {});
+      // The connector stays listed, and neither its read hint nor the usual cache time is vouched for.
+      expect(tool(stale).annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      expect(tool(stale)._meta["dev.connecta/stale"]).toEqual({ code: "timeout", ageMs: expect.any(Number) });
+      expect(stale.result.ttlMs).toBe(60_000);
+      const skills = stale.result.tools.find((candidate: { name: string }) => candidate.name === "skills");
+      expect(skills._meta["dev.connecta/surface"].staleCatalogs).toEqual(["crm"]);
+      expect(skills._meta["dev.connecta/surface"].catalogErrors).toEqual([]);
+      const call = await rpc(app, token, "native", "tools/call", { name: "crm__get", arguments: {} });
+      expect(envelope(call.result).error.code).toBe("timeout");
+      expect(dispatched).toBe(0);
+    } finally {
+      await app.close();
+    }
+  });
+
   it("INV-8: preserves object schemas and omits only the connector with an unrepresentable schema", async () => {
     const object: JsonSchema = {
       type: "object",

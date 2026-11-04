@@ -457,6 +457,98 @@ describe("Node listen adapter", () => {
     25_000,
   );
 
+  describe("the response ceiling on Node", () => {
+    const stalled = () => {
+      let calls = 0;
+      const connector = api("slow", {
+        description: "Never answers",
+        tools: [
+          {
+            name: "write",
+            description: "Hang",
+            annotations: { readOnlyHint: false },
+            inputSchema: { type: "object" },
+            handler: () => {
+              calls++;
+              return new Promise(() => {});
+            },
+          },
+        ],
+      });
+      const connecta = createTestConnecta({
+        connectors: [connector],
+        auth: [],
+        publicUrl: "http://127.0.0.1",
+        execute: { watchdogMs: 2_000 },
+      });
+      return { connecta, calls: () => calls };
+    };
+    const call = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: {
+        name: "call_destructive_tool",
+        arguments: { address: "slow.write", args: {}, timeoutMs: 600_000 },
+      },
+    });
+    const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+
+    it("counts a slow upload, so the answer still beats the client's timer", async () => {
+      const { connecta } = stalled();
+      const server = listen(connecta, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected a TCP listen address.");
+      try {
+        const request = httpRequest({
+          host: "127.0.0.1",
+          port: address.port,
+          method: "POST",
+          path: "/mcp",
+          headers: { ...headers, "Content-Length": Buffer.byteLength(call) },
+        });
+        const answered = once(request, "response");
+        request.write(call.slice(0, 10));
+        // Headers are in, and most of the ceiling goes on the rest of the body.
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+        const uploaded = Date.now();
+        request.end(call.slice(10));
+        const [response] = (await answered) as [NodeJS.ReadableStream];
+        const chunks: Buffer[] = [];
+        for await (const chunk of response) chunks.push(chunk as Buffer);
+        // About 500 ms of ceiling is left; counted from the upload's end it would be 2 s.
+        expect(Date.now() - uploaded).toBeLessThan(1_500);
+        const body = JSON.parse(Buffer.concat(chunks).toString());
+        expect(body.result.structuredContent.error).toMatchObject({ code: "write_outcome_unknown", retryable: false });
+      } finally {
+        await connecta.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+
+    it("INV-4: takes arrival from the host's context, never from the request", async () => {
+      const { connecta, calls } = stalled();
+      const mcp = (extra: Record<string, string> = {}) =>
+        new Request("http://127.0.0.1/mcp", { method: "POST", headers: { ...headers, ...extra }, body: call });
+      const longAgo = Date.now() - 60_000;
+      const context = { waitUntil: () => {}, requestArrivedAt: longAgo };
+      const refused = (await (await connecta.fetch(mcp(), undefined, context)).json()) as any;
+      expect(refused.result.structuredContent.error).toMatchObject({
+        code: "timeout",
+        retryable: true,
+        details: { stage: "response ceiling" },
+      });
+      expect(calls()).toBe(0);
+      // Nothing a client can send moves the clock.
+      const forged = connecta.fetch(mcp({ requestArrivedAt: String(longAgo), "request-arrived-at": String(longAgo) }));
+      const body = (await (await forged).json()) as any;
+      expect(body.result.structuredContent.error.code).toBe("write_outcome_unknown");
+      expect(calls()).toBe(1);
+      await connecta.close();
+    });
+  });
+
   it("propagates a real MCP socket disconnect into execute_code host calls", async () => {
     const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     let markStarted!: () => void;

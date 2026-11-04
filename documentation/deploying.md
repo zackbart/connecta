@@ -297,14 +297,15 @@ connector; resolve credentials using [authorization recovery](./meta-tools.md#au
 
 Use the failed check to choose the next step:
 
-| Symptom                             | Action                                                                                                                                           |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Connection refused or timeout       | Check the public URL, listening process/port, proxy, and Worker deployment.                                                                      |
-| `/health` fails behind Access       | Check the Worker-level Access policy and the two service headers above. Do not broaden the agent bypass.                                         |
-| Executor check fails                | Retain `quickJsExecutor()` and its peer on Node, or `workerExecutor({ loader })`, the codemode peer, and `LOADER` on Workers.                    |
-| MCP 401                             | Check the saved token, declared agent, and slot state; rotated/revoked tokens refuse. Use `/agent/<pool>` with `--pool`.                         |
-| MCP 404                             | Check the pool name and `members: ["agent:assistant"]`; an existing but inaccessible pool is deliberately indistinguishable from a missing one.  |
-| Doctor passes but a connector fails | Discover its tools in that pool, check credential status/account ownership, and perform a bounded read. Doctor does not prove downstream access. |
+| Symptom                             | Action                                                                                                                                                         |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection refused or timeout       | Check the public URL, listening process/port, proxy, and Worker deployment.                                                                                    |
+| `/health` fails behind Access       | Check the Worker-level Access policy and the two service headers above. Do not broaden the agent bypass.                                                       |
+| Executor check fails                | Retain `quickJsExecutor()` and its peer on Node, or `workerExecutor({ loader })`, the codemode peer, and `LOADER` on Workers.                                  |
+| MCP 401                             | Check the saved token, declared agent, and slot state; rotated/revoked tokens refuse. Use `/agent/<pool>` with `--pool`.                                       |
+| MCP 404                             | Check the pool name and `members: ["agent:assistant"]`; an existing but inaccessible pool is deliberately indistinguishable from a missing one.                |
+| Doctor passes but a connector fails | Discover its tools in that pool, check credential status/account ownership, and perform a bounded read. Doctor does not prove downstream access.               |
+| `Native discovery degraded`         | The named connectors did not answer and are listed from an older catalog. Check them with a scoped search; tools stay listed but calls check the live catalog. |
 
 After a fix, repeat doctor with the same client credentials and pool. Never
 paste a token or raw downstream failure body into a committed diagnostic log.

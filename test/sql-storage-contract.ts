@@ -335,7 +335,9 @@ export function sqlGetManyContract(open: () => Promise<Pick<SqlFixture, "storage
     expect(after.has(entry("first", "public"))).toBe(false);
     expect(after.get(entry("second", "public"))).toBeNull();
     await expect(
-      runEdge(getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, ["a", "b", "c"])),
+      runEdge(
+        getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, ["a", "b", "c", "d"]),
+      ),
     ).rejects.toThrow(RangeError);
   });
 

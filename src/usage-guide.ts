@@ -32,7 +32,7 @@ Parse \`format: "text"\` only when documented as JSON. Verify collection roots.
 \`connecta.read("resource://id/"+encodeURIComponent(uri))\` returns \`{ contents }\` for advertised URIs.
 
 Search/describe return \`{ tools }\`, never an array. Check search's
-\`catalogErrors\` and \`absence\` before selecting a match. Search defaults to a
+\`catalogErrors\` and \`absence\` before selecting a match; a \`stale: true\` error's tools are listed from an older catalog, and a call still checks the live one. Search defaults to a
 TypeScript \`signature\`; text schemas have \`schemaFormat: "text"\` and no .properties.
 A \`readyCalls\` entry is a complete read: \`connecta.call(entry.address, entry.args)\`. Select the exact tool and
 account/environment, inspect its schema, and supply its required keys and types.
