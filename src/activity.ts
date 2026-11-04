@@ -3,7 +3,7 @@ import { CONNECTA_VERSION } from "./version.js";
 import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import { routeActivity } from "./routes/activity.js";
 import type { ActivityModule } from "./module-contracts.js";
-import { boundedEchoText, classificationCode, type ClassificationCode } from "./errors.js";
+import { clampedRecordName, classificationCode, type ClassificationCode } from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { keepErrorName } from "./redaction-identity.js";
 import type { Logger } from "./types.js";
@@ -377,9 +377,9 @@ export function recordToolActivity(context: ActivityRequestContext | undefined, 
       pool: context.pool,
       actorBasis: input.privateCatalog || (input.personal && context.principalActor) ? "principal" : undefined,
     }),
-    connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
-    toolName: boundedEchoText(input.toolName, MAX_ACTIVITY_NAME_BYTES),
-    address: boundedEchoText(input.address, MAX_ACTIVITY_ADDRESS_BYTES),
+    connectorId: clampedRecordName(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
+    toolName: clampedRecordName(input.toolName, MAX_ACTIVITY_NAME_BYTES),
+    address: clampedRecordName(input.address, MAX_ACTIVITY_ADDRESS_BYTES),
     source: input.source,
     outcome: input.outcome,
     durationMs: Math.max(0, Math.trunc(input.durationMs)),

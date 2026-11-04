@@ -172,6 +172,69 @@ describe("call-scoped sent credentials", () => {
     expect(secrets.redact(result)).toBe(result);
   });
 
+  describe("INV-5: a header or query parameter's name never makes its value public", () => {
+    const interior = SECRET.slice(2, 14);
+    const expectProtected = (secrets: SentSecrets) => {
+      expect(secrets.text(`note ${interior} end`)).not.toContain(interior);
+      expect(secrets.text(`note ${SECRET} end`)).not.toContain(SECRET);
+      expect(secrets.filterCredentials({ note: `note ${interior} end` }).changed).toBe(true);
+    };
+
+    it.each([["x-auth-email"], ["x-auth-user"], ["x-auth-id"], ["x-api-key-id"], ["public-key-auth"]])(
+      "keeps the whole value and every fragment of a %s header matched",
+      (name) => {
+        const secrets = new SentSecrets();
+        secrets.request("https://api.example.com/", { headers: { [name]: SECRET } });
+        expectProtected(secrets);
+      },
+    );
+
+    it.each([["auth_user"], ["auth_email"], ["x_auth_id"], ["public_key"]])(
+      "keeps the whole value and every fragment of a %s query parameter matched",
+      (name) => {
+        const secrets = new SentSecrets();
+        secrets.request(`https://api.example.com/?${name}=${encodeURIComponent(SECRET)}`);
+        expectProtected(secrets);
+      },
+    );
+
+    it("matches the unframed secret of a query value an auth scheme frames", () => {
+      const secrets = new SentSecrets();
+      secrets.request(`https://api.example.com/?auth_user=Bearer%20${encodeURIComponent(SECRET)}`);
+      expectProtected(secrets);
+    });
+  });
+
+  describe("INV-5: a header maintained provider code declares a public identifier", () => {
+    const EMAIL = "alice@example.com";
+
+    it("matches the whole value in output only, leaving its parts and outbound arguments alone", () => {
+      const secrets = new SentSecrets();
+      expect(secrets.publicIdentifierHeader(EMAIL)).toBe(true);
+      expect(secrets.text("example.com alice")).toBe("example.com alice");
+      expect(secrets.text(EMAIL)).toBe("[redacted]");
+      expect(secrets.filterCredentials({ name: "example.com", owner: EMAIL })).toEqual({
+        value: { name: "example.com", owner: EMAIL },
+        changed: false,
+      });
+    });
+
+    it.each([["Bearer"], ["token"], ["Basic"], ["ApiKey"]])("treats a value %s frames as a credential", (scheme) => {
+      const secrets = new SentSecrets();
+      expect(secrets.publicIdentifierHeader(`${scheme} ${SECRET}`)).toBe(false);
+      const fragment = `note ${SECRET.slice(2, 14)} end`;
+      expect(secrets.text(fragment)).not.toContain(SECRET.slice(2, 14));
+      expect(secrets.filterCredentials({ note: fragment }).changed).toBe(true);
+    });
+
+    it("gives way to the same value sent as a credential", () => {
+      const secrets = new SentSecrets();
+      secrets.publicIdentifierHeader(SECRET);
+      secrets.header(SECRET);
+      expect(secrets.filterCredentials({ note: SECRET.slice(2, 14) }).changed).toBe(true);
+    });
+  });
+
   it("INV-5: credentials shorter than eight characters and Basic usernames cannot corrupt ordinary text", () => {
     const secrets = new SentSecrets();
     secrets.add("a");

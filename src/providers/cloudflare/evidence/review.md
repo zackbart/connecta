@@ -131,3 +131,7 @@ are not validated as the literal string undefined; the concrete route remains
 callable. Independently captured number params require decimal syntax with a
 canonical integer part; fractional trailing zeros are accepted, while negative
 zero, hex, exponents, leading plus and whitespace remain refused.
+
+## Public identifier header
+
+The Global API Key scheme sends the account email in `X-Auth-Email` and proves it with `X-Auth-Key`. The provider declares only `x-auth-email` a public identifier: the whole email stays matched in output, and fragments of it, such as the account's domain, stay usable. The key stays fully matched.
