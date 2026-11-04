@@ -238,6 +238,10 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
   "p5-supabase-project-ref": { route: [], outcome: ["no-wrong-project"] },
   "p5-absent-github": { route: [], outcome: ["no-lookalike-call", "states-absence", "structured-answer"] },
   "p5-known-read-routing": { route: ["direct-read"], outcome: ["one-read", "reads-only"] },
+  "para-green-build": { route: [], outcome: ["vendor-read", "reads-only", "answer"] },
+  "para-who-owes": { route: [], outcome: ["vendor-read", "reads-only", "answer"] },
+  "para-mark-done": { route: [], outcome: ["state", "one-write"] },
+  "para-tell-room": { route: [], outcome: ["state", "one-write"] },
   "p5-connecta-read": { route: [], outcome: ["program-resource-read", "reads-only"] },
 };
 const OUTER: Record<string, Grading> = {
@@ -275,7 +279,19 @@ export function gradeTask(
 ): Check[] {
   // Presentation normalization for existing route-sensitive graders only.
   // Saved trace and physical downstream ledger retain their original names.
-  if (surface === "native" || surface === "native-no-code") {
+  if (surface === "read-six" || surface === "read-five") {
+    // A read program is a program to outcome graders; the wire name stays in the saved trace.
+    context = {
+      ...context,
+      trace: {
+        ...context.trace,
+        toolUses: context.trace.toolUses.map((use) =>
+          use.tool === "execute_read_code" ? { ...use, tool: "execute_code" } : use,
+        ),
+      },
+    };
+  }
+  if (surface === "native" || surface === "native-no-code" || surface === "native-hints" || surface === "pinned") {
     context = {
       ...context,
       trace: {

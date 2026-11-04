@@ -17,6 +17,7 @@ import { VERCEL_TASKS } from "./vercel.js";
 import { GITHUB_TASKS } from "./github.js";
 import { CLOUDFLARE_TASKS } from "./cloudflare.js";
 import { STRIPE_TASKS } from "./stripe.js";
+import { PARAPHRASE_TASKS } from "./paraphrase.js";
 
 /** Retained tasks from the historical 19-task #765 paired experiment. */
 export const COMPARISON_TASKS: ActiveTask[] = [
@@ -28,6 +29,7 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   QUICKBOOKS_TASK,
   QUICKBOOKS_WRITE_TASK,
   ...COMPARISON_TASKS,
+  ...PARAPHRASE_TASKS,
   ...REST_TASKS,
   ...TITHELY_TASKS,
   ...BREEZE_TASKS,

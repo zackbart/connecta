@@ -4,7 +4,7 @@ import { guidanceValue } from "./guidance.js";
  * lifecycle. Node-free: the workerd composition wraps the Dynamic Worker
  * executor with the same observer.
  */
-import { codeError, codeSkill, codeValue } from "./code-surface.js";
+import { codeError, codeSkill, codeValue, hidesSearch } from "./code-surface.js";
 import type { Surface } from "../agent/surface.js";
 import type { ExecutorProvider, ExecutorLease } from "@zackbart/connecta";
 
@@ -52,7 +52,7 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
               try {
                 const original = guidanceValue(await fn(...args));
                 const result =
-                  surface !== "code" && surface !== "five"
+                  surface !== "code" && !hidesSearch(surface)
                     ? original
                     : call.name === "connecta.skill" && surface === "code"
                       ? codeSkill(args[0], original)
@@ -61,7 +61,7 @@ export function observePrograms<T extends { acquire: NonNullable<ExecutorLike["a
                 call.result = result;
                 return result;
               } catch (original) {
-                const error = surface !== "code" && surface !== "five" ? original : codeError(original, surface);
+                const error = surface !== "code" && !hidesSearch(surface) ? original : codeError(original, surface);
                 call.outcome = "error";
                 if (error && typeof error === "object" && "code" in error) call.errorCode = String(error.code);
                 throw error;

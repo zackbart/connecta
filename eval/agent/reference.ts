@@ -119,7 +119,7 @@ export async function playReference<T>(
           }
           let native;
           if (
-            (surface === "native" || surface === "native-no-code") &&
+            (surface === "native" || surface === "native-no-code" || surface === "native-hints") &&
             ["call_tool", "call_destructive_tool"].includes(tool)
           ) {
             native = (await live.listTools()).find((listed) => listed.address === args.address);

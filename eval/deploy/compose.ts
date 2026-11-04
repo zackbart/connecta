@@ -6,6 +6,7 @@
  * differ: storage, executor, vault key and, on Workers, Access.
  */
 import { codeConfig } from "./code-surface.js";
+import { armPools } from "./surface-arms.js";
 import type { Surface } from "../agent/surface.js";
 import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
 import { PROVIDER_DEPLOYS } from "./providers.generated.js";
@@ -111,18 +112,25 @@ export function evalConfig(
       : {}),
     ...(passthrough as Partial<Config>),
   } as Config;
-  if (composition.surface === "native" || composition.surface === "native-no-code") {
+  if (
+    composition.surface === "native" ||
+    composition.surface === "native-no-code" ||
+    composition.surface === "native-hints" ||
+    composition.surface === "native-bound"
+  ) {
     config.pools = Object.fromEntries(
       Object.entries(config.pools ?? {}).map(([id, pool]) => [
         id,
         {
           ...pool,
           surface: "native",
-          executeCode: composition.surface === "native",
+          executeCode: composition.surface !== "native-no-code",
         },
       ]),
     );
   }
+  if (composition.surface)
+    config.pools = armPools(config.pools ?? {}, composition.surface) as NonNullable<Config["pools"]>;
   return codeConfig(config, composition.surface ?? "six");
 }
 

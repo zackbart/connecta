@@ -27,8 +27,22 @@ export interface CodexRun {
   loadedTools: string[];
 }
 
+/**
+ * What the eval host does when a real host would prompt. `auto` approves every
+ * tool up front and never prompts, which is the historical setup. `prompt-allow`
+ * and `prompt-deny` leave host approval on, then answer and count each prompt.
+ */
+export type ApprovalMode = "auto" | "prompt-allow" | "prompt-deny";
+
+export function parseApproval(value = "auto"): ApprovalMode {
+  if (value !== "auto" && value !== "prompt-allow" && value !== "prompt-deny")
+    throw new Error("--approval must be auto, prompt-allow or prompt-deny");
+  return value;
+}
+
 export interface CodexOptions {
   model: string;
+  approval?: ApprovalMode;
   surface?: Surface;
   mcpUrl: string;
   token: string;
@@ -40,8 +54,17 @@ export interface CodexOptions {
   firstPrompt: string;
   nextTurn(turnIndex: number, events: StreamEvent[]): Promise<string | undefined>;
   onEvent?(event: StreamEvent): void;
+  /** Enabled tools a prompting host asks about. */
+  promptedTools?: string[];
   /** Dependency injection for the protocol self-test; never set by eval/run-agent. */
   testHost?: { executable: string; args: string[]; authFile: string; version: string };
+}
+
+/** The tool a host approval names, wherever this CLI version carries it. */
+function approvalTool(params: Record<string, any> | undefined): string | undefined {
+  const text = JSON.stringify(params ?? {});
+  const named = /"tool_name":"([^"]+)"/.exec(text) ?? /"tool":"([^"]+)"/.exec(text);
+  return named?.[1]?.replace(/^mcp__connecta__/, "");
 }
 
 export async function codexVersion(): Promise<string> {
@@ -125,6 +148,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     throw new Error("Codex timeout must be a finite positive number");
   }
   if (options.signal?.aborted) throw new Error("Codex trial aborted");
+  const prompting = (options.approval ?? "auto") !== "auto";
   const root = await mkdtemp(join(tmpdir(), "connecta-eval-codex-"));
   const codexHome = join(root, "codex-home");
   const cwd = join(root, "empty-workspace");
@@ -165,8 +189,9 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     "[mcp_servers.connecta]",
     `url = ${JSON.stringify(options.mcpUrl)}`,
     "required = true",
-    `enabled_tools = ${JSON.stringify([...new Set([...options.allowedTools, ...options.deniedTools])])}`,
-    'default_tools_approval_mode = "approve"',
+    `enabled_tools = ${JSON.stringify([...new Set([...options.allowedTools, ...options.deniedTools, ...(options.promptedTools ?? [])])])}`,
+    // Omitted, Codex applies its default: readOnlyHint runs; other tools prompt, including inside exec.
+    ...(prompting ? [] : ['default_tools_approval_mode = "approve"']),
     `http_headers = { Authorization = ${JSON.stringify(`Bearer ${options.token}`)} }`,
     ...options.deniedTools.flatMap((tool) => [
       `[mcp_servers.connecta.tools.${JSON.stringify(tool)}]`,
@@ -197,6 +222,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   let nextId = 1;
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
   const toolByItem = new Map<string, string>();
+  let lastMcpTool: string | undefined;
   let turnDone: ((value: Record<string, unknown>) => void) | undefined;
   let stopWaiting: (() => void) | undefined;
   const stopped = new Promise<undefined>((resolve) => {
@@ -230,7 +256,10 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     }
     if (message.method === "item/tool/requestUserInput" && message.id !== undefined) {
       const tool = toolByItem.get(String(message.params?.itemId));
-      const deny = tool === undefined || options.deniedTools.includes(tool);
+      const deny = prompting
+        ? options.approval === "prompt-deny"
+        : tool === undefined || options.deniedTools.includes(tool);
+      if (prompting) push({ type: "approval_prompt", tool: tool ?? "unknown", decision: deny ? "deny" : "allow" });
       const questions = message.params?.questions ?? [];
       const choices: (readonly [string, string | undefined])[] = questions.map(
         (question: { id: string; options?: { label: string }[] }) => {
@@ -239,13 +268,20 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
           return [question.id, deny ? declined?.label : accepted?.label] as const;
         },
       );
-      if (deny) push({ type: "codex_denial", tool: tool ?? "unknown" });
+      if (deny && !prompting) push({ type: "codex_denial", tool: tool ?? "unknown" });
       if (choices.some(([, answer]) => answer === undefined)) {
         send({ id: message.id, error: { code: -32000, message: "Eval host refused an unrecognized approval prompt" } });
       } else {
         const answers = Object.fromEntries(choices.map(([id, answer]) => [id, { answers: [answer] }]));
         send({ id: message.id, result: { answers } });
       }
+      return;
+    }
+    if (message.method === "mcpServer/elicitation/request" && message.id !== undefined && prompting) {
+      const tool = approvalTool(message.params) ?? lastMcpTool ?? "unknown";
+      const allow = options.approval === "prompt-allow";
+      push({ type: "approval_prompt", tool, decision: allow ? "allow" : "deny" });
+      send({ id: message.id, result: { action: allow ? "accept" : "decline", ...(allow ? { content: {} } : {}) } });
       return;
     }
     if (message.method === "mcpServer/elicitation/request" && message.id !== undefined) {
@@ -274,6 +310,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     }
     if (message.method === "item/started" && message.params?.item?.type === "mcpToolCall") {
       toolByItem.set(String(message.params.item.id), String(message.params.item.tool));
+      lastMcpTool = String(message.params.item.tool);
     }
     if (
       message.method === "item/started" &&

@@ -1,6 +1,7 @@
 /** No paid model: actual Worker surface, state, paging and grader controls. */
 import { playReference } from "./agent/reference.js";
 import assert from "node:assert/strict";
+import { deploymentControls } from "./surface-controls.js";
 import { World } from "./fakes/world.js";
 import { startDeployment } from "./deploy/targets.js";
 import { connectMcp } from "./support/mcp.js";
@@ -117,6 +118,7 @@ async function nativeControls() {
   }
 }
 await nativeControls();
+await deploymentControls();
 
 // A real retained result: rows reach the agent only after every read_result page.
 {

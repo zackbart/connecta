@@ -24,6 +24,8 @@ export async function claudeVersion(): Promise<string> {
 
 interface ClaudeOptions extends Omit<CodexOptions, "testHost" | "effort"> {
   maxBudgetUsd?: number;
+  /** false runs the host without deferred tool search, sending every schema in the first request. */
+  toolSearch?: boolean;
   testHost?: { executable: string; args: string[] };
 }
 
@@ -33,6 +35,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
   const root = await mkdtemp(join(tmpdir(), "connecta-eval-claude-"));
   const cwd = join(root, "empty-workspace");
   const configPath = join(root, "mcp.json");
+  const prompting = (options.approval ?? "auto") !== "auto";
   try {
     await mkdir(cwd);
     await writeFile(
@@ -60,7 +63,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       options.model,
       "--tools",
       // ToolSearch is on by default in real Claude Code; it defers MCP schemas.
-      "ToolSearch",
+      options.toolSearch === false ? "" : "ToolSearch",
       "--setting-sources",
       "",
       "--disable-slash-commands",
@@ -80,12 +83,15 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       "--mcp-config",
       configPath,
       "--no-session-persistence",
-      "--permission-mode",
-      "dontAsk",
-      "--permission-prompts",
-      "none",
+      // A prompting host answers each unlisted tool over the SDK control channel.
+      ...(prompting
+        ? ["--permission-mode", "default", "--permission-prompt-tool", "stdio"]
+        : ["--permission-mode", "dontAsk", "--permission-prompts", "none"]),
       "--allowedTools",
-      ["ToolSearch", ...options.allowedTools.map((tool) => `mcp__connecta__${tool}`)].join(","),
+      [
+        ...(options.toolSearch === false ? [] : ["ToolSearch"]),
+        ...options.allowedTools.map((tool) => `mcp__connecta__${tool}`),
+      ].join(","),
       ...(options.deniedTools.length
         ? ["--disallowedTools", options.deniedTools.map((tool) => `mcp__connecta__${tool}`).join(",")]
         : []),
@@ -111,6 +117,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
         CLAUDE_CODE_DISABLE_BUNDLED_SKILLS: "1",
         ENABLE_CLAUDEAI_MCP_SERVERS: "false",
+        ...(options.toolSearch === false ? { ENABLE_TOOL_SEARCH: "false" } : {}),
       },
     });
     const events: StreamEvent[] = [];
@@ -143,6 +150,38 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
       try {
         event = JSON.parse(line) as StreamEvent;
       } catch {
+        return;
+      }
+      if (event.type === "control_request") {
+        const request = event.request as { subtype?: string; tool_name?: string; input?: unknown } | undefined;
+        const id = event.request_id;
+        if (request?.subtype === "can_use_tool") {
+          const allow = options.approval === "prompt-allow";
+          push({
+            type: "approval_prompt",
+            tool: String(request.tool_name ?? "unknown").replace(/^mcp__connecta__/, ""),
+            decision: allow ? "allow" : "deny",
+          });
+          child.stdin.write(
+            `${JSON.stringify({
+              type: "control_response",
+              response: {
+                subtype: "success",
+                request_id: id,
+                response: allow
+                  ? { behavior: "allow", updatedInput: request.input ?? {} }
+                  : { behavior: "deny", message: "The user declined this tool call." },
+              },
+            })}\n`,
+          );
+        } else {
+          child.stdin.write(
+            `${JSON.stringify({
+              type: "control_response",
+              response: { subtype: "error", request_id: id, error: "Eval host refuses this control request" },
+            })}\n`,
+          );
+        }
         return;
       }
       push(event);

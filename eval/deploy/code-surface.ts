@@ -7,6 +7,7 @@
 import type { Connecta, ConnectaConfig } from "@zackbart/connecta";
 import { renderRoutesAsPrograms } from "../../src/agent-routes.js";
 import { CODE_TOOLS, FIVE_TOOLS, type Surface } from "../agent/surface.js";
+import { withArm } from "./surface-arms.js";
 
 export const CODE_INSTRUCTIONS =
   'Use execute_code for every operation: known reads, discovery, reductions and writes. Pass async () => { ... } with the connecta global and no arguments. Discover with connecta.search, inspect schemas with connecta.describe, call with connecta.call, page retained results with connecta.result, and deliver text/images/audio with connecta.emit. Keep discovery and calls together when schemas suffice. Programs write only on a writable endpoint. On a read-only endpoint search omits write tools, guides may still name them, and read_only_endpoint is a terminal refusal with no retry. Never repeat a write for its output. After auth_required or downstream_oauth_required follow nextAction: give its link to the user unchanged and wait before retrying; call authorize_connector only when the error has no handoff. host_auth_required needs host connection repair. Fetch skills({ name: "usage" }) when instructions are insufficient or a program needs repair.';
@@ -38,8 +39,13 @@ async () => {
 
 /** Mark a deployment's configuration so Connecta renders its route text in program form. */
 export function codeConfig<T extends ConnectaConfig>(config: T, surface: Surface): T {
-  if (surface === "code" || surface === "five") renderRoutesAsPrograms(config, surface === "five");
+  if (surface === "code" || hidesSearch(surface)) renderRoutesAsPrograms(config, hidesSearch(surface));
   return config;
+}
+
+/** The arms that move discovery from `search_tools` into programs. */
+export function hidesSearch(surface: Surface): boolean {
+  return surface === "five" || surface === "read-five";
 }
 
 /** Recovery actions a program can follow. Also used before the QuickJS bridge, for caught errors. */
@@ -95,7 +101,8 @@ function isUsage(name: unknown): boolean {
 }
 
 export function forSurface(connecta: Connecta, surface: Surface): Connecta {
-  return surface === "code" || surface === "five" ? withCodeSurface(connecta, surface) : connecta;
+  const base = surface === "code" || hidesSearch(surface) ? withCodeSurface(connecta, surface) : connecta;
+  return withArm(base, surface);
 }
 
 /** Preserve authentication, transport and execution; change only eval replies. */
@@ -127,7 +134,7 @@ function withCodeSurface(connecta: Connecta, surface: Surface): Connecta {
       let forwarded = request;
       if (
         body?.method === "tools/call" &&
-        (surface === "five" ? ["search_tools"] : ["call_tool", "call_destructive_tool", "search_tools"]).includes(
+        (hidesSearch(surface) ? ["search_tools"] : ["call_tool", "call_destructive_tool", "search_tools"]).includes(
           body.params?.name,
         )
       ) {
@@ -144,7 +151,7 @@ function withCodeSurface(connecta: Connecta, surface: Surface): Connecta {
       const type = response.headers.get("content-type") ?? "";
       if (!type.includes("application/json") && !type.includes("text/event-stream")) return response;
       // Hash the exact served resource bytes. Never retain the original manifest.
-      const usage = surface === "five" ? undefined : CODE_USAGE;
+      const usage = hidesSearch(surface) ? undefined : CODE_USAGE;
       const files = new Map<string, Promise<{ digest: string; size: number }>>();
       const fileMetadata = (uri: string) => {
         let pending = files.get(uri);
@@ -220,7 +227,7 @@ function withCodeSurface(connecta: Connecta, surface: Surface): Connecta {
           reply.result.instructions = CODE_INSTRUCTIONS;
         if (body?.method === "tools/list" && reply.result?.tools) {
           reply.result.tools = reply.result.tools.filter((t: { name: string }) =>
-            (surface === "five" ? FIVE_TOOLS : CODE_TOOLS).some((name) => name === t.name),
+            (hidesSearch(surface) ? FIVE_TOOLS : CODE_TOOLS).some((name) => name === t.name),
           );
         }
         // Resolve the skill identity from the request, before rewriting either

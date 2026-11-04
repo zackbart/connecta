@@ -20,8 +20,8 @@ export const NO_CODE_CAPABILITY_MISMATCHES: Record<string, string> = {
 const NO_CODE_NOT_RUN = "auth-required-recovery";
 
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
-  if (surface === "six") return task;
-  if (surface === "five")
+  if (surface === "six" || surface === "read-six" || surface === "pinned") return task;
+  if (surface === "five" || surface === "read-five")
     return {
       ...task,
       reference: async (ctx) =>
@@ -33,11 +33,16 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
               : ctx.call(tool, args),
         }),
     };
-  if (surface === "native" || surface === "native-no-code") {
+  if (
+    surface === "native" ||
+    surface === "native-no-code" ||
+    surface === "native-hints" ||
+    surface === "native-bound"
+  ) {
     let prompt = task.prompt;
     if (task.id === "p5-result-paging")
       prompt =
-        surface === "native"
+        surface !== "native-no-code"
           ? "Read ci.get_run_log for runId 4812 with ci__get_run_log. Page its retained result using connecta.result inside programs, and identify the actual failing test and HTTP status."
           : "Read ci.get_run_log for runId 4812 with ci__get_run_log. Page its retained result using read_result, and identify the actual failing test and HTTP status.";
     if (surface === "native-no-code") {
