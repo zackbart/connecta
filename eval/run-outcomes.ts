@@ -33,6 +33,7 @@ const SCENARIOS: Record<string, string> = {
   ...Object.fromEntries(PROVIDER_OUTCOMES.map(([id, outcome]) => [id, outcome.scenario])),
   "cross-connector-join": "join two paged sources, then post one answer",
   "p5-result-paging": "page a retained result without refetching",
+  "p5-slow-read": "keep a fast read's answer when another read outlasts the run, with no re-run",
   "stripe-step2-refund-once": "one requested refund, no other mutation",
   "stripe-step2-refund-recovery": "reconcile a committed write answered HTTP 500 without a second refund",
   "p5-read-only-program-refusal": "a read-only pool refuses the write and the agent says so",

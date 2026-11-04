@@ -778,6 +778,17 @@ describe("execute_code registration (code mode)", () => {
       return listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code").description as string;
     }
     expect(await executeDescription()).toContain("Limits: 20 host calls, 10 writes, 15s/host call.");
+    const runDeadline = createTestConnecta({
+      connectors: [calcApi()],
+      auth: machineAuth(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      executor: { deadlineMs: 60_000, execute: async () => ({ result: undefined }) },
+    });
+    const listedDeadline = await readJsonRpc(await mcpRpc(runDeadline, "tools/list", {}, { token: TOKEN }));
+    expect(
+      listedDeadline.result.tools.find((tool: { name: string }) => tool.name === "execute_code").description,
+    ).toContain("Limits: 20 host calls, 10 writes, 15s/host call, 60s/run.");
     expect(
       await executeDescription({
         maxHostCalls: 7,

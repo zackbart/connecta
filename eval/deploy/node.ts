@@ -116,7 +116,8 @@ export async function startNodeDeployment(
       "eval-provisioning",
     );
     const vault = encryptedCredentialVault(storage, randomBytes(32).toString("base64"));
-    let observed = (cleanupExecutor = observedExecutor(surface));
+    const executorTimeoutMs = extra.executorTimeoutMs as number | undefined;
+    let observed = (cleanupExecutor = observedExecutor(surface, executorTimeoutMs));
     const previousPrograms: ProgramObservation[] = [];
     // The fakes route their own credentials; see eval/fakes/transport.ts.
     const qb = connectors.find((s) => s.quickbooks);
@@ -161,7 +162,7 @@ export async function startNodeDeployment(
               endpointReadOnly = readOnly ?? endpointReadOnly;
               await connecta!.close();
               previousPrograms.push(...observed.programs);
-              observed = cleanupExecutor = observedExecutor(surface);
+              observed = cleanupExecutor = observedExecutor(surface, executorTimeoutMs);
               connecta = guidanceSurface(build());
             },
           }

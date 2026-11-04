@@ -792,6 +792,51 @@ export async function checkWriteDeadlineDiagnostics(executor: Executor): Promise
 }
 
 /** Review regression: a write passed its gate but is still in admission. */
+/** Reads other than connecta.call end before the run does too. */
+export async function checkReadDeadlineUtilities(executor: Executor): Promise<void> {
+  let listing: "hang" | "ready" = "ready";
+  const slow: Connector = {
+    id: "slow",
+    kind: "api",
+    async listTools() {
+      if (listing === "hang") await new Promise<never>(() => {});
+      return [readOnly("read")];
+    },
+    async readResource() {
+      return new Promise<never>(() => {});
+    },
+    async callTool() {
+      return true;
+    },
+  };
+  const execute = createExecuteTool(makeRegistry([slow]), CONTRACT_BASE, executor, silentLogger);
+  const started = Date.now();
+  const read = await execute({
+    code: `async () => {
+      const failed = await connecta.read("resource://slow/" + encodeURIComponent("docs://hanging")).catch((error) => error);
+      return { code: failed.code, retryable: failed.retryable };
+    }`,
+  });
+  expect(read.isError, read.content[0]?.text).toBeFalsy();
+  expect(required(read.structuredContent).result).toEqual({ code: "timeout", retryable: true });
+  listing = "hang";
+  const discovery = await execute({
+    code: `async () => {
+      const settled = await Promise.allSettled([
+        connecta.search({ connector: "slow" }),
+        connecta.describe({ address: "slow.read" }),
+      ]);
+      return settled.map(({ status, reason }) => ({ status, code: reason?.code, retryable: reason?.retryable }));
+    }`,
+  });
+  expect(discovery.isError, discovery.content[0]?.text).toBeFalsy();
+  expect(required(discovery.structuredContent).result).toEqual([
+    { status: "rejected", code: "timeout", retryable: true },
+    { status: "rejected", code: "timeout", retryable: true },
+  ]);
+  expect(Date.now() - started).toBeGreaterThan(1_000);
+}
+
 export async function checkQueuedWriteAtExhaustion(executor: Executor): Promise<void> {
   let releaseRead!: () => void;
   const blocked = new Promise<void>((resolve) => {
@@ -902,8 +947,8 @@ export interface ContractCase {
   code: string;
   /** A second program run on the same executor, for cross-run clauses. */
   follows?: string;
-  /** Set for the cases that need a short-deadline executor. */
-  deadline?: true;
+  /** Set for the cases that need a read cap and a run deadline apart: a 2 s executor. */
+  runDeadline?: true;
   /** Small output budget for utility-budget contract cases. */
   maxEmittedBytes?: number;
   /** Bounded stash capacity for native result transfer cases. */
@@ -1260,10 +1305,20 @@ function contractConnectors(state: ContractState): Connector[] {
     kind: "api",
     description: "Never answers",
     async listTools() {
-      return [readOnly("read")];
+      return [
+        readOnly("read"),
+        { name: "write", annotations: { readOnlyHint: false } },
+        { name: "slow_write", annotations: { readOnlyHint: false } },
+      ];
     },
-    async callTool() {
-      count("hang.read");
+    async callTool(name, args) {
+      count(`hang.${name}`);
+      // Outlasts the case's run deadline and its read cap, and then answers.
+      if (name === "slow_write") {
+        await new Promise((resolve) => setTimeout(resolve, (args as { ms: number }).ms));
+        return { written: "slow-write-output" };
+      }
+      if (name === "write") return { written: "write-output" };
       return new Promise<never>(() => {});
     },
   };
@@ -3471,20 +3526,96 @@ return fs;
     },
   },
   {
-    clauses: "L3, X1",
-    name: "an execution that outruns its deadline ends as an error",
-    deadline: true,
+    clauses: "L3, X1, W9",
+    name: "an execution that outruns its deadline ends as an error, and the drain learns its write's outcome",
+    runDeadline: true,
+    // Past the read cap and the run deadline: only a write still runs this long.
     code: `async () => {
-      await connecta.call("hang.read", {}).then(({ data }) => data);
+      await connecta.call("hang.slow_write", { ms: 2500 }, { timeoutMs: 600000 });
       return "never";
     }`,
-    check(outcome) {
+    check(outcome, state) {
       expect(outcome.isError).toBe(true);
       // Either side of the QuickJS deadline may end it: the child reports its
       // own timeout, or, when a loaded host delays that report past the
       // parent's grace, the parent terminates the child at its wall budget.
       // Both are this clause; a hang or an unrelated error is not.
       expect(outcome.text.toLowerCase()).toMatch(/timed out|timeout|wall budget/);
+      expect(outcome.value.error).toMatchObject({
+        code: "timeout",
+        retryable: false,
+        details: { operation: "execute_code" },
+        writes: { succeeded: 1, failed: 0, unknown: 0 },
+      });
+      expect(state.calls["hang.slow_write"]).toBe(1);
+    },
+  },
+  {
+    clauses: "L3, Y2",
+    name: "a hanging read becomes a catchable timeout, and fast results survive under allSettled",
+    runDeadline: true,
+    code: `async () => {
+      const settled = await Promise.allSettled([
+        connecta.call("reader.read", { value: "fast" }),
+        // A request longer than the run does not buy time past it.
+        connecta.call("hang.read", {}, { timeoutMs: 600000 }),
+      ]);
+      return {
+        fast: settled[0].value.data.echo,
+        code: settled[1].reason.code,
+        retryable: settled[1].reason.retryable,
+        operation: settled[1].reason.details.details.operation,
+        deadlineMs: settled[1].reason.details.details.deadlineMs,
+      };
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({
+        fast: "fast",
+        code: "timeout",
+        retryable: true,
+        operation: "hang.read",
+      });
+      // Capped below the 2 s run deadline, by its margin of a tenth.
+      expect((outcome.result as { deadlineMs: number }).deadlineMs).toBeLessThanOrEqual(1_800);
+      expect(state.calls["hang.read"]).toBe(1);
+    },
+  },
+  {
+    clauses: "L3, E2",
+    name: "an uncaught hanging read fails the run as its own retryable timeout",
+    runDeadline: true,
+    code: `async () => {
+      await connecta.call("hang.read", {}, { timeoutMs: 600000 });
+      return "never";
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "timeout",
+        retryable: true,
+        details: { operation: "hang.read" },
+      });
+    },
+  },
+  {
+    clauses: "L3, W9, W10",
+    name: "a write too close to the run deadline is refused unsent",
+    runDeadline: true,
+    code: `async () => {
+      await connecta.call("hang.read", {}, { timeoutMs: 600000 }).catch(() => {});
+      try {
+        await connecta.call("hang.write", {});
+        return "sent";
+      } catch (error) {
+        return { code: error.code, retryable: error.retryable, message: error.message };
+      }
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toMatchObject({ code: "timeout", retryable: true });
+      expect(state.calls["hang.write"]).toBeUndefined();
+      expect(outcome.value.writes).toBeUndefined();
     },
   },
 ];

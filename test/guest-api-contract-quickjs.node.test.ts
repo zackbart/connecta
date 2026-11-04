@@ -14,6 +14,7 @@ import {
   checkProgramReadDependencies,
   checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
+  checkReadDeadlineUtilities,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -40,14 +41,15 @@ vi.setConfig({ testTimeout: 20_000 });
 // A generous guest-CPU budget: these programs loop and stringify, and the
 // clause under test is never the 250ms default.
 const executor = quickJsExecutor({ cpuTimeMs: 5_000 });
-const deadlineExecutor = quickJsExecutor({
-  timeoutMs: 500,
+// Long enough that a loaded host still delivers a read's timeout inside the margin.
+const readDeadlineExecutor = quickJsExecutor({
+  timeoutMs: 2_000,
   cpuTimeMs: 5_000,
 });
 
 afterAll(async () => {
   await executor.close?.();
-  await deadlineExecutor.close?.();
+  await readDeadlineExecutor.close?.();
 });
 
 describe("guest API contract (QuickJS executor)", () => {
@@ -156,13 +158,17 @@ describe("guest API contract (QuickJS executor)", () => {
   for (const contractCase of CONTRACT_CASES.filter(({ name }) => !duplicateCases.has(name))) {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness(contractCase.maxStashEntries);
-      const base = contractCase.deadline ? deadlineExecutor : executor;
+      const base = contractCase.runDeadline ? readDeadlineExecutor : executor;
       const config = caseConfig(contractCase);
       const outcome = await harness.run(base, contractCase.code, config);
       const follow = contractCase.follows ? await harness.run(base, contractCase.follows, config) : undefined;
       contractCase.check(outcome, harness.state, follow);
     });
   }
+
+  it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
+    await checkReadDeadlineUtilities(readDeadlineExecutor);
+  });
 
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
     const outcome = await contractHarness().run(

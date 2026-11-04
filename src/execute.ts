@@ -81,6 +81,18 @@ const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
  */
 const EXECUTE_WATCHDOG_MS = CONFIG_DEFAULTS.execute.watchdogMs;
 /**
+ * How long before the executor's own deadline a program's reads stop: the time
+ * the guest gets to receive their `timeout` and return what it has.
+ */
+const READ_DEADLINE_MARGIN_MS = 1_000;
+
+/** Reads stop this long into a run, leaving its guest time to finish. */
+function readWindowMs(executor: Executor, watchdogMs: number): number {
+  const { deadlineMs } = executor;
+  if (deadlineMs === undefined) return watchdogMs;
+  return Math.min(watchdogMs, deadlineMs - Math.min(READ_DEADLINE_MARGIN_MS, Math.floor(deadlineMs / 10)));
+}
+/**
  * Room to name every connector of a typical deployment. Past it, complete
  * entries plus an exact omission count stay inside this byte cap.
  */
@@ -494,6 +506,8 @@ interface SandboxLimits {
   sentSecrets?: SentSecrets;
   defaultToolTimeoutMs?: number | undefined;
   programDeadlineAt?: number | undefined;
+  /** When reads stop, shortly before the executor's own deadline. Writes are exempt (W9). */
+  readDeadlineAt?: number | undefined;
   signal?: AbortSignal | undefined;
   hostCalls?: HostCalls | undefined;
   maxHostCalls?: number | undefined;
@@ -598,6 +612,9 @@ function sandboxProvider(
   const maxHostCalls = Math.max(1, Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS));
   const hostCallTimeoutMs = Math.max(1, Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS));
   const { signal, diagnostics, programWrites } = limits;
+  /** The part of `requestedMs` left before reads stop; never below one tick. */
+  const readBudget = (requestedMs: number) =>
+    Math.min(requestedMs, Math.max(1, (limits.readDeadlineAt ?? Infinity) - Date.now()));
   const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: InvocationFailure | undefined;
   let emitAttempts = 0;
@@ -631,10 +648,11 @@ function sandboxProvider(
     return value;
   };
   /** Budget and account for writes a writable endpoint admits. */
-  const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number) => ({
+  const invocationContext = (sending: { settle?: SettleWrite }, timeoutMs: number, writeTimeoutMs: number) => ({
     source: "execute_code" as const,
     sentSecrets,
     timeoutMs,
+    writeTimeoutMs,
     ...(limits.routes ? { routes: limits.routes } : {}),
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
@@ -757,6 +775,19 @@ function sandboxProvider(
             unrecorded: true,
           };
         }
+        // Its answer could not reach the program, so refuse now while the outcome
+        // is known. Earlier writes go out and drain past the deadline (W9).
+        if (limits.readDeadlineAt !== undefined && Date.now() >= limits.readDeadlineAt) {
+          return {
+            kind: "refuse",
+            error: {
+              code: "timeout",
+              message: `Too little of this run's deadline remains for ${target.connector.id}.${target.toolName}, so it was not sent. Return what you have and send it in a new program.`,
+              retryable: true,
+              details: { operation: `${target.connector.id}.${target.toolName}`, stage: "write gate" },
+            },
+          };
+        }
         const budgeted = target.definition.classification !== "read";
         if (budgeted && writes >= maxWrites) {
           return {
@@ -813,12 +844,17 @@ function sandboxProvider(
         normalizeTimeoutMs(timeout as number | undefined) ??
         normalizeTimeoutMs(limits.defaultToolTimeoutMs) ??
         hostCallTimeoutMs;
-      const timeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
+      const timeoutMs = readBudget(requestedMs);
+      const writeTimeoutMs = Math.min(requestedMs, Math.max(1, (limits.programDeadlineAt ?? Infinity) - Date.now()));
       // A program write settles here — unknown if the call never returned an
       // outcome. Credentials are filtered from arguments; submitted private values are not.
       const sending: { settle?: SettleWrite } = {};
       const outcome = yield* invocation
-        .pipeline(address, sentSecrets.redactCredentials(args ?? {}), invocationContext(sending, timeoutMs))
+        .pipeline(
+          address,
+          sentSecrets.redactCredentials(args ?? {}),
+          invocationContext(sending, timeoutMs, writeTimeoutMs),
+        )
         .pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
@@ -859,13 +895,32 @@ function sandboxProvider(
         try: read,
         catch: (err) => (err instanceof DiscoveryPolicyError ? guestFailure(err.code, err.message) : err),
       });
-      return (
-        !hostAccessSignal
-          ? reading
-          : hostAccessSignal.aborted
-            ? Effect.fail(cancelled())
-            : Effect.raceAllFirst([reading, fromSignal(hostAccessSignal).pipe(Effect.mapError(cancelled))])
-      ).pipe(
+      const contenders: Array<Effect.Effect<unknown, unknown>> = [reading];
+      // A catalog probe may outlast the run; end it as a catchable timeout first.
+      if (limits.readDeadlineAt !== undefined)
+        contenders.push(
+          Effect.suspend(() => {
+            const deadlineMs = readBudget(Infinity);
+            return Effect.sleep(Duration.millis(deadlineMs)).pipe(
+              Effect.andThen(
+                Effect.suspend(() => {
+                  const elapsedMs = Date.now() - started;
+                  const name = `connecta.${operation}`;
+                  return Effect.fail(
+                    new InvocationFailure({
+                      code: "timeout",
+                      message: `Operation "${name}" timed out during catalog after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`,
+                      retryable: true,
+                      details: { operation: name, stage: "catalog", elapsedMs, deadlineMs },
+                    }),
+                  );
+                }),
+              ),
+            );
+          }),
+        );
+      if (hostAccessSignal) contenders.push(fromSignal(hostAccessSignal).pipe(Effect.mapError(cancelled)));
+      return (hostAccessSignal?.aborted ? Effect.fail(cancelled()) : Effect.raceAllFirst(contenders)).pipe(
         Effect.onExit((exit) =>
           Effect.sync(() =>
             diagnostics?.recordCatalog(
@@ -1011,7 +1066,7 @@ function sandboxProvider(
           baseUrl,
           requestScope,
           sentSecrets,
-          timeoutMs: hostCallTimeoutMs,
+          timeoutMs: readBudget(hostCallTimeoutMs),
           onResolved: (connector) =>
             limits.resultDependencies?.push({ connector: connector.id, classification: "read" }),
           onConnectorTime: (elapsed) => {
@@ -1182,6 +1237,7 @@ function sandboxProvider(
             }
             if (counted) hostCalls.admitted++;
             const started = Date.now();
+            const utilityDeadlineMs = readBudget(hostCallTimeoutMs);
             let stage = deadline ?? "";
             const invoke = Effect.suspend(() => operation(...args));
             const guarded = deadline
@@ -1193,7 +1249,7 @@ function sandboxProvider(
                       }),
                     ),
                   {
-                    timeoutMs: hostCallTimeoutMs,
+                    timeoutMs: utilityDeadlineMs,
                     ...(hostAccessSignal ? { signal: hostAccessSignal } : {}),
                     timeoutError: guestFailure("timeout", `connecta.${name} timed out.`),
                   },
@@ -1212,7 +1268,7 @@ function sandboxProvider(
                     );
                   if (deadline && error instanceof InvocationFailure && error.code === "timeout") {
                     const elapsedMs = Date.now() - started;
-                    const message = `Operation "connecta.${name}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${hostCallTimeoutMs}ms).`;
+                    const message = `Operation "connecta.${name}" timed out during ${stage} after ${elapsedMs}ms (effective deadline ${utilityDeadlineMs}ms).`;
                     return typedFailure(
                       new InvocationFailure({
                         code: "timeout",
@@ -1222,7 +1278,7 @@ function sandboxProvider(
                           operation: `connecta.${name}`,
                           stage,
                           elapsedMs,
-                          deadlineMs: hostCallTimeoutMs,
+                          deadlineMs: utilityDeadlineMs,
                         },
                       }),
                     );
@@ -1510,6 +1566,7 @@ export function createExecuteTool(
                 hostCallTimeoutMs,
                 defaultToolTimeoutMs: config.defaultToolTimeoutMs,
                 programDeadlineAt: Date.now() + watchdog.ms,
+                readDeadlineAt: Date.now() + readWindowMs(executor, watchdog.ms),
                 defer: config.defer,
                 readOnly: config.readOnly,
                 maxWrites: config.maxWrites,
@@ -1899,7 +1956,7 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
 
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
-  hostLimits: { maxHostCalls: number; callTimeoutMs: number; hostCallTimeoutMs: number },
+  hostLimits: { maxHostCalls: number; callTimeoutMs: number; hostCallTimeoutMs: number; runDeadlineMs?: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
   maxWrites: number,
@@ -1907,7 +1964,7 @@ const executeDescription = (
   native = false,
   routes: AgentRouteNames = META_ROUTES,
 ) =>
-  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}.
+  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No portable ambient capabilities. API:
@@ -2016,6 +2073,9 @@ export function registerExecuteTool(
           ...hostLimits,
           // connecta.call falls back to calls.defaultTimeoutMs; result, skill and read always use hostCallTimeoutMs.
           callTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs,
+          ...(ctx.executor.deadlineMs !== undefined
+            ? { runDeadlineMs: Math.min(ctx.executor.deadlineMs, resolveBudget(ctx.watchdogMs, EXECUTE_WATCHDOG_MS)) }
+            : {}),
         },
         hasConnectorGuides(connectors),
         connectors,

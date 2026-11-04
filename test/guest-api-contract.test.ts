@@ -24,6 +24,7 @@ import {
   checkProgramReadDependencies,
   checkProgramVisibilityDependencies,
   checkQueuedWriteAtExhaustion,
+  checkReadDeadlineUtilities,
   checkSharedPreludes,
   checkStashAuthority,
   checkWriteDeadlineDiagnostics,
@@ -58,7 +59,7 @@ async function loadWorkerExecutor(options: { timeout?: number } = {}): Promise<E
 }
 
 const workerExecutor = await loadWorkerExecutor();
-const workerDeadlineExecutor = await loadWorkerExecutor({ timeout: 500 });
+const workerReadDeadlineExecutor = await loadWorkerExecutor({ timeout: 2_000 });
 
 /** True in the workers project, where the arm below must not silently skip. */
 const inWorkerd = await (async () => {
@@ -475,13 +476,17 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
   for (const contractCase of CONTRACT_CASES.filter(({ name }) => !duplicateCases.has(name))) {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness(contractCase.maxStashEntries);
-      const executor = required(contractCase.deadline ? workerDeadlineExecutor : workerExecutor);
+      const executor = required(contractCase.runDeadline ? workerReadDeadlineExecutor : workerExecutor);
       const config = caseConfig(contractCase);
       const outcome = await harness.run(executor, contractCase.code, config);
       const follow = contractCase.follows ? await harness.run(executor, contractCase.follows, config) : undefined;
       contractCase.check(outcome, harness.state, follow);
     });
   }
+
+  it("[L3] ends connecta.read, search and describe before the run deadline", async () => {
+    await checkReadDeadlineUtilities(required(workerReadDeadlineExecutor));
+  });
 
   it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
     const outcome = await contractHarness().run(required(workerExecutor), CAPABILITY_PROBE_CODE);
