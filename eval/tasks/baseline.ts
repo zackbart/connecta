@@ -98,17 +98,61 @@ function handoffLinks(trace: AgentTrace): string[] {
   return [...links];
 }
 
+/** Closes a wrapper written immediately before a URL. */
+const URL_WRAPPER_CLOSERS: Record<string, string> = {
+  "(": ")",
+  "[": "]",
+  "<": ">",
+  '"': '"',
+  "'": "'",
+  "`": "`",
+  "*": "*",
+  _: "_",
+};
+
+/**
+ * Every complete URL in the agent's words, in its original bytes: a Markdown
+ * destination, or a whitespace-delimited word without the sentence punctuation
+ * a linkifier also leaves out and without a closer matching what opened it.
+ * Every other trailing character stays, because it would be part of the link a
+ * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL.
+ */
+function urlTokens(text: string): string[] {
+  const tokens = [...text.matchAll(/\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g)].map(
+    (match) => match[1]!,
+  );
+  for (const match of text.matchAll(/https?:\/\/\S+/g)) {
+    const before = text.slice(0, match.index);
+    // Glued to a preceding word, this is a part of another URL, like a proxy's `?u=`.
+    if (before && !/[\s([<"'`*_:]$/.test(before)) continue;
+    const opened = /[([<"'`*_]*$/.exec(before)![0];
+    const closing = [...opened]
+      .reverse()
+      .map((opener) => URL_WRAPPER_CLOSERS[opener]!)
+      .join("");
+    const withoutPunctuation = (word: string) => word.replace(/[.,;:!?]+$/, "");
+    let token = withoutPunctuation(match[0]);
+    if (closing && token.endsWith(closing)) token = withoutPunctuation(token.slice(0, -closing.length));
+    // `(see https://x).` opens away from the URL, so only the balance shows the closer isn't its own.
+    else if (token.endsWith(")") && token.split(")").length > token.split("(").length)
+      token = withoutPunctuation(token.slice(0, -1));
+    tokens.push(match[0], token);
+  }
+  return tokens;
+}
+
 /**
  * The agent's own words carry a real link exactly as issued. A person can only
- * open what reaches them whole, so a paraphrase, a re-encoded link and a tool
- * call nobody hears about all fail alike, by either route to the link.
+ * open what reaches them whole, so a paraphrase, a re-encoded link, characters
+ * run onto its end and a tool call nobody hears about all fail alike, by either
+ * route to the link.
  */
 function handoffLinkReachedUser(trace: AgentTrace): boolean {
   const said = [
     trace.finalAnswer ?? "",
     ...trace.transcript.flatMap((entry) => (entry.kind === "assistant" ? [entry.text] : [])),
-  ];
-  return handoffLinks(trace).some((link) => said.some((text) => text.includes(link)));
+  ].flatMap(urlTokens);
+  return handoffLinks(trace).some((link) => said.includes(link));
 }
 
 function resultPagingUses(trace: Parameters<typeof uses>[0]) {

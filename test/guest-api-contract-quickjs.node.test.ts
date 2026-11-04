@@ -273,6 +273,162 @@ describe("guest API contract (QuickJS executor)", () => {
     });
   });
 
+  describe("the advice on a paged read handle", () => {
+    const BASE = "https://connecta.handle";
+    const TOTAL = 1_100_000;
+    type Handle = { format: "paged"; resultId: string; totalBytes: number; hint: string };
+    type Run = {
+      result?: { handle?: Handle; bytes?: number; nextOffset?: number; hasMore?: boolean };
+      error?: { code: string };
+      hostCalls: { attempted: number };
+    };
+    const setup = (options: { maxHostCalls?: number; maxResultBytes?: number } = {}) => {
+      const calls = { reads: 0 };
+      const registry = makeRegistry(
+        [
+          {
+            id: "logs",
+            kind: "api",
+            ...(options.maxResultBytes ? { maxResultBytes: options.maxResultBytes } : {}),
+            listTools: async () => [
+              { name: "read", annotations: { readOnlyHint: true } },
+              { name: "ping", annotations: { readOnlyHint: true } },
+            ],
+            callTool: async (tool: string) => {
+              if (tool === "ping") return "pong";
+              calls.reads++;
+              return "x".repeat(TOTAL);
+            },
+          },
+        ],
+        {},
+      );
+      const execute = createExecuteTool(
+        registry,
+        BASE,
+        executor,
+        silentLogger,
+        undefined,
+        options.maxHostCalls ? { maxHostCalls: options.maxHostCalls } : {},
+      );
+      const program = async (code: string) => JSON.parse(required((await execute({ code })).content[0]).text!) as Run;
+      /** The handle, after spending `spent` calls, the read's own included. */
+      const handle = async (spent = 1) => {
+        const pings = 'await connecta.call("logs.ping");'.repeat(spent - 1);
+        const { result } = await program(
+          `async () => { ${pings} return { handle: await connecta.call("logs.read") }; }`,
+        );
+        return required(result?.handle);
+      };
+      /** One program following the hint's bound, carrying the offset and the reduction. */
+      const pages = (id: string, limit: number, offset: number, bytes: number) =>
+        program(`async () => {
+          let bytes = ${bytes}, offset = ${offset}, page;
+          for (let calls = 0; calls < ${limit}; calls++) {
+            page = await connecta.result(${JSON.stringify(id)}, { offset });
+            bytes += page.bytes;
+            offset = page.nextOffset;
+            if (!page.hasMore) break;
+          }
+          return { bytes, nextOffset: offset, hasMore: page.hasMore };
+        }`);
+      return { calls, handle, pages, program };
+    };
+    /** Follows a bounded hint through fresh programs to the last byte. */
+    const follow = async ({ pages }: ReturnType<typeof setup>, { hint, resultId, totalBytes }: Handle) => {
+      const [, here, each] = /at most (\d+) times here and (\d+) per new program/.exec(hint)!;
+      let limit = Number(here);
+      let offset = 0;
+      let bytes = 0;
+      let programs = 0;
+      for (;;) {
+        // The first bound may be zero; the program that read the handle has simply finished.
+        if (limit > 0) {
+          const { result, error, hostCalls } = await pages(resultId, limit, offset, bytes);
+          expect(error).toBeUndefined();
+          expect(hostCalls.attempted).toBeLessThanOrEqual(limit);
+          programs++;
+          bytes = result!.bytes!;
+          offset = result!.nextOffset!;
+          if (!result!.hasMore) break;
+        }
+        limit = Number(each);
+      }
+      return { bytes, totalBytes, programs };
+    };
+
+    it("[L6] bounds the pages per program at the defaults, and following it reaches the last byte", async () => {
+      const handler = setup();
+      const handle = await handler.handle();
+      const { hint, resultId } = handle;
+      expect(hint).toContain(`Needs up to ${Math.ceil((TOTAL + 2) / 23_997)} host calls`);
+      expect(hint).toContain("this program has 19 left");
+      expect(hint).toContain(`connecta.result(${JSON.stringify(resultId)}, { offset }) at most 17 times here`);
+      expect(hint).toContain("and 18 per new program");
+      expect(hint).toContain("return your reduction and nextOffset, and continue from both within 15 minutes");
+      expect(hint).not.toContain("until !hasMore");
+      const followed = await follow(handler, handle);
+      expect(followed.bytes).toBe(followed.totalBytes);
+      expect(followed.programs).toBe(3);
+      expect(handler.calls.reads).toBe(1);
+    });
+
+    it("[L6] the loop the bound replaces does end in budget_exceeded at the defaults", async () => {
+      const { handle, program } = setup();
+      const { resultId } = await handle();
+      const looped = await program(`async () => {
+        let offset = 0, page;
+        do {
+          page = await connecta.result(${JSON.stringify(resultId)}, { offset });
+          offset = page.nextOffset;
+        } while (page.hasMore);
+        return offset;
+      }`);
+      expect(looped.error?.code).toBe("budget_exceeded");
+      expect(looped.result).toBeUndefined();
+    });
+
+    it("[L6] sizes the bound from a lower host-call budget", async () => {
+      const handler = setup({ maxHostCalls: 5 });
+      const handle = await handler.handle();
+      const { hint } = handle;
+      expect(hint).toContain("this program has 4 left");
+      expect(hint).toMatch(/at most 2 times here and 3 per new program/);
+      const followed = await follow(handler, handle);
+      expect(followed.bytes).toBe(followed.totalBytes);
+    });
+
+    it("[L6] still gives a usable bound on the smallest budget", async () => {
+      const { hint } = await setup({ maxHostCalls: 1 }).handle();
+      expect(hint).toMatch(/at most 0 times here and 1 per new program/);
+    });
+
+    it("[L6] counts pages at the connector's cap", async () => {
+      const { handle } = setup({ maxResultBytes: 1_000, maxHostCalls: 100 });
+      const { hint } = await handle();
+      expect(hint).toContain(`up to ${Math.ceil((TOTAL + 2) / 997)} host calls`);
+      expect(hint).not.toContain("until !hasMore");
+    });
+
+    it("[L6] offers the loop when a raised budget fits it, and only with the calls still left", async () => {
+      const handler = setup({ maxHostCalls: 60 });
+      const pagesNeeded = Math.ceil((TOTAL + 2) / 23_997);
+      expect((await handler.handle()).hint).toContain("until !hasMore");
+      // The last spend that still leaves every page and the two spare calls.
+      const fits = 60 - pagesNeeded - 2;
+      const { hint, resultId } = await handler.handle(fits);
+      expect(hint).toBe("Loop connecta.result(handle, { offset }) until !hasMore, setting offset to nextOffset.");
+      const looped = await handler.pages(resultId, pagesNeeded + 1, 0, 0);
+      expect(looped.error).toBeUndefined();
+      expect(looped.hostCalls.attempted).toBeLessThanOrEqual(pagesNeeded);
+      const late = await handler.handle(fits + 1);
+      expect(late.hint).toContain(`this program has ${60 - fits - 1} left`);
+      expect(late.hint).not.toContain("until !hasMore");
+      expect(late.hint).toContain(`at most ${60 - fits - 3} times here`);
+      expect(late.hint).toContain("and 58 per new program");
+    });
+  });
+
   it("[R5, L4] retains streamed logs when the budget ends the child", async () => {
     const outcome = await contractHarness().run(
       executor,

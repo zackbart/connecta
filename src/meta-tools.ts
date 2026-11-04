@@ -261,16 +261,33 @@ interface ResultStash {
 /** Calls a whole-result loop leaves the program, so it can also act on what it finds. */
 const LOOP_SPARE_HOST_CALLS = 2;
 
+/** A running program's `execute.maxHostCalls`, and how many of them remain. */
+interface ProgramHostCalls {
+  max: number;
+  left: number;
+}
+
 /**
- * Whether one program can walk every page of a retained result with its
- * default page size. A page can stop up to three bytes short to keep a
- * character whole, so the count assumes every one does.
+ * Host calls to read every page of a retained result at the default page size.
+ * A page can stop up to three bytes short to keep a character whole, so the
+ * count assumes every one does.
  */
-function wholeResultLoopFits(results: ResultStash, totalBytes: number): boolean {
-  const pageBytes = Math.min(results.cap, PROGRAM_RESULT_PAGE_BYTES);
-  if (pageBytes <= 3) return false;
-  const pages = Math.ceil(totalBytes / (pageBytes - 3));
-  return pages + LOOP_SPARE_HOST_CALLS <= (results.programHostCalls ?? CONFIG_DEFAULTS.execute.maxHostCalls);
+const resultPages = (cap: number, totalBytes: number) =>
+  Math.ceil(totalBytes / Math.max(1, Math.min(cap, PROGRAM_RESULT_PAGE_BYTES) - 3));
+
+/** Whether a program with this many calls left can walk every page of a retained result. */
+const loopFits = (cap: number, totalBytes: number, calls: number) =>
+  resultPages(cap, totalBytes) + LOOP_SPARE_HOST_CALLS <= calls;
+
+/**
+ * A read handle's advice, sized to the calls its program has left. Overrunning
+ * them ends the run and discards everything it read, so a result that can't fit
+ * pages across programs, which carry the offset and reduction between them.
+ */
+function readHandleHint(id: string, cap: number, totalBytes: number, calls: ProgramHostCalls): string {
+  if (loopFits(cap, totalBytes, calls.left))
+    return "Loop connecta.result(handle, { offset }) until !hasMore, setting offset to nextOffset.";
+  return `Needs up to ${resultPages(cap, totalBytes)} host calls; this program has ${calls.left} left, and overrunning returns nothing. Call connecta.result(${JSON.stringify(id)}, { offset }) at most ${Math.max(0, calls.left - LOOP_SPARE_HOST_CALLS)} times here and ${Math.max(1, calls.max - LOOP_SPARE_HOST_CALLS)} per new program, return your reduction and nextOffset, and continue from both within ${RESULT_TTL_SECONDS / 60} minutes.`;
 }
 
 /**
@@ -341,8 +358,8 @@ function pagingHint(results: ResultStash, id: string, totalBytes: number, previe
     // Stop fetching again when one program can reach every retained byte: the reduction
     // still sees the whole value, and the downstream is asked only once. Beyond that the
     // loop would end in budget_exceeded with nothing returned, so a program repeats the read.
-    if (wholeResultLoopFits(results, totalBytes))
-      return `${shown} The full result is retained for ${RESULT_TTL_SECONDS / 60} minutes. To find something in it, loop connecta.result(${JSON.stringify(id)}, { offset }) from offset 0 until !hasMore, setting offset to nextOffset, in one ${results.routes.program} program; filter there and return only the matches. To read on, run nextAction.`;
+    if (loopFits(results.cap, totalBytes, results.programHostCalls ?? CONFIG_DEFAULTS.execute.maxHostCalls))
+      return `${shown} The full result is retained for ${RESULT_TTL_SECONDS / 60} minutes. To find something in it, loop connecta.result(${JSON.stringify(id)}, { offset }) from offset 0 until !hasMore, setting offset to nextOffset, in one ${results.routes.program} program; filter there and return the matches. To read on, run nextAction.`;
     return `${shown} ${readReduceFirst(results.routes)}; ${full} with connecta.result using nextAction.`;
   }
   const body =
@@ -464,9 +481,12 @@ export function pageProgramResult(
   format: "json" | "text",
   secrets: SentSecrets,
   requestScope: object,
+  hostCalls: ProgramHostCalls,
   wireBytes = PROGRAM_RESULT_WIRE_BYTES,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
-  return runEdge(pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, wireBytes));
+  return runEdge(
+    pageProgramResultNative(registry, baseUrl, resolved, value, format, secrets, requestScope, hostCalls, wireBytes),
+  );
 }
 const pageProgramResultNative = /* @__PURE__ */ registerAuth(
   pageProgramResult,
@@ -478,6 +498,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
     format: "json" | "text",
     secrets: SentSecrets,
     requestScope: object,
+    hostCalls: ProgramHostCalls,
     wireBytes: number = PROGRAM_RESULT_WIRE_BYTES,
   ) {
     return authFlow<{ data: unknown; format: "json" | "text" } | ProgramResultHandle>(function* () {
@@ -487,6 +508,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
       const text = secrets.text(format === "text" ? String(data) : serializeResultText(data));
       const bytes = enc.encode(text);
       const write = resolved.definition.classification !== "read";
+      const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes);
       const notice = yield* upwardStep(
         stashResult(
           bytes,
@@ -501,7 +523,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
               classification: write ? "write" : "read",
             },
             write,
-            cap: resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes),
+            cap,
             set: authMethod((id: string, chunks: string[], ttl: number) =>
               registryProgram(registry, "stashResult", id, chunks, ttl),
             ),
@@ -525,7 +547,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
         hint: notice.resultId
           ? write
             ? `${WRITE_ALREADY_RAN} Page this result with connecta.result(handle); do not repeat the call for output.`
-            : "Loop connecta.result(handle, { offset }) until !hasMore, setting offset to nextOffset."
+            : readHandleHint(notice.resultId, cap, bytes.length, hostCalls)
           : notice.hint,
       };
     });
@@ -1593,7 +1615,7 @@ const SEARCH_INPUT = advertisedSchema(
 const CALL_SHAPE = {
   error: (issue: { code?: string | undefined; keys?: readonly string[] | undefined }) =>
     issue.code === "unrecognized_keys"
-      ? `Unrecognized key${issue.keys?.length === 1 ? "" : "s"}: ${issue.keys?.map((key) => JSON.stringify(key)).join(", ")}. Send { address, args }, with the tool's own arguments inside args.`
+      ? `Unrecognized key${issue.keys?.length === 1 ? "" : "s"}: ${issue.keys?.map((key) => JSON.stringify(key)).join(", ")}. Send { address, args }, with the tool's arguments in args.`
       : undefined,
 };
 

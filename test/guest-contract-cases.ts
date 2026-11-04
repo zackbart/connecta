@@ -1399,7 +1399,7 @@ function record(outcome: ContractOutcome): Record<string, unknown> {
 }
 
 const RETURNED_NOTHING_AFTER_WRITE =
-  "Program returned nothing. Its writes were already sent. Do not rerun it, even with a fix added: read their targets in a new program and return what you need.";
+  "Program returned nothing. Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.";
 
 export const CONTRACT_CASES: ContractCase[] = [
   {
@@ -1421,9 +1421,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     code: `async () => { await connecta.call("reader.read", { value: "x" }); }`,
     check(outcome) {
       expect(outcome.isError).toBe(false);
-      expect(outcome.value.note).toBe(
-        "Program returned nothing, though its calls ran. Add a return to see their results.",
-      );
+      expect(outcome.value.note).toBe("Program returned nothing, though its calls ran. Add a return.");
     },
   },
   {
@@ -1504,7 +1502,7 @@ export const CONTRACT_CASES: ContractCase[] = [
         code: "program_error",
         details: {
           name: "TypeError",
-          hint: "search and describe return { tools }; call returns { data, format }. Read those fields.",
+          hint: "search and describe return { tools }; call returns { data, format }.",
         },
       });
     },
@@ -3130,7 +3128,7 @@ return fs;
         error: {
           code: "budget_exceeded",
           message:
-            "execute_code host-call budget exceeded (20 calls maximum); the run ended with nothing returned. Split the remaining work across programs of at most 20 calls each, and do not resend any write this run already sent.",
+            "execute_code host-call budget exceeded (20 calls maximum); the run returned nothing. Split the rest across programs of at most 20 calls each; do not resend any write it sent.",
           retryable: false,
         },
         hostCalls: {

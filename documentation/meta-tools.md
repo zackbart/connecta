@@ -687,7 +687,7 @@ opens with “This write already ran: do not call it again to see its result.”
 The approved write happened; repeating it to look again is how one export
 becomes three. For an explicitly read-only call, the hint offers reduction first:
 to find something specific, loop `connecta.result` over the retained result in
-one `execute_code` program, filter there and return only the matches; to read
+one `execute_code` program, filter there and return the matches; to read
 on, run `nextAction`. A reduction must see the whole value at once, because
 page-by-page reading in the model misses things: when the hint named paging
 alone, the eval's weakest model read a 185 KB CI log in 24,000-byte pages, skipped
@@ -703,7 +703,7 @@ a loop would end in `budget_exceeded` with nothing returned, so the hint says to
 repeat the read inside `execute_code` with `connecta.call` and reduce it there;
 a host call's result is not bound by the inline cap, only what the program returns
 (`L6` in [code mode](./code-mode.md)). A value over `L6`'s host-call bound returns
-a paged handle instead, whose own hint names the loop.
+a paged handle instead, whose own hint is sized the same way.
 When paging is available, `nextAction` is the page handle for either kind of call, because paging is
 the one next step connecta can spell out exactly, while a reduction is a
 program the agent has to write. `resultId` stays beside the exact `nextAction`,
@@ -718,19 +718,26 @@ no paging route.
 
 Meta endpoints page inside a program. Native pools without code list `read_result` for the same bound handles. Program calls also
 return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
-A read's handle says to loop `connecta.result(handle, { offset })` until `!hasMore`;
-a write's handle says the write already ran and not to repeat it.
+A read's handle says to loop `connecta.result(handle, { offset })` until `!hasMore`
+only when every page at the connector's cap, plus two host calls spare, fits the
+calls its program has left. A handle's value is usually over 1 MiB, so at the
+default 20 calls and 24,000-byte cap it doesn't: its hint then gives the pages
+to read in this program and in each new one, and says to return the reduction so
+far with `nextOffset` and continue from both, by `resultId`, inside the 15-minute
+retention. A loop past the budget ends in `budget_exceeded` with nothing returned.
+A write's handle says the write already ran and not to repeat it.
 `connecta.result(handle, { page: 0 })` accepts those handles alongside direct
 result IDs. Numbered pages are zero-based and mutually exclusive with offset.
 Keep maxBytes fixed while incrementing pages. A direct call's
 notice carries a `resultId`, `nextOffset`, and an executable `execute_code`
-recovery action. Read and reduce the result in one program:
+recovery action. When the hint offers the loop, read and reduce the result in one
+program. Leave `maxBytes` unset, because a smaller page spends more host calls:
 
 ```js
 async () => {
   let text = "", offset = 0, page;
   do {
-    page = await connecta.result("result-id", { offset, maxBytes: 8_000 });
+    page = await connecta.result("result-id", { offset });
     text += page.text;
     offset = page.nextOffset;
   } while (page.hasMore);
@@ -1049,7 +1056,7 @@ An OAuth call failure uses this envelope:
   "operation": "service.read",
   "recovery": "oauth",
   "authorizationUrl": "https://connecta.example/connect/service?h=...",
-  "instructions": "For the person opening this link: open it in a browser and sign in as the user who requested this connection; ...",
+  "instructions": "For the person opening this link: sign in as the user who requested this connection; ...",
   "nextAction": {
     "url": "https://connecta.example/connect/service?h=...",
     "purpose": "Give this link to the user, unchanged, then stop. Retry after they confirm."

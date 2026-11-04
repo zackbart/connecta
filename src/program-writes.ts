@@ -24,9 +24,8 @@ type WriteCompletion =
       handoff?: WriteHandoff;
     };
 
-const CHECK_UNKNOWN_WRITE = "Read its target to see whether it applied before doing anything that depends on it.";
-const UNKNOWN_WRITE_ARGS =
-  "Any echoed arguments may be partial or absent; use your original arguments for any further call.";
+const CHECK_UNKNOWN_WRITE = "Read its target to see whether it applied before anything depends on it.";
+const UNKNOWN_WRITE_ARGS = "Echoed arguments may be partial or absent; use your original arguments for further calls.";
 
 /** What a dispatched write's outcome says about whether it landed. */
 export function writeStateOf(outcome: InvocationOutcome<unknown>): WriteCompletion {
@@ -164,7 +163,7 @@ export class ProgramWrites {
       return toolError({
         code: handoff?.code ?? "write_outcome_unknown",
         message: handoff
-          ? `A write this program sent failed authorization after it left, so its outcome is unknown and the program's return was discarded. It will not be resent. ${CHECK_UNKNOWN_WRITE} Then run nextAction and give what it returns to the operator to recover the connector. ${UNKNOWN_WRITE_ARGS}`
+          ? `A write this program sent failed authorization after it left, so its outcome is unknown and the program's return was discarded. It will not be resent. ${CHECK_UNKNOWN_WRITE} Then give what nextAction returns to the operator to recover the connector. ${UNKNOWN_WRITE_ARGS}`
           : `A write this program sent has an unknown outcome, and the program's return was discarded. It will not be resent. ${CHECK_UNKNOWN_WRITE} ${UNKNOWN_WRITE_ARGS}`,
         retryable: false,
         ...(handoff ? { ...handoff, reconciliationRequired: true, writeOutcome: "unknown" } : {}),

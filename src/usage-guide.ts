@@ -91,9 +91,9 @@ nextOffset in UTF-8 bytes, reassemble and reduce inside one program. Use the
 returned id in place of result-id below; this example assumes documented JSON.
 
 Calls reconstruct up to 1 MiB through stash pages. Larger values return
-\`{ format: "paged", valueFormat, resultId?, totalBytes, hint }\`. Pass the handle
-to \`connecta.result\`. No resultId means no paging. IDs expire after
-15 minutes; only explicit paging spends extra host calls.
+\`{ format: "paged", valueFormat, resultId?, totalBytes, hint }\`. Follow its hint.
+No resultId means no paging. IDs expire after 15 minutes; only explicit paging
+spends extra host calls.
 Use zero-based \`{ page: 0 }\` or UTF-8 \`{ offset }\`, never both. Keep maxBytes
 fixed across pages; connector caps and the 32 KiB bridge ceiling apply.
 

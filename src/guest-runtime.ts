@@ -292,7 +292,7 @@ export function programError(
     /not a function|not iterable/.test(message) &&
     /\bconnecta\s*\.\s*(?:search|describe|call)\b/.test(code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ""))
   ) {
-    hint = "search and describe return { tools }; call returns { data, format }. Read those fields.";
+    hint = "search and describe return { tools }; call returns { data, format }.";
   } else if (name === "SyntaxError" && !/^(?:async\b|\(|function\b)/.test(code.replace(LEADING_TRIVIA, ""))) {
     hint = "Pass one expression: async () => { ...; return answer; }.";
   }

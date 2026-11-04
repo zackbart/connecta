@@ -537,7 +537,7 @@ class HostCallBudgetExceeded extends InvocationFailure {
   ) {
     super({
       code: "budget_exceeded",
-      message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum); the run ended with nothing returned. Split the remaining work across programs of at most ${maxHostCalls} calls each, and do not resend any write this run already sent.`,
+      message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum); the run returned nothing. Split the rest across programs of at most ${maxHostCalls} calls each; do not resend any write it sent.`,
       retryable: false,
     });
   }
@@ -655,6 +655,7 @@ function sandboxProvider(
               valueFormat,
               secrets,
               requestScope,
+              { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
             ]);
           const envelope =
@@ -763,7 +764,7 @@ function sandboxProvider(
             kind: "refuse",
             error: {
               code: "budget_exceeded",
-              message: `execute_code write budget exceeded (${maxWrites} writes per run); ${target.connector.id}.${target.toolName} was not sent. Check the run's writes count, then send only the remaining writes in a new program; do not resend those that succeeded.`,
+              message: `execute_code write budget exceeded (${maxWrites} writes per run); ${target.connector.id}.${target.toolName} was not sent. Check the run's writes count, then send only the rest in a new program; do not resend those that succeeded.`,
               retryable: false,
             },
           };
@@ -1693,7 +1694,7 @@ export function createExecuteTool(
 
 const UNAWAITED_HINT = "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.";
 const SENT_NOTE =
-  "Its writes were already sent. Do not rerun it, even with a fix added: read their targets in a new program and return what you need.";
+  "Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.";
 
 /**
  * A completed run that gave the agent nothing to read looks like nothing
@@ -1711,9 +1712,7 @@ function finishedRunNote(
   const body = result.structuredContent;
   if (body?.result !== undefined || body?.emitted !== undefined) return undefined;
   if (wrote) return `Program returned nothing. ${SENT_NOTE}`;
-  return attempted > 0
-    ? "Program returned nothing, though its calls ran. Add a return to see their results."
-    : "Program returned nothing and made no host calls. Add a return.";
+  return `Program returned nothing${attempted > 0 ? ", though its calls ran" : " and made no host calls"}. Add a return.`;
 }
 
 interface RunReport {

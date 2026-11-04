@@ -47,13 +47,11 @@ function handoffAction(
   if (!url)
     return {
       action: "contact_operator",
-      purpose: `Tell the user the operator must fix this connector, as instructions says, then stop. ${then}`,
+      purpose: `Tell the user the operator must fix this connector, then stop. ${then}`,
     };
   return {
     url,
-    purpose: handoff.authorizationUrl
-      ? `Give this link to the user, unchanged, then stop. ${then}`
-      : `Give this link to the user, unchanged, for the operator to open, then stop. ${then}`,
+    purpose: `Give this link to the user, unchanged, ${handoff.authorizationUrl ? "" : "for the operator to open, "}then stop. ${then}`,
   };
 }
 
@@ -174,7 +172,7 @@ const authorizationHandoffNative = /* @__PURE__ */ registerAuth(
         status: "auth_required",
         authorizationUrl,
         instructions:
-          "For the person opening this link: open it in a browser and sign in as the user who requested this connection; Connecta verifies identity and permission before starting consent. For the agent: pass authorizationUrl on exactly as returned, without decoding or re-encoding it. " +
+          "For the person opening this link: sign in as the user who requested this connection; Connecta verifies identity and permission before starting consent. For the agent: pass authorizationUrl on exactly as returned. " +
           oauthFollowUp(connector.id, unknownWrite, opts),
       }));
     });

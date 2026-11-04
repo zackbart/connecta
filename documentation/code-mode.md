@@ -668,7 +668,7 @@ the same words in `note` (`R1`). Awaiting, `then`, `Promise.all`, and
 `Promise.allSettled` never read those fields. A `TypeError` saying a value is not a
 function or not iterable, in a program that uses `connecta.search`, `describe` or
 `call`, names the result shape: `search and describe return { tools }; call returns
-{ data, format }. Read those fields.` A syntax error in source that does not start
+{ data, format }.` A syntax error in source that does not start
 as a program says `Pass one expression: async () => { ...; return answer; }.`
 Hints are fixed text; no program source, field name, or value enters them.
 
@@ -724,8 +724,8 @@ evidence that programs fail to project.
 A program that finished with nothing to read looks like nothing happened, and a
 write inside it must not run again. When `result` is absent and nothing was
 emitted, the response carries a fixed `note`. After a write:
-`Program returned nothing. Its writes were already sent. Do not rerun it, even with a fix added: read their targets in a new program and return what you need.`
-After reads only: `Program returned nothing, though its calls ran. Add a return to see their results.`
+`Program returned nothing. Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.`
+After reads only: `Program returned nothing, though its calls ran. Add a return.`
 With no calls: `Program returned nothing and made no host calls. Add a return.`
 A returned `null` is a return. An unawaited read (`E6`) puts its await hint in
 `note` even beside a value, followed by the write sentences when a write was sent.
@@ -1049,8 +1049,10 @@ including U+FEFF at page starts. Larger values return a
 `{ format: "paged", valueFormat, resultId, totalBytes, truncated: true, hint }`
 handle. Pass the handle or its `resultId` to `connecta.result` and reduce the
 pages before returning them. Automatic transfers spend no additional host-call
-budget; explicit paging does. This policy is shared by QuickJS, Worker and custom
-executors that run provider preludes.
+budget; explicit paging does, so a read's `hint` offers the whole loop only when
+it fits the calls left and otherwise bounds the pages per program
+([paging](./meta-tools.md#paging-with-connectaresult)). This policy is shared by
+QuickJS, Worker and custom executors that run provider preludes.
 Oversized raw text containing unpaired UTF-16 surrogates returns a handle without
 `resultId`, with a notice that it cannot be paged as text. This preserves the
 UTF-8 byte-offset contract without silently replacing code units. The completed
