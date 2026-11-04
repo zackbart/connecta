@@ -160,5 +160,4 @@ export const kit = {
   hatch: { name: GITHUB_HATCH.name, verdicts: GITHUB_HATCH.verdicts, paging: "argument" as const },
   errors: errorMeanings(errors)!,
   idempotencyKey: false,
-  refusesWithheld: true as const,
 };

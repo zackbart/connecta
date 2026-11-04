@@ -225,7 +225,8 @@ carries:
   human-readable and which is an id;
 - vendor semantics: units, time zones, consistency, what a status means;
 - required sequences;
-- disqualifiers: what the provider will not do;
+- disqualifiers no refusal enforces: if misuse already gets a typed refusal or
+  hits an absent operation before any side effect, leave it out;
 - result reduction advice where the domain requires it.
 
 Keep these out of it:
@@ -233,8 +234,10 @@ Keep these out of it:
 - **operator setup** (imports, options, credentials, scopes, allowlists,
   admission sizing) → the provider's `## <display name>` section in
   `documentation/providers.md`;
-- **paging, hatch, write, error, `fields`, and withheld-value conventions** →
-  generated from declarations;
+- **generic paging, hatch, write, `fields` and withheld-value rules** → the
+  schemas, hatch descriptions and error messages that already carry them;
+  never restate them. The kit's `cursor`, `page`, `fields` and
+  `write_outcome_unknown` text is shared by every provider;
 - **connection facts** (purpose, mode, region, account, `sensitiveFields`,
   `readOnly`, excluded products) → context in `index.ts`;
 - **value-safety internals** → `safety.ts` and `evidence/review.md`;
@@ -249,19 +252,21 @@ and `usageGuide` renders the selected blocks; `defineProvider` and
 guide text. The guide leads with the routing fact, keeps its summary within
 120 bytes, and never restates a schema (H13).
 
+Write rules a read-only connection cannot use go in a `writes` when-block,
+selected with `blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) }`
+(QuickBooks defaults to read-only, so it selects on `readOnly === false`). Money
+units, account or environment selection, sensitive-data reduction and "absence
+does not prove" rules always stay in the unconditional body: they are the
+silent-wrong-answer risks no refusal catches.
+
 `providers:generate` appends `## Conventions` to `skill.generated.ts` from the
-definition: results (`fields`, `truncated`) for an `api` surface; one paging
-convention from `createAuthored().staticTools` schemas and `kit.pageSize`
-defaults (exclude tools whose `page.hasMore` is always false, and distinguish
-top-level `cursor` from `query[page.param]` or `body[page.param]` continuation);
-the hatch's tools, approval and nonzero refusal count from
-`kit.hatch`, the write-once rule with the declared `idempotencyKey` (checked
-against the kit write builders at construction), and the Errors line from
+definition, and only provider-specific facts render: the vendor envelope root
+(`kit.hatch.fieldsRoot`); the hatch's tools and nonzero refusal count from
+`kit.hatch`; the `idempotencyKey` rule where the provider declares one (checked
+against the kit write builders at construction); and the Errors line from
 `VendorErrors.meanings` (the code an unknown id fails with, whether it proves
-absence, and each documented conflict source); a standard provider must
-declare both. The withheld-value rule renders only with the standard hatch's
-derived `kit.refusesWithheld`, which covers whole marker values and withheld
-links, plus marker containment in paths and queries.
+absence, and each documented conflict source). A standard provider must declare
+both `idempotencyKey` and `meanings`, even when no line renders for the key.
 
 ## The agent-facing surface (S)
 

@@ -30,7 +30,7 @@ conflict.
 
 Styles, named ranges, headers and footers live in the complete document
 resource. Read it with
-`docs_api_read({path:"/documents/doc_123",query:{includeTabsContent:true}})`
+`docs_api_read({path:"/documents/<id>",query:{includeTabsContent:true}})`
 when a rendering cannot answer the task. Paths omit `/v1`; the hatch reply is
 `{status,data}`, with the vendor document in `data` (a program call's
 `delivery.data.data`). A Docs

@@ -19,6 +19,7 @@ export interface GitHubOptions extends ProviderOptions {
 
 /** One GitHub App, multiple owner installations, explicit org/repo grants. */
 export const github = defineProvider<GitHubOptions>({
+  blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
   name: "github",
   title: "GitHub",
   kind: "api",

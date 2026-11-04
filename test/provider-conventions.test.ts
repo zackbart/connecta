@@ -245,25 +245,25 @@ describe.each(providers)("$name meets the hand-written provider conventions", ({
       const more = page?.properties?.hasMore;
       return page && more?.const !== false && !(more?.enum?.length === 1 && more.enum[0] === false);
     });
+    // Continuation is stated where the agent acts (decision 0011, G note), so a
+    // tool that an excluded product removes can never be named by a guide line.
     const guide = connector.usageGuide;
-    if (paged.length && typeof guide === "object") {
-      const lines = guide.content.split("\n").filter((line) => line.startsWith("- **Paging:**"));
-      expect(lines.length).toBeGreaterThan(0);
-      // Conditional product groups may supply separate paging lines. Each
-      // reachable paged tool still gets exactly one continuation instruction.
-      for (const tool of paged)
-        expect(
-          lines.filter((line) => line.includes(`\`${tool.name}\``)),
-          tool.name,
-        ).toHaveLength(1);
-      const line = lines.join("\n");
-      for (const tool of tools.filter((tool) => (tool.outputSchema as any)?.properties?.page && !paged.includes(tool)))
-        expect(line).not.toContain(`\`${tool.name}\``);
-      for (const tool of paged) {
-        if (!(tool.inputSchema as any)?.properties?.cursor)
-          expect(line).toContain(`For \`${tool.name}\`, put it in \`query[page.param]\` or \`body[page.param]\``);
+    if (typeof guide === "object") expect(guide.content).not.toContain("**Paging:**");
+    for (const tool of paged) {
+      const page = (tool.outputSchema as any).properties.page;
+      const cursor = (tool.inputSchema as any)?.properties?.cursor;
+      if (cursor) expect(cursor.description, tool.name).toMatch(/nextCursor/);
+      else {
+        expect(page.properties.param.description, tool.name).toContain(
+          "Put nextCursor unchanged in query[param] or body[param], as page.in says, and keep every other argument",
+        );
+        expect(page.properties.in.enum, tool.name).toEqual(["query", "body"]);
       }
-      expect(line).toContain("before the call that would exceed it and continue in the next program; don't restart");
+      // Only a hatch can report more data it cannot continue.
+      if (page.properties.param)
+        expect(page.properties.hasMore.description, tool.name).toContain(
+          "True without nextCursor means this data is incomplete",
+        );
     }
   });
 
@@ -376,6 +376,50 @@ const authoredProviders = await Promise.all(
     ),
   })),
 );
+
+describe("a read-only connection is not served its write rules (decision 0011, G)", () => {
+  const content = (name: string, options: object) => {
+    const guide = providerFixtures.find((fixture) => fixture.name === name)!.create("fixture", options).usageGuide;
+    if (typeof guide !== "object") throw new Error("expected a structured usage guide");
+    return guide.content;
+  };
+  it.each([
+    ["slides", "## Edit at the version you read"],
+    ["sheets", "## Edit and reconcile"],
+    ["forms", "## Editing without losing structure"],
+    ["gmail", "## Draft recovery"],
+    ["tithely", "## Writes"],
+    ["planning-center", "deleting a\nprofile is permanent"],
+    ["planning-center", "may break another integration"],
+    ["planning-center", "changes financial"],
+  ])("%s: %s", (name, rule) => {
+    expect(content(name, {})).toContain(rule);
+    expect(content(name, { readOnly: true })).not.toContain(rule);
+  });
+  it("github keeps its merge rules for a writable connection", () => {
+    const options = { readOnly: true };
+    expect(content("github", {})).toContain("## Release and merge semantics");
+    expect(content("github", options)).not.toContain("## Release and merge semantics");
+  });
+  it("quickbooks, read-only by default, serves write rules only when writes are enabled", () => {
+    for (const options of [{}, { readOnly: true }]) {
+      const guide = content("quickbooks", options);
+      expect(guide).not.toContain("## Writes");
+      expect(guide).not.toContain("requestId");
+      expect(guide).toContain("Amounts are decimal currency units, not cents.");
+    }
+    const writable = content("quickbooks", { readOnly: false });
+    expect(writable).toContain("reconcile, never resend");
+    expect(writable).toContain("`NotSet` cannot prove no earlier delivery occurred.");
+  });
+  it("serves no operator instruction", () => {
+    for (const fixture of providerFixtures) {
+      const guide = fixture.create().usageGuide;
+      if (typeof guide === "object")
+        expect(guide.content, fixture.name).not.toMatch(/deployment code must|set readOnly/i);
+    }
+  });
+});
 
 describe("standard api() surfaces share one agent-facing shape (decision 0011, S1–S6)", () => {
   it("holds every provider to the S rules, on this runtime", () => {

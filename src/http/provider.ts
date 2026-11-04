@@ -264,18 +264,13 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     kind: "api",
     kit: {
       operations: operations(vendor),
-      ...(pageSize ? { pageSize } : {}),
       ...(hatchOptions
         ? {
             hatch: {
               name: hatchOptions.name,
               verdicts: hatchOptions.verdicts,
               ...(hatchOptions.fieldsRoot ? { fieldsRoot: hatchOptions.fieldsRoot } : {}),
-              ...(hatchOptions.pageCursor && Object.keys(hatchOptions.pages ?? {}).length
-                ? { paging: hatchOptions.pageCursor }
-                : {}),
             },
-            refusesWithheld: true,
           }
         : {}),
       ...(meanings ? { errors: meanings } : {}),

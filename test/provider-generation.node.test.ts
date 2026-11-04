@@ -509,39 +509,42 @@ export const createAuthored = () => ({ staticTools: [
     // Generation accepts the rows --record will complete; the suite does not accept them committed.
     expect(run(root).status).toBe(0);
     const guide = generatedSkill(root, "alpha").content;
-    expect(guide).toContain("For `get_widget`, pass it as the top-level `cursor`");
-    expect(guide).toContain("For `alpha_api_read`, put it in `query[page.param]`");
-    expect(guide).not.toContain("`list_terminal`");
-    expect(guide.match(/\*\*Paging:\*\*/g)).toHaveLength(1);
-    expect(guide).toContain("`query[page.param]` or `body[page.param]`");
-    expect(guide).not.toContain("`get_summary`");
-    expect(guide).toContain("before the call that would exceed it and continue in the next program; don't restart");
-    const { renderConventions } = await import(new URL("../scripts/provider-guide.mjs", import.meta.url).href);
+    // Paging lives on each tool's schema, so generation names no paged tool.
+    expect(guide).not.toContain("**Paging:**");
+    for (const name of ["get_widget", "list_terminal", "get_summary"]) expect(guide).not.toContain(`\`${name}\``);
+    const { checkToolBlocks, renderConventions } = await import(
+      new URL("../scripts/provider-guide.mjs", import.meta.url).href
+    );
     const kit = {
       idempotencyKey: false,
       errors: { unknownId: "connector_call_failed", provesAbsence: false, conflicts: [] },
     };
-    const pagingTools = ["list_common", "list_services"].map((name) => ({
-      name,
-      inputSchema: { properties: { cursor: { type: "string" } } },
-      outputSchema: { properties: { page: { properties: { hasMore: { type: "boolean" } } } } },
-    }));
-    const ordinary = { name: "alpha", kind: "api", kit, tools: pagingTools };
-    expect(renderConventions({ ...ordinary, toolBlocks: undefined })).toBe(renderConventions(ordinary));
-    const conditional = renderConventions({
-      ...ordinary,
-      keys: ["services"],
-      toolBlocks: { list_services: "services" },
-    });
-    expect(conditional).toContain("<!-- when: services -->\n- **Paging:** For `list_services`");
-    expect(conditional).toContain("For `list_common`, pass it as the top-level `cursor`");
+    const pagingTools = ["list_common", "list_services"].map((name) => ({ name }));
+    const ordinary = { name: "alpha", tools: pagingTools };
+    expect(() => checkToolBlocks(ordinary)).not.toThrow();
+    expect(() =>
+      checkToolBlocks({ ...ordinary, keys: ["services"], toolBlocks: { list_services: "services" } }),
+    ).not.toThrow();
     for (const toolBlocks of [
       { unknown: "services" },
       { list_services: "unknown" },
       { list_services: ["services", "groups"] },
       [],
     ])
-      expect(() => renderConventions({ ...ordinary, keys: ["services"], toolBlocks })).toThrow(/conventionToolBlocks/);
+      expect(() => checkToolBlocks({ ...ordinary, keys: ["services"], toolBlocks })).toThrow(/conventionToolBlocks/);
+    // Only provider-specific facts render: absence and conflict meanings, the key rule when one exists.
+    const conventions = renderConventions({ name: "alpha", kind: "api", kit });
+    expect(conventions).toBe(
+      "## Conventions\n\n- **Errors:** An unknown id, or one these credentials cannot reach, fails as `connector_call_failed`; this API does not tell the two apart.",
+    );
+    const keyed = renderConventions({
+      name: "alpha",
+      kind: "api",
+      kit: { ...kit, idempotencyKey: true, errors: { ...kit.errors, provesAbsence: true, conflicts: ["HTTP 409"] } },
+    });
+    expect(keyed).toContain("a write that takes `idempotencyKey` may be repeated with the same key and arguments");
+    expect(keyed).toContain("`not_found` means the record does not exist");
+    expect(keyed).toContain("`conflict` means: HTTP 409.");
     for (const count of [0, 1, 70, 10000]) {
       const rendered = renderConventions({
         name: "alpha",
@@ -559,7 +562,7 @@ export const createAuthored = () => ({ staticTools: [
         expect(line).toContain(`${count} ${count === 1 ? "operation is" : "operations are"} refused by design`);
         expect(line).toContain("use `widgets_api_details` with the method and path");
       } else expect(line).not.toContain("refused by design");
-      expect(line).toContain("An operation without a reviewed verdict is refused");
+      expect(line).toContain("calls a reviewed read");
       expect(line).not.toContain("DELETE /widgets");
       expect(new TextEncoder().encode(line).length).toBeLessThan(550);
     }

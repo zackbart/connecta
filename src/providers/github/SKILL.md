@@ -44,6 +44,7 @@ listings have a vendor cap and are not recursive. Missing inline content or a
 missing patch does not establish an empty file or an unchanged diff. Raw diff,
 log/archive downloads, secret/admin operations and arbitrary GraphQL are unavailable.
 
+<!-- when: writes -->
 ## Release and merge semantics
 
 Publishing a draft release updates that release's `draft` to false. Deleting a
@@ -55,3 +56,4 @@ same-repository head and base, plus explicit workflow-write access. GitHub's
 atomic SHA guard binds the head rather than the base: a concurrent base retarget
 can introduce workflow changes after the preflight. A response with `merged:false`
 is a failed merge, not a completed one. Inspect current PR state before a new attempt.
+<!-- end -->

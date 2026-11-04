@@ -431,7 +431,7 @@ export class InvocationService {
           return {
             ...error,
             code: "write_outcome_unknown",
-            message: `${error.message} Its outcome is unknown. Check the target before repeating this call.`,
+            message: `${error.message} It was sent once; its outcome is unknown. Check the target before repeating this call.`,
             retryable: false,
             ...(sentSourceWrite() ? { writeOutcome: "unknown" as const } : {}),
             connector: target.connector.id,

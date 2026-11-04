@@ -702,10 +702,10 @@ describe("fields (decision 0011 S5)", () => {
     const fieldsOf = (tool: ApiTool) =>
       (tool.inputSchema!.properties as Record<string, { description: string }>)["fields"]!.description;
     expect(fieldsOf(one)).toBe(
-      'Dot paths to keep. Paths start at the result, e.g. ["id"]. It only narrows the result.',
+      'Dot paths to keep. Paths start at the result, e.g. ["id"]. It only narrows the result. A withheld value reads "[redacted]"; truncated lists paths cut for size, and the ids to fetch them stay.',
     );
     expect(fieldsOf(many)).toBe(
-      'Dot paths to keep. Paths start at each item in items, e.g. ["id"]. It only narrows the result.',
+      'Dot paths to keep. Paths start at each item in items, e.g. ["id"]. It only narrows the result. A withheld value reads "[redacted]"; truncated lists paths cut for size, and the ids to fetch them stay.',
     );
     const connector = apiConnector("acme", { tools: [one, many] });
     // Declared paths the data lacks (an absent optional, an empty list's items) and paths

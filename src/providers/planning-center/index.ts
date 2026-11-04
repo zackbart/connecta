@@ -114,11 +114,17 @@ export const planningCenter = defineApiProvider<PlanningCenterOptions>({
   safety: () => safety,
   probe,
   blocks: {
-    keys: [...PLANNING_CENTER_APPS, "lists", "limited"],
-    select: (options) => [
-      ...PLANNING_CENTER_APPS.filter((app) => !excludedApps(options.excludeApps).has(app)),
-      excludedApps(options.excludeApps).size === 0 ? "lists" : "limited",
-    ],
+    keys: [...PLANNING_CENTER_APPS, "lists", "limited", "people-writes", "giving-writes", "api-writes"],
+    select: (options) => {
+      const apps = PLANNING_CENTER_APPS.filter((app) => !excludedApps(options.excludeApps).has(app));
+      return [
+        ...apps,
+        excludedApps(options.excludeApps).size === 0 ? "lists" : "limited",
+        ...(options.readOnly
+          ? []
+          : (["people", "giving", "api"] as const).filter((app) => apps.includes(app)).map((app) => `${app}-writes`)),
+      ];
+    },
   },
   guide: (options) => ({
     heading: "Planning Center usage",

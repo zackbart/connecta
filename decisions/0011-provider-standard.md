@@ -360,6 +360,20 @@ deployment instructions under `## <instructionsHeading>`.
 | Disqualifiers: what the provider will not do                                                     | Value-safety internals and review notes                                            | `safety.ts` comments and `evidence/review.md` |
 |                                                                                                  | Anything a schema already says (H13), source paths, INV ids                        | deleted                                       |
 
+**Amended (compact provider guides).** Guides spent a third of their bytes on
+boilerplate repeated across providers. Conventions now carry only
+provider-specific facts: the envelope root, the hatch's tools and refusal count,
+the `idempotencyKey` rule where a provider has one, and the Errors line. Generic
+paging, `fields`, withheld-value and write-once rules move out of the table's
+"generated Conventions" row to where the agent acts: the `cursor` and `page`
+schemas, the `fields` schema, the hatch descriptions and `withheld` hint, and the
+`write_outcome_unknown` error. A disqualifier stays in `SKILL.md` only when misuse
+would not otherwise get a typed refusal before any side effect; one that a
+refusal or an absent operation already enforces leaves the guide. Money units,
+account or environment selection, sensitive-data reduction and "absence does not
+prove" rules always stay. A read-only connection is not served its write rules:
+a guide puts them in `writes` when-blocks.
+
 - **G1.** The frontmatter declares exactly `name` and `instructionsHeading`.
   The `content` selector is gone.
 - **G2.** The fragment template system is retired. A body may hold unnested
