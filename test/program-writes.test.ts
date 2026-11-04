@@ -55,6 +55,7 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
 }
 
 interface WorldOptions {
+  classification?: Record<string, Record<string, "read" | "read-repeatable" | "write" | "hidden">>;
   readOnly?: boolean;
   /** The tracker stands for a boundary, so its own refusal marks hold (round 13). */
   provesRefusals?: boolean;
@@ -105,7 +106,10 @@ function world(options: WorldOptions = {}) {
     },
   };
   if (options.provesRefusals) delegatesEachCall(tracker);
-  const registry = makeRegistry([reader, tracker], { storage: memoryStorage() });
+  const registry = makeRegistry([reader, tracker], {
+    storage: memoryStorage(),
+    ...(options.classification ? { classification: options.classification } : {}),
+  });
   const activity: ActivityRequestContext = {
     recordTool: recordToolActivity,
     sink: { record: (event) => void events.push(event) },
@@ -587,7 +591,7 @@ describe("writable-endpoint programs (#706, #820)", () => {
     expect(() => construct({ classification: { nope: { read: "read" } } })).toThrow('unknown connector "nope"');
     expect(() => construct({ classification: { notes: { missing: "read" } } })).toThrow('has no tool "missing"');
     expect(() => construct({ classification: { notes: { read: "never" } } })).toThrow(
-      'must be "read", "write", or "hidden"',
+      'must be "read", "read-repeatable", "write", or "hidden"',
     );
     expect(() => construct({ readOnly: "yes" })).toThrow("ConnectaConfig.readOnly must be true or false");
     expect(() => construct({ pools: { named: { tools: ["notes"], readOnly: 1 } } })).toThrow(
@@ -733,6 +737,68 @@ describe("classification and pool endpoints (#706)", () => {
     });
     expect(value(await execute({ code })).error).toMatchObject({ code: "read_only_endpoint" });
     expect(sent).toBe(0);
+  });
+
+  it("INV-1 INV-9: read-repeatable serves a declared write as a read in programs and keeps write accounting", async () => {
+    const classification = { tracker: { close_issue: "read-repeatable" as const } };
+    const writable = world({ classification });
+    const ran = value(await writable.run((connecta) => connecta.call!("tracker.close_issue", { id: 1 })));
+    expect(ran.error).toBeUndefined();
+    expect(writable.writes()).toHaveLength(1);
+
+    const readOnly = world({ classification, readOnly: true });
+    const found = value(
+      await readOnly.run(async (connecta) => {
+        const search = await connecta.search!({});
+        await connecta.call!("tracker.close_issue", { id: 1 });
+        return search.tools.map((tool: { address: string; classification: string }) => [
+          tool.address,
+          tool.classification,
+        ]);
+      }),
+    );
+    expect(found.error).toBeUndefined();
+    expect(found.result).toContainEqual(["tracker.close_issue", "read"]);
+    expect(readOnly.writes()).toHaveLength(1);
+
+    // Still a source write: a failure after dispatch is an unknown outcome, not a retry.
+    const failing = world({
+      classification,
+      write: () => {
+        throw new ConnectorCallError("unavailable", "Downstream failed.");
+      },
+    });
+    const failed = value(await failing.run((connecta) => connecta.call!("tracker.close_issue", { id: 1 })));
+    expect(failed.error).toMatchObject({ retryable: false });
+    expect(failing.writes()).toHaveLength(1);
+  });
+
+  it("INV-1 INV-11: read-repeatable warns about nothing, and an unknown verdict names it", async () => {
+    const logger = { ...silentLogger, warn: vi.fn() };
+    const connector: Connector = {
+      id: "crm",
+      listTools: async () => [
+        { name: "update", annotations: { readOnlyHint: false } },
+        { name: "plain", annotations: { readOnlyHint: false } },
+      ],
+      callTool: async () => null,
+    };
+    const registry = makeRegistry([connector], {
+      classification: { crm: { update: "read-repeatable", plain: "read" } },
+      logger,
+    });
+    const tools = await registry.getTools("crm", BASE, {});
+    expect(tools.map((tool) => [tool.name, tool.classification, tool.annotations?.readOnlyHint])).toEqual([
+      ["update", "read", true],
+      ["plain", "write", false],
+    ]);
+    const warnings = logger.warn.mock.calls.map(([message]) => String(message)).filter((m) => m.includes("override"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"crm.plain"');
+    expect(warnings[0]).toContain('"read-repeatable"');
+    expect(() => makeRegistry([connector], { classification: { crm: { update: "repeatable" as never } } })).toThrow(
+      '"read-repeatable"',
+    );
   });
 
   it("INV-1: a static connector reports a refused read override once, at construction", async () => {

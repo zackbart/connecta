@@ -1816,7 +1816,8 @@ address, which never changes.
 `{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
 write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
 whatever hints the downstream declared. A deployment `"read"` override never
-produces read annotations for a tool whose source explicitly declares a write; see
+produces read annotations for a tool whose source explicitly declares a write;
+`"read-repeatable"` does, and accepts that a host may repeat the call. See
 [deployment overrides](./integrating.md#another-remote-mcp-server). A read-only endpoint or connector
 leaves write tools out of the list, by the same rule search and describe use.
 
