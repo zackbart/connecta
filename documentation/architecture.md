@@ -3978,7 +3978,8 @@ physical-attempt and body/admission suites remain compatibility evidence.
 
 The standard hatch privately registers bounded vendor operation text against its
 ApiTool identity; `apiConnector` transfers those facts to the constructed
-connector. `operation-vocabulary.ts` contains only pure lexical/cache logic and
+connector, and a provider that wraps that connector carries them to its outer
+object with `carryConnectorVocabulary`. `operation-vocabulary.ts` contains only pure lexical/cache logic and
 types. Catalog discovery consumes those facts after loading and classifying a
 complete visible catalog. It never imports a provider or an operation index,
 parses operation contracts, invokes a handler, or authenticates. Matching requires

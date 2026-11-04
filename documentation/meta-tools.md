@@ -172,7 +172,7 @@ discovery. Both take the same arguments.
 | `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe client approval policy; a read-only endpoint has no write rows. |
 | `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                                                        |
 | `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                                                 |
-| `fullDescriptions` | unabridged tool purposes, at the obvious cost                                                                                                                                                                                                                                                       |
+| `fullDescriptions` | unabridged tool purposes instead of the one-sentence summary, at the obvious cost                                                                                                                                                                                                                   |
 
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
@@ -181,9 +181,10 @@ Main search also consults a standard hatch's construction-authored operation
 vocabulary (path, operation id, vendor summary and tag), without calling a tool
 or reading account data. A match returns the owning `_api_search` tool; call it
 with the original query to retrieve operations. Exact tool/address and complete
-authored-tool matches retain precedence. A vocabulary match requires every term
-in one operation, and the operation's hatch route must be visible and match the
-read/write filter. On `approvalRequired` searches the returned discovery tool
+authored-tool matches retain precedence, and a vocabulary match never suppresses
+lexical partial matches: both stay on the page, the hatch above partial tools.
+A vocabulary match requires every term in one operation, and the operation's
+hatch route must be visible and match the read/write filter. On `approvalRequired` searches the returned discovery tool
 is still a read. Hidden tools, missing grants and read-only restrictions remain
 in force. Browsing does not consult operation vocabulary.
 
@@ -276,9 +277,9 @@ directly; reserve `connecta.describe` for a search without schemas, an ambiguous
 compact shape, or exact constraints that need `format: "json"`.
 
 Compact search is a routing view, not a second copy of connector documentation,
-so it spends bytes on shape and none on prose: tool purposes cap at 160
-characters, connector descriptions and property prose are dropped, and required
-input fields render before optional ones. Both surfaces share one renderer, so
+so it spends bytes on shape and little on prose: a tool's purpose is its summary
+([below](#lexical-discovery)), connector descriptions and property prose are
+dropped, and required input fields render before optional ones. Both surfaces share one renderer, so
 its byte and work budgets, its truncation renderings, and its handling of enums,
 tuples, and conditional keywords are documented once under
 [`connecta.search`](./code-mode.md#connectasearch) and
@@ -895,17 +896,44 @@ compact schema strings and TypeScript signatures. Compact schemas are text;
 `inputSchema.properties` is meaningful only in JSON mode. Pagination counts
 tools across connectors: `nextOffset` is present only when another page remains.
 
-Search tokenizes tool names and descriptions at punctuation and camel-case
-boundaries. Whole-token matches and a small set of inflectional variants preserve
-recall without admitting arbitrary mid-word substrings. Document frequency weights
-rare domain terms above ubiquitous action terms. Exact tool names and canonical
-addresses rank first, so `get_issue` beats `get_issue_status` even when a
-connector is named `issue`. Exact configured connector IDs, full display titles,
-and recognized service names rank next. Complete lexical matches then precede
-partial matches. Within a tier, a query whose first word outside connector names
-is `list`, `get`, `find`, `search`, `show`, `read`, `fetch`, or `count` ranks
-read rows before write rows; writes stay on the page. Score and catalog order
-break the remaining ties.
+A row's `description` is a summary: the first complete sentence, joined to the
+following ones until it reaches 40 characters, within 160 UTF-16 code units. Text
+with no sentence end in that range is cut at a word and marked `…`. The row
+carries `descriptionTruncated: true` whenever text was left out;
+`fullDescriptions: true` returns the original text and no flag.
+
+Search tokenizes tool names, titles and full descriptions at punctuation and
+camel-case boundaries. Whole-token matches, a small set of inflectional variants
+and a few unambiguous abbreviations (`config`/`configuration`, `db`/`database`,
+`doc`/`document`, `env`/`environment`, `org`/`organization`,
+`repo`/`repository`, `var`/`variable`) preserve recall without admitting
+arbitrary mid-word substrings. Document frequency weights rare domain terms above
+ubiquitous action terms. A term weighs most in the name, then the summary, then
+the title (`title` or `annotations.title`), and least in the rest of the
+description, which stays searchable but is weak evidence. A tool's score is then
+multiplied by the square of the share of the query's total rarity it covers in
+any zone, so rare words in a description's tail outrank a common verb in a name,
+and a tool covering every term is unaffected.
+
+Exact tool names and canonical addresses rank first, so `get_issue` beats
+`get_issue_status` even when a connector is named `issue`. A tool named only by
+an action word, such as `search`, is exact when it is the whole query, not when a
+longer query contains that word. Exact configured connector IDs, full display
+titles, and recognized service names rank next. Three tiers follow:
+
+1. Complete matches: every term is in the name, title or summary. A tool on the
+   connector the query or scope names need not repeat that connector's name.
+2. A hatch whose operation vocabulary matched, and a tool whose name states a
+   query word other than an action or the connector, with the remaining terms in
+   the rest of its description.
+3. Every other match.
+
+When a complete match exists, tier 3 keeps only tools covering every term
+somewhere, covering at least two terms, or whose name states a term at least as
+rare as the query's average. Otherwise it keeps any match. Within a tier, a query
+whose first word outside connector names is `list`, `get`, `find`, `search`,
+`show`, `read`, `fetch`, or `count` ranks read rows before write rows; writes stay
+on the page. Score and catalog order break the remaining ties.
 
 A maintained provider may declare `searchSynonyms`: groups of single lowercase
 words its users and its vendor use for the same record, such as `household`
@@ -930,8 +958,9 @@ catalog is a catalog failure, never an absence. Absence records and catalog
 errors use only the endpoint's tools; a connector the endpoint does not serve
 is indistinguishable from an unconfigured one.
 
-If no tool covers every search term, wider any-term fallback remains available
-for ordinary action/object searches and the page carries `matchMode: "partial"`.
+If no tool covers every search term, in any part of its text or through one
+operation of its vocabulary, wider any-term fallback remains available for
+ordinary action/object searches and the page carries `matchMode: "partial"`.
 A service absence suppresses that fallback, so `GitHub get issue` cannot return
 Linear issues or Supabase projects. Tool rows expose no scores or
 per-result query coverage. `queryAnalysis` partitions at most eight terms of at

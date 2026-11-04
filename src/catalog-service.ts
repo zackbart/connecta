@@ -29,8 +29,8 @@ import {
   matchesLexicalTerm,
   rankTools,
   schemaObjectKeys,
-  summarizeDiscoveryDescription,
-  summarizeDescription,
+  discoverySummary,
+  vocabularyScore,
   typescriptSignature,
 } from "./catalog.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
@@ -111,6 +111,8 @@ export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
+/** UTF-8 bytes of full tool purposes one describe call returns; fallback summaries have their own bound. */
+export const MAX_DESCRIBE_DESCRIPTION_BYTES = 32 * 1024;
 const MAX_QUERY_TERMS = 8;
 const MAX_QUERY_TERM_LENGTH = 64;
 /**
@@ -394,6 +396,7 @@ interface CatalogSearchEntry {
     name: string;
     address: string;
     description?: string;
+    descriptionTruncated?: true;
     inputSchema?: unknown;
     outputSchema?: unknown;
     signature?: string;
@@ -679,6 +682,7 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
           name: { type: "string" },
           address: { type: "string" },
           description: { type: "string" },
+          descriptionTruncated: { const: true },
           inputSchema: {},
           outputSchema: {},
           signature: { type: "string" },
@@ -750,6 +754,7 @@ export interface CatalogDescription {
   schemaFormat?: "json" | "text";
   name?: string;
   description?: string;
+  descriptionTruncated?: true;
   guide?: string;
   guideSummary?: string;
   guideRequired?: true;
@@ -1732,7 +1737,14 @@ export class CatalogService {
         exactLookup: boolean;
         connectorRank: number;
         matchedTermCount: number;
+        /** Every term met in the name, title or summary. */
         complete: boolean;
+        /** Every term met somewhere: in the description's tail, or an operation. */
+        covered: boolean;
+        vocabulary: boolean;
+        /** The name states a query word other than an action or the connector. */
+        namesSubject: boolean;
+        namesDistinctiveTerm: boolean;
       }> = [];
       let matchMode: "all" | "partial" = "all";
       // Provider-declared synonyms widen term matching within their own catalog only.
@@ -1822,22 +1834,38 @@ export class CatalogService {
                     order: original.success.indexOf(tool),
                     exactName: false,
                     matchedTermCount: toolTermCount,
+                    headTerms: [],
+                    nameTerms: [],
+                    namesDistinctiveTerm: false,
                   });
               }
             }
+            // A tool on the named connector need not repeat that connector's name.
+            const statedTerms =
+              args.connector || exactConnector ? toolTerms.filter((term) => !connectorTerms.has(term)) : toolTerms;
+            const requiredTerms = statedTerms.length > 0 ? statedTerms : toolTerms;
             for (const ranked of rankedTools) {
+              const complete = isBrowse || requiredTerms.every((term) => ranked.headTerms.includes(term));
+              const vocabulary = vocabularyTools.has(ranked.tool);
+              // Discovery pointers follow every tool that answers lexically.
+              const vocabularyRank = complete ? 0 : vocabularyScore(requiredTerms, statistics);
               collected.push({
                 connector,
                 tool: ranked.tool,
-                score: vocabularyTools.has(ranked.tool) && !ranked.exactName ? 0 : ranked.score,
+                score: vocabulary && !ranked.exactName ? vocabularyRank : ranked.score,
                 order: orderBase + ranked.order,
-                exactName: ranked.exactName,
+                // A tool named just `search` is not what a longer query containing that verb names.
+                exactName: ranked.exactName && !ACTION_WORD.test(ranked.tool.name.toLowerCase()),
                 exactLookup:
                   rawPhrase === lexicalQueryTerms(ranked.tool.name).join(" ") ||
                   rawPhrase === lexicalQueryTerms(`${connector.id}.${ranked.tool.name}`).join(" "),
                 connectorRank,
                 matchedTermCount: vocabularyTools.has(ranked.tool) ? toolTermCount : ranked.matchedTermCount,
-                complete: isBrowse || vocabularyTools.has(ranked.tool) || ranked.matchedTermCount === toolTermCount,
+                complete,
+                covered: isBrowse || vocabulary || ranked.matchedTermCount === toolTermCount,
+                vocabulary,
+                namesSubject: ranked.nameTerms.some((term) => !ACTION_WORD.test(term) && !connectorTerms.has(term)),
+                namesDistinctiveTerm: ranked.namesDistinctiveTerm,
               });
             }
           }
@@ -1853,14 +1881,15 @@ export class CatalogService {
       matches.push(
         ...rankedMatches.filter(
           (match) =>
-            match.complete ||
+            match.covered ||
+            match.namesDistinctiveTerm ||
             completeMatchCount === 0 ||
             match.exactName ||
             match.connectorRank > 0 ||
             match.matchedTermCount >= 2,
         ),
       );
-      if (!isBrowse && !unsearchableQuery && completeMatchCount === 0) {
+      if (!isBrowse && !unsearchableQuery && !rankedMatches.some((match) => match.covered)) {
         matchMode = "partial";
       }
       // A read-intent verb leads the query once connector names are set aside.
@@ -1871,14 +1900,17 @@ export class CatalogService {
       // longer name such as get_issue_status cannot beat an exact get_issue
       // merely because its description repeats rare query terms. Within a
       // tier, a read-intent query puts reads before writes.
+      // A hatch with a matching operation stays above partial matches, as does a
+      // tool that names the query's subject and states the rest in its tail. A
+      // tail alone earns no tier: long prose can mention anything.
+      const tier = (match: (typeof matches)[number]) =>
+        match.complete || match.exactName ? 2 : match.vocabulary || (match.covered && match.namesSubject) ? 1 : 0;
       matches.sort((a, b) => {
-        const aFirstTier = a.complete || a.exactName;
-        const bFirstTier = b.complete || b.exactName;
         return (
           Number(b.exactLookup) - Number(a.exactLookup) ||
           Number(b.exactName) - Number(a.exactName) ||
           b.connectorRank - a.connectorRank ||
-          Number(bFirstTier) - Number(aFirstTier) ||
+          tier(b) - tier(a) ||
           readFirst(b) - readFirst(a) ||
           b.score - a.score ||
           a.order - b.order
@@ -1909,7 +1941,11 @@ export class CatalogService {
             ? renderSearchSchema(output.schema, schemaFormat)
             : undefined;
         const schemaKeys = withSchemas && args.includeSchemaKeys ? schemaKeyMetadata(input, output.schema) : undefined;
-        const description = summarizeDiscoveryDescription(match.tool.description, args.fullDescriptions === true);
+        const summary =
+          match.tool.description && args.fullDescriptions !== true
+            ? discoverySummary(match.tool.description)
+            : undefined;
+        const description = summary ? summary.text : match.tool.description || undefined;
         const requiredReasons = guideRequiredReasons(
           match.connector,
           match.tool,
@@ -1928,6 +1964,7 @@ export class CatalogService {
             name: match.tool.name,
             address: `${match.connector.id}.${match.tool.name}`,
             ...(description !== undefined ? { description } : {}),
+            ...(summary?.truncated ? { descriptionTruncated: true as const } : {}),
             ...(schemaFormat
               ? {
                   inputSchema: renderedInput?.schema,
@@ -2302,6 +2339,10 @@ export class CatalogService {
         ),
       );
 
+      // Full prose shares one budget in address order, so a large batch keeps its
+      // schemas and a repeated describe renders the same text. A fallback summary
+      // spends none of it: every entry keeps its purpose, within 480 bytes each.
+      let descriptionBytes = MAX_DESCRIBE_DESCRIPTION_BYTES;
       return resolved.map(({ address, resolved: addressResolution }) => {
         if (!addressResolution) {
           const message = `Unknown address "${boundedEchoText(address)}"`;
@@ -2361,7 +2402,11 @@ export class CatalogService {
         const tool = cloneTool(selected);
         const input = tool.inputSchema ?? { type: "object" };
         const output = this.outputSchema(addressResolution.connector.id, tool);
-        const description = summarizeDescription(tool.description, args.fullDescriptions === true);
+        const bytes = tool.description ? encoder.encode(tool.description).length : 0;
+        const withinBudget = args.fullDescriptions === true || bytes <= descriptionBytes;
+        if (withinBudget) descriptionBytes -= bytes;
+        const summary = withinBudget || !tool.description ? undefined : discoverySummary(tool.description);
+        const description = summary ? summary.text : tool.description || undefined;
         const signature =
           format === "typescript"
             ? typescriptSignature(input, output.schema, {
@@ -2385,6 +2430,7 @@ export class CatalogService {
           schemaFormat: format === "json" ? "json" : "text",
           name: tool.name,
           ...(description !== undefined ? { description } : {}),
+          ...(summary?.truncated ? { descriptionTruncated: true as const } : {}),
           ...(connectorGuide(addressResolution.connector)
             ? {
                 guide: connectorSkillName(addressResolution.connector.id),
