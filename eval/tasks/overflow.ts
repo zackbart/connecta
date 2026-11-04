@@ -199,6 +199,15 @@ async function reference(id: string, ctx: ReferenceContext) {
         ...(standard() ? { fields: ["id", "email"], ...(cursor ? { cursor } : {}) } : { page: i }),
       });
       if (result.isError) throw new Error(result.text);
+      // A careful agent edits a preview's program to read the rows it left out.
+      if (result.text.startsWith('{"truncated"')) {
+        const notice = JSON.parse(result.text.slice(0, result.text.indexOf("\n"))) as {
+          nextAction: { arguments: { code: string } };
+        };
+        const code = notice.nextAction.arguments.code.replace(/return \{ count: .*\}; \}$/, "return rows; }");
+        const rows = await ctx.call("execute_code", { code });
+        if (rows.isError) throw new Error(rows.text);
+      }
       cursor = /"nextCursor"\s*:\s*"([^"]+)"/.exec(result.text)?.[1];
       if (standard() && i < 3 && !cursor) throw new Error("Overflow donor list lost its continuation");
     }

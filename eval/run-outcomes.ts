@@ -348,7 +348,11 @@ async function run() {
     const lost = structuredClone(references.find((reference) => reference.task === id)!);
     for (const use of lost.saved!.trace.toolUses) {
       if (use.isError) continue;
-      const body = JSON.parse(use.resultText ?? "{}");
+      const resultText = use.resultText ?? "{}";
+      // A preview's body follows its notice line.
+      const body = JSON.parse(
+        resultText.startsWith('{"truncated"') ? resultText.slice(resultText.indexOf("\n") + 1) : resultText,
+      );
       const page = body.page ?? body.result?.page;
       const text = JSON.stringify({ page, result: { page } });
       use.resultText = text;
