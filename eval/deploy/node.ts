@@ -128,6 +128,7 @@ export async function startNodeDeployment(
           evalConfig(
             {
               connectors,
+              surface,
               extra,
               fixtures: { alice: ALICE, accountA: ACCOUNT_A, shopZone: SHOP_ZONE },
               readOnly: endpointReadOnly,

@@ -1,5 +1,8 @@
 {
   "notes": [
+    "2026-11-04: Run-deadline read caps merged with #1319, #1330, #1335 and #1315. The official Node 22.23.4 binary reproduces CI on origin/main at 736a1e1a exactly (424,610 B and 808,988 B) and measures this merge at 425,093 B and 809,586 B, up 483 B and 598 B against 190 B and 312 B of headroom. The caps move to 425,200 B and 809,700 B, leaving 107 B and 114 B.",
+    "2026-11-04: #1319 and #1330 both move these caps. CI measured this PR alone at 423,133 B and 807,145 B, 958 B and 1,028 B over 422,175 B and 806,117 B, and its review fixes add 9 B and remove 11 B on one machine. Added to #1330's 423,700 B and 808,000 B caps, the caps move to 424,800 B and 809,300 B. These are estimates, to check against this PR's build (package) table.",
+    "2026-11-04: Lexical search ranks on summaries, with title, summary and tail zones, summaries and a small abbreviation map. Measured on one machine against origin/main at 25e9e940, this adds 891 B to the root and 1,218 B to examples/worker; gzip output differs by machine, so these are deltas, not CI sizes. Added to CI's 422,175 B and 806,117 B they estimate 423,066 B and 807,335 B. The caps move to 423,400 B and 807,700 B, keeping about the same headroom as before.",
     "2026-11-04: Run-deadline read caps on top of the failure-recovery text, with their discovery cancellation. CI on 92d32845 measures the root at 424,205 B and examples/worker at 808,467 B. The caps move to 424,300 B and 808,550 B.",
     "2026-11-04: Run-deadline read caps need to live in the root: the deadline clock, the write gate and the discovery timeout. CI measures this PR at 422,733 B and 806,774 B, up 528 B and 788 B from origin/main against 325 B and 383 B of headroom. The caps move to 422,800 B and 806,850 B, leaving 67 B and 76 B.",
     "2026-11-04: Failure-recovery text (agent-text/failure-recovery) adds about 1,398 B to the root and 1,809 B to examples/worker against main's CI measures of 422,175 B and 806,117 B, past their 325 B and 383 B of headroom. This is new agent-facing text, not drift; the root cap moves to 423,700 B and the examples/worker cap to 808,000 B.",
@@ -60,7 +63,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 424300
+      "maxGzip": 425200
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -143,7 +146,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 808550
+      "maxGzip": 809700
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

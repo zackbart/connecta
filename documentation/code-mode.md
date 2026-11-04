@@ -252,7 +252,9 @@ unchanged as `connecta.call(entry.address, entry.args)`
 ([fully determined operations](./meta-tools.md#discovery-context) only).
 
 Each entry carries `address`, `name`, and — when requested — `description`,
-the rendered schemas, and `annotations`. The page's `connectors` map holds each
+the rendered schemas, and `annotations`. `description` is the one-sentence
+[summary](./meta-tools.md#lexical-discovery), with `descriptionTruncated: true`
+when text was left out; `fullDescriptions: true` returns the original text. The page's `connectors` map holds each
 row's connector facts once, keyed by the id before the address's first dot: the
 configured `title` when present (normalized whitespace, at most 120 UTF-8
 bytes), and `guide` (the skill name) with a bounded `guideSummary` when the
@@ -358,7 +360,14 @@ and catalog failures add only `retryAfterMs` when known. Each failed entry
 clamps its caller-authored `address` to 512 UTF-8 bytes with an `…` marker, and
 entry order correlates a clipped address with its request; successes keep
 canonical addresses. More than 100 addresses is `invalid_args`, and the same
-256,000-byte ceiling applies. Compact describe keeps property prose within a
+256,000-byte ceiling applies. `description` is the tool's full text. One call
+returns at most 32 KiB of UTF-8 full description text in address order; an entry
+that does not fit in what remains gets the search summary, with
+`descriptionTruncated: true` when that summary leaves text out, and a later,
+shorter entry may still fit. Summaries have their own allowance and spend none of
+that budget: each is at most 160 UTF-16 code units, at most 480 UTF-8 bytes, so
+100 addresses return at most 80,288 bytes of description text.
+`fullDescriptions: true` lifts the budget, leaving the ceiling. Compact describe keeps property prose within a
 separate 8,192-byte UTF-8 shape cap and shares search's 2,000-visit budget; a
 capped shape sets `inputSchemaTruncated` or `outputSchemaTruncated`, and
 `format: "json"` gives the exact schema. `format: "typescript"` returns a
@@ -996,7 +1005,10 @@ later read gets the one-tick deadline that is left, and fails the same way.
 The cap ends the work as well as the wait: the read's downstream signal aborts
 before the program hears `timeout`, and a listing other callers still wait on is
 cancelled once the last of them leaves. Storage operations cannot be withdrawn
-once sent, so one in flight runs to its end, and no further one starts.
+once sent, so one in flight runs to its end. A discovery-health routine already
+under way cannot be interrupted either, and it may start its next operation,
+such as reading the connector's generation key, after the program hears
+`timeout`. No deadline bounds that storage latency.
 
 Writes are exempt, because a write ended early is a write with an unknown
 outcome. A write-like call (`W9`), a source write overridden to read included,

@@ -1185,7 +1185,7 @@ function sandboxProvider(
         return catalog.describeEffect({ ...args, format: args.format ?? "json" }).pipe(
           Effect.map((tools) => {
             const result = { tools };
-            boundedDiscoveryText(result, 'Split the address list or use format: "compact".');
+            boundedDiscoveryText(result, 'Split the address list, omit fullDescriptions, or use format: "compact".');
             for (const tool of result.tools) {
               if (!tool.error) catalogAddressDependency(tool.address);
               else {

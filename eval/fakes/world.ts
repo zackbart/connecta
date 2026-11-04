@@ -80,7 +80,7 @@ export interface WorldOptions extends Partial<Record<ProviderFakeName, boolean>>
   quickbooks?: boolean;
   google?: GoogleOptions;
   restVendor?: RestVendor;
-  github?: { fault?: "search-503" };
+  github?: { fault?: "search-503" | "ci-scope-gap" };
   breeze?: { fault?: "update-500" };
   ccb?: { fault?: "update-500" };
   planningCenter?: { fault?: "update-500" };
@@ -100,7 +100,7 @@ export interface WorldOptions extends Partial<Record<ProviderFakeName, boolean>>
   billingCredential?: "preset" | "missing";
 }
 
-const BILLING_TOKEN = "sk_eval_billing_7f3a91";
+const BILLING_TOKEN = "sk_eval_7f3a91c82d6049e5";
 
 const META: Record<ServiceId, { title: string; description: string }> = {
   revenuecat: { title: "RevenueCat", description: "Production subscription access" },
@@ -258,7 +258,10 @@ export class World {
 
   /** The task's connectors, then any injected fault connectors. */
   connectorSpecs(): ConnectorSpec[] {
-    return [...this.taskSpecs(), ...this.injected.specs()];
+    const specs = [...this.taskSpecs(), ...this.injected.specs()];
+    if (new Set(specs.map((spec) => spec.id)).size !== specs.length)
+      throw new Error("Injected connector id collides with a task connector");
+    return specs;
   }
 
   private taskSpecs(): ConnectorSpec[] {

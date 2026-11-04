@@ -23,6 +23,8 @@ export function contentsPath(path: string): string {
   return match[1]! + encodeURIComponent(relative);
 }
 
+const COMMIT_SUBRESOURCE = /^(\/repos\/[^/]+\/[^/]+\/commits\/)([^/]+)(\/(?:check-runs|check-suites|status|statuses))$/;
+
 // Prefer the deployed coverage for natural queries. Explicit paths and queries
 // without reviewed matches retain full-pin refusal discovery. Metadata, contract
 // lookup, validation and the manifest still use the complete immutable pin.
@@ -34,6 +36,15 @@ class RepositoryIndex extends OperationIndex {
       // placeholder. The actual resource request keeps the /contents URL.
       const match = super.resolve(method, `${path}/root`);
       return { ...match, params: { ...match.params, path: "" } };
+    }
+    // The shared index admits an encoded slash only in a final parameter, so a
+    // branch like feature%2Fx is checked as commits/{ref} itself, then bound to
+    // its reviewed CI read. Nothing here widens the path the request is sent to.
+    const nested = method === "GET" ? COMMIT_SUBRESOURCE.exec(path) : null;
+    if (nested && /%2f/i.test(nested[2]!)) {
+      const { params } = super.resolve(method, `${nested[1]}${nested[2]}`);
+      const match = super.resolve(method, `${nested[1]}ref${nested[3]}`);
+      return { ...match, params: { ...match.params, ref: params.ref! } };
     }
     try {
       return super.resolve(method, contentsPath(path));
@@ -57,7 +68,7 @@ class RepositoryIndex extends OperationIndex {
         if (param.name === "path")
           param.description =
             "Canonical relative file or directory path; nested paths such as src/index.ts are accepted. For the root directory use /repos/{owner}/{repo}/contents without a final path.";
-    if (["/repos/{owner}/{repo}/commits/{ref}", "/repos/{owner}/{repo}/compare/{basehead}"].includes(op.path))
+    if (/^\/repos\/\{owner\}\/\{repo\}\/(?:commits\/\{ref\}(?:\/[a-z-]+)?|compare\/\{basehead\})$/.test(op.path))
       for (const param of contract.parameters)
         if (param.name === "ref" || param.name === "basehead")
           param.description =

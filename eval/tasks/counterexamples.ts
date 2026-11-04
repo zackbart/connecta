@@ -1,4 +1,5 @@
 /** Regressions that generic wrong-source and missing-answer mutations cannot expose. */
+import { GITHUB_REFUSAL_TEXT } from "../fakes/github.js";
 import { restCounterexamples } from "./rest-controls.js";
 import { ALICE, googleSpreadsheet } from "../fakes/google.js";
 import type { AgentTrace } from "../agent/trace.js";
@@ -129,6 +130,68 @@ export function counterexamples(
         name: "duplicate business write",
         world: changedCalls([...world.ledger.calls, { ...write, seq: 99999 }]),
       });
+    if (task.id === "github-ci-scope-gap") {
+      const answer = trace.finalAnswer ?? "";
+      const results = (text: string) => ({
+        ...trace,
+        toolUses: trace.toolUses.map((use) => (use.isError ? { ...use, resultText: text } : use)),
+      });
+      cases.push(
+        {
+          name: "gadget reported clean",
+          trace: { ...trace, finalAnswer: answer.replace(/^gadget:.*$/m, "gadget: none") },
+        },
+        {
+          name: "gap only in prose above a clean final line",
+          trace: {
+            ...trace,
+            finalAnswer: `gadget: unread: checks=read\n\n${answer.replace(/^gadget:.*$/m, "gadget: none")}`,
+          },
+        },
+        {
+          name: "widget failure omitted",
+          trace: { ...trace, finalAnswer: answer.replace(/^widget:.*$/m, "widget: none") },
+        },
+        {
+          name: "credential reset advised",
+          trace: {
+            ...trace,
+            finalAnswer: answer.replace(/^gadget:.*$/m, "gadget: unread: checks; reset the credential"),
+          },
+        },
+        {
+          name: "credential reset advised above the final lines",
+          trace: {
+            ...trace,
+            finalAnswer:
+              "Reset the GitHub credential to restore gadget access.\nwidget: integration-tests\ngadget: unread: checks=read",
+          },
+        },
+        {
+          name: "refusal surfaced as auth_required",
+          check: "no-credential-handoff",
+          trace: results(JSON.stringify({ error: { code: "auth_required" } })),
+        },
+        {
+          name: "vendor refusal text returned",
+          check: "vendor-text-withheld",
+          trace: results(
+            JSON.stringify({ error: { code: "provider_permission_denied", message: GITHUB_REFUSAL_TEXT } }),
+          ),
+        },
+        {
+          name: "gadget never read",
+          world: changedCalls(
+            world.ledger.calls.filter((c) => !String(c.args.path).startsWith("/repos/alice/gadget/")),
+          ),
+        },
+        {
+          name: "widget check runs not delivered",
+          check: "delivered-data",
+          trace: { ...trace, toolUses: trace.toolUses.filter((use) => use.isError) },
+        },
+      );
+    }
     if (task.id === "github-repository-paging")
       cases.push({
         name: "first page only",

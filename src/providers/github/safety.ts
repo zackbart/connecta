@@ -101,6 +101,45 @@ const RESPONSE_PATHS: Readonly<
     "redact": [],
     "keep": ["commit.verification.signature"],
   },
+  "GET /repos/{owner}/{repo}/check-suites/{check_suite_id}": {
+    "redact": ["repository.temp_clone_token"],
+    "keep": [
+      "repository.security_and_analysis.advanced_security",
+      "repository.security_and_analysis.secret_scanning",
+      "repository.security_and_analysis.secret_scanning_ai_detection",
+      "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+      "repository.security_and_analysis.secret_scanning_delegated_bypass",
+      "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+      "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+      "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+    ],
+  },
+  "GET /repos/{owner}/{repo}/commits/{ref}/check-suites": {
+    "redact": ["check_suites[].repository.temp_clone_token"],
+    "keep": [
+      "check_suites[].repository.security_and_analysis.advanced_security",
+      "check_suites[].repository.security_and_analysis.secret_scanning",
+      "check_suites[].repository.security_and_analysis.secret_scanning_ai_detection",
+      "check_suites[].repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+      "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass",
+      "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+      "check_suites[].repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+      "check_suites[].repository.security_and_analysis.secret_scanning_non_provider_patterns",
+    ],
+  },
+  "GET /repos/{owner}/{repo}/commits/{ref}/status": {
+    "redact": ["repository.temp_clone_token"],
+    "keep": [
+      "repository.security_and_analysis.advanced_security",
+      "repository.security_and_analysis.secret_scanning",
+      "repository.security_and_analysis.secret_scanning_ai_detection",
+      "repository.security_and_analysis.secret_scanning_delegated_alert_dismissal",
+      "repository.security_and_analysis.secret_scanning_delegated_bypass",
+      "repository.security_and_analysis.secret_scanning_delegated_bypass_options",
+      "repository.security_and_analysis.secret_scanning_delegated_bypass_options.reviewers",
+      "repository.security_and_analysis.secret_scanning_non_provider_patterns",
+    ],
+  },
   "GET /repos/{owner}/{repo}/compare/{basehead}": {
     "redact": [],
     "keep": [
