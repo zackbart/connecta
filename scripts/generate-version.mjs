@@ -14,7 +14,7 @@ const source = `// Generated from package.json by scripts/generate-version.mjs.
 export const CONNECTA_VERSION = ${JSON.stringify(version)};
 `;
 // Worker evals bundle src/ under wrangler's watcher, which reloads on any write.
-for (const path of ["src/version.ts", "bin/version.mjs"]) {
+for (const path of ["src/version.ts", "bin/version.mjs", "packages/connecta-eve/src/version.ts"]) {
   const target = new URL(path, root);
   if ((await readFile(target, "utf8").catch(() => undefined)) !== source) await writeFile(target, source);
 }

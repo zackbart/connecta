@@ -1317,7 +1317,7 @@ createConnecta({
     reporting: { tools: ["posthog"], readOnly: true, members: analysts },
   },
   classification: {
-    posthog: { exec: "read" }, // only for a deployment with a read-only exec contract
+    posthog: { exec: "read" }, // only if the server is silent about exec and exec is safe to repeat
     vendor: { mislabeled_update: "write" },
   },
 });
@@ -1334,7 +1334,7 @@ all calls this deployment can make through it.
 
 | Precedence | Evidence                                                 | Result                                                                                                                                           |
 | ---------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1          | Exact deployment `classification[connectorId][toolName]` | `read`, `write`, or `hidden`, even over a stale provider review                                                                                  |
+| 1          | Exact deployment `classification[connectorId][toolName]` | `read` where the source is silent, `write`, or `hidden`; `read` cannot change a source's declared write                                          |
 | 2          | `Connector.classification` provider review               | Reviewed writes remain writes; a stale schema digest makes a read a write; an explicit downstream contradiction also invalidates a reviewed read |
 | 3          | Downstream annotations                                   | Read only when `readOnlyHint === true && destructiveHint !== true`; otherwise write                                                              |
 
@@ -1343,8 +1343,12 @@ fail construction. An absent runtime-discovered tool leaves its override
 dormant and emits an operator warning once per catalog change; the override applies if the name returns.
 Hidden tools are absent from search and describe and refuse every call, including
 a guessed name. `"write"` selects the host approval path. MCP recovery sends a
-tool only once when either its effective or source class is write, even when an
-override changes write to read. The source class is the verified provider review
+tool only once when either its effective or source class is write, including a
+tool the server is silent about and an override sets to read. A `read` override on a
+tool whose source declares a write (`readOnlyHint: false`, `destructiveHint: true`,
+or contradictory hints) has no effect beyond an operator warning: a host may resend
+a read-annotated call, so that tool stays a write. Where the source is silent, the
+override asserts that the call is safe to repeat. The source class is the verified provider review
 where present during migration, otherwise the server annotations. It also governs
 authorization recovery, program re-runs and ambiguous failure outcomes: after
 dispatch, an unknown outcome has no retry or wait advice, including on timeout or

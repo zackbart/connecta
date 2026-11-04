@@ -91,6 +91,8 @@ await armControl("native", "worker");
 // Helper changes are tested by naming the connection and choosing its description.
 await armControl("native", "node", "gateway", "Issue and CI records");
 await armControl("six", "node", "gateway", "Issue and CI records");
+// The helper's own default description and connection guide, as a deployment gets them.
+await armControl("native", "node", "gateway", null);
 
 const world = new World(task.world);
 await world.start();

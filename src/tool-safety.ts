@@ -1,25 +1,45 @@
 import type { ToolDef } from "./types.js";
 
-/** Deployment override, then fail-closed annotations. */
-export function classifyTool(definition: ToolDef, override?: "read" | "write"): "read" | "write" {
-  if (override !== undefined) return override;
+type SourceFacts = "read" | "silent" | "declared_write";
 
-  return definition.annotations?.readOnlyHint === true && definition.annotations?.destructiveHint !== true
-    ? "read"
-    : "write";
+function sourceFactsOf(annotations: ToolDef["annotations"]): SourceFacts {
+  const readOnly = annotations?.readOnlyHint;
+  const destructive = annotations?.destructiveHint;
+  if (readOnly === true && destructive !== true) return "read";
+  // Anything but a clean read or silence counts as declared, including contradictory
+  // or malformed hints: an override must not turn an unclear statement into a read.
+  return readOnly === undefined && destructive !== true ? "silent" : "declared_write";
 }
 
-// Source policy is fail-closed annotations.
-// Deployment overrides never enter it. It is private metadata, not catalog data.
-// Keep it through host-owned clones without exposing it to tools or storage.
-const sourceClassifications = new WeakMap<ToolDef, "read" | "write">();
+// Source policy is fail-closed annotations, with silence kept apart from a
+// declared write. Deployment overrides never enter it. It is private metadata,
+// not catalog data. Keep it through host-owned clones without exposing it to
+// tools or storage.
+const sourceFacts = new WeakMap<ToolDef, SourceFacts>();
+
+const factsFor = (tool: ToolDef): SourceFacts => sourceFacts.get(tool) ?? sourceFactsOf(tool.annotations);
 
 export function sourceClassification(tool: ToolDef): "read" | "write" {
-  return sourceClassifications.get(tool) ?? classifyTool(tool);
+  return factsFor(tool) === "read" ? "read" : "write";
+}
+
+/** The source said this tool writes, as opposed to saying nothing. */
+export function sourceDeclaresWrite(tool: ToolDef): boolean {
+  return factsFor(tool) === "declared_write";
+}
+
+/**
+ * Deployment override, then fail-closed annotations. A read override speaks
+ * only where the source is silent: a declared write stays a write, because a
+ * read annotation lets a host resend the call.
+ */
+export function classifyTool(definition: ToolDef, override?: "read" | "write"): "read" | "write" {
+  if (override === "write" || (override === "read" && !sourceDeclaresWrite(definition))) return override;
+  return sourceClassification(definition);
 }
 
 export function carryToolClassification(source: ToolDef, served: ToolDef): ToolDef {
-  sourceClassifications.set(served, sourceClassification(source));
+  sourceFacts.set(served, factsFor(source));
   return served;
 }
 

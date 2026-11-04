@@ -232,9 +232,9 @@ but the runner fixes its approvals and address map at session start.
 To test a helper change, `--eve-connection <name>` sets the connection's file name
 and tool prefix, and passes the name to `connectaInstructions`. `--eve-description
 <text>` sets the description and `--eve-default-description` omits it so the
-helper's default applies; a helper whose connection requires a description refuses
-to start. The default is `connecta` with `Connecta task tools`, and any override is
-recorded in the result file's `config.eve`.
+helper's default applies. The runner's default stays `connecta` with `Connecta task
+tools`, so earlier batches stay comparable, and any override is recorded in the
+result file's `config.eve`.
 
 Each server and its app-server descendants occupy a tracked process group,
 with a trial deadline and TERM/KILL cleanup. `--eve-only` drives a search, a

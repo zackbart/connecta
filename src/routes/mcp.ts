@@ -34,7 +34,7 @@ import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import type { ConnectorCaller } from "../connector-caller.js";
-import { endpointInstructions } from "../skills.js";
+import { ENDPOINT_EXTENSION, endpointExtension, endpointInstructions } from "../skills.js";
 import {
   NATIVE_DEGRADED_TOOLS_LIST_TTL_MS,
   NATIVE_TOOLS_LIST_TTL_MS,
@@ -457,10 +457,24 @@ function serveMcp(
       });
       // Read as this request's response is built, so a degraded native listing can shorten it.
       const toolsListHint = { ttlMs: native ? NATIVE_TOOLS_LIST_TTL_MS : 3_600_000, cacheScope: "private" as const };
+      const connectors = registry.listConnectors();
+      const effectiveReadOnly =
+        readOnly || (connectors.length > 0 && connectors.every((connector) => connector.readOnly === true));
       const server = new McpServer(opts.config.serverInfo, {
         // A request-local server cannot publish catalog changes. Set this before
         // tool registration, whose SDK default otherwise advertises listChanged.
-        capabilities: { tools: { listChanged: false }, extensions: { "io.modelcontextprotocol/skills": {} } },
+        capabilities: {
+          tools: { listChanged: false },
+          extensions: {
+            "io.modelcontextprotocol/skills": {},
+            [ENDPOINT_EXTENSION]: endpointExtension(
+              connectors,
+              native !== undefined,
+              native?.executeCode ?? true,
+              effectiveReadOnly,
+            ),
+          },
+        },
         // Instructions reflect the admitted pool, its connector roster and the effective write
         // policy. `registry` is this caller's admitted view, the one execute_code's inventory
         // reads, so a person at plain /mcp never sees an id outside their pool. Every cache hint
@@ -468,10 +482,8 @@ function serveMcp(
         instructions: endpointInstructions(
           pool !== undefined ? opts.pools.get(pool)?.description : undefined,
           native,
-          readOnly ||
-            (registry.listConnectors().length > 0 &&
-              registry.listConnectors().every((connector) => connector.readOnly === true)),
-          registry.listConnectors().map((connector) => connector.id),
+          effectiveReadOnly,
+          connectors.map((connector) => connector.id),
         ),
         inputRequired: { legacyShim: false },
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },
