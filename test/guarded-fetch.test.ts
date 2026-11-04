@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { guardedFetch, oauthBearer, retryAfterMs } from "../src/connectors/guarded-fetch.js";
 import type { ApiHandlerContext } from "../src/connectors/api-connector.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { sentSecretsFor } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
 import { connectorContext } from "./fixtures/misc.js";
@@ -110,6 +111,17 @@ describe("guardedFetch() construction", () => {
 });
 
 describe("guardedFetch() request construction", () => {
+  it.each([["x-client-id"], ["x-user"], ["x-auth-email"]])(
+    "INV-5: an authentication header named %s is a credential",
+    async (name) => {
+      const secret = "client-7Qm2Xv9Lp4Zt";
+      stubFetch(() => json({ ok: true }));
+      const ctx = context();
+      await transport({ authenticate: () => ({ [name]: secret }) })({ method: "GET", path: "/items" }, ctx, asJson);
+      expect(sentSecretsFor(ctx).filterCredentials({ note: secret.slice(7, 17) }).changed).toBe(true);
+    },
+  );
+
   it("resolves the path beneath the base and encodes the query", async () => {
     stubFetch(() => json({ ok: true }));
     await transport()(

@@ -96,6 +96,11 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly authenticate:
     | Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>
     | ((options: Readonly<O>) => Effect.Effect<Readonly<Record<string, string>>, HttpFailure, CallServices | Grant>);
+  /**
+   * `authenticate` headers the vendor documents as a public identifier, not proof of identity.
+   * Lowercase names, cited in the provider's evidence. See {@link GuardedOptions}.
+   */
+  readonly publicIdentifierHeaders?: GuardedOptions["publicIdentifierHeaders"];
   readonly errors: VendorErrors<any>;
   readonly safety: (options: Readonly<O>) => SafetyOptions;
   readonly result?: ConnectOptions["result"];
@@ -196,6 +201,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     grant,
     grantRenewal,
     authenticate,
+    publicIdentifierHeaders,
     errors,
     safety,
     result,
@@ -307,6 +313,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         ...(headers === undefined ? {} : { headers }),
         ...(admit === undefined ? {} : { admit }),
         authenticate: typeof authenticate === "function" ? authenticate(options) : authenticate,
+        ...(publicIdentifierHeaders === undefined ? {} : { publicIdentifierHeaders }),
         ...configured,
       });
       const connected = connect(

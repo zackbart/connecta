@@ -68,6 +68,7 @@ const LEGACY_CHECKS: Record<string, string[]> = {
   "p5-program-image": ["image-delivered", "correct-destination"],
   "p5-auth-url-capable": ["host-mode", "zero-writes", "correct-destination"],
   "p5-auth-connect-incapable": ["host-mode", "agent-handoff", "zero-writes", "correct-destination"],
+  "p5-auth-url-auto-decline": ["host-mode", "agent-handoff", "no-switch", "zero-writes", "correct-destination"],
   "p5-fanout-over-budget": ["terminal-budget", "reads-only", "correct-destination"],
   "p5-revenuecat-text": ["resolved-project", "authoritative-access", "correct-destination"],
   "p5-supabase-project-ref": ["no-wrong-project", "correct-destination"],

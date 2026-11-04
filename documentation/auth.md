@@ -1442,7 +1442,7 @@ longer live; one left behind cannot complete and expires with its link.
 `authorize_connector` issues the same browser link, with `force` carried in the
 signed handoff. On hosts without URL elicitation, direct and program auth
 failures and search/describe catalog failures include the same authorization
-handoff. The admitted registry and management permission govern issuance.
+handoff. A declined or cancelled URL elicitation returns it too. The admitted registry and management permission govern issuance.
 Each call or program run shares at most one handoff per connector; errors never
 request a forced restart. Signed links retain their fifteen-minute expiry,
 initiating-user and owner binding, origin check, and single-use browser nonce.
@@ -2012,9 +2012,14 @@ any registered form is still withheld, however short.
 Identifiers sent beside a credential are matched whole only, because consent
 URLs and vendor metadata carry their parts by design: a confidential OAuth
 client's ID, a Basic username beside a password of at least eight characters,
-and credential-slot fields named as identifiers (ending in `id`, `user`,
-`username`, `login`, or `email`, or starting with `public`). A Basic username
-beside a shorter or empty password is the credential itself and is fully
+credential-slot fields named as identifiers (ending in `id`, `user`,
+`username`, `login`, or `email`, or starting with `public`), and the two headers
+maintained providers declare public from their vendors' contracts: Cloudflare's
+Global API Key `X-Auth-Email` and Overflow's `x-client-id`. A value in either
+that holds whitespace, as an auth scheme's framing does, is a credential. Any
+other header or query parameter is never public by name: `remoteMcp()` and
+`api()` auth headers under any name are credentials, fully matched. A Basic
+username beside a shorter or empty password is the credential itself and is fully
 matched. Query parameters named as continuation cursors (`pageToken`,
 `nextPageToken`, `next_token`, `continuationToken`, `syncToken`) are public
 result state and are not registered. Header values a connector adds to token
@@ -2610,6 +2615,15 @@ survives every round. Rotation invalidates outstanding states.
 Each state admits one retry through a connector-scoped storage CAS, including
 decline and cancel. Concurrent or repeated consumption is refused before
 dispatch, so retries cannot fork into sibling forced connection links.
+A decline or cancel returns one fresh link, issued only after that state verifies
+and the same management check as the prompt passes, so a refusal offers nothing
+this caller could not already request. The link is sealed like the prompt's, keeps
+the prompt's force, and stays bound to a pending forced start.
+A refused `force: true` flow retires its unspent links through the same CAS before
+issuing that link, so one link can begin the reset however late a browser arrives.
+Opening a retired prompt link starts nothing and returns the invalid-link refusal;
+the link in the refusal performs the restart. A link already claimed in a browser
+keeps its reset, and the refusal's link continues it. An unforced prompt link stays open.
 The host records each entered call's classification, catalog freshness and
 classification digest in private invocation state, along with auth failure origins. Writes may elicit only
 when Connecta's own credential resolution fails before invoking the connector:

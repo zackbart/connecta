@@ -139,9 +139,10 @@
       "id": "tools-call",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header. The four structured-only meta-tools declare outputSchema; native-content direct-call tools omit it. Maintained-provider hostile HTTP acknowledgements remain failures even after a vendor commits; a subsequent read reconciles state without replaying the physical write.",
+      "notes": "Direct and program calls work; both direct-call tools declare the address parameter header. The four structured-only meta-tools declare outputSchema; native-content direct-call tools omit it. A native pool binds each wire name to the tool's classification and takes the route the name selects, so a client's resent read name is refused before dispatch once the tool is a write. Maintained-provider hostile HTTP acknowledgements remain failures even after a vendor commits; a subsequent read reconciles state without replaying the physical write.",
       "evidence": [
         "test/meta-tools-call.test.ts",
+        "test/native-tools.test.ts",
         "test/remote-mcp.test.ts",
         "test/mcp-core.test.ts",
         "test/meta-tool-schemas.test.ts",
@@ -215,7 +216,7 @@
       "id": "elicitation",
       "status": "partial",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation",
-      "notes": "Auth URL elicitation on capable 2026-07-28 hosts with identity-checked connect links and ordinary recovery fallback. Incapable hosts receive the same signed OAuth or operator credential handoff as explicit authorization in direct, program, and catalog auth errors, reused once per connector per request without forcing reauthorization. Direct calls relay downstream form and URL elicitation only when the client declares that mode, with namespaced keys, validated bare responses, HTTPS URLs without known credentials, and agent-output redaction. Programs keep downstream elicitation unsupported; sampling and roots remain declined under #703. Auth writes still elicit only before invocation, independently of downstream continuations.",
+      "notes": "Auth URL elicitation on capable 2026-07-28 hosts with identity-checked connect links, ordinary recovery fallback, and a handoff on decline or cancel. Incapable hosts receive the same signed OAuth or operator credential handoff as explicit authorization in direct, program, and catalog auth errors, reused once per connector per request without forcing reauthorization. Direct calls relay downstream form and URL elicitation only when the client declares that mode, with namespaced keys, validated bare responses, HTTPS URLs without known credentials, and agent-output redaction. Programs keep downstream elicitation unsupported; sampling and roots remain declined under #703. Auth writes still elicit only before invocation, independently of downstream continuations.",
       "issue": "https://github.com/zackbart/connecta/issues/707",
       "evidence": [
         "test/auth-elicitation.test.ts",

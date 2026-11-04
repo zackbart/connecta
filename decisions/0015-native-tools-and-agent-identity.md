@@ -191,6 +191,8 @@ project-token end-to-end check has been performed.
 
 The exclusion of `authorize_connector` from native pools is superseded by
 [0020](./0020-native-authorization-recovery.md) for recovery when catalogs fail.
+Current-verdict routing of a cached read, and names independent of classification,
+are superseded by [0021](./0021-native-names-bind-classification.md).
 
 ## Consequences
 
