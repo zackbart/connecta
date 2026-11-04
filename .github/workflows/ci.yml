@@ -199,24 +199,28 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}
         run: |
-          # The jobs API can trail the `needs` results by seconds, so a leg that
-          # already succeeded may read as incomplete. Read again before refusing;
-          # every read still has to prove all legs, so this fails closed.
-          for read in 1 2 3 4 5 6; do
+          # The jobs API can trail the `needs` results by minutes, reporting finished legs
+          # as queued. Keep reading while a leg is merely unfinished, and refuse at once
+          # when one has ended badly. Every pass still has to prove all legs.
+          LEGS='[.[].jobs[]] as $jobs |
+            ["build (static)", "build (package)", "node (1)", "node (2)"] | map(
+              . as $name |
+              [$jobs[] | select(.name == $name)] |
+              (map(.run_attempt) | max) as $attempt |
+              map(select(.run_attempt == $attempt)))'
+          for read in $(seq 1 30); do
             # Fetch first: a later page's failure can still print valid partial
             # JSON, and a pipe would keep only jq's exit status.
-            gh api --paginate --slurp \
-              "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" > "$RUNNER_TEMP/jobs.json" &&
-              jq -e '
-                [.[].jobs[]] as $jobs |
-                all(["build (static)", "build (package)", "node (1)", "node (2)"][];
-                  . as $name |
-                  [$jobs[] | select(.name == $name)] |
-                  (map(.run_attempt) | max) as $attempt |
-                  map(select(.run_attempt == $attempt)) |
-                  length == 1 and all(.[]; .status == "completed" and .conclusion == "success"))
-              ' "$RUNNER_TEMP/jobs.json" > /dev/null && exit 0
-            [ "$read" -lt 6 ] && sleep 10
+            if gh api --paginate --slurp \
+              "repos/$GH_REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" > "$RUNNER_TEMP/jobs.json"; then
+              jq -e "$LEGS"' | all(length == 1 and all(.[]; .status == "completed" and .conclusion == "success"))' \
+                "$RUNNER_TEMP/jobs.json" > /dev/null && exit 0
+              if jq -e "$LEGS"' | any(length > 1 or any(.[]; .status == "completed" and .conclusion != "success"))' \
+                "$RUNNER_TEMP/jobs.json" > /dev/null; then
+                break
+              fi
+            fi
+            [ "$read" -lt 30 ] && sleep 10
           done
           echo "::error::Not every matrix leg shows one completed success in its latest attempt"
           jq -r '[.[].jobs[]] | .[] | "\(.name) attempt=\(.run_attempt) \(.status) \(.conclusion)"' "$RUNNER_TEMP/jobs.json"
