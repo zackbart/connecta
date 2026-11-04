@@ -1,13 +1,20 @@
 /** A deterministic 2026-07-28 host around the CLI's MCP transport.
  * The model still chooses tools. This adapter exercises Connecta's real MRTR
  * boundary even when a CLI negotiates an older protocol. It is not evidence
- * that that CLI natively implements URL elicitation.
+ * that that CLI natively implements URL elicitation. `auto-decline` stands for a
+ * client that declares URL elicitation and refuses without showing anyone the
+ * prompt, as observed from the Agent SDK. It never opens the link it was given.
  */
 import type { Deployment } from "../deploy/node.js";
 import { serveFetch } from "../support/serve.js";
+import type { ActiveTask } from "../tasks/types.js";
 import type { StreamEvent } from "./trace.js";
 
-export async function startAuthHost(deployment: Deployment, capable: boolean, onEvent: (event: StreamEvent) => void) {
+export async function startAuthHost(
+  deployment: Deployment,
+  mode: NonNullable<ActiveTask["host"]>["urlElicitation"],
+  onEvent: (event: StreamEvent) => void,
+) {
   const server = await serveFetch(async (request) => {
     const url = new URL(deployment.mcpUrl);
     const headers = new Headers(request.headers);
@@ -28,7 +35,9 @@ export async function startAuthHost(deployment: Deployment, capable: boolean, on
       _meta: {
         "io.modelcontextprotocol/protocolVersion": "2026-07-28",
         "io.modelcontextprotocol/clientInfo": { name: "connecta-eval-auth-host", version: "1" },
-        "io.modelcontextprotocol/clientCapabilities": { elicitation: capable ? { url: {} } : { form: {} } },
+        "io.modelcontextprotocol/clientCapabilities": {
+          elicitation: mode === "incapable" ? { form: {} } : { url: {} },
+        },
       },
     };
     const dispatch = async (p: Record<string, unknown>) => {
@@ -41,19 +50,20 @@ export async function startAuthHost(deployment: Deployment, capable: boolean, on
       const input = reply.result.inputRequests?.connecta_auth;
       const link = input?.params?.url;
       if (
-        !capable ||
+        mode === "incapable" ||
         input?.method !== "elicitation/create" ||
         input.params.mode !== "url" ||
         typeof link !== "string"
       ) {
         throw new Error("Unexpected eval auth input request");
       }
-      onEvent({ type: "eval_url_elicitation", connector: "oauth", url: link, action: "accept" });
-      await deployment.openConnect(link);
+      const action = mode === "auto-decline" ? "decline" : "accept";
+      onEvent({ type: "eval_url_elicitation", connector: "oauth", url: link, action });
+      if (action === "accept") await deployment.openConnect(link);
       ({ response, reply } = await dispatch({
         ...modern,
         requestState: reply.result.requestState,
-        inputResponses: { connecta_auth: { action: "accept" } },
+        inputResponses: { connecta_auth: { action } },
       }));
     }
     return Response.json(reply, { status: response.status });

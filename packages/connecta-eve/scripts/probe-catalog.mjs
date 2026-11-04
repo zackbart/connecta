@@ -249,7 +249,7 @@ async function cell(consumer, count, surface) {
             name: index === 1 ? "call_destructive_tool" : "call_tool",
             arguments: { address: address(index), args, resultMode: "value" },
           }
-        : { name: `crm__${tool(index)}`, arguments: args },
+        : { name: `crm__${index === 1 ? "WRITE__" : ""}${tool(index)}`, arguments: args },
     );
   let eve;
   let transport;
