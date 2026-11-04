@@ -87,8 +87,8 @@ const ALL_REFUSED =
   "If every GitHub call through this connection is refused, verify the App ID, private key and installation.";
 const OTHER_CAUSES =
   "An unmarked secondary rate limit, an IP allow list or a repository or organization policy can also refuse a request with sufficient permissions, and repeated invalid credentials can lock out authentication with a 403.";
-const GRANT =
-  "the App owner must grant the permission and the installation owner must approve it or select this repository, or an administrator must lift the restriction.";
+const REMEDIES =
+  "A rate limit or lockout clears with time; a confirmed permission or repository gap needs the App owner and installation owner; a confirmed policy or IP restriction needs an administrator.";
 
 /**
  * A 403 establishes a refusal and not its cause: classification never reads
@@ -121,7 +121,7 @@ function refused({ headers, operation, status }: Classified): Verdict {
         ? ` This call requested ${requested}.`
         : "";
   return denied(
-    `GitHub refused this request ${where} (HTTP ${status}); ${WITHHELD}.${need} The likely cause is access the App or its installation does not hold. ${OTHER_CAUSES} Report this as an access gap and continue with other repositories; do not reset the credential or switch tools on this result alone. ${WAIT} If it persists, ${GRANT} ${ALL_REFUSED}`,
+    `GitHub refused this request ${where} (HTTP ${status}); ${WITHHELD}.${need} The likely cause is access the App or its installation does not hold. ${OTHER_CAUSES} Report this as an access gap and continue with other repositories; do not reset the credential or switch tools on this result alone. ${WAIT} ${REMEDIES} ${ALL_REFUSED}`,
   );
 }
 

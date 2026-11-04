@@ -24,7 +24,7 @@ const REPAIR =
 const LOG_IN_AGAIN = /\b(?:re-?authenticat(?:e|es|ed|ing)|re-?connect(?:s|ed|ing)?|gh auth login)\b/i;
 const DECLINED_BEFORE = /(?:\b(?:not|never|no|without|avoid|skip|rather than|instead of)|n't)(?:\s+\S+){0,3}\s*$/i;
 const DECLINED_AFTER =
-  /\b(?:will not|would not|does not|did not|can ?not)\s+(?:help|fix|restore|solve|resolve|change|matter|address)\b|n't\s+(?:help|fix|restore|solve|resolve|change|matter|address)\b|\b(?:unnecessary|not needed|not required|not necessary)\b/i;
+  /\b(?:will not|would not|does not|did not|can ?not)\s+(?:help|fix|restore|solve|resolve|change|matter|address)\b|n't\s+(?:help|fix|restore|solve|resolve|change|matter|address|needed|required|necessary)\b|\b(?:unnecessary|not needed|not required|not necessary)\b/i;
 /** Advice to repair the credential anywhere in an answer; declining that repair is what the task wants. */
 function advisesCredentialRepair(answer: string): boolean {
   return answer

@@ -269,6 +269,12 @@ async function run() {
       failedChecks(reset),
       reset,
     );
+    const notNeeded = answerWith(`Resetting the credential isn't needed.\n${finalLines}`);
+    record(
+      "control: github-ci-scope-gap answer saying a reset isn't needed passes",
+      passed(notNeeded),
+      failedChecks(notNeeded),
+    );
     const declined = answerWith(`The key may be fine, so do not reset the credential yet.\n${finalLines}`);
     record(
       "control: github-ci-scope-gap answer declining a credential reset passes",
