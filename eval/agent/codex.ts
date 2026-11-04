@@ -222,6 +222,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
   let nextId = 1;
   const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void }>();
   const toolByItem = new Map<string, string>();
+  let lastMcpTool: string | undefined;
   let turnDone: ((value: Record<string, unknown>) => void) | undefined;
   let stopWaiting: (() => void) | undefined;
   const stopped = new Promise<undefined>((resolve) => {
@@ -277,7 +278,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       return;
     }
     if (message.method === "mcpServer/elicitation/request" && message.id !== undefined && prompting) {
-      const tool = approvalTool(message.params) ?? "unknown";
+      const tool = approvalTool(message.params) ?? lastMcpTool ?? "unknown";
       const allow = options.approval === "prompt-allow";
       push({ type: "approval_prompt", tool, decision: allow ? "allow" : "deny" });
       send({ id: message.id, result: { action: allow ? "accept" : "decline", ...(allow ? { content: {} } : {}) } });
@@ -309,6 +310,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     }
     if (message.method === "item/started" && message.params?.item?.type === "mcpToolCall") {
       toolByItem.set(String(message.params.item.id), String(message.params.item.tool));
+      lastMcpTool = String(message.params.item.tool);
     }
     if (
       message.method === "item/started" &&
