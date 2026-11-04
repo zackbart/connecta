@@ -274,9 +274,13 @@ async function doctor() {
     if (
       native
         ? expected.some((name) => !actual.includes(name)) ||
-          ["search_tools", "call_tool", "call_destructive_tool", executeCode ? "read_result" : "execute_code"].some(
-            (name) => actual.includes(name),
-          )
+          [
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            READ_PROGRAM_TOOL,
+            executeCode ? "read_result" : "execute_code",
+          ].some((name) => actual.includes(name))
         : JSON.stringify(actual) !== JSON.stringify(expected)
     ) {
       throw new Error(
