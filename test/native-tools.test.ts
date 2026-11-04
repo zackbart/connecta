@@ -813,6 +813,149 @@ describe("native tool surface", () => {
     }
   });
 
+  it("INV-1 INV-9: a name a read held before write names existed stays that read, never another tool's write", async () => {
+    // Before names bound a classification, `crm.WRITE__get` was already `crm__WRITE__get_373b87`,
+    // and a host may hold it across the upgrade. `crm.get_373b87` is an unrelated write.
+    const cached = "crm__WRITE__get_373b87";
+    for (const readStillRead of [true, false]) {
+      const storage = memoryStorage();
+      const sent: string[] = [];
+      const app = createTestConnecta({
+        connectors: [
+          {
+            id: "crm",
+            listTools: async () => [
+              { name: "WRITE__get", annotations: { readOnlyHint: readStillRead } },
+              { name: "get_373b87", annotations: { readOnlyHint: false } },
+            ],
+            callTool: async (tool) => {
+              sent.push(tool);
+              return {};
+            },
+          },
+        ],
+        agents: ["assistant"],
+        pools: { native: { tools: ["crm"], members: ["agent:assistant"], surface: "native" } },
+        storage,
+        accessTokens: accessTokens(storage),
+        logger: silentLogger,
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const listed = await rpc(app, token, "native", "tools/list", {});
+        const names = listed.result.tools.map((tool: { name: string }) => tool.name);
+        const write = await nativeToolName("crm", "get_373b87", "write");
+        expect(write).not.toBe(cached);
+        expect(names).toContain(write);
+        expect(names.includes(cached)).toBe(readStillRead);
+
+        const resent = await rpc(app, token, "native", "tools/call", { name: cached, arguments: {} });
+        if (readStillRead) {
+          expect(resent.result.isError).toBeUndefined();
+          expect(sent).toEqual(["WRITE__get"]);
+        } else {
+          // The cached read's own tool became a write: refused, not run under a name that reads like a write.
+          expect(envelope(resent.result).error).toMatchObject({
+            code: "destructive_tool_requires_approval",
+            nextAction: { tool: await nativeToolName("crm", "WRITE__get", "write") },
+          });
+          expect(sent).toEqual([]);
+        }
+        sent.length = 0;
+        const called = await rpc(app, token, "native", "tools/call", { name: write, arguments: {} });
+        expect(called.result.isError).toBeUndefined();
+        expect(sent).toEqual(["get_373b87"]);
+      } finally {
+        await app.close();
+      }
+    }
+  });
+
+  it("INV-1: recovery from a refused read names the write, when resolution still saw a read", async () => {
+    const storage = memoryStorage();
+    const sent: string[] = [];
+    let loads = 0;
+    const app = createTestConnecta({
+      connectors: [
+        {
+          id: "crm",
+          // The first load answers resolution as a read, and every later one says write.
+          listTools: async () => [{ name: "set", annotations: { readOnlyHint: loads++ === 0 } }],
+          callTool: async () => {
+            sent.push("set");
+            return {};
+          },
+        },
+      ],
+      agents: ["assistant"],
+      pools: { native: { tools: ["crm"], members: ["agent:assistant"], surface: "native" } },
+      storage,
+      accessTokens: accessTokens(storage),
+      logger: silentLogger,
+    });
+    try {
+      const token = await issueAgentToken(storage, "assistant");
+      const refused = await rpc(app, token, "native", "tools/call", { name: "crm__set", arguments: {} });
+      expect(loads).toBeGreaterThan(1);
+      expect(envelope(refused.result).error).toMatchObject({
+        code: "destructive_tool_requires_approval",
+        nextAction: { tool: "crm__WRITE__set" },
+      });
+      expect(sent).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it("INV-2: a name listing omits for a collision on either alias does not dispatch", async () => {
+    // `a.b__x` hashes to the read name `a__b__x_87f747`, the plain read name of `a__b.x_87f747`.
+    const shared = "a__b__x_87f747";
+    expect(await nativeToolName("a", "b__x", "read")).toBe(shared);
+    expect(await nativeToolName("a__b", "x_87f747", "read")).toBe(shared);
+    for (const siblingDown of [false, true]) {
+      const storage = memoryStorage();
+      const sent: string[] = [];
+      const fixture = (id: string, name: string): Connector => ({
+        id,
+        listTools: async () => {
+          if (siblingDown && id === "a__b") throw new Error("down");
+          return [{ name, annotations: { readOnlyHint: false } }];
+        },
+        callTool: async () => {
+          sent.push(id);
+          return {};
+        },
+      });
+      const app = createTestConnecta({
+        connectors: [fixture("a", "b__x"), fixture("a__b", "x_87f747")],
+        agents: ["assistant"],
+        pools: { native: { tools: ["a", "a__b"], members: ["agent:assistant"], surface: "native" } },
+        storage,
+        accessTokens: accessTokens(storage),
+        logger: silentLogger,
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const aliases = [shared, await nativeToolName("a", "b__x", "write")];
+        if (!siblingDown) {
+          aliases.push(await nativeToolName("a__b", "x_87f747", "write"));
+          const listed = await rpc(app, token, "native", "tools/list", {});
+          const names = listed.result.tools.map((tool: { name: string }) => tool.name);
+          for (const alias of aliases) expect(names).not.toContain(alias);
+        }
+        for (const name of aliases) {
+          const called = await rpc(app, token, "native", "tools/call", { name, arguments: {} });
+          expect(called.result.isError, name).toBe(true);
+          // A claimant of the other alias that cannot load cannot prove the name unique.
+          expect(envelope(called.result).error.code, name).toBe(siblingDown ? "catalog_lookup_failed" : "unknown_tool");
+        }
+        expect(sent).toEqual([]);
+      } finally {
+        await app.close();
+      }
+    }
+  });
+
   it("INV-8: preserves object schemas and omits only the connector with an unrepresentable schema", async () => {
     const object: JsonSchema = {
       type: "object",
@@ -939,14 +1082,25 @@ describe("native tool names", () => {
   });
 
   it(
-    "INV-1: bind each classification to its own name, and no read's name is ever a write's",
+    "INV-1: bind each classification to its own name, and no read's name, old or new, is ever a write's",
     { tags: ["node"] },
     async () => {
       expect(await nativeToolName("crm", "create_person", "write")).toBe("crm__WRITE__create_person");
       expect(await nativeToolName("1pass", "set", "write")).toBe("C1pass__WRITE__set");
       // Eve displays the last `__` segment, so that stays the tool.
       expect((await nativeToolName("crm", "create_person", "write")).split("__").at(-1)).toBe("create_person");
-      const pairs = [
+      // The name every tool had before names bound a classification, whatever it is now.
+      const legacy = async (connector: string, tool: string) => {
+        const part = /^[a-z]/.test(connector) ? connector : `C${connector}`;
+        const safe = tool.replace(/[^A-Za-z0-9_-]/g, "_");
+        const plain = `${part}__${safe}`;
+        if (safe === tool && /^[A-Za-z0-9-](?:[A-Za-z0-9-]|_(?!_))*$/.test(safe) && plain.length <= NATIVE_NAME_MAX)
+          return plain;
+        const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${connector}.${tool}`));
+        const hash = [...new Uint8Array(digest).subarray(0, 3)].map((b) => b.toString(16).padStart(2, "0")).join("");
+        return `${plain.slice(0, NATIVE_NAME_MAX - 7).replace(/_+$/, "")}_${hash}`;
+      };
+      const pairs: (readonly [string, string])[] = [
         ["crm", "get"],
         // A name that reads like a write's still stays a read's.
         ["crm", "get_write"],
@@ -956,25 +1110,45 @@ describe("native tool names", () => {
         ["crm", "WRITE__get"],
         ["crm", "WRITE__WRITE__get"],
         ["crm", "x__WRITE__y.z"],
+        ["crm", ".WRITE..y"],
+        ["crm", "_WRITE__y"],
         ["crm__x", "write"],
+        ["crm_", "WRITE__y"],
         ["1pass", "get"],
+        ["1pass", "WRITE__get"],
         ["crm", "x".repeat(41)],
         ["crm", "x".repeat(60)],
         ["crm", `${"x".repeat(50)}__WRITE__`],
+        ["crm", `WRITE__${"x".repeat(50)}`],
         ["c".repeat(60), "get"],
         ["c".repeat(24), "get.it"],
         ["c".repeat(25), "get.it"],
+        ["c".repeat(24), "WRITE__get"],
         ["crm", "é"],
         ["crm_", "get"],
         ["crm", "_get"],
-      ] as const;
+        // A write whose plain name would end like a hashed read's takes a hashed name instead.
+        ["crm", "get_373b87"],
+        ["crm", "abcdef"],
+        ["crm", "x_000000"],
+      ];
+      // Every old name that carries the marker, with the tool a write's plain name would take it from.
+      const reachable = await Promise.all(pairs.map(([connector, tool]) => legacy(connector, tool)));
+      for (const old of reachable) {
+        const at = old.indexOf("__WRITE__");
+        if (at > 0) pairs.push([old.slice(0, at).replace(/^C(?=[^a-z])/, ""), old.slice(at + 9)]);
+      }
       const reads = new Set<string>();
       const writes = new Set<string>();
       for (const [connector, tool] of pairs) {
         const read = await nativeToolName(connector, tool, "read");
         const write = await nativeToolName(connector, tool, "write");
-        expect(read).not.toContain("__WRITE__");
+        // Every read keeps its name, so nothing a host cached needs reserving.
+        expect(read).toBe(await legacy(connector, tool));
         expect(write).toContain("__WRITE__");
+        // The rule: an old name carries the marker only when hashed, and a write never ends like a hash.
+        expect(write).not.toMatch(/_[0-9a-f]{6}$/);
+        if (read.includes("__WRITE__")) expect(read).toMatch(/_[0-9a-f]{6}$/);
         for (const name of [read, write]) {
           expect(name).toMatch(/^[A-Za-z][A-Za-z0-9_-]*$/);
           expect(name.length).toBeLessThanOrEqual(NATIVE_NAME_MAX);
@@ -984,8 +1158,8 @@ describe("native tool names", () => {
         writes.add(write);
       }
       expect([...reads].filter((name) => writes.has(name))).toEqual([]);
-      expect(writes.size).toBe(pairs.length);
-      // Reads keep the exact names they have always had.
+      expect(await legacy("crm", "WRITE__get")).toBe("crm__WRITE__get_373b87");
+      expect(await nativeToolName("crm", "get_373b87", "write")).toMatch(/^crm__WRITE__get_373b87_w[0-9a-f]{6}$/);
       expect(await nativeToolName("crm", "get_write", "read")).toBe("crm__get_write");
       expect(await nativeToolName("crm", "write", "read")).toBe("crm__write");
       expect(await nativeToolName("crm__x", "write", "read")).toBe("crm__x__write");

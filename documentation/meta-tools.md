@@ -1623,17 +1623,21 @@ classification changes. A read is `<connector>__<tool>` and a write
 contains no `__`, does not start with `_`, and the whole name fits 48 characters.
 Otherwise a read is that name's head plus `_` and the first six hex digits of the
 SHA-256 of `<connector>.<tool>`, and a write is up to 24 characters of the
-connector, `__WRITE__`, the head of the tool name, and the same `_` and six hex
-digits. A connector id that does not start with a letter is prefixed with `C`. 48
-characters leave room for a client's own prefix under common 64-character
-tool-name limits (Eve's `connecta__`, Claude Code's `mcp__connecta__`).
+connector, `__WRITE__`, the head of the tool name, `_w` and the same six hex
+digits. A write whose plain name would end in `_` and six lowercase hex digits,
+such as a tool named `get_373b87` or `facade`, also takes this hashed form. A
+connector id that does not start with a letter is prefixed with `C`. 48 characters
+leave room for a client's own prefix under common 64-character tool-name limits
+(Eve's `connecta__`, Claude Code's `mcp__connecta__`).
 
-Every write's name contains `__WRITE__` and no read's name does, so a name a client
-holds for a read can never select a write. A tool whose own name contains
-`__WRITE__` takes a hashed read name with that text lowercased. Two tools that
-would share either name are both left out of the list, with an operator warning,
-and a call by that name is refused; both stay callable by address in
-`execute_code`.
+A name a client holds for a read can never select a write. Every write's name
+contains `__WRITE__` and never ends in `_` and six lowercase hex digits. A read's
+name contains `__WRITE__` only when the tool's own name supplies it, and such a read
+is always hashed, so it ends that way and takes the read route. A tool's read name
+does not depend on its classification or on this rule, so names clients cached from
+earlier versions stay read names. Two tools that would share either name are both
+left out of the list, with an operator warning, and a call by either of their names
+is refused; both stay callable by address in `execute_code`.
 
 Read a tool's name from `tools/list` rather than building it. Host approval rules,
 allowlists, prompts and recipes that name a native write must use its `__WRITE__`

@@ -26,7 +26,7 @@ import { withAuthorizationHandoff } from "./authorization-handoff.js";
 import { classifyCallError, type CallErrorDetails } from "./errors.js";
 import { nativeRecovery } from "./native-recovery.js";
 import { CatalogService } from "./catalog-service.js";
-import { jsonResult } from "./meta-tools.js";
+import { jsonResult, type ToolResult } from "./meta-tools.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type { RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
@@ -48,13 +48,12 @@ export const NATIVE_TOOLS_LIST_TTL_MS = 300_000;
 const HASH_CHARS = 6;
 const SEPARATOR = "__";
 /**
- * What every write's name carries and no read's name can. Connector ids have no
- * uppercase and a plain tool has no `__`, so a plain read cannot contain it; a
- * hashed read lowercases it. It sits before the tool, because Eve displays a
- * name's last `__` segment and a suffix there would show every write as "write".
+ * What every write's name carries. It sits before the tool, because Eve displays
+ * a name's last `__` segment and a suffix there would show every write as "write".
  */
-const WRITE_MARKER = "WRITE";
-const WRITE_SEGMENT = `${SEPARATOR}${WRITE_MARKER}${SEPARATOR}`;
+const WRITE_SEGMENT = `${SEPARATOR}WRITE${SEPARATOR}`;
+/** How every hashed read ends, and so what no write's name may end in. See {@link nativeToolName}. */
+const READ_HASH_TAIL = /_[0-9a-f]{6}$/;
 /** A hashed write keeps this much of its connector, leaving the rest of the budget to its tool. */
 const WRITE_CONNECTOR_HEAD = 24;
 /** No `__`, no leading `_`: the last `__` of a plain name is then always its separator. */
@@ -89,16 +88,23 @@ function connectorPart(connectorId: string): string {
 
 /** The classification a wire name is bound to. A name never changes what it is bound to. */
 function boundClassification(name: string): "read" | "write" {
-  return name.includes(WRITE_SEGMENT) ? "write" : "read";
+  return name.includes(WRITE_SEGMENT) && !READ_HASH_TAIL.test(name) ? "write" : "read";
 }
 
 /**
  * A pure function of the connector id, downstream tool name and classification,
  * so it is stable across catalog refreshes until the classification changes. A
- * read is `<connector>__<tool>` and a write `<connector>__WRITE__<tool>` when
- * that is exact, legal and short, otherwise its head plus a six-hex SHA-256
- * suffix of the original pair. No read's name is ever a write's: a host's cached
- * read name, however often it is replayed, cannot select a write.
+ * read is `<connector>__<tool>` when that is exact, legal and short, otherwise its
+ * head plus `_` and a six-hex SHA-256 of the original pair. A write is
+ * `<connector>__WRITE__<tool>` under the same conditions and when that does not end
+ * like a hashed read, otherwise a connector head, the marker, a tool head, `_w` and
+ * the same hash.
+ *
+ * No read's name is ever a write's, including a name a host cached before writes
+ * had their own, because a read's name has not changed. A read can carry the marker
+ * only when hashed: connector ids have no uppercase, so `WRITE` and the `__` after
+ * it would fall inside the tool, and a plain tool has no `__`. Every hashed read
+ * ends in `_` and six hex digits. Every write carries the marker and never ends so.
  */
 export function nativeToolName(
   connectorId: string,
@@ -113,29 +119,74 @@ const nativeToolNameNative = /* @__PURE__ */ registerAuth(
     return authFlow<string>(function* () {
       const connector = connectorPart(connectorId);
       const tool = toolName.replace(/[^A-Za-z0-9_-]/g, "_");
-      const separator = classification === "write" ? WRITE_SEGMENT : SEPARATOR;
-      const plain = `${connector}${separator}${tool}`;
-      if (tool === toolName && PLAIN_TOOL.test(tool) && plain.length <= NATIVE_NAME_MAX) return plain;
-      const suffix = `_${yield* upwardStep(authCall<string>(shortHash, [`${connectorId}.${toolName}`]))}`;
-      if (classification === "write") {
+      const write = classification === "write";
+      const plain = `${connector}${write ? WRITE_SEGMENT : SEPARATOR}${tool}`;
+      if (
+        tool === toolName &&
+        PLAIN_TOOL.test(tool) &&
+        plain.length <= NATIVE_NAME_MAX &&
+        !(write && READ_HASH_TAIL.test(plain))
+      )
+        return plain;
+      const hash = yield* upwardStep(authCall<string>(shortHash, [`${connectorId}.${toolName}`]));
+      if (write) {
         const owner = connector.slice(0, WRITE_CONNECTOR_HEAD);
+        const suffix = `_w${hash}`;
         const room = NATIVE_NAME_MAX - suffix.length - owner.length - WRITE_SEGMENT.length;
         return `${owner}${WRITE_SEGMENT}${tool.slice(0, room).replace(/_+$/, "")}${suffix}`;
       }
-      const head = plain.slice(0, NATIVE_NAME_MAX - suffix.length).replace(/_+$/, "");
-      // A tool whose own name holds the marker takes this hashed path, because
-      // of its `__`. Lowercasing here is what keeps reads and writes disjoint.
-      return `${head.includes(WRITE_SEGMENT) ? head.replaceAll(WRITE_MARKER, WRITE_MARKER.toLowerCase()) : head}${suffix}`;
+      return `${plain.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "")}_${hash}`;
     });
   },
 );
+
+/** What a set of loaded catalogs claims, by native name. A collision holds `null`. */
+type NativeClaims = {
+  loaded: ({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[];
+  byName: Map<string, NativeTool | null>;
+};
 
 /** A listed native tool and the downstream tool it calls. */
 export interface NativeTool {
   /** The name its current classification binds. A call may arrive by the other classification's name. */
   name: string;
+  /** Both names it claims, whichever it is now. */
+  names: { read: string; write: string };
   connector: Connector;
   tool: ToolDef;
+}
+
+/**
+ * Whether any tool of a connector could hold a name: every shape in
+ * {@link nativeToolName}, including truncated connector prefixes.
+ */
+function couldClaim(connector: Connector, name: string): boolean {
+  const part = connectorPart(connector.id);
+  const prefix = `${part}${SEPARATOR}`;
+  // A hashed name can truncate even the connector prefix, and strips trailing
+  // underscores from its head. Such a name is exactly `${head}_` + six hex digits.
+  const head = prefix.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
+  return (
+    name.startsWith(prefix) ||
+    // A hashed write keeps only the head of a long connector id.
+    name.startsWith(`${part.slice(0, WRITE_CONNECTOR_HEAD)}${WRITE_SEGMENT}`) ||
+    (name.length === head.length + 1 + HASH_CHARS &&
+      name.startsWith(`${head}_`) &&
+      /^[0-9a-f]+$/.test(name.slice(-HASH_CHARS)))
+  );
+}
+
+/**
+ * The name recovery should give: what the refusing verdict selects, because a
+ * catalog can change between resolving a name and invoking it.
+ */
+function recoveryName(result: unknown, called: string, names: NativeTool["names"]): string {
+  const error = (result as ToolResult)?.structuredContent?.error as
+    | { code?: unknown; nextAction?: { tool?: unknown } }
+    | undefined;
+  const route =
+    error?.code === "destructive_tool_requires_approval" ? "call_destructive_tool" : error?.nextAction?.tool;
+  return route === "call_destructive_tool" ? names.write : route === "call_tool" ? names.read : called;
 }
 
 /** Read or write, from the served classification only. */
@@ -438,8 +489,7 @@ export class NativeSurface {
                   request,
                 ]),
               );
-              // Recovery names the tool as it is listed now, not the name this call used.
-              return nativeRecovery(result, target.entry.name);
+              return nativeRecovery(result, recoveryName(result, name, target.entry.names));
             }),
         ).pipe(Effect.provideService(RequestScope, requestOwner((this as NativeSurface).options.requestScope)));
       },
@@ -461,28 +511,21 @@ export class NativeSurface {
               | { kind: "ambiguous" }
               | { kind: "missing"; failure?: { connector: Connector; cause: unknown } }
             >(function* () {
-              const prefixed = self.registry.listConnectors().filter((connector) => {
-                const prefix = `${connectorPart(connector.id)}${SEPARATOR}`;
-                // A hashed name can truncate even the connector prefix, and strips
-                // trailing underscores from its head. Include every possible claimant.
-                const head = prefix.slice(0, NATIVE_NAME_MAX - HASH_CHARS - 1).replace(/_+$/, "");
-                // A hashed name carries a stripped head only as exactly `${head}_` + six hex digits.
-                return (
-                  name.startsWith(prefix) ||
-                  // A hashed write keeps only the head of a long connector id.
-                  name.startsWith(`${connectorPart(connector.id).slice(0, WRITE_CONNECTOR_HEAD)}${WRITE_SEGMENT}`) ||
-                  (name.length === head.length + 1 + HASH_CHARS &&
-                    name.startsWith(`${head}_`) &&
-                    /^[0-9a-f]+$/.test(name.slice(-HASH_CHARS)))
-                );
-              });
-              const { loaded, byName } = yield* upwardStep(
-                authInvoke<{
-                  loaded: ({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[];
-                  byName: Map<string, NativeTool | null>;
-                }>(self, "claims", [prefixed]),
-              );
-              const found = byName.get(name);
+              const possible = (...names: string[]) =>
+                self.registry.listConnectors().filter((connector) => names.some((held) => couldClaim(connector, held)));
+              const prefixed = possible(name);
+              let { loaded, byName } = yield* upwardStep(authInvoke<NativeClaims>(self, "claims", [prefixed]));
+              let found = byName.get(name);
+              if (found) {
+                // A tool that loses either name loses both, as listing omits it, so the
+                // other name's claimants decide this one too. One step is enough: only a
+                // tool sharing one of these two names can take them from this tool.
+                const every = possible(found.names.read, found.names.write);
+                if (every.length > prefixed.length) {
+                  ({ loaded, byName } = yield* upwardStep(authInvoke<NativeClaims>(self, "claims", [every])));
+                  found = byName.get(name);
+                }
+              }
               if (found === null) return { kind: "ambiguous" };
               // An unavailable possible claimant cannot prove uniqueness.
               for (const entry of loaded)
@@ -576,7 +619,10 @@ export class NativeSurface {
                     authCall<string>(nativeToolName, [entry.connector.id, tool.name, "write"]),
                   );
                   const name = tool.classification === "read" ? read : write;
-                  claimed.push({ names: [read, write], claim: { name, connector: entry.connector, tool } });
+                  claimed.push({
+                    names: [read, write],
+                    claim: { name, names: { read, write }, connector: entry.connector, tool },
+                  });
                   for (const held of [read, write]) claimants.set(held, (claimants.get(held) ?? 0) + 1);
                 }
               }

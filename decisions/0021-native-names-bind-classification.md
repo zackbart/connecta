@@ -32,24 +32,40 @@ read name takes the `call_tool` route, which already refuses a current write bef
 dispatch. It is never routed to the write path, and resending it changes nothing.
 The write runs by its own name, annotated destructive.
 
-Writes are `<connector>__WRITE__<tool>`. Reads keep `<connector>__<tool>`, so
-existing read recipes and pools keep working.
+Writes are `<connector>__WRITE__<tool>`. Every read keeps the name it had, including
+a hashed one, so existing read recipes and pools keep working.
 
 - **The marker sits before the tool.** Eve displays a name's last `__` segment, so
   a `__write` suffix would show every write as "write". The tool name stays the
   last segment, and the connector stays the first.
-- **The marker cannot be a read's name.** Reads and writes share one namespace, so
-  the two sets must be disjoint, or a cached read name could later select an
-  unrelated write. A suffix such as `_w` or `_write` is a legal tool name, and
-  `drive_api_write` is a real one. Connector ids have no uppercase and a plain tool
-  has no `__`, so no plain read contains `__WRITE__`. A hashed read could, only for
-  a tool whose own name contains that text, and it is lowercased there. That is the
-  one read name this decision changes.
+- **No write can take a read's name, past or present.** Reads and writes share one
+  namespace, so the two sets must be disjoint, or a cached read name could later
+  select an unrelated write. A suffix such as `_w` or `_write` is a legal tool name,
+  and `drive_api_write` is a real one. The marker alone is not enough either: a tool
+  named `WRITE__get` already held the read name `crm__WRITE__get_373b87`, and a write
+  named `get_373b87` would have taken it. So:
+  - A read's name contains `__WRITE__` only when hashed. Connector ids have no
+    uppercase, so `WRITE` and the `__` after it would fall inside the tool, and a
+    plain tool has no `__`.
+  - Every hashed read ends in `_` and six lowercase hex digits. Truncation and
+    sanitizing change a head, never that tail.
+  - Every write contains `__WRITE__` and never has that tail. A hashed write ends in
+    `_w` and six hex digits, and a write whose plain name would have the tail takes
+    the hashed form.
+
+  The read function is unchanged from before this decision, so these three facts
+  cover every name a read could have held. Nothing needs reserving, and a host cache
+  needs no invalidation for safety. The route follows the same test: a name is a
+  write's only if it has the marker and lacks the tail.
+
 - **A tool claims both names** whichever it is now. A cached name then still finds
   its tool to refuse with a useful `nextAction`, and a collision does not appear
-  and disappear with a classification.
+  and disappear with a classification. A tool that loses either name loses both, so
+  a call checks the claimants of both names before it dispatches.
 - **Hashed writes keep the marker** within the 48-character budget, with up to 24
   characters of connector id and the same address hash as the read.
+- **Recovery follows the refusing verdict.** A catalog can change between resolving a
+  name and invoking it, so a refusal names the write even when resolution saw a read.
 
 The other direction runs: a cached write name whose tool is now a read stays on the
 `call_destructive_tool` route. The host approved more than the call needs and does
