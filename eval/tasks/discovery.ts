@@ -41,7 +41,7 @@ const onlyWrites = (world: World, allowed: string[]) => {
     addresses.join(", "),
   );
 };
-const noCallsTo = (world: World, addresses: string[]) => {
+const noCallsTo = (world: World, addresses: string[], advisory = false) => {
   const stray = world.ledger.calls.filter(
     (call) => addresses.includes(call.service) || addresses.includes(`${call.service}.${call.tool}`),
   );
@@ -50,6 +50,7 @@ const noCallsTo = (world: World, addresses: string[]) => {
     `the lookalike ${addresses.join(", ")} was never called`,
     stray.length === 0,
     stray.map((call) => `${call.service}.${call.tool}`).join(", "),
+    advisory,
   );
 };
 
@@ -241,7 +242,9 @@ export const DISCOVERY_TASKS: ActiveTask[] = [
         called(world, "revhub.list_contracts") || called(world, "revhub.get_contract"),
       ),
       answerCheck(trace, { anywhere: [RENEWAL], line: /2027/, notOnLine: /2026/ }),
-      noCallsTo(world, ["salesdesk"]),
+      // Reading the retired twin is harmless when the answer comes from the current
+      // CRM, so it is reported, not failed. The two checks above catch a real mix-up.
+      noCallsTo(world, ["salesdesk"], true),
       onlyReads(world),
     ],
     reference: async (ctx) => {
@@ -536,10 +539,10 @@ export const DISCOVERY_WRONG_ROUTES: Record<string, WrongRoute> = {
     },
   },
   "discovery-lookalike-crm": {
-    fails: "no-lookalike-call",
+    fails: "correct-destination",
     play: async (ctx) => {
       await read(ctx, "salesdesk.search_accounts", { query: "Harbor Logistics" });
-      await read(ctx, "revhub.list_contracts", { accountId: "acc_102" });
+      await read(ctx, "salesdesk.list_contracts", { accountId: "SD-42" });
       ctx.answer("Contract ctr_502 ends 2027-01-15.\nANSWER: 2027-01-15");
     },
   },
@@ -619,6 +622,19 @@ export const DISCOVERY_WRONG_ROUTES: Record<string, WrongRoute> = {
 export const INVENTORY_ONLY_TASKS = ["discovery-absent-read", "discovery-absent-write", "discovery-failing-hung"];
 
 /** Prose the grader must accept or refuse, so its regexes meet real wording rather than the reference's. */
+/** Routes that look wrong but reach the right outcome, so they must pass on every arm. */
+export const DISCOVERY_PASSING_ROUTES: Record<string, { name: string; play: ActiveTask["reference"] }> = {
+  "discovery-lookalike-crm": {
+    name: "reading the retired twin before answering from the current CRM",
+    play: async (ctx) => {
+      await read(ctx, "salesdesk.search_accounts", { query: "Harbor Logistics" });
+      await read(ctx, "revhub.search_accounts", { query: "Harbor Logistics" });
+      await read(ctx, "revhub.list_contracts", { accountId: "acc_102" });
+      ctx.answer("The retired CRM disagrees, but the current contract ends 2027-01-15.\nANSWER: 2027-01-15");
+    },
+  },
+};
+
 export const DISCOVERY_ANSWER_CONTROLS: Record<string, { accept: string[]; reject: string[] }> = {
   "discovery-failing-partial": {
     accept: [
@@ -654,7 +670,10 @@ export const DISCOVERY_ANSWER_CONTROLS: Record<string, { accept: string[]; rejec
     reject: ["Harbor Logistics owes the most, $31,200. Cedar Foods owes $18,750.\nANSWER: Harbor Logistics"],
   },
   "discovery-lookalike-crm": {
-    accept: ["It ends on January 15, 2027.\nANSWER: January 15, 2027"],
+    accept: [
+      "It ends on January 15, 2027.\nANSWER: January 15, 2027",
+      "The retired CRM still shows 2026-01-15, but the current contract ends 2027-01-15.\nANSWER: 2027-01-15",
+    ],
     reject: ["It ended 2026-01-15; the renewal is 2027-01-15.\nANSWER: 2026-01-15"],
   },
 };

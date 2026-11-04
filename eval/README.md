@@ -1346,7 +1346,7 @@ so they reach the ledger and act as distractors for every other task.
 | -------------------------------- | ------------------------ | --------------------------------------------------------------------- |
 | `discovery-nohint-overdue`       | No hints                 | Receivables read; the longest-overdue customer and amount             |
 | `discovery-nohint-seats`         | No hints                 | Licence utilization read; available count after pending invites       |
-| `discovery-lookalike-crm`        | Lookalike by description | Any call to the retired CRM fails; the current renewal date           |
+| `discovery-lookalike-crm`        | Lookalike by description | Current CRM's contract read; its renewal date, not the retired one    |
 | `discovery-lookalike-invoices`   | Lookalike by name        | Any call to the export write fails; the invoice numbers and total     |
 | `discovery-write-rollback`       | Write after discovery    | Any staging call fails; one production rollback; resulting state      |
 | `discovery-guidance-description` | Guidance deep in a tool  | Ownership transfer precedes deactivation; nothing deleted             |
@@ -1365,10 +1365,14 @@ these tasks need no `--hung-connector` or `--unauthorized-connector`, and every
 other task avoids the hung connector's search delay.
 
 Grades read the ledger, fake state and final answer, never the route or the field
-names of reduced program output. In the lookalike and rollback tasks, any call to
-the wrong twin fails, including an exploratory read. Elsewhere an exploratory read
-is allowed when the answer stays correct: an absence task may read a near miss,
-then report that it does not answer the question.
+names of reduced program output. In `discovery-lookalike-invoices` and
+`discovery-write-rollback`, any call to the wrong twin fails, including an
+exploratory read, because those twins are a write or the wrong environment.
+Elsewhere an exploratory read is allowed when the answer stays correct: an absence
+task may read a near miss, then report that it does not answer the question.
+`discovery-lookalike-crm` may read the retired CRM too, if the contract is read
+from the current one and the answer gives its date. Such a read stays visible as a
+failed advisory `no-lookalike-call`.
 
 ```sh
 pnpm run build

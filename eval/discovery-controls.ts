@@ -19,6 +19,7 @@ import { startDeployment } from "./deploy/targets.js";
 import { World } from "./fakes/world.js";
 import {
   DISCOVERY_ANSWER_CONTROLS,
+  DISCOVERY_PASSING_ROUTES,
   DISCOVERY_TASKS,
   DISCOVERY_WRONG_ROUTES,
   INVENTORY_ONLY_TASKS,
@@ -156,6 +157,19 @@ for (const target of targets) {
         wrongChecks.some((check) => check.id === wrong.fails && !check.pass) && !passes(wrongChecks, "outcome"),
         failed(wrongChecks) || "passed",
       );
+      const passing = DISCOVERY_PASSING_ROUTES[original.id];
+      if (passing) {
+        const passingChecks = await playReference(
+          taskForSurface({ ...original, reference: passing.play }, surface),
+          { mode: "reference", target, surface, injection },
+          ({ world, trace }) => gradeTask(task, { world, trace }, surface, "outcome"),
+        );
+        record(`${name}: ${passing.name} passes`, passes(passingChecks, "outcome"), failed(passingChecks));
+        record(
+          `${name}: ${passing.name} is still reported`,
+          passingChecks.some((check) => check.id === "no-lookalike-call" && !check.pass && check.advisory),
+        );
+      }
       if (target === "node" && surface === "six") proseControls(original, saved, surface);
       if (surface !== "native-no-code" && surface !== "code") {
         const programs = await playReference(
