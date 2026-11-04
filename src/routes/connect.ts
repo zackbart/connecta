@@ -85,7 +85,11 @@ async function connect(context: RouteContext): Promise<Response> {
   const refuse = (error: string, status = 403) => privateJson({ error }, { status });
   const invalidLink = () => refuse("Invalid or expired connection link. Request a new link from connecta.", 400);
   // Spends nothing, so this same link works once the other visit settles.
-  const starting = () => refuse("This connection is starting in another visit. Reload this page in a moment.", 409);
+  const starting = () =>
+    refuse(
+      "This connection is starting in another visit. Reload this page in a moment. If this stays, start a new connection request.",
+      409,
+    );
   if (request.method !== "GET")
     return privateJson({ error: "method not allowed" }, { status: 405, headers: { Allow: "GET" } });
   const unavailable = oauthConnectUnavailable(opts);

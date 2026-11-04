@@ -2634,7 +2634,10 @@ its links share:
 | Failed                           | Claims it again and starts afresh, so a failure never reuses the old grant      |
 
 A failed link is spent, but the flow is not: its other links, or the next prompt's,
-take over. The record outlives every link the flow can issue. Each link still works
+take over. The record outlives every link the flow can issue. If the process holding
+the claim dies, nothing settles it, so the flow's links keep returning 409 for up to
+thirty minutes, and that response says to start a new connection request. A new
+`force: true` call is a new flow with its own reset, so it recovers at once. Each link still works
 once. An unforced flow's links stay independent and never reset.
 The host records each entered call's classification, catalog freshness and
 classification digest in private invocation state, along with auth failure origins. Writes may elicit only
@@ -2743,12 +2746,13 @@ still serve configured credentials. Both routes accept only GET, otherwise retur
 `form_post` is unsupported. Clerk's session-only policy applies regardless of method.
 
 The fifteen-minute signed handoff carries connector ownership, initiating principal, deployment origin, nonce,
-restart mode, and any predecessor link binding. New links use versioned, length-prefixed fields instead of
+restart mode, and, for a forced flow's later links, the flow they share a reset with. New links use versioned, length-prefixed fields instead of
 JSON, with unpadded base64url payload and signature segments. Ordinary handoffs use an opaque wire encoding,
 not encryption; URL elicitation also seals those fields as described above. Copy the complete URL unchanged.
 The signature authenticates the exact version and payload text. Tampered or re-encoded links return
 `Invalid or expired connection link. Request a new link from connecta.` Pre-upgrade signed JSON and sealed
-v2 links still verify against their original text and expire after their original fifteen minutes.
+v2 links still verify against their original text and expire after their original fifteen minutes. A link from
+an earlier version that names a predecessor link, in any format, returns the same refusal, and a new link replaces it.
 
 Configure `vault: encryptedCredentialVault(storage, key)`, which derives its HMAC key with HKDF. Custom vaults need `signOAuthHandoff` and `verifyOAuthHandoff`; without a signing vault, links cannot be
 issued or accepted. A link grants no identity. After identity and permissions pass, its nonce is consumed

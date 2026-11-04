@@ -289,6 +289,8 @@ const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
                 )
               : atob(payload),
           );
+          // A retired predecessor binding: nothing here can honor it, so it must not be ignored.
+          if ("after" in h) return null;
         }
         const connector = opts.registry.getConnector(connectorId);
         if (

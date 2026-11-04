@@ -1190,7 +1190,8 @@ Each state can be consumed once; concurrent or repeated retries are refused
 before dispatch. Accept does not mean a browser has opened the link, so every link
 in a flow stays live. A `force: true` flow's links, including a refusal's, share one
 reset: the first verified visit performs it and later visits continue it. A visit
-during a running start returns 409 without spending its link, and a failed start
+during a running start returns 409 without spending its link, and says to start a new
+connection request if it persists, because a new call is a new flow. A failed start
 lets the flow's next visit begin again.
 Host-owned invocation facts record the auth failure's origin and entry into
 all calls, including each classification, catalog freshness and classification

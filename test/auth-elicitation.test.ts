@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { identityStorageKey } from "../src/identity.js";
+import { claimOAuthConnectStart, verifyOAuthHandoff } from "../src/oauth-handoff.js";
+import { oauthConnectKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, KVStorage } from "../src/types.js";
 import { operatorUi } from "../src/ui.js";
@@ -631,6 +634,29 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
       expect(pairing.other.connector.startAuth).toHaveBeenLastCalledWith(expect.anything(), { force: true });
     });
 
+    it("INV-4 INV-9: a claim whose process died names the way out, and a fresh request recovers", async () => {
+      const flow = setup();
+      flow.connect();
+      const first = (await flow.rpc("authorize_connector", args)).result;
+      const late = (await flow.rpc("authorize_connector", args, { state: first.requestState, action: "accept" }))
+        .result;
+      // Exactly the storage a killed start leaves: claimed, never settled.
+      const opts = { config: { vault: flow.vault }, registry: flow.app.registry } as unknown as Parameters<
+        typeof verifyOAuthHandoff
+      >[0];
+      const handoff = await verifyOAuthHandoff(opts, BASE, "service", new URL(LINK(first)).searchParams.get("h"));
+      expect(await claimOAuthConnectStart(opts, required(handoff ?? undefined))).toBe("reset");
+      const stuck = await flow.browser(LINK(late));
+      expect(stuck.status).toBe(409);
+      expect(await stuck.json()).toEqual({
+        error: expect.stringMatching(/Reload this page in a moment.*start a new connection request/s),
+      });
+      expect(flow.connector.startAuth).not.toHaveBeenCalled();
+      const recovery = (await flow.rpc("authorize_connector", args)).result;
+      expect((await flow.browser(LINK(recovery))).status).toBe(302);
+      expect(flow.connector.startAuth).toHaveBeenCalledExactlyOnceWith(expect.anything(), { force: true });
+    });
+
     it("INV-4 INV-9: a reset's record outlives the link that claimed it, so a later round's link cannot repeat it", async () => {
       const pairing = pair();
       const { links, last } = await rounds(pairing, 1);
@@ -732,6 +758,63 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
           for (const database of databases) database.close();
           rmSync(directory, { recursive: true, force: true });
         }
+      },
+    );
+  });
+
+  describe("a legacy link carrying the retired predecessor field", () => {
+    /** A pre-upgrade signed JSON or sealed v2 link, exactly as an older deployment minted it. */
+    const legacyLink = async (flow: ReturnType<typeof setup>, format: string, fields: Record<string, unknown> = {}) => {
+      const json = JSON.stringify({
+        connector: "service",
+        owner: "shared",
+        principal: await identityStorageKey({ namespace: "https://clerk.example.test", id: "alice" }),
+        origin: BASE,
+        expiresAt: Date.now() + 15 * 60_000,
+        nonce: crypto.randomUUID(),
+        force: false,
+        ...fields,
+      });
+      const payload =
+        format === "json"
+          ? btoa(json)
+          : `v2:${btoa(await flow.vault.seal!("service", "connecta:connect-link:v2", json))}`;
+      const url = new URL(`${BASE}/connect/service`);
+      url.searchParams.set("h", `${payload}.${await flow.vault.signOAuthHandoff!(payload)}`);
+      return url.href;
+    };
+
+    it.each([
+      ["json", "never visited", null],
+      ["json", "still pending", "used"],
+      ["json", "failed", "failed"],
+      ["json", "started", "started"],
+      ["v2", "never visited", null],
+      ["v2", "still pending", "used"],
+      ["v2", "failed", "failed"],
+      ["v2", "started", "started"],
+    ])(
+      "INV-4 INV-9: a %s Continue link whose predecessor %s is refused and starts nothing",
+      async (format, _name, stage) => {
+        const flow = setup();
+        flow.connect();
+        const after = crypto.randomUUID();
+        if (stage) await flow.app.registry.contextFor("service", BASE).storage.set(oauthConnectKeys.used(after), stage);
+        const response = await flow.browser(await legacyLink(flow, format, { after }));
+        expect(response.status).toBe(400);
+        expect(await response.json()).toEqual({
+          error: "Invalid or expired connection link. Request a new link from connecta.",
+        });
+        expect(flow.connector.startAuth).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["json", "v2"])(
+      "INV-4: a %s link without that field still works until its original expiry",
+      async (format) => {
+        const flow = setup();
+        expect((await flow.browser(await legacyLink(flow, format))).status).toBe(302);
+        expect(flow.connector.startAuth).toHaveBeenCalledExactlyOnceWith(expect.anything(), { force: false });
       },
     );
   });
