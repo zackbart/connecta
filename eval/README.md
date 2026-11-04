@@ -37,7 +37,8 @@ CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped
 write recovery, Overflow donor paging, Gmail attachment-preserving draft refusal,
 Forms revision-conflict recovery, Docs indexes, Sheets rows across ranges and
 Slides deck/comment save outcomes. The provider/HTTP cleanup also promotes
-existing Tithe.ly cancellation recovery, a single GitHub draft release,
+existing Tithe.ly cancellation recovery, a single GitHub draft release, a GitHub
+CI read that reports one repository's permission gap while finishing another,
 Cloudflare DNS and Vercel environment recovery, shared-drive permission
 inheritance and Docs partial-creation recovery. Each is graded on outcome:
 downstream state, the physical write ledger and the final answer, not the

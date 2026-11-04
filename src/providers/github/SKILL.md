@@ -44,6 +44,21 @@ listings have a vendor cap and are not recursive. Missing inline content or a
 missing patch does not establish an empty file or an unchanged diff. Raw diff,
 log/archive downloads, secret/admin operations and arbitrary GraphQL are unavailable.
 
+## Read CI state
+
+A commit's CI lives in two systems, so read both: `commits/{ref}/check-runs` holds
+Actions and App checks, and `commits/{ref}/status` holds older commit statuses. A
+status of `pending` with no statuses means none were posted, not that CI is running.
+Check-run annotations give failing paths and lines, since log downloads are unavailable.
+
+## When access is refused
+
+`provider_permission_denied` is a refusal: usually a gap in the App's access to that
+repository or permission, though a policy, an unmarked rate limit or a lockout can
+also cause it. Report the gap and continue; other repositories may still work. Do not
+reset the credential or switch tools on this alone. `auth_required` is the failure
+that points at the credential itself.
+
 ## Release and merge semantics
 
 Publishing a draft release updates that release's `draft` to false. Deleting a
