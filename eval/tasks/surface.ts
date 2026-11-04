@@ -43,9 +43,9 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
     if (surface === "native-no-code") {
       if (task.id === "p5-trusted-program-write")
         prompt =
-          "In this writable pool, close tracker issue WEB-105 using tracker__close_issue and confirm its resulting status.";
+          "In this writable pool, close tracker issue WEB-105 using tracker__WRITE__close_issue and confirm its resulting status.";
       if (task.id === "p5-read-only-program-refusal")
-        prompt = `${task.prompt.replace("a program", "tracker__close_issue")} If this pool does not list that tool, say so instead of attempting it.`;
+        prompt = `${task.prompt.replace("a program", "tracker__WRITE__close_issue")} If this pool does not list that tool, say so instead of attempting it.`;
       if (task.id === "p5-program-image")
         prompt =
           "Read assets.get_badge_image using assets__get_badge_image, preserve its image and caption, and confirm the badge approval and revision.";
@@ -87,7 +87,7 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
             reference: (ctx: ReferenceContext) =>
               answerOnly(
                 ctx,
-                "Tracker WEB-105 remains open: tracker__close_issue is not available in this read-only pool, so nothing was attempted.\nANSWER: not closed",
+                "Tracker WEB-105 remains open: tracker__WRITE__close_issue is not available in this read-only pool, so nothing was attempted.\nANSWER: not closed",
               ),
           }
         : {}),

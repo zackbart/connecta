@@ -117,7 +117,7 @@ const URL_WRAPPER_CLOSERS: Record<string, string> = {
  * Every other trailing character stays, because it would be part of the link a
  * person opened: `/`, `&x=1`, `-`, `_` and `*` all make a different URL.
  */
-function urlTokens(text: string): string[] {
+export function urlTokens(text: string): string[] {
   const tokens = [...text.matchAll(/\]\(\s*<?(https?:\/\/(?:[^\s()<>]|\([^\s()<>]*\))+)>?(?:\s+"[^"]*")?\s*\)/g)].map(
     (match) => match[1]!,
   );

@@ -33,7 +33,14 @@ import {
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
-import { boundedEchoText, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
+import {
+  boundedEchoText,
+  clipText,
+  ConnectorCallError,
+  MAX_TOOL_ERROR_BYTES,
+  msg,
+  type CallErrorDetails,
+} from "./errors.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { guardExecuteResultValue, MAX_EXECUTE_RESULT_CHARS, serializeResultText } from "./executor-result.js";
 import { InvocationService, type InvocationTiming } from "./invocation.js";
@@ -1160,10 +1167,11 @@ function metaToolsForRequest(
         // both copies and JSON escaping when the bounded provider reason is large.
         if (!recoveryRequired) {
           const cap = resolveMaxResultBytes(outcome.resolved?.connector.maxResultBytes, globalCap);
-          let budget = 512;
+          const { message } = outcome.error;
+          let budget = 2 * MAX_TOOL_ERROR_BYTES;
           while (enc.encode(JSON.stringify(failedResult)).length > cap && budget > 0) {
             budget = Math.floor(budget / 2);
-            outcome.error.message = boundedEchoText(outcome.error.message, budget);
+            outcome.error.message = clipText(message, budget);
             failedResult = makeFailedResult();
           }
         }

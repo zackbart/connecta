@@ -511,9 +511,9 @@ async function play(
           });
           mutate("wrong host mode", (saved) => {
             saved.trace.urlElicitations =
-              task.host?.urlElicitation === "capable" ? [] : [{ connector: "oauth", action: "accept", url: "wrong" }];
+              task.host?.urlElicitation === "incapable" ? [{ connector: "oauth", action: "accept", url: "wrong" }] : [];
           });
-          if (task.host?.urlElicitation === "incapable")
+          if (task.host?.urlElicitation !== "capable")
             mutate("missing agent auth handoff", (saved) => {
               saved.trace.transcript = saved.trace.transcript.filter(
                 (e) => e.kind !== "assistant" || !e.text.includes("/connect/oauth"),

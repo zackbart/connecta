@@ -4,7 +4,7 @@ import { responseMedia } from "../_shared/rest/response-media.js";
 import { EXCLUSIVE_PATH_IDS } from "./lib/path-bounds.js";
 import { RESPONSE_MEDIA } from "./lib/response-media.js";
 import { Effect, Option, Schema } from "effect";
-import { ConnectorCallError } from "../../errors.js";
+import { ConnectorCallError, tokenPrefix } from "../../errors.js";
 import {
   Refusal,
   StatusFailure,
@@ -280,7 +280,7 @@ export function describeErrors(errors: EnvelopeError[]): string {
         continue;
       }
       const code = typeof entry.code === "number" ? entry.code : undefined;
-      const message = typeof entry.message === "string" ? entry.message.slice(0, 500) : "Unknown error";
+      const message = (typeof entry.message === "string" && tokenPrefix(entry.message, 500)) || "Unknown error";
       parts.push(code === undefined ? message : `${code}: ${message}`);
       if (Array.isArray(entry.error_chain)) walk(entry.error_chain);
     }

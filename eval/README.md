@@ -31,6 +31,8 @@ fresh fake vendors and the published-edge Node deployment (SQLite, QuickJS,
 stored agent tokens): a two-source join with one post, retained-result
 paging, one Stripe refund, reconciliation after a committed refund answered
 HTTP 500, a read-only pool's refusal, the identity-checked `/connect` handoff,
+that handoff from a client that auto-declines URL elicitation (its controls fail
+a refusal with no link, a second prompt and a read from another connector),
 a secret rotation that never reads a value, and the QuickBooks accounting
 and named-write journeys, plus a Granola workspace meeting dossier. Provider journeys also cover
 CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped
@@ -84,7 +86,11 @@ the original two Worker entries use a local Access stand-in. The original four t
 `/health`, MCP initialize, the six-tool list, an `execute_code` read and the
 operator page in headless Chromium. Targets with a write-capable fake make
 one `call_destructive_tool` write and verify exactly one downstream write and
-the resulting fake state; targets without one claim no write. Steps are bounded
+the resulting fake state; targets without one claim no write. `node-fakes` and
+`worker-fakes` also run sequential writes through one `execute_code` program on
+one connection: two land, the tool refuses the third with its own error, and the
+fourth never leaves. The check reads the fake's state, its count of physical writes,
+and the `write_outcome_unknown` result, which must lead with the tool's words. Steps are bounded
 to two minutes, child process groups stop on exit or signal, and any failed
 check exits nonzero with the results JSON. Install Chromium once with
 `pnpm run test:browser:install`.
@@ -412,8 +418,8 @@ because the Worker imports the package by name from `dist/`.
   it. A selftest control asserts that no 8-character window of either secret
   appears in any wrangler output or log file of the trial.
 - **Eligibility.** The worker target serves every active task except:
-  - `p5-auth-url-capable` and `p5-auth-connect-incapable`: the fake OAuth
-    inbound auth, connector and URL-elicitation host are in-process Node
+  - `p5-auth-url-capable`, `p5-auth-connect-incapable` and
+    `p5-auth-url-auto-decline`: the fake OAuth inbound auth, connector and URL-elicitation host are in-process Node
     objects;
   - any task under `--surface code`: that arm wraps the Node deployment's fetch
     and QuickJS bridge;
