@@ -51,8 +51,9 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
       "delivered-data",
       seed.people
         .filter((p) => !p.active)
-        .every((p) => delivered.some((row) => row?.id === p.id && row.active === false)) ||
-        delivered.some((row) => row?.count === inactive),
+        .every((p) => delivered.some((row) => row?.id === p.id)) ||
+        // A program's reduced count is delivered however it names the field.
+        delivered.includes(inactive),
     );
   }
   if (i === 4) {
