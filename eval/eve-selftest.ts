@@ -1,5 +1,6 @@
 /** Opt-in Node 24+ control through the real Eve server, without subscription auth. */
 import assert from "node:assert/strict";
+import { stopsBatch } from "./agent/infra.js";
 import { runEve } from "./agent/eve.js";
 import { parseTrace } from "./agent/trace.js";
 import { META_TOOLS } from "./agent/surface.js";
@@ -40,7 +41,23 @@ export default mockModel({ modelId: "eve-read-control", respond: ({ toolResults 
   assert.equal(trace.toolUses.find((t) => t.tool === "call_destructive_tool")?.isError, true);
   assert.equal(trace.permissionDenials.length, 1);
   assert.ok(world.ledger.calls.every((c) => c.kind === "read"));
-  console.log("ok   Eve mockModel read through real server, helper instructions, deferred tools and Node target");
+  const authFailure = await runEve({
+    model: "eve-auth-control",
+    mcpUrl: deployment.mcpUrl,
+    token: "invalid-eval-token",
+    allowedTools: [...META_TOOLS],
+    deniedTools: [],
+    timeoutMs: 120_000,
+    firstPrompt: task.prompt,
+    nextTurn: async () => undefined,
+    testModelSource: `import { mockModel } from "eve/evals";
+export default mockModel({ modelId: "eve-auth-control", respond: ({ toolResults }) => toolResults.length === 0 ? { toolCalls: [{ name: "eve__search", input: { query: "connecta__call_tool" } }] } : "Unavailable" });`,
+  });
+  assert.equal(authFailure.exitCode, 1);
+  assert.ok(stopsBatch(String(authFailure.events.at(-1)?.result)));
+  console.log(
+    "ok   Eve mockModel read, denied write and authentication batch-stop through real server and Node target",
+  );
 } finally {
   await deployment?.close();
   await world.stop();

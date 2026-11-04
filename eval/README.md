@@ -200,6 +200,8 @@ The provider request inventory allows only Eve search/tool and the trial's
 Connecta tools; response metadata must confirm the requested model. Unexpected
 interactions (including parked approval or sign-in) fail closed. The helper
 approval policy approves allowed tools and refuses denied or unknown tools.
+A host connection authorization failure reported inside search results stops
+the batch through `stopsBatch`, as do model authentication and rate limits.
 
 Eve deferred calls are recorded under their inner Connecta tool names so the
 same graders apply. `eve__search` stays in `metrics.otherTools`. Tokens come
@@ -208,7 +210,8 @@ Both deployment targets and the existing six/code surfaces use the same runner.
 Each server and its app-server descendants occupy a tracked process group,
 with a trial deadline and TERM/KILL cleanup. `--eve-only` drives one read with
 Eve's `mockModel()` through its real HTTP server and the Node deployment;
-it needs no credentials and makes no model calls.
+it also checks write denial and an invalid-token batch stop, needs no credentials,
+and makes no model calls.
 
 Codex uses the signed-in `codex` CLI, `~/.codex/auth.json`, and defaults to
 `gpt-6-luna`. Its isolated temporary `CODEX_HOME` contains only that credential

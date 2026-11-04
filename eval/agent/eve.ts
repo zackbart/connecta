@@ -223,6 +223,19 @@ await import("eve/bin/eve.js");
               },
             });
           }
+          if (event.type === "call.settled") {
+            const unavailable = data.output?.unavailable;
+            const authMessage = /requires authorization and cannot start interactive sign-in/i;
+            if (
+              (Array.isArray(unavailable) &&
+                unavailable.some((entry) => entry.connection === "connecta" && authMessage.test(entry.error))) ||
+              (data.output?.code === "ACTION_RESULT_FAILED" && authMessage.test(data.output.message)) ||
+              authMessage.test(data.error?.message)
+            )
+              throw new Error(
+                "authentication failure: Eve's Connecta connection requires authorization and cannot start interactive sign-in",
+              );
+          }
           if (event.type === "usage.recorded") push({ type: "eve_usage", usage: data.usage });
           if (event.type === "content.completed" && data.kind === "text")
             push({
