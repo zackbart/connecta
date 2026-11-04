@@ -15,12 +15,16 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
+import { startAuthHost } from "./agent/auth-host.js";
 import { playReference } from "./agent/reference.js";
 import { regradeTrial } from "./agent/regrade.js";
 import type { TrialResult } from "./agent/run.js";
 import { saveGradeInputs } from "./agent/saved.js";
 import { batchFailures, trialOutcome } from "./agent/verdict.js";
 import type { AgentResultFile } from "./report/summary.js";
+import { startNodeDeployment } from "./deploy/node.js";
+import { World } from "./fakes/world.js";
+import { connectMcp } from "./support/mcp.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
 import { ccbState } from "./fakes/ccb.js";
 import { overflowState } from "./fakes/overflow.js";
@@ -357,6 +361,22 @@ async function run() {
       },
     ],
     [
+      "the agent's Markdown link carries a period inside its destination",
+      "agent-handoff",
+      (saved) => {
+        for (const entry of saved.trace.transcript)
+          if (entry.kind === "assistant") entry.text = entry.text.replace(CONNECT_LINK, "[Connect]($&.)");
+      },
+    ],
+    [
+      "the agent's Markdown link carries a question mark inside its destination",
+      "agent-handoff",
+      (saved) => {
+        for (const entry of saved.trace.transcript)
+          if (entry.kind === "assistant") entry.text = entry.text.replace(CONNECT_LINK, "[Connect]($&?)");
+      },
+    ],
+    [
       "the agent prompts again after the refusal",
       "host-mode",
       (saved) => {
@@ -379,6 +399,36 @@ async function run() {
       !passed(graded) && graded.checks.some((c) => c.id === check && !c.pass),
       failedChecks(graded),
       graded,
+    );
+  }
+
+  // The real ordering: a host's accept goes out before its browser visit lands, so
+  // each round answers first and that round's link must still work when it is opened.
+  // Every other auth task finishes the visit first, which cannot show this.
+  for (const [flow, tool, input, forcedStarts] of [
+    ["a forced reconnect", "authorize_connector", { connector: "oauth", force: true }, 1],
+    ["an auth-gated read", "call_tool", { address: "oauth.get_balance", args: { customer: "Northwind" } }, 0],
+  ] as const) {
+    const world = new World({ oauth: true });
+    await world.start();
+    const deployment = await startNodeDeployment(world.connectorSpecs(), {}, world.oauth);
+    const host = await startAuthHost(deployment, "accept-first", () => {});
+    const session = await connectMcp(host.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+    let detail: string;
+    let completed = false;
+    try {
+      const reply = await session.call(tool, input);
+      completed = !reply.isError;
+      detail = `${world.oauth.visits} visits, ${world.oauth.forcedStarts} forced starts`;
+    } catch (error) {
+      detail = error instanceof Error ? error.message : String(error);
+    } finally {
+      await Promise.allSettled([session.close(), host.close(), deployment.close(), world.stop()]);
+    }
+    record(
+      `control: accept before the visit lands completes ${flow}, every link works, ${forcedStarts} forced`,
+      completed && world.oauth.visits === 2 && world.oauth.forcedStarts === forcedStarts,
+      detail,
     );
   }
 
