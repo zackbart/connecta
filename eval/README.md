@@ -382,8 +382,8 @@ because the Worker imports the package by name from `dist/`.
   that stopped answering reads as a lost connection instead.
 
   Smokes keep Wrangler's bundler and watcher. Their inputs reach `src/` through
-  tsconfig paths, and the shared `dist/` lease does not cover those, so rewriting
-  even identical bytes reloads them. The build hooks (`pretest`, `pretypecheck`,
+  tsconfig paths, and the shared `dist/` lease does not cover those, so a rewrite can
+  reload them even with identical bytes. The build hooks (`pretest`, `pretypecheck`,
   `prebuild` and similar) therefore write only changed bytes, so `check` or
   `test:browser` can run beside a smoke. A real edit of `src/` or `eval/deploy/`
   during a smoke still reloads it, so do not edit those there.

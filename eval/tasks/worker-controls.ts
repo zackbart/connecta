@@ -843,18 +843,26 @@ export default { fetch: () => new Response(JSON.stringify({ instance: (instance 
   const world = new World();
   let deployment: Awaited<ReturnType<typeof startWorkerDeployment>> | undefined;
   try {
-    // The smoke shape. Identical bytes reload it, which is why the hooks must not write.
+    // The smoke shape. Prove the watcher is live with real edits first, repeated
+    // because a watcher still starting misses a write, then require the hooks to do nothing.
     smoke = await wranglerDev({ name: "connecta-worker-reload-smoke", main: entry });
     const before = await served(smoke.origin);
-    const started = Date.now();
-    await writeFile(dep, v1);
+    let revision = 1;
+    const calibrating = Date.now();
+    let lastWrite = 0;
     for (;;) {
-      if (Date.now() - started > 60_000) throw new Error("Rewriting a bundle input did not reload a smoke Worker");
+      if (Date.now() - calibrating > 90_000) throw new Error("Editing a bundle input did not reload a smoke Worker");
+      if (Date.now() - lastWrite > 5_000) {
+        await writeFile(dep, `export const revision = ${++revision};\n`);
+        lastWrite = Date.now();
+      }
       if ((await served(smoke.origin).catch(() => before)).instance !== before.instance) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
     // Scale later negative waits to the latency just measured on this machine.
-    settleMs = Math.max(settleMs, (Date.now() - started) * 3);
+    settleMs = Math.max(settleMs, (Date.now() - lastWrite) * 3);
+    // A write already on its way would read as a reload below, so let it land.
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
     const reloaded = await served(smoke.origin);
     hooks();
     await new Promise((resolve) => setTimeout(resolve, settleMs));
@@ -869,10 +877,14 @@ export default { fetch: () => new Response(JSON.stringify({ instance: (instance 
     const snapshot = join(trial.persist, "snapshot", "worker.mjs");
     const bytes = await readFile(snapshot, "utf8");
     const frozen = await served(trial.origin);
-    await writeFile(dep, `export const revision = 2;\n`);
+    await writeFile(dep, `export const revision = ${++revision};\n`);
     await new Promise((resolve) => setTimeout(resolve, settleMs));
     const after = await served(trial.origin);
-    if (after.instance !== frozen.instance || after.revision !== 1 || (await readFile(snapshot, "utf8")) !== bytes)
+    if (
+      after.instance !== frozen.instance ||
+      after.revision !== frozen.revision ||
+      (await readFile(snapshot, "utf8")) !== bytes
+    )
       throw new Error("A source edit reached a running trial's snapshot");
     await trial.close();
     trial = undefined;
