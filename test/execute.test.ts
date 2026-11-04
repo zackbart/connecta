@@ -581,7 +581,8 @@ describe("execute_code executor watchdog", () => {
     // two wedged programs used to block every later execute_code.
     let executions = 0;
     const deployment = makeDeployment({
-      execute: { watchdogMs: 200 },
+      // Long enough to start both runs on a busy host; the ceiling also bounds queueing.
+      execute: { watchdogMs: 1_000 },
       executor: {
         execute: () => {
           executions++;
