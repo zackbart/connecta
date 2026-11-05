@@ -12,6 +12,7 @@
 // headers keep their names. test/describe-config.test.ts plants a sentinel secret in every
 // secret-bearing position and asserts none survives.
 
+import type { ClassificationOverride } from "./tool-safety.js";
 import { resolveBranding } from "./branding.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { ConnectaConfig, ResolvedConfig } from "./config.js";
@@ -109,7 +110,7 @@ export interface ConnectaConfigDescription {
   maintainers: Array<{ namespace: string; id: string }>;
   /** Non-maintainer people listed in several pools, whom plain `/mcp` refuses. */
   peopleInSeveralPools: Array<{ namespace: string; id: string; pools: string[] }>;
-  classification: Record<string, Record<string, "read" | "write" | "hidden">>;
+  classification: Record<string, Record<string, ClassificationOverride>>;
   /** Inbound auth providers in the order they are tried. */
   auth: Array<{ kind: string; interactive: boolean; ui?: string }>;
   /** Agents declared in code, by name, in declaration order. Never token state. */

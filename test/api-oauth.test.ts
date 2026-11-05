@@ -1808,6 +1808,64 @@ describe("api() oauth replay is for reads only", () => {
     expect(declared.structuredContent).toMatchObject({ error: { code: "destructive_tool_requires_approval" } });
     expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
   });
+
+  it("INV-1 INV-9: serves a declared GET write as a read and never resends it after 401", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb({ tools });
+    const registry = makeRegistry([connector], { classification: { ccb: { trigger: "read-repeatable" } } });
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+    const mt = createMetaTools(registry, BASE);
+    provider.expireAccess();
+    const refused = JSON.parse((await mt.callTool({ address: "ccb.trigger" })).content[0]!.text) as {
+      error: { code: string; retryable: boolean };
+    };
+    expect(refused.error).toMatchObject({ retryable: false });
+    expect(refused.error.code).not.toBe("destructive_tool_requires_approval");
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+  });
+});
+
+describe("api() read-repeatable with a handler that catches the 401", () => {
+  it.each(["direct", "program"] as const)(
+    "INV-1 INV-9: a %s call that swallows a declared write's 401 is no success",
+    async (route) => {
+      const provider = fakeProvider();
+      install(provider);
+      const connector = ccb({
+        tools: [
+          {
+            name: "trigger",
+            description: "Trigger a vendor operation",
+            annotations: { readOnlyHint: false },
+            async handler(_args, ctx) {
+              await ctx.oauth!.fetch(`${API}/trigger`, { method: "GET" }).catch(() => undefined);
+              return { ok: true };
+            },
+          },
+        ],
+      });
+      const registry = makeRegistry([connector], { classification: { ccb: { trigger: "read-repeatable" } } });
+      await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+      provider.expireAccess();
+      const result =
+        route === "direct"
+          ? await createMetaTools(registry, BASE).callTool({ address: "ccb.trigger" })
+          : await createExecuteTool(
+              registry,
+              BASE,
+              scriptedExecutor(async (fns) => {
+                await fns.call!("ccb.trigger", {});
+                return { ok: true };
+              }),
+              silentLogger,
+              undefined,
+              { readOnly: true },
+            )({ code: "async () => null" });
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+      expect(result.structuredContent, JSON.stringify(result)).toMatchObject({ error: { retryable: false } });
+    },
+  );
 });
 
 describe("api() oauth access boundaries", () => {
