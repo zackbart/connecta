@@ -9,10 +9,13 @@ checkouts have independent locks. Install the `flock` CLI with Homebrew
 (`brew install flock`) where unavailable. The OS releases locks when holders exit,
 including SIGKILL; never delete the persistent `.flock` file (that would split the
 lock). No stale owner directory or PID recovery is needed. Node and fake listeners bind port 0. Child deployments
-that need a public URL before startup retry bind collisions at most three times,
-only during initial startup. Wrangler's inspector and internal proxy use explicit
-ports so Landlock can allow callbacks before workerd starts; a startup collision
-retries the entire process group with fresh ports. Reader and writer fairness is
+that need a public URL before startup retry bind collisions at most three times.
+Wrangler's inspector and internal proxy use explicit ports so Landlock can allow
+callbacks before workerd starts; a startup collision retries the entire process
+group with fresh ports. A restart keeps its public port, because the origin has
+already been served, so it redraws only the internal ports and waits between
+attempts. Claims in `~/.cache/connecta-eval-ports` keep other evals on the machine
+from drawing a port during that gap, and a claim from a dead process is ignored. Reader and writer fairness is
 not guaranteed: sustained readers can delay a build up to the 1,800 s lock
 acquisition timeout.
 
@@ -122,13 +125,20 @@ company/owner isolation, and coordinates consecutive vendor-hour renewals with
 identical refresh bytes,
 then rotates and persists new bytes across application reconstruction.
 Disconnecting Alice must revoke the fake Intuit grant and invalidate its old
-access token while Bob keeps working. Accounting evidence
-includes exact lookahead pages, customer joins, nested report rows and empty
-cells, plus named/hatch/fields secrecy while retaining public SyncToken.
+access token while Bob keeps working. The fake answers every query `search_records`
+can build from its live rows, with filters, paging and hidden inactive master
+records, and refuses anything else as Intuit refuses an unknown column. The grader
+reads physical reads, delivered facts and the facts in a JSON dossier, however the
+agent named them. The reference also asserts exact lookahead pages and named, hatch
+and fields secrecy that retains the public SyncToken. A second no-model route follows
+the prompt with other queries and a reduced dossier, and must pass.
 Hostile paths, raw SQL and unreviewed writes must send no vendor request.
 The separate `quickbooks-write-journey` opts into the three named writes while
 preserving the original read-only task. Both QuickBooks smoke targets also run
-this compact journey. A stateful vendor commits customer names, arbitrates two
+this compact journey. Its prompt gives the exact intents and their requestIds,
+which also select each vendor failure, so an agent meets the same failures as the
+reference. A no-model route following only those steps must pass; the probes an
+agent has no reason to send stay asserted in the reference. A stateful vendor commits customer names, arbitrates two
 concurrent sparse updates against a caller-read SyncToken (one winner, one
 5010 conflict), and computes invoice tax and rounding from fixture settings.
 The grader checks exact requestid/body/company, committed state, preserved
