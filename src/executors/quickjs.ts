@@ -703,7 +703,12 @@ class QuickJsChildPool implements AdmittingExecutor {
       slot.backoff = undefined;
       slot.notBefore = 0;
       this.resolveActive(slot, payload.outcome);
-      if (payload.timedOut) {
+      if (payload.retire) {
+        console.warn(
+          "[connecta] QuickJS could not free a finished run's runtime. Its answer stands; replacing the child.",
+        );
+      }
+      if (payload.timedOut || payload.retire) {
         // A timed-out host call may still retain QuickJS handles. A fresh child
         // is cheaper and safer than reusing a context with unknown stragglers.
         // The runtime sets this flag itself: matching error text here would let

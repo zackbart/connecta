@@ -1,5 +1,6 @@
 // Node-only: runs the Node QuickJS child-process executor.
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import type { EventEmitter } from "node:events";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -479,5 +480,174 @@ describe("INV-5: a remote connection's credential under any header or query name
     expect(out.read).not.toContain(SECRET);
     expect(out.write).toBe("invalid_args");
     expect(written).toEqual([]);
+  });
+});
+
+describe("quickJsExecutor memory growth during a job pass", () => {
+  vi.setConfig({ testTimeout: 60_000 });
+  type Pool = AdmittingExecutor & {
+    slots: { child?: { process: EventEmitter & { pid: number } }; active?: { id: number } }[];
+  };
+  const pool = (options: Parameters<typeof quickJsExecutor>[0] = {}) => {
+    const created = quickJsExecutor({ cpuTimeMs: 5_000, ...options }) as unknown as Pool;
+    onTestFinished(() => created.close?.());
+    return created;
+  };
+  const childPid = (executor: Pool) => executor.slots[0]?.child?.process.pid;
+  const GROW = `const grown = []; for (let i = 0; i < 30; i++) grown.push(new ArrayBuffer(1 << 20));`;
+  const tool = (executor: Pool, value: unknown = "value") =>
+    createExecuteTool(
+      makeRegistry([
+        {
+          id: "store",
+          kind: "api",
+          listTools: async () => [
+            { name: "fast", annotations: { readOnlyHint: true } },
+            { name: "slow", annotations: { readOnlyHint: true } },
+            { name: "get", annotations: { readOnlyHint: true } },
+          ],
+          async callTool(name: string) {
+            if (name === "slow") await new Promise((resolve) => setTimeout(resolve, 300));
+            return name === "get" ? value : name;
+          },
+        },
+      ]),
+      "https://growth.test",
+      executor,
+      silentLogger,
+      undefined,
+      { maxHostCalls: 512 },
+    );
+
+  it("a run with an unawaited host call keeps its answer and its child takes the next request", async () => {
+    const warn = vi.spyOn(console, "warn");
+    onTestFinished(() => warn.mockRestore());
+    const executor = pool();
+    const execute = tool(executor);
+    await execute({ code: `async () => { await connecta.call("store.fast"); return "warm"; }` });
+    const child = childPid(executor);
+    expect(child).toBeTypeOf("number");
+    const grew = await execute({
+      code: `async () => { await connecta.call("store.fast"); connecta.call("store.slow"); ${GROW} return "answer"; }`,
+    });
+    expect(grew.structuredContent?.result, JSON.stringify(grew.structuredContent)).toBe("answer");
+    for (let run = 0; run < 3; run++) {
+      const next = await execute({ code: `async () => { await connecta.call("store.fast"); return ${run}; }` });
+      expect(next.isError, JSON.stringify(next.structuredContent)).toBeUndefined();
+      expect(next.structuredContent?.result).toBe(run);
+    }
+    expect(childPid(executor)).toBe(child);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  const fill = (make: () => unknown, bytes: number) => {
+    const rows: unknown[] = [];
+    let size = 2;
+    const each = JSON.stringify(make()).length + 1;
+    while (size < bytes) {
+      rows.push(make());
+      size += each;
+    }
+    return rows;
+  };
+  it.each([
+    ["small objects", () => ({ a: 1 })],
+    ["empty objects", () => ({})],
+    ["integers", () => 1],
+  ])("reading %s around 1.2 MB doesn't replace the child", async (_shape, make) => {
+    const executor = pool();
+    const execute = tool(executor, fill(make, 1.2 * 1024 * 1024));
+    const read = await execute({
+      code: `async () => {
+        const handle = await connecta.call("store.get");
+        const parts = [];
+        let offset = 0, page;
+        do {
+          page = await connecta.result(handle, { offset, maxBytes: 32000 });
+          parts.push(page.text);
+          offset = page.nextOffset;
+        } while (page.hasMore);
+        return JSON.parse(parts.join("")).length > 1000;
+      }`,
+    });
+    expect(read.structuredContent?.result, JSON.stringify(read.structuredContent)).toBe(true);
+    const child = childPid(executor);
+    const next = await execute({ code: `async () => "next"` });
+    expect(next.structuredContent?.result, JSON.stringify(next.structuredContent)).toBe("next");
+    expect(child).toBeTypeOf("number");
+    expect(childPid(executor)).toBe(child);
+  });
+
+  // Fills the heap to the limit during a job pass, then gives back a little at each level.
+  it.each([0, 4, 16, 64, 128, 200, 256])(
+    "tears down cleanly with the heap filled and %i blocks given back",
+    async (released) => {
+      const executor = pool({ cpuTimeMs: 30_000 });
+      const providers = [{ name: "h", fns: { noop: async () => "ok" } }];
+      const outcome = await executor.execute(
+        `async () => {
+          await h.noop();
+          globalThis.keep = [];
+          for (const size of [1 << 20, 1 << 16, 1 << 12, 1 << 8]) {
+            try { for (;;) keep.push(new ArrayBuffer(size)); } catch {}
+          }
+          for (let i = 0; i < ${released} && keep.length; i++) keep.pop();
+          await h.noop();
+          return "survived";
+        }`,
+        providers,
+      );
+      // With nothing given back the program itself may run out of heap, which is its own clean failure.
+      if (released > 0) expect(outcome.result, String(outcome.error)).toBe("survived");
+      expect(String(outcome.error)).not.toContain("Aborted");
+      const child = childPid(executor);
+      const next = await executor.execute(`async () => { await h.noop(); return "next"; }`, providers);
+      expect(next.result).toBe("next");
+      expect(child).toBeTypeOf("number");
+      expect(childPid(executor)).toBe(child);
+    },
+  );
+
+  it("a job that ends on the CPU budget after growing reports it and keeps the child", async () => {
+    const executor = pool({ cpuTimeMs: 300 });
+    const providers = [{ name: "h", fns: { noop: async () => "ok" } }];
+    await executor.execute(`async () => "warm"`, providers);
+    const child = childPid(executor);
+    const outcome = await executor.execute(`async () => { await h.noop(); ${GROW} for (;;) {} }`, providers);
+    expect(outcome.error).toContain("CPU budget");
+    const next = await executor.execute(`async () => "next"`, providers);
+    expect(next.result).toBe("next");
+    expect(childPid(executor)).toBe(child);
+  });
+
+  it("a child reporting a failed free has its answer kept, a warning logged and is replaced", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    onTestFinished(() => warn.mockRestore());
+    const executor = pool();
+    let began!: () => void;
+    const waiting = new Promise<void>((resolve) => (began = resolve));
+    const running = executor.execute(`async () => await h.wait()`, [
+      {
+        name: "h",
+        fns: {
+          wait: () => {
+            began();
+            return new Promise(() => {});
+          },
+        },
+      },
+    ]);
+    await waiting;
+    const slot = executor.slots[0]!;
+    const child = slot.child!.process;
+    child.emit("message", {
+      type: "result",
+      jobId: slot.active!.id,
+      payloadJson: JSON.stringify({ outcome: { result: "kept" }, retire: true }),
+    });
+    expect((await running).result).toBe("kept");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toContain("replacing the child");
+    expect(slot.child?.process).not.toBe(child);
   });
 });
