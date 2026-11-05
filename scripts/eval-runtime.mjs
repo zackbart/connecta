@@ -75,14 +75,20 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       (entry === "selftest" && !existsSync("dist/worker.js")) ||
       (!flags.has("no-build") &&
         (entry === "run-smoke" || (entry === "run-agent" && flags.get("target") === "worker")));
-    let code = 0;
-    if (needsBuild) {
-      const child = spawn("pnpm", ["run", "build"], { stdio: "inherit" });
-      code = await new Promise((resolve, reject) => {
+    // The Eve runner imports the helper from its own dist/, which no other step
+    // builds. Rebuild it so a batch cannot test a stale helper.
+    const needsEveHelper =
+      !flags.has("no-build") &&
+      ((entry === "selftest" && flags.has("eve-only")) || (entry === "run-agent" && flags.get("runner") === "eve"));
+    const run = (args) =>
+      new Promise((resolve, reject) => {
+        const child = spawn("pnpm", args, { stdio: "inherit" });
         child.once("error", reject);
         child.once("exit", (code) => resolve(code ?? 1));
       });
-    }
+    let code = 0;
+    if (needsBuild) code = await run(["run", "build"]);
+    if (!code && needsEveHelper) code = await run(["--filter", "@zackbart/connecta-eve", "run", "build"]);
     process.exitCode =
       code ||
       (await withRuntimeLock(false, process.execPath, [

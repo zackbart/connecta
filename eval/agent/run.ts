@@ -1,3 +1,4 @@
+import { runEve, type EveConnection } from "./eve.js";
 import { guidanceArm } from "../deploy/guidance.js";
 /**
  * One trial = a fresh world, a fresh deployment, one Codex conversation,
@@ -67,7 +68,7 @@ export interface TrialResult {
   task: string;
   taskDefinitionsHash?: string;
   timeoutMs?: number;
-  runner?: "codex" | "claude";
+  runner?: "codex" | "claude" | "eve";
   /** Absent in results written before the worker target existed: node. */
   target?: Target;
   surface?: Surface;
@@ -109,6 +110,7 @@ export interface TrialResult {
   };
   /** Claude Code runner metadata; historical results remain readable. */
   claude?: Record<string, unknown>;
+  eve?: TrialResult["codex"];
   startedAt: string;
 }
 
@@ -118,7 +120,9 @@ interface TrialOptions {
   injection?: Injection;
   surface?: Surface;
   grading?: Grading;
-  runner?: "codex" | "claude";
+  runner?: "codex" | "claude" | "eve";
+  /** Eve only: the helper configuration under test, and a no-model control's fixture. */
+  eve?: EveConnection & { testModelSource?: string };
   maxBudgetUsd?: number;
   timeoutMs: number;
   signal?: AbortSignal;
@@ -217,10 +221,11 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
     const notes: { beforeTurn: number; text: string }[] = [];
     let followUpsSent = 0;
     let nudges = 0;
-    const runAgent = options.runner === "claude" ? runClaude : runCodex;
+    const runAgent = options.runner === "eve" ? runEve : options.runner === "claude" ? runClaude : runCodex;
     const run = await runAgent({
       model,
       surface: surfaceArm,
+      ...(options.runner === "eve" ? options.eve : {}),
       ...(options.maxBudgetUsd === undefined ? {} : { maxBudgetUsd: options.maxBudgetUsd }),
       mcpUrl: host?.mcpUrl ?? deployment.mcpUrl,
       token: deployment.token,
@@ -380,7 +385,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       finalAnswer: trace.finalAnswer ?? "",
       urlElicitations: trace.urlElicitations ?? [],
       ledger: world.ledger.calls.map((call) => ({ ...call, args: clipArgs(call.args) })),
-      [options.runner === "claude" ? "claude" : "codex"]: {
+      [options.runner ?? "codex"]: {
         requestedModel: model,
         servedModel: run.model,
         version: trace.agentVersion ?? trace.claudeCodeVersion,

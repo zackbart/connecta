@@ -314,6 +314,7 @@ export async function executeQuickJs(
   // undefined and calls newContext({ contextPointer: undefined }), which creates a context
   // nothing frees, and freeing the runtime aborts. A run has this one context, and that lookup
   // is the only thing here that reaches newContext, so it always means this one.
+  // Remove once a release fixes it: justjake/quickjs-emscripten#240, fix in PR #248.
   ctx.runtime.newContext = () => ctx;
   const deadline = Date.now() + timeoutMs;
   const timeoutError = `Execution timed out after ${timeoutMs}ms.`;

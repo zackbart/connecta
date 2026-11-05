@@ -1357,6 +1357,7 @@ createConnecta({
   },
   classification: {
     posthog: { exec: "read" }, // only if the server is silent about exec and exec is safe to repeat
+    crm: { save_view: "read-repeatable" }, // declared a write; checked, and a repeat is accepted
     vendor: { mislabeled_update: "write" },
   },
 });
@@ -1373,7 +1374,7 @@ all calls this deployment can make through it.
 
 | Precedence | Evidence                                                 | Result                                                                                                                                           |
 | ---------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1          | Exact deployment `classification[connectorId][toolName]` | `read` where the source is silent, `write`, or `hidden`; `read` cannot change a source's declared write                                          |
+| 1          | Exact deployment `classification[connectorId][toolName]` | `read` where the source is silent, `read-repeatable`, `write`, or `hidden`; only `read-repeatable` can serve a source's declared write as a read |
 | 2          | `Connector.classification` provider review               | Reviewed writes remain writes; a stale schema digest makes a read a write; an explicit downstream contradiction also invalidates a reviewed read |
 | 3          | Downstream annotations                                   | Read only when `readOnlyHint === true && destructiveHint !== true`; otherwise write                                                              |
 
@@ -1387,7 +1388,9 @@ tool the server is silent about and an override sets to read. A `read` override 
 tool whose source declares a write (`readOnlyHint: false`, `destructiveHint: true`,
 or contradictory hints) has no effect beyond an operator warning: a host may resend
 a read-annotated call, so that tool stays a write. Where the source is silent, the
-override asserts that the call is safe to repeat. The source class is the verified provider review
+override asserts that the call is safe to repeat. `read-repeatable` serves a declared
+write as a read in programs and everywhere else, and keeps these single-send rules; the
+deployment accepts that a host may repeat the call. The source class is the verified provider review
 where present during migration, otherwise the server annotations. It also governs
 authorization recovery, program re-runs and ambiguous failure outcomes: after
 dispatch, an unknown outcome has no retry or wait advice, including on timeout or
