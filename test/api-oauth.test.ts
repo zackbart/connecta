@@ -1826,6 +1826,48 @@ describe("api() oauth replay is for reads only", () => {
   });
 });
 
+describe("api() read-repeatable with a handler that catches the 401", () => {
+  it.each(["direct", "program"] as const)(
+    "INV-1 INV-9: a %s call that swallows a declared write's 401 is no success",
+    async (route) => {
+      const provider = fakeProvider();
+      install(provider);
+      const connector = ccb({
+        tools: [
+          {
+            name: "trigger",
+            description: "Trigger a vendor operation",
+            annotations: { readOnlyHint: false },
+            async handler(_args, ctx) {
+              await ctx.oauth!.fetch(`${API}/trigger`, { method: "GET" }).catch(() => undefined);
+              return { ok: true };
+            },
+          },
+        ],
+      });
+      const registry = makeRegistry([connector], { classification: { ccb: { trigger: "read-repeatable" } } });
+      await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+      provider.expireAccess();
+      const result =
+        route === "direct"
+          ? await createMetaTools(registry, BASE).callTool({ address: "ccb.trigger" })
+          : await createExecuteTool(
+              registry,
+              BASE,
+              scriptedExecutor(async (fns) => {
+                await fns.call!("ccb.trigger", {});
+                return { ok: true };
+              }),
+              silentLogger,
+              undefined,
+              { readOnly: true },
+            )({ code: "async () => null" });
+      expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+      expect(result.structuredContent, JSON.stringify(result)).toMatchObject({ error: { retryable: false } });
+    },
+  );
+});
+
 describe("api() oauth access boundaries", () => {
   it("sends the token only to a declared origin, and lets no handler set Authorization", async () => {
     const provider = fakeProvider();

@@ -714,7 +714,7 @@ export class InvocationService {
         // recorded requests alone decide whether a 401 left it unknown.
         if (
           dispatchedToConnector &&
-          (resolved?.definition.classification !== "read" || sentSourceWrite()) &&
+          (resolved === undefined || isWriteLike(resolved.definition) || sentSourceWrite()) &&
           (error.code === "cancelled" || isTimeoutFailure(error))
         ) {
           const departed = settleWrite(logicalCall?.sent ?? [], undefined, true);
@@ -1152,7 +1152,7 @@ export class InvocationService {
       // Q8 settles a result too: a write an undeclared 401 left unknown is no
       // success, whatever its handler made of the 401, and its result is not
       // processed.
-      if (dispatchedToConnector && (completed.definition.classification !== "read" || sentSourceWrite())) {
+      if (dispatchedToConnector && (isWriteLike(completed.definition) || sentSourceWrite())) {
         const unknown = settleWriteResult(logicalCall?.sent ?? []);
         if (unknown) {
           failureAdvice = failureKeyAdvice = undefined;
