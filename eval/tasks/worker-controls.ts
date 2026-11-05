@@ -23,6 +23,7 @@ import { gradeTask } from "./grading.js";
 import { crossTarget, compare } from "../compare.js";
 import { connectionLost, stopsBatch, trialInfraFailure, WORKER_RELOADED } from "../agent/infra.js";
 import { batchFailures } from "../agent/verdict.js";
+import { claimPairGraph, freezeWorkerGraph, refuseMislabelledGraph } from "../support/worker-graph.js";
 import { startVendorGateway, startWorkerDeployment } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
 import { fakeTransportState, routeFakeVendor } from "../fakes/transport.js";
@@ -34,7 +35,6 @@ import { isInjected, NO_INJECTION, parseInjection, type Injection } from "../fak
 import { World, type WorldOptions } from "../fakes/world.js";
 import { servedDelayStats, serveFetch, retryBind } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
-import { claimPairGraph, freezeWorkerGraph, refuseMislabelledGraph } from "../support/worker-graph.js";
 import { ACTIVE_TASKS } from "./index.js";
 import { PROVIDER_EVALS } from "./providers.generated.js";
 
@@ -487,18 +487,9 @@ async function fixture(target: "node" | "worker", surface: "six" | "code"): Prom
   return file;
 }
 
-/** Node and worker results pair only as a diagnostic, and only from measured, consistent batches. */
-export async function comparatorTargetControls() {
+/** Runner-specific fields and the served graph are part of what a comparison must match. */
+export async function comparatorServedControls() {
   const fresh = fixture;
-  if (!crossTarget(await fresh("node", "six"), await fresh("worker", "six")).startsWith("CROSS-TARGET DIAGNOSTIC"))
-    throw new Error("Measured node and worker batches did not compare as a diagnostic");
-  for (const allowMismatch of [false, true]) {
-    const node = await fresh("node", "six"),
-      worker = await fresh("worker", "code");
-    refused(() => compare(node, worker, { allowMismatch }), "Comparison paired node and worker arms");
-  }
-  if (!compare(await fresh("worker", "six"), await fresh("worker", "code")).includes("target worker"))
-    throw new Error("Two worker arms did not compare as worker");
   // Eve arms compare on Eve's own version and served model, not on empty Codex fields.
   const eveArm = async (surface: "six" | "code") => {
     const file = await fresh("worker", surface);
@@ -519,7 +510,13 @@ export async function comparatorTargetControls() {
   refused(() => compare(eveArmSix, otherEve), "Eve arms on different Eve versions compared");
   const otherServed = await eveArm("code");
   otherServed.trials[0]!.eve = { ...otherServed.trials[0]!.eve!, servedModel: "another-model" };
-  refused(() => compare(eveArmSix, otherServed), "Eve arms with different served models compared");
+  try {
+    compare(eveArmSix, otherServed);
+    throw new Error("Eve arms with different served models compared");
+  } catch (error) {
+    if (!/served model for/.test(String(error)))
+      throw new Error(`Eve served models were not compared: ${String(error)}`);
+  }
   // Each arm's graph must be recorded, match its commit, and match the other arm's.
   const graphs: [string, (file: AgentResultFile) => void][] = [
     [
@@ -544,6 +541,20 @@ export async function comparatorTargetControls() {
     if (label.startsWith("a trial") && !batchFailures(batch).some((problem) => problem.includes("served graph")))
       throw new Error(`A batch accepted ${label}`);
   }
+}
+
+/** Node and worker results pair only as a diagnostic, and only from measured, consistent batches. */
+export async function comparatorTargetControls() {
+  const fresh = fixture;
+  if (!crossTarget(await fresh("node", "six"), await fresh("worker", "six")).startsWith("CROSS-TARGET DIAGNOSTIC"))
+    throw new Error("Measured node and worker batches did not compare as a diagnostic");
+  for (const allowMismatch of [false, true]) {
+    const node = await fresh("node", "six"),
+      worker = await fresh("worker", "code");
+    refused(() => compare(node, worker, { allowMismatch }), "Comparison paired node and worker arms");
+  }
+  if (!compare(await fresh("worker", "six"), await fresh("worker", "code")).includes("target worker"))
+    throw new Error("Two worker arms did not compare as worker");
   const mutations: [string, (file: AgentResultFile) => void][] = [
     ["a node trial in a worker batch", (f) => (f.trials[0]!.target = "node")],
     ["a missing protocol", (f) => delete f.protocol],
