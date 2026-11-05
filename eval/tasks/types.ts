@@ -65,6 +65,8 @@ interface GradeContext {
 /** A scripted MCP caller standing in for the agent, for the self-test. */
 export interface ReferenceContext {
   world: World;
+  /** The arm being played, for discovery a native host's inventory replaces. */
+  surface?: import("../agent/surface.js").Surface;
   /** The reference's final answer, kept separate from tool output. */
   answer(text: string): void;
   call(

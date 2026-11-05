@@ -1,6 +1,7 @@
 /** Complete fake-only grading inputs, separate from the clipped display trace. */
 import { World, type ProviderFakeName, type ProviderFakeOf } from "../fakes/world.js";
 import { PROVIDER_FAKES } from "../fakes/providers.generated.js";
+import { DISCOVERY_CONNECTORS } from "../fakes/discovery.js";
 import type { TrackerState } from "../fakes/tracker.js";
 import type { ChatState, AuditState } from "../fakes/services.js";
 import type { CallRecord } from "../fakes/service.js";
@@ -21,6 +22,7 @@ export interface SavedGradeInputs {
     pco?: World["pco"];
     overflow?: World["overflow"];
     tithely?: World["tithely"];
+    discovery?: World["discovery"];
     ci?: World["ci"];
     tracker: TrackerState;
     chat: ChatState;
@@ -44,6 +46,7 @@ export function saveGradeInputs(world: World, trace: AgentTrace): SavedGradeInpu
       rest: world.rest,
       ...(world.options.github ? { github: world.github } : {}),
       ...(world.options.tithely ? { tithely: world.tithely } : {}),
+      ...(world.options.discovery ? { discovery: world.discovery } : {}),
       ...(world.options.breeze ? { breeze: world.breeze } : {}),
       ...(world.options.ccb ? { ccb: world.ccb } : {}),
       ...(world.options.planningCenter ? { pco: world.pco } : {}),
@@ -184,6 +187,13 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
     Object.assign(world.tithely, structuredClone(state.tithely));
   } else if (state.calls.some((c) => c.service === "tithely"))
     throw new Error("Incomplete saved grading evidence: tithely");
+  if (state.discovery) {
+    for (const key of ["users", "resources", "deletedResources", "batches"] as const)
+      requireEvidence(Array.isArray(state.discovery[key]), `discovery.${key}`);
+    requireEvidence(state.discovery.platform?.production && state.discovery.platform.staging, "discovery.platform");
+    Object.assign(world.discovery, structuredClone(state.discovery));
+  } else if (state.calls.some((c) => DISCOVERY_CONNECTORS.includes(c.service)))
+    throw new Error("Incomplete saved grading evidence: discovery");
   if (state.overflow) {
     for (const key of [
       "donors",

@@ -17,6 +17,7 @@ import { VERCEL_TASKS } from "./vercel.js";
 import { GITHUB_TASKS } from "./github.js";
 import { CLOUDFLARE_TASKS } from "./cloudflare.js";
 import { STRIPE_TASKS } from "./stripe.js";
+import { DISCOVERY_TASKS } from "./discovery.js";
 
 /** Retained tasks from the historical 19-task #765 paired experiment. */
 export const COMPARISON_TASKS: ActiveTask[] = [
@@ -41,5 +42,6 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   ...PLANNING_CENTER_TASKS,
   ...GOOGLE_TASKS,
   ...GITHUB_TASKS,
+  ...DISCOVERY_TASKS,
 ];
 export const PLANNED: PlannedTask[] = PLANNED_TASKS;

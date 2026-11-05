@@ -1402,3 +1402,79 @@ runner reads its raw custom-call events: the scripted run reports
 `commandExecution` items still fail the isolation guard. The eight initial paid probes were interrupted by development
 reloads and are diagnostics, not a valid arm comparison; no paid retries were
 run.
+
+### Hard discovery tasks
+
+The twelve `discovery-*` tasks make finding the tool the hard part. They ask for
+a goal in the user's words against one shared catalog,
+[fakes/discovery.ts](fakes/discovery.ts): 110 tools across fifteen connectors,
+with fixed dates and no clock. `--catalog-tools <n>` adds its private-ledger
+padding beside that catalog. Each task's lookalikes live in the shared catalog,
+so they reach the ledger and act as distractors for every other task.
+
+| Task                             | Type                     | What decides the grade                                                |
+| -------------------------------- | ------------------------ | --------------------------------------------------------------------- |
+| `discovery-nohint-overdue`       | No hints                 | Receivables read; the longest-overdue customer and amount             |
+| `discovery-nohint-seats`         | No hints                 | Licence utilization read; available count after pending invites       |
+| `discovery-lookalike-crm`        | Lookalike by description | Current CRM's contract read; its renewal date, not the retired one    |
+| `discovery-lookalike-invoices`   | Lookalike by name        | Any call to the export write fails; the invoice numbers and total     |
+| `discovery-write-rollback`       | Write after discovery    | Any staging call fails; one production rollback; resulting state      |
+| `discovery-guidance-description` | Guidance deep in a tool  | Ownership transfer precedes deactivation; nothing deleted             |
+| `discovery-guidance-guide`       | Guidance in a guide      | Screening precedes release; only the October batch released           |
+| `discovery-absent-read`          | Honest absence           | Search on search arms; `ANSWER: unavailable`; no near-miss figure     |
+| `discovery-absent-write`         | Honest absence           | Search on search arms; zero writes; `ANSWER: unavailable`             |
+| `discovery-failing-partial`      | Failing connector (401)  | Directory read; manager named; `timeoff` failure reported, not denied |
+| `discovery-failing-hung`         | Failing connector (hung) | Search on search arms; `expense_desk` failure reported, not denied    |
+| `discovery-join-unnamed`         | Unnamed multi-connector  | Current accounts and tickets read; the right customer and ticket      |
+
+Prompts name no connector or tool, are identical on every arm, and end with the
+same line offering `ANSWER: unavailable`, so that option cannot reveal which
+tasks have no answer. Their wording was fixed before any model ran. Do not tune it
+toward an arm's results. The two failing connectors are task-level fakes, so
+these tasks need no `--hung-connector` or `--unauthorized-connector`, and every
+other task avoids the hung connector's search delay.
+
+Grades read the ledger, fake state and final answer, never the route or the field
+names of reduced program output. In `discovery-lookalike-invoices` and
+`discovery-write-rollback`, any call to the wrong twin fails, including an
+exploratory read, because those twins are a write or the wrong environment.
+Elsewhere an exploratory read is allowed when the answer stays correct: an absence
+task may read a near miss, then report that it does not answer the question.
+`discovery-lookalike-crm` may read the retired CRM too, if the contract is read
+from the current one and the answer gives its date. Such a read stays visible as a
+failed advisory `no-lookalike-call`.
+
+```sh
+pnpm run build
+pnpm run eval:selftest --discovery-only
+pnpm run eval:selftest --discovery-only --targets node --arms six,native --tasks discovery-lookalike-crm
+```
+
+`--discovery-only` uses no model. On each target and arm, with 60 padded tools, it
+requires the reference and a program that reduces every read to a meaningless
+field to pass. It requires a no-op, a fabricated answer, a duplicate write and a
+plausible wrong route played against real fakes to fail. It also runs accepted and
+rejected final-answer wording. The `code` arm is Node-only, and program reduction
+does not apply to `native-no-code` or `code`. These tasks are not enrolled in
+`eval:outcomes`.
+
+**Limits to keep in mind when reading results:**
+
+- On native arms a fabricated answer to `discovery-absent-read`,
+  `discovery-absent-write` or `discovery-failing-hung` passes by construction.
+  The served inventory is their only discovery, and no call can prove it was read.
+  The controls assert this exception explicitly. Search arms require a real search.
+- A native pool omits a failed connector's tools, with no per-connector signal in
+  the tool list. `native` can still see `catalogErrors` through `connecta.search`.
+  `native-no-code` has no route to that signal, so an honest agent there can
+  only report that no such tool is listed, which fails `no-denial`. The
+  scripted references name the connector anyway, because they script the ideal
+  answer rather than what the arm reveals. Read those failures as a measured
+  property of the arm's failure reporting, not as evidence about search.
+- A hung connector stalls a native `tools/list` for the 30 s probe timeout, while
+  an unscoped search waits about 5 s. Trial timing on `discovery-failing-hung`
+  includes that cost.
+- A final-answer regex recognizes common wording. `reports-limitation` requires a
+  clause naming the connector with a failure term, and `no-denial` refuses claims
+  that the capability does not exist. Check failed transcripts before treating a
+  miss as agent behavior, and add any real wording to the answer controls.
