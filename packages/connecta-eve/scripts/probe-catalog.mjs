@@ -125,6 +125,51 @@ async function boot(consumer, url, token, transport) {
   }
 }
 
+/** The claims the helper's guide makes about Eve, read from what real Eve sent. */
+function assertEveContract({ modelRequests, sequence, surface, tool, wire }) {
+  // Dynamic instructions reach every model call as their own system message.
+  for (const { prompt } of modelRequests) {
+    const guidance = prompt.filter(
+      (message) =>
+        message.role === "system" && message.content.startsWith("Connecta guidance:\nConnecta tools are deferred"),
+    );
+    assert.equal(guidance.length, 1, "Every model call carries the guidance once, as its own system message");
+    assert.match(
+      guidance[0].content,
+      surface === "meta" ? /eve__search sees only Connecta's routing tools/ : /"connecta__<connector>__WRITE__<tool>"/,
+    );
+  }
+  // Tool results sit in later requests, keyed by the probe's own call ids.
+  const results = new Map(
+    modelRequests
+      .at(-1)
+      .prompt.filter((message) => message.role === "tool")
+      .flatMap((message) => message.content)
+      .map((part) => [part.toolCallId, part.output]),
+  );
+  const searchOf = (query) => {
+    const ordinal = sequence.findIndex(([name, input]) => name === "eve__search" && input.query === query);
+    assert.notEqual(ordinal, -1, query);
+    const output = results.get(`probe-${ordinal}`);
+    assert.equal(output?.type, "json", `eve__search answered ${query}: ${JSON.stringify(output)}`);
+    return output.value;
+  };
+  if (surface === "meta") {
+    // Only tools named connecta__<routing tool>, never a downstream operation.
+    const downstream = searchOf(tool(0));
+    assert.deepEqual(downstream.results, [], "A downstream name must not match on a meta pool");
+    assert.equal(downstream.searched, 6, "Eve searched the routing tools, not an empty catalog");
+  } else {
+    const writes = searchOf("connecta__crm__WRITE__").results.map((result) => result.tool);
+    assert.ok(writes.includes(`connecta__crm__WRITE__${tool(1)}`), JSON.stringify(writes));
+    for (const name of writes) assert.match(name, /^connecta__crm__WRITE__/);
+  }
+  // Eve closes a step's client and lists again in the next one, so a repaired
+  // connector needs no reconnect: every step that reached the connection listed.
+  const listed = wire.filter((entry) => entry.method === "tools/list").length;
+  assert.ok(listed >= sequence.length, `Eve listed tools ${listed} times across ${sequence.length} steps`);
+}
+
 async function cell(consumer, count, surface) {
   const start = performance.now();
   const installedCore = join(consumer, "node_modules/@zackbart/connecta/dist");
@@ -359,6 +404,8 @@ async function cell(consumer, count, surface) {
         ? [
             ["eve__search", { query: "connecta__call_tool" }],
             ["connecta__call_tool", { address: address(count - 1), args: { id: "eve-read" }, resultMode: "value" }],
+            // A downstream name: the guide promises this search reaches routing tools only.
+            ["eve__search", { query: tool(0) }],
             ["eve__search", { query: "connecta__execute_code" }],
             [
               "connecta__execute_code",
@@ -370,6 +417,9 @@ async function cell(consumer, count, surface) {
         : [
             ["eve__search", { query: `connecta__crm__${tool(count - 1)}` }],
             [`connecta__crm__${tool(count - 1)}`, { id: "eve-read" }],
+            // The guide's scoped search and write name, both through eve__tool.
+            ["eve__search", { query: "connecta__crm__WRITE__" }],
+            [`connecta__crm__WRITE__${tool(1)}`, { id: "eve-write" }],
             ...(surface === "native-code"
               ? [
                   ["eve__search", { query: "connecta__execute_code" }],
@@ -417,6 +467,7 @@ async function cell(consumer, count, surface) {
         res.writeHead(500).end();
       }
     });
+    const eveWireStart = wire.length;
     eve = await boot(consumer, url, token, transport.origin);
     const eveStart = performance.now();
     const signal = AbortSignal.timeout(90_000);
@@ -444,8 +495,13 @@ async function cell(consumer, count, surface) {
     assert.equal(modelRequests.length, sequence.length + 1);
     assert.deepEqual(
       ledger.filter((entry) => entry.args.id.startsWith("eve-")).map((entry) => entry.args.id),
-      surface === "native" ? ["eve-read"] : ["eve-read", "eve-code"],
+      {
+        meta: ["eve-read", "eve-code"],
+        native: ["eve-read", "eve-write"],
+        "native-code": ["eve-read", "eve-write", "eve-code"],
+      }[surface],
     );
+    assertEveContract({ modelRequests, sequence, surface, tool, wire: wire.slice(eveWireStart) });
     for (const entry of ledger) assert.equal(entry.resultBytes > 0, true);
     const after = process.memoryUsage();
     const measurement = {
