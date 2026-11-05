@@ -1,8 +1,12 @@
+import { eveVersion, type EveConnection } from "./agent/eve.js";
 import { guidanceArm } from "./deploy/guidance.js";
 /**
  * `pnpm run eval:agent [options]` runs fake-only tasks through Codex or Claude Code.
  *
- *   --runner       codex (default) or claude
+ *   --runner       codex (default), claude or eve
+ *   --eve-connection          Eve's connection name (default connecta)
+ *   --eve-description         Eve's connection description (default "Connecta task tools")
+ *   --eve-default-description omit the description, so the helper's own default applies
  *   --target       node (default) or worker: the deployment shape each trial
  *                  boots; worker runs workerd under wrangler dev
  *   --no-build     skip `pnpm run build` before a worker batch
@@ -20,7 +24,7 @@ import { guidanceArm } from "./deploy/guidance.js";
  *   --report       also write an HTML report
  *   --baseline     previous result file for that report
  *
- * Both runners use existing CLI sign-ins. Codex isolates its home; Claude
+ * The runners use existing sign-ins. Codex isolates its home; Claude
  * isolates settings and tools with CLI flags. Only the fake MCP endpoint loads. Completed trials are written
  * atomically as they finish. The exit status is nonzero unless every declared
  * trial ran once, completed normally and passed.
@@ -53,9 +57,10 @@ if (guidance && (target !== "node" || surface !== "six" || grading !== "outcome"
 const injection = parseInjection(args);
 if (injection.d1LatencyMs && target !== "worker") throw new Error("--d1-latency-ms needs --target worker");
 const runner = args.get("runner") ?? "codex";
-if (runner !== "codex" && runner !== "claude") throw new Error("--runner must be codex or claude");
+if (runner !== "codex" && runner !== "claude" && runner !== "eve")
+  throw new Error("--runner must be codex, claude or eve");
 if (
-  (runner === "codex" && args.has("max-budget-usd")) ||
+  (runner !== "claude" && args.has("max-budget-usd")) ||
   args.has("mcp-output-tokens") ||
   args.has("max-utilization")
 ) {
@@ -63,6 +68,15 @@ if (
     "Unsupported runner option; --max-budget-usd is Claude-only, and MCP output/utilization flags are retired",
   );
 }
+const eveFlags = ["eve-connection", "eve-description", "eve-default-description"].filter((flag) => args.has(flag));
+if (runner !== "eve" && eveFlags.length) throw new Error(`--${eveFlags[0]} is Eve-only`);
+if (args.has("eve-description") && args.has("eve-default-description"))
+  throw new Error("--eve-description and --eve-default-description conflict");
+const eve: EveConnection = {
+  ...(args.has("eve-connection") ? { connection: args.get("eve-connection")! } : {}),
+  ...(args.has("eve-description") ? { description: args.get("eve-description")! } : {}),
+  ...(args.has("eve-default-description") ? { description: null } : {}),
+};
 const models = (args.get("models") ?? (runner === "claude" ? CLAUDE_MODELS.join(",") : "gpt-6-luna"))
   .split(",")
   .map((model) => model.trim())
@@ -71,7 +85,7 @@ const repeats = Number(args.get("repeats") ?? 1);
 const concurrency = Number(args.get("concurrency") ?? 1);
 const timeoutMs = Number(args.get("timeout-min") ?? 8) * 60_000;
 const effort = args.get("effort");
-if (runner === "claude" && effort) throw new Error("--effort is Codex-only");
+if (runner !== "codex" && effort) throw new Error("--effort is Codex-only");
 const maxBudgetUsd = args.has("max-budget-usd") ? Number(args.get("max-budget-usd")) : undefined;
 if (maxBudgetUsd !== undefined && (!Number.isFinite(maxBudgetUsd) || maxBudgetUsd <= 0))
   throw new Error("--max-budget-usd must be positive");
@@ -112,16 +126,17 @@ if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error("--timeout-mi
 if (!models.length) throw new Error("--models must name at least one model");
 
 const out = resolve(args.get("out") ?? join(ROOT, "eval", "results", `agent-${stamp()}.json`));
-const version = await (runner === "claude" ? claudeVersion() : codexVersion());
+const version = await (runner === "eve" ? eveVersion() : runner === "claude" ? claudeVersion() : codexVersion());
 if (version === "unavailable") throw new Error(`${runner} CLI is unavailable`);
 const file: AgentResultFile = {
   kind: "connecta-eval/agent",
   version: 1,
   meta: runMeta(),
   protocol: runProtocol(args.get("pair-id")),
-  [runner === "claude" ? "claudeVersion" : "codexVersion"]: version,
+  [`${runner}Version`]: version,
   config: {
     runner,
+    ...(eveFlags.length ? { eve } : {}),
     target,
     // Always recorded, zeros included, so a comparison can prove it matched.
     injection,
@@ -170,6 +185,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
 let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
   runner,
+  ...(eveFlags.length ? { eve } : {}),
   target,
   injection,
   surface,
