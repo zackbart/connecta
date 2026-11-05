@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-05: The read-only program route adds its registration, description, instructions, discovery marker and refusal, and carries the read-repeatable acceptance to that refusal. The official Node 22.23.4 binary measures this PR at 435,673 B and 819,206 B, against main's caps of 434,800 B and 818,500 B. The caps move to 435,803 B and 819,336 B, leaving 130 B each, and stay provisional: final caps come from the combined candidate.",
     "2026-11-04: The Eve connection guide adds endpoint facts to the core, and merging it with #1343 is projected to pass the examples/worker cap of 818,330 B. That cap moves to 818,500 B; final caps are set from the combined release candidate.",
     "2026-11-04: Endpoint facts for the Eve helper, from the discovery extension and shared inventory title. Official Node 22.23.4 measures the root at 434,488 B on main at ec3a61f6, up 110 B on that main's 434,378 B and 8 B past its 434,480 B cap. The root cap moves to 434,600 B; examples/worker stays within its cap at 818,280 B.",
     "2026-11-04: Merging main at ec3a61f6 (#1348) into the source-declared write rule puts the root past 434,480 B on CI. The root cap moves to 434,800 B; final caps are set from the combined release candidate.",
@@ -78,7 +79,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 434800
+      "maxGzip": 435803
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -161,7 +162,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 818500
+      "maxGzip": 819336
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
