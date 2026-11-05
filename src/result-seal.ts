@@ -3,8 +3,9 @@
 // lasts, so every way a run can end leaves nothing a reader can open unless sealing wrote
 // that chunk. Sealing waits until the run can no longer add to its secret set, and only
 // then writes the headers of entries that pass that set. Stored bytes never change, so an
-// offset issued for an entry stays valid. A run costs no extra writes, and reads stored
-// bytes back only for entries the set grew past.
+// offset issued for an entry stays valid. A reclaimed transfer leaves this ledger first and
+// gets no header. Sealing costs no extra writes, and reads stored bytes back only for
+// entries the set grew past.
 import { Duration, Effect } from "effect";
 import { authStorage } from "./auth/native.js";
 import { PendingWork } from "./runtime/request-scope.js";
@@ -66,6 +67,11 @@ export class HeldResults {
     if (this.closed) return false;
     this.entries.set(entry.id, entry);
     return true;
+  }
+  /** Forget an entry whose stash is being given back, so sealing never writes its header.
+   * False once sealing began, when the entry is no longer this ledger's to give up. */
+  discard(id: string): boolean {
+    return !this.closed && this.entries.delete(id);
   }
   /** Chunk 0 as storage will hold it, for paging inside the run that stashed it. */
   stored(id: string): string | undefined {

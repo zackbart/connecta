@@ -33,6 +33,7 @@ import {
   guardProgramReturn,
   jsonResult,
   pageProgramResult,
+  releaseStashedResult,
   type ProgramResultDependency,
   type ResultReadStage,
   type ToolResult,
@@ -40,6 +41,7 @@ import {
 import {
   PROGRAM_RESULT_INLINE_BYTES,
   PROGRAM_RESULT_PAGE_BYTES,
+  PROGRAM_RESULT_READ_BYTES,
   PROGRAM_RESULT_WIRE_BYTES,
   type ProgramResultHandle,
 } from "./program-result.js";
@@ -75,6 +77,13 @@ const EXECUTE_MAX_HOST_CALLS = CONFIG_DEFAULTS.execute.maxHostCalls;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
 /** Above every program in the recorded evals, below the QuickJS IPC ceiling. */
 const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
+/** All of one run's stash reclaim, in milliseconds of waiting on storage. */
+const RECLAIM_BUDGET_MS = 1_000;
+/**
+ * Reclaims per run. Each freed slot lets another read stash and page again, so unbounded
+ * reclaim keeps a program spending storage queries that a full stash would have ended.
+ */
+const RECLAIM_MAX_PER_RUN = 3;
 /**
  * The outer ceiling on one execution. It sits above both executors' own
  * deadlines (QuickJS 30s, the Dynamic Worker 60s), so a healthy executor
@@ -565,6 +574,8 @@ interface SandboxLimits {
   maxWrites?: number | undefined;
   /** The program's writes, for close and drain. */
   programWrites?: ProgramWrites | undefined;
+  /** What `connecta.result(id, { all: true })` delivers. */
+  readBytes?: number | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
   /** Set when a program read a result field off an unawaited host call. */
@@ -669,19 +680,48 @@ function sandboxProvider(
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
   // These are transfer cursors only. All result bytes live in the existing stash.
-  const transfers = new Map<string, { id: string; offset: number }>();
+  // `reclaim` marks a read's stash only this transfer can name, because the guest never saw
+  // its handle. A guest-supplied id stays readable until it expires; a write's stash expires too.
+  const readBytes = limits.readBytes ?? PROGRAM_RESULT_READ_BYTES;
+  const transfers = new Map<
+    string,
+    { id: string; offset: number; reclaim?: { totalBytes: number }; finished?: boolean }
+  >();
   const nativeResults = new Map<string, GuestNativeBlock[]>();
-  const transportResult = (value: { format: string }) => {
+  const transportResult = (value: { format: string }, write: boolean) => {
     if (value.format === "paged") {
       const handle = value as ProgramResultHandle;
       if (handle.resultId && handle.totalBytes <= PROGRAM_RESULT_INLINE_BYTES) {
         const transfer = `transfer:${crypto.randomUUID()}`;
-        transfers.set(transfer, { id: handle.resultId, offset: 0 });
-        return { transfer, handle };
+        transfers.set(transfer, {
+          id: handle.resultId,
+          offset: 0,
+          ...(write ? {} : { reclaim: { totalBytes: handle.totalBytes } }),
+        });
+        return { transfer, handle, ...(write ? {} : { reclaim: true }) };
       }
     }
     return value;
   };
+  // Slow storage may cost a run its reclaim, never its answer: all of a run's reclaim shares
+  // this much time, and once it's spent the rest of the run's entries just wait to expire.
+  let reclaimLeftMs = RECLAIM_BUDGET_MS;
+  let reclaimsLeft = RECLAIM_MAX_PER_RUN;
+  const reclaim = (id: string, totalBytes: number) =>
+    Effect.suspend(() => {
+      if (reclaimLeftMs <= 0 || reclaimsLeft <= 0) return Effect.void;
+      reclaimsLeft--;
+      const started = Date.now();
+      return releaseStashedResult(registry, limits.heldResults, id, totalBytes).pipe(
+        Effect.timeoutOrElse({ duration: Duration.millis(reclaimLeftMs), orElse: () => Effect.void }),
+        Effect.ignore,
+        Effect.ensuring(
+          Effect.sync(() => {
+            reclaimLeftMs -= Date.now() - started;
+          }),
+        ),
+      );
+    });
   const dispatchDeadlineAt = limits.readDeadlineAt ?? limits.programDeadlineAt;
   /** Budget and account for writes a writable endpoint admits. */
   const invocationContext = (
@@ -718,6 +758,7 @@ function sandboxProvider(
           // Dispatch succeeded before presentation began. Cancellation of paging
           // cannot turn this completed write into an unknown or failed write.
           sending.settle?.("ok");
+          const write = resolved.definition.classification !== "read";
           const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
             authCall<Awaited<ReturnType<typeof pageProgramResult>>>(pageProgramResult, [
               registry,
@@ -730,6 +771,7 @@ function sandboxProvider(
               { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
               limits.heldResults,
+              readBytes,
             ]);
           const envelope =
             resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
@@ -755,7 +797,7 @@ function sandboxProvider(
             !Array.isArray(content) ||
             !content.some((block) => block && ["image", "audio", "resource", "resource_link"].includes(block.type))
           ) {
-            return transportResult(yield* page(value, format));
+            return transportResult(yield* page(value, format), write);
           }
           const unavailablePresentation = (): ProgramResultHandle => ({
             format: "paged",
@@ -782,7 +824,7 @@ function sandboxProvider(
             }
           } catch (error) {
             if (!(error instanceof NativePresentationLimit)) throw error;
-            const result = dataKey === undefined ? undefined : transportResult(yield* page(value, format));
+            const result = dataKey === undefined ? undefined : transportResult(yield* page(value, format), write);
             const notice = unavailablePresentation();
             return result ? { value: result, native: { value: notice } } : notice;
           }
@@ -797,7 +839,7 @@ function sandboxProvider(
           });
           let valueResult: unknown;
           if (native.format === "paged") {
-            valueResult = result ? transportResult(result) : undefined;
+            valueResult = result ? transportResult(result, write) : undefined;
             if (!native.resultId || native.totalBytes > PROGRAM_RESULT_INLINE_BYTES) {
               return valueResult ? { value: valueResult, native: { value: native } } : native;
             }
@@ -807,14 +849,14 @@ function sandboxProvider(
           // absent or connector-owned blocks.
           if (!retained) {
             const notice = native.format === "paged" ? native : unavailablePresentation();
-            const valueResult = result ? transportResult(result) : undefined;
+            const valueResult = result ? transportResult(result, write) : undefined;
             return valueResult ? { value: valueResult, native: { value: notice } } : notice;
           }
           const ref = crypto.randomUUID();
           nativeResults.set(ref, retained);
           return {
             ...(valueResult ? { value: valueResult } : {}),
-            native: { ref, value: transportResult(native), dataKey },
+            native: { ref, value: transportResult(native, write), dataKey },
           };
         }),
     ),
@@ -1036,8 +1078,16 @@ function sandboxProvider(
       if (limits.unawaited) limits.unawaited.read = true;
     },
     call,
-    result: (id, options, signal, onStage) =>
-      Effect.tryPromise({
+    result: (id, options, signal, onStage) => {
+      const finished = typeof id === "string" ? transfers.get(id) : undefined;
+      if (finished?.finished) {
+        // The prelude has the whole value, so a read gives its bytes back.
+        transfers.delete(id as string);
+        return finished.reclaim
+          ? reclaim(finished.id, finished.reclaim.totalBytes).pipe(Effect.as({}))
+          : Effect.succeed({});
+      }
+      return Effect.tryPromise({
         try: async () => {
           const transfer = typeof id === "string" ? transfers.get(id) : undefined;
           const transferId = id;
@@ -1057,6 +1107,14 @@ function sandboxProvider(
             );
           }
           const args = { ...((options ?? {}) as Record<string, unknown>) };
+          const whole = args.all === true;
+          if (args.all === false) delete args.all;
+          if ((whole && Object.keys(args).length > 1) || (args.all !== undefined && !whole)) {
+            throw new InvocationFailure(
+              utilityRecovery("invalid_args", "Use connecta.result(handleOrId, { all: true }) with no other options."),
+            );
+          }
+          delete args.all;
           if (
             Object.keys(args).some((key) => !["page", "offset", "maxBytes"].includes(key)) ||
             (args.page !== undefined &&
@@ -1098,12 +1156,27 @@ function sandboxProvider(
             );
           if (transfer) {
             if (page.structuredContent?.hasMore) transfer.offset = page.structuredContent.nextOffset as number;
+            else if (transfer.reclaim) transfer.finished = true;
             else transfers.delete(transferId as string);
+          }
+          if (whole) {
+            const totalBytes = page.structuredContent?.totalBytes as number;
+            if (totalBytes > readBytes) {
+              throw guestFailure(
+                "result_too_large",
+                `This result is ${totalBytes} bytes and connecta.result(id, { all: true }) reads at most ${readBytes}. Page it with { offset } and keep only what you need from each page.`,
+              );
+            }
+            if (!page.structuredContent?.hasMore) return page.structuredContent;
+            const started = `transfer:${crypto.randomUUID()}`;
+            transfers.set(started, { id, offset: page.structuredContent.nextOffset as number });
+            return { ...page.structuredContent, transfer: started };
           }
           return page.structuredContent;
         },
         catch: (err) => err,
-      }),
+      });
+    },
     skill: (name, _options, utilitySignal) =>
       Effect.tryPromise({
         try: async () => {
@@ -1608,6 +1681,7 @@ export function createExecuteTool(
   };
   const hostCallTimeoutMs = resolveBudget(config.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS);
   const maxResultChars = resolveBudget(config.maxResultChars, MAX_EXECUTE_RESULT_CHARS);
+  const readBytes = resolveBudget(executor.maxReadBytes, PROGRAM_RESULT_READ_BYTES);
 
   const play = (
     program: string,
@@ -1700,6 +1774,7 @@ export function createExecuteTool(
                 maxWrites: config.maxWrites,
                 routes: config.routes,
                 programWrites,
+                readBytes,
                 resultDependencies,
                 dispatchController,
                 unawaited,
@@ -1787,6 +1862,7 @@ export function createExecuteTool(
             maxResultChars,
             heldResults,
             ceiling.answerBy,
+            readBytes,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(

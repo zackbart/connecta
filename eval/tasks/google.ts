@@ -45,7 +45,7 @@ const goals: Record<GoogleProduct, readonly string[]> = {
   sheets: [
     "Read sheets1 'Alice''s costs'!A1:D7 using unformatted numbers. Sum office amounts on 2026-10-01. Report spreadsheet id, record ids and numeric total. Do not change anything.",
     "Find workbook 'sheets review' through Drive, resolve named range Amounts, and join record1/record2 from Alice's costs to People. Report workbook id, named range id and both matched names. Do not change anything.",
-    "Read every row of sheets1 across 'Alice''s costs'!A1:L7 and People!A1:B2, using a small cell budget and every local continuation. Report the complete cost-record ids and total amount. Do not invent a Google page token or change anything.",
+    "Read every row of sheets1 across 'Alice''s costs'!A1:L7 and People!A1:B2, using a small cell budget and every local continuation. Report the spreadsheet id, the complete cost-record ids and total amount. Do not invent a Google page token or change anything.",
     "Inspect conditional formatting and protected-range metadata in sheets1 sheet 0, then make A1:D1 bold once. Report spreadsheet id, sheet id and protection id. Preserve existing rules and protection.",
     "Append exactly one row ['external1','2026-10-02','office',77] to sheets1 Alice's costs as literal values, inserting rows rather than overwriting. Verify it and report spreadsheet id, record id and amount.",
     "Append exactly one literal row ['recover1','2026-10-02','office',88] to sheets1 Alice's costs. If uncertain, read the table and identify the saved row without appending again. Report spreadsheet id, record id and actual amount.",

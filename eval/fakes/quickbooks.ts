@@ -1,4 +1,4 @@
-/** Small stateful Intuit stand-in: exact query fixtures, no SQL parser or vendor network. */
+/** Small stateful Intuit stand-in: the structured query grammar search_records builds, no vendor network. */
 import { serveFetch, type Served } from "../support/serve.js";
 import type { Ledger } from "./service.js";
 import { randomBytes } from "node:crypto";
@@ -41,6 +41,97 @@ const report = {
     ],
   },
 };
+/** What each record family can filter on, as Intuit answers an unknown column with a 400. */
+const SEARCHABLE: Record<string, string[]> = (() => {
+  const updated = ["Id", "MetaData.LastUpdatedTime"];
+  const master = (name: string) => [...updated, "Active", name];
+  return {
+    Customer: master("DisplayName"),
+    Vendor: master("DisplayName"),
+    Account: master("Name"),
+    Item: master("Name"),
+    Invoice: [...updated, "TxnDate", "DocNumber", "DueDate", "Balance", "CustomerRef"],
+    Bill: [...updated, "TxnDate", "DocNumber", "DueDate", "Balance", "VendorRef"],
+    Payment: [...updated, "TxnDate", "CustomerRef"],
+    BillPayment: [...updated, "TxnDate", "DocNumber", "VendorRef"],
+  };
+})();
+const MASTER = new Set(["Customer", "Vendor", "Account", "Item"]);
+const RANGE = new Set(["MetaData.LastUpdatedTime", "TxnDate", "DueDate", "Balance"]);
+
+/** One `Field op literal` clause, or undefined for anything search_records would not build. */
+function parseClause(source: string, entity: string) {
+  const match = /^([A-Za-z.]+) (=|>=|<=|>|<) (?:'((?:[^'\\]|\\.)*)'|(true|false)|(-?\d+(?:\.\d+)?))(?: AND |$)/.exec(
+    source,
+  );
+  if (!match || !SEARCHABLE[entity]!.includes(match[1]!)) return undefined;
+  const [text, field, operator, quoted, bool, number] = match;
+  if (operator !== "=" && !RANGE.has(field!)) return undefined;
+  if (bool !== undefined && field !== "Active") return undefined;
+  if (number !== undefined && field !== "Balance") return undefined;
+  if (quoted !== undefined && (field === "Active" || field === "Balance")) return undefined;
+  const value =
+    quoted !== undefined ? quoted.replace(/\\(.)/g, "$1") : bool !== undefined ? bool === "true" : Number(number);
+  return {
+    field: field!,
+    operator: operator!,
+    value,
+    rest: source.slice(text!.length),
+    ended: text!.endsWith(" AND "),
+  };
+}
+
+function fieldValue(row: Row, field: string): unknown {
+  if (field === "CustomerRef" || field === "VendorRef") return row[field]?.value;
+  if (field === "MetaData.LastUpdatedTime") return row.MetaData?.LastUpdatedTime;
+  return row[field];
+}
+
+/**
+ * Accept every query the provider's search can build, against the live rows, and
+ * refuse the rest: raw columns, joins, OR, malformed quoting and missing paging.
+ * A wrong filter value therefore finds no record, as it would at Intuit.
+ */
+export function runSearch(company: Row, query: string): Row | undefined {
+  const match = /^SELECT \* FROM ([A-Za-z]+)(?: WHERE (.+))? STARTPOSITION ([1-9]\d*) MAXRESULTS ([1-9]\d*)$/.exec(
+    query,
+  );
+  if (!match || !Object.hasOwn(SEARCHABLE, match[1]!) || Number(match[4]) > 1000) return undefined;
+  const entity = match[1]!;
+  const clauses: { field: string; operator: string; value: unknown }[] = [];
+  let rest = match[2] ?? "";
+  for (let more = rest !== ""; more;) {
+    const clause = parseClause(rest, entity);
+    if (!clause) return undefined;
+    clauses.push(clause);
+    rest = clause.rest;
+    more = clause.ended;
+    if (more && rest === "") return undefined;
+  }
+  const compare = (actual: unknown, operator: string, wanted: unknown) => {
+    if (operator === "=") return actual === wanted;
+    if (actual === undefined || actual === null) return false;
+    const [left, right] = [actual as string | number, wanted as string | number];
+    return operator === ">"
+      ? left > right
+      : operator === ">="
+        ? left >= right
+        : operator === "<"
+          ? left < right
+          : left <= right;
+  };
+  // Intuit hides inactive master records unless a query asks about Active.
+  const hidden = MASTER.has(entity) && !clauses.some((clause) => clause.field === "Active");
+  const rows = ((company[entity] as Row[] | undefined) ?? []).filter(
+    (row) =>
+      !(hidden && row.Active === false) &&
+      clauses.every((clause) => compare(fieldValue(row, clause.field), clause.operator, clause.value)),
+  );
+  const start = Number(match[3]) - 1;
+  const page = rows.slice(start, start + Number(match[4]));
+  return page.length ? { [entity]: page } : {};
+}
+
 export const quickbooksState = () => ({
   /** Per-world OAuth client and token suffix: concurrent worlds never share a credential. */
   clientId: `${QB_CLIENT}-${randomBytes(6).toString("hex")}`,
@@ -323,31 +414,9 @@ export class FakeQuickBooks {
           result = { Invoice: { ...(result as Row).Invoice, ExchangeRate: "not-a-number" } };
       } else if (path === `/companyinfo/${realm}`) result = { CompanyInfo: company.company };
       else if (path === "/query") {
-        const query = url.searchParams.get("query");
-        // A finite set of independently authored fixture requests. Unexpected SQL fails.
-        const queries: Record<string, unknown> = {
-          "SELECT * FROM Customer WHERE DisplayName = 'Alice\\'s \\\\ studio' STARTPOSITION 1 MAXRESULTS 2": {
-            Customer: company.Customer.slice(0, 1),
-          },
-          "SELECT * FROM Invoice WHERE CustomerRef = '9' STARTPOSITION 1 MAXRESULTS 3": {
-            Invoice: company.Invoice.slice(0, 3),
-          },
-          "SELECT * FROM Invoice WHERE CustomerRef = '9' STARTPOSITION 3 MAXRESULTS 3": {
-            Invoice: company.Invoice.slice(2, 5),
-          },
-        };
-        for (const name of ["Workshop", "Workshop A", "Workshop B", "Transport", "Malformed"]) {
-          queries[`SELECT * FROM Customer WHERE DisplayName = '${name}' STARTPOSITION 1 MAXRESULTS 26`] = {
-            Customer: company.Customer.filter((r: Row) => r.DisplayName === name),
-          };
-        }
-        for (const label of ["SERVICES-OK", "SERVICES-RECOVER", "SERVICES-CONTRADICT", "SERVICES-RATE"]) {
-          queries[`SELECT * FROM Invoice WHERE DocNumber = '${label}' STARTPOSITION 1 MAXRESULTS 26`] = {
-            Invoice: company.Invoice.filter((r: Row) => r.DocNumber === label),
-          };
-        }
-        if (!query || !queries[query]) status = 400;
-        else result = { QueryResponse: queries[query] };
+        const rows = runSearch(company, url.searchParams.get("query") ?? "");
+        if (!rows) status = 400;
+        else result = { QueryResponse: rows };
       } else if (/^\/(invoice|customer|item)\/\d+$/.test(path)) {
         const entity = { invoice: "Invoice", customer: "Customer", item: "Item" }[path.split("/")[1]!]!;
         const row = company[entity as "Invoice" | "Customer" | "Item"].find((r: Row) => r.Id === path.split("/")[2]);
@@ -362,7 +431,7 @@ export class FakeQuickBooks {
       const root = result as Row;
       const withEcho = (row: Row) => ({ ...row, Name: auth?.slice(7) });
       for (const entity of ["Invoice", "Customer", "Item"]) if (root[entity]) root[entity] = withEcho(root[entity]);
-      for (const entity of ["Invoice", "Customer"])
+      for (const entity of ["Invoice", "Customer", "Item"])
         if (root.QueryResponse?.[entity]) root.QueryResponse[entity] = root.QueryResponse[entity].map(withEcho);
     }
     const call = {

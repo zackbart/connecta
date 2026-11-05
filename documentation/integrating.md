@@ -202,7 +202,7 @@ only in deployment code through the existing `classification` map:
 
 ```ts
 classification: {
-  crm: { list_tickets: "read", update_ticket: "write", internal_export: "hidden" },
+  crm: { list_tickets: "read", save_view: "read-repeatable", update_ticket: "write", internal_export: "hidden" },
 },
 ```
 
@@ -224,6 +224,15 @@ states:
   annotations. Setting it asserts that the call is safe to repeat, because the host
   may resend it and Connecta cannot tell a resend from a new call.
 
+`"read-repeatable"` is the opt-in for a tool whose source declares a write but which
+you have checked: `crm.save_view` above adds one immutable record. It serves as a read
+on every route, with read annotations, on read-only endpoints, through `call_tool`,
+in programs and under its plain native name. You accept that a host may resend it after
+a connection failure, so the vendor can receive the call twice; only use it where a
+repeat is harmless. Connecta itself still sends it at most once, as the next paragraph
+describes. Prefer `"read"`: if a vendor later declares a write, `"read"` fails safe and
+`"read-repeatable"` does not.
+
 Replay and failure decisions treat a call as a write when either its
 effective class or its source class is write. The source class is the verified
 server annotations;
@@ -242,8 +251,8 @@ Remote catalogs evolve. Discovery, direct calls, and programs enforce the
 current annotations and `ConnectaConfig.classification` overrides. A leftover
 `classify` option throws at construction and names that map. Provider reviews,
 schema pins, `optional`, and `unlisted: "hide"` are removed. Missing or
-contradictory hints make the source class write. Contradictory hints also keep
-the effective class write; missing hints do not, under a read override. Review behavior before setting a read override;
+contradictory hints make the source class write. Under `"read"`, contradictory hints also keep
+the effective class write and missing hints do not. `"read-repeatable"` serves either as a read. Review behavior before setting a read override;
 classification does not replace downstream scopes or caller grants.
 
 ## A hand-written HTTP capability

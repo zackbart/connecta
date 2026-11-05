@@ -43,6 +43,9 @@ import {
   checkProgramReturnFallback,
   checkProgramReturnPaging,
   checkProgramReturnWriteWarning,
+  checkReclaimAfterSealingBegan,
+  checkTransferReclaim,
+  wholeReadSealingCases,
 } from "./program-result-cases.js";
 
 // Every case here drives a real QuickJS child process, whose startup and IPC
@@ -127,6 +130,113 @@ describe("guest API contract (QuickJS executor)", () => {
   for (const [title, check] of Object.entries(retainedSealingCases)) {
     it(`INV-5 INV-7: ${title}`, () => check(executor), 60_000);
   }
+  for (const [title, check] of Object.entries(wholeReadSealingCases)) {
+    it(`[S11, R4a] INV-5: ${title}`, () => check(executor), 60_000);
+  }
+  it("[L6, R4a]: sealing owns an entry from the moment it begins", checkReclaimAfterSealingBegan);
+  it("[L6] INV-9: reclaims finished reads and keeps a failed run's write output", async () => {
+    await checkTransferReclaim(executor);
+  });
+  it("[S11] scales the whole-read ceiling with the CPU budget and caps it", async () => {
+    const ceiling = (options: Parameters<typeof quickJsExecutor>[0]) => {
+      const scaled = quickJsExecutor(options);
+      void scaled.close?.();
+      return scaled.maxReadBytes;
+    };
+    expect(ceiling({})).toBe(1.5 * 1024 * 1024);
+    expect(ceiling({ cpuTimeMs: 125 })).toBe(0.75 * 1024 * 1024);
+    expect(ceiling({ cpuTimeMs: 60_000 })).toBe(2 * 1024 * 1024);
+    expect(ceiling({ cpuTimeMs: 60_000, memoryLimitBytes: 16 * 1024 * 1024 })).toBe(1024 * 1024);
+  });
+  it("[S11] a whole read of a large return leaves its child in place", async () => {
+    // A large return, then a whole read of it in the same child, grows memory during a job pass.
+    const pool = quickJsExecutor({ cpuTimeMs: 5_000 });
+    const registry = makeRegistry(
+      [
+        {
+          id: "store",
+          kind: "api",
+          maxResultBytes: 9_001,
+          async listTools() {
+            return [{ name: "noop", annotations: { readOnlyHint: true } }];
+          },
+          async callTool() {
+            return "ok";
+          },
+        },
+      ],
+      {},
+    );
+    const execute = createExecuteTool(registry, "https://whole-read.test", pool, silentLogger);
+    try {
+      const made = await execute({
+        code: `async () => { await connecta.call("store.noop"); return { text: '雪"\\\\\\n'.repeat(150000) }; }`,
+      });
+      const { resultId } = made.structuredContent!.result as { resultId: string };
+      const child = (pool as unknown as { slots: { child?: { process: { pid: number } } }[] }).slots[0]!.child?.process
+        .pid;
+      for (let run = 0; run < 3; run++) {
+        const read = await execute({
+          code: `async () => (await connecta.result(${JSON.stringify(resultId)}, { all: true })).data.text.length`,
+        });
+        expect(read.isError, JSON.stringify(read.structuredContent)).toBeUndefined();
+        expect(read.structuredContent!.result).toBe(600_000);
+        expect(
+          (pool as unknown as { slots: { child?: { process: { pid: number } } }[] }).slots[0]!.child?.process.pid,
+        ).toBe(child);
+      }
+    } finally {
+      await pool.close?.();
+    }
+  }, 60_000);
+  it("[S11, L4] a default program reads whole what paging can't finish in one program", async () => {
+    // Every limit at its default: 250 ms of CPU, 20 host calls, 24,000 return characters.
+    const defaults = quickJsExecutor();
+    const rows = Array.from({ length: 12_000 }, (_, i) => ({ i, pad: "x".repeat(80) }));
+    const registry = makeRegistry([
+      {
+        id: "store",
+        kind: "api",
+        async listTools() {
+          return [{ name: "read", annotations: { readOnlyHint: true } }];
+        },
+        async callTool() {
+          return { rows };
+        },
+      },
+    ]);
+    const execute = createExecuteTool(registry, "https://whole-read.test", defaults, silentLogger);
+    try {
+      const whole = await execute({
+        code: `async () => {
+          const handle = await connecta.call("store.read");
+          const { data } = await connecta.result(handle, { all: true });
+          return { totalBytes: handle.totalBytes, rows: data.rows.length, last: data.rows.at(-1).i };
+        }`,
+      });
+      expect(whole.isError, JSON.stringify(whole.structuredContent)).toBeUndefined();
+      const value = whole.structuredContent!.result as { totalBytes: number; rows: number; last: number };
+      expect(value.totalBytes).toBeGreaterThan(1024 * 1024);
+      expect([value.rows, value.last]).toEqual([12_000, 11_999]);
+
+      // The same result, paged as far as one program can: the host-call limit ends the run.
+      const paged = await execute({
+        code: `async () => {
+          const handle = await connecta.call("store.read");
+          let page, offset = 0;
+          do {
+            page = await connecta.result(handle, { offset });
+            offset = page.nextOffset;
+          } while (page.hasMore);
+          return offset;
+        }`,
+      });
+      expect(paged.isError).toBe(true);
+      expect(JSON.stringify(paged.structuredContent)).toContain("budget_exceeded");
+    } finally {
+      await defaults.close?.();
+    }
+  }, 60_000);
   it("INV-5: at every step of sealing another request reads only what sealing published", async () => {
     await checkRetainedResultsUnreadableWhileSealing(executor);
   }, 60_000);
@@ -354,7 +464,11 @@ describe("guest API contract (QuickJS executor)", () => {
       const execute = createExecuteTool(
         registry,
         BASE,
-        executor,
+        // These handles sit past this executor's read ceiling, where the advice is paging.
+        customExecutor(
+          { maxReadBytes: 1_000_000, execute: executor.execute.bind(executor) },
+          { lifecycle: "self-managed" },
+        ),
         silentLogger,
         undefined,
         options.maxHostCalls ? { maxHostCalls: options.maxHostCalls } : {},

@@ -762,10 +762,12 @@ no paging route.
 
 Meta endpoints page inside a program. Native pools without code list `read_result` for the same bound handles. Program calls also
 return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
-A read's handle says to loop `connecta.result(handle, { offset })` until `!hasMore`
-only when every page at the connector's cap, plus two host calls spare, fits the
-calls its program has left. A handle's value is usually over 1 MiB, so at the
-default 20 calls and 24,000-byte cap it doesn't: its hint then gives the pages
+A handle within the program's [read ceiling](./code-mode.md#connectaresult-and-connectaskill)
+says to read it whole with `connecta.result(handle, { all: true })`, for one host call.
+Past the ceiling, a read's handle says to loop `connecta.result(handle, { offset })`
+until `!hasMore` only when every page at the connector's cap, plus two host calls
+spare, fits the calls its program has left. At the default 20 calls and 24,000-byte
+cap it doesn't: its hint then gives the pages
 to read in this program and in each new one, and says to return the reduction so
 far with `nextOffset` and continue from both, by `resultId`, inside the 15-minute
 retention. A loop past the budget ends in `budget_exceeded` with nothing returned.
@@ -1816,7 +1818,8 @@ address, which never changes.
 `{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
 write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
 whatever hints the downstream declared. A deployment `"read"` override never
-produces read annotations for a tool whose source explicitly declares a write; see
+produces read annotations for a tool whose source explicitly declares a write;
+`"read-repeatable"` does, and accepts that a host may repeat the call. See
 [deployment overrides](./integrating.md#another-remote-mcp-server). A read-only endpoint or connector
 leaves write tools out of the list, by the same rule search and describe use.
 

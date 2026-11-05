@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { operationActivity } from "./operation-activity.js";
 import { SkillLookupError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
@@ -231,6 +232,29 @@ function serializedWithBinary(value: unknown): { text: string; binary: boolean }
 }
 
 /**
+ * Give back a stash nothing can name any more; its layout follows from its size. Sealing
+ * writes a header for whatever the ledger still holds, so the id leaves the ledger first.
+ * Once sealing has begun it owns the entry, which keeps its charge until it expires.
+ */
+export function releaseStashedResult(
+  registry: RegistryView,
+  held: HeldResults | undefined,
+  id: string,
+  totalBytes: number,
+): Effect.Effect<void, unknown> {
+  return Effect.suspend(() =>
+    held && !held.discard(id)
+      ? Effect.void
+      : registryProgram(
+          registry,
+          "releaseResult",
+          id,
+          Math.max(1, Math.ceil(totalBytes / resultChunkBytes(totalBytes))),
+        ),
+  );
+}
+
+/**
  * Base64 of `bytes`, in three-byte-aligned batches so the argument list of one
  * spread never grows with the result. Alignment matters: an unaligned batch
  * would pad mid-stream and the concatenation would no longer decode.
@@ -284,6 +308,8 @@ interface ResultStash {
    * `passed` is the secret set's revision from before the bytes were checked.
    */
   held?: { results: HeldResults; passed: number; format: "json" | "text"; binary: boolean };
+  /** A program return no larger than this is offered whole, to reduce, in nextAction. */
+  readBytes?: number;
 }
 
 /** Calls a whole-result loop leaves the program, so it can also act on what it finds. */
@@ -349,6 +375,10 @@ function resultNotRetained(write: boolean, id: string): CallErrorDetails {
       };
 }
 
+/** nextAction for a whole read: runs as written, and is meant to be edited first. */
+const reduceWhole = (id: string, results: ResultStash) =>
+  `async () => { const { data } = await connecta.result(${JSON.stringify(id)}, { all: true }); return /* reduce data to what you need */ JSON.stringify(data).slice(0, ${programPageBytes(results)}); }`;
+
 /** Opens a write's notice, ahead of any paging instruction. */
 const WRITE_ALREADY_RAN = "This write already ran: do not call it again to see its result.";
 
@@ -386,6 +416,8 @@ const readReduceFirst = (routes: AgentRouteNames) =>
   `To find something specific, repeat this read inside ${routes.program} with connecta.call and filter or search the result there, returning only what matters`;
 
 function pagingHint(results: ResultStash, id: string, totalBytes: number, preview: PreviewShape): string {
+  if (results.readBytes !== undefined && totalBytes <= results.readBytes)
+    return `${results.write ? WRITE_ALREADY_RAN + " " : ""}Read this completed return with connecta.result(id, { all: true }) inside ${results.routes.program} and reduce it, as nextAction does.`;
   if (results.pagingTool === "read_result") {
     const shown =
       preview.kind === "prefix"
@@ -538,7 +570,10 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
               // A byte may cost six JSON characters when escaped. Leave room for the
               // result id, page counters, and continuation metadata in the returned page.
               arguments: {
-                code: `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${programPageBytes(results)} })`,
+                code:
+                  results.readBytes !== undefined && totalBytes <= results.readBytes
+                    ? reduceWhole(id, results)
+                    : `async () => await connecta.result(${JSON.stringify(id)}, { offset: ${preview.kind === "prefix" ? preview.bytes : 0}, maxBytes: ${programPageBytes(results)} })`,
               },
             },
     };
@@ -557,6 +592,7 @@ export function pageProgramResult(
   hostCalls: ProgramHostCalls,
   wireBytes = PROGRAM_RESULT_WIRE_BYTES,
   held?: HeldResults,
+  readBytes?: number,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
   return runEdge(
     pageProgramResultNative(
@@ -570,6 +606,7 @@ export function pageProgramResult(
       hostCalls,
       wireBytes,
       held,
+      readBytes,
     ),
   );
 }
@@ -586,6 +623,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
     hostCalls: ProgramHostCalls,
     wireBytes: number = PROGRAM_RESULT_WIRE_BYTES,
     held?: HeldResults,
+    readBytes?: number,
   ) {
     return authFlow<{ data: unknown; format: "json" | "text" } | ProgramResultHandle>(function* () {
       const passed = held?.secrets.revision ?? 0;
@@ -634,9 +672,11 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
         totalBytes: bytes.length,
         truncated: true,
         hint: notice.resultId
-          ? write
-            ? `${WRITE_ALREADY_RAN} Page this result with connecta.result(handle); do not repeat the call for output.`
-            : readHandleHint(notice.resultId, cap, bytes.length, hostCalls)
+          ? readBytes !== undefined && bytes.length <= readBytes
+            ? `${write ? `${WRITE_ALREADY_RAN} ` : ""}Read it whole with connecta.result(handle, { all: true }), then reduce it.`
+            : write
+              ? `${WRITE_ALREADY_RAN} Page this result with connecta.result(handle); do not repeat the call for output.`
+              : readHandleHint(notice.resultId, cap, bytes.length, hostCalls)
           : notice.hint,
       };
     });
@@ -656,6 +696,7 @@ export function guardProgramReturn(
   programChars?: number,
   held?: HeldResults,
   storeBy?: number,
+  readBytes?: number,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -670,6 +711,7 @@ export function guardProgramReturn(
       programChars,
       held,
       storeBy,
+      readBytes,
     ),
   );
 }
@@ -688,6 +730,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     held?: HeldResults,
     // Stalled storage costs the paging, never the answer.
     storeBy?: number,
+    readBytes?: number,
   ) {
     return authFlow<unknown>(function* () {
       if (serializeResultText(value).length <= maxChars) return value;
@@ -715,6 +758,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         write: completedWrite,
         cap,
         ...(programChars !== undefined ? { programChars } : {}),
+        ...(readBytes !== undefined ? { readBytes } : {}),
         ...(held ? { held: { results: held, passed, format: "json" as const, binary: serialized.binary } } : {}),
         set: authMethod((id: string, chunks: string[], ttl: number, options?: { holdFirst?: boolean }) =>
           storeBy === undefined
