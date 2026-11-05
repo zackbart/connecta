@@ -17,6 +17,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createTestConnecta, fetchTestUiDetails, makeRegistry, required, silentLogger } from "./helpers.js";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
 import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
 import { bindCallback, callbackAuth, consentKey, oauthVault, seedGrant, storedGrant } from "./fixtures/oauth.js";
@@ -1224,6 +1225,89 @@ describe("remoteMcp() cross-isolate force re-auth", () => {
 // ---------------------------------------------------------------------------
 // End-to-end /oauth/callback/<id> route.
 // ---------------------------------------------------------------------------
+describe("remoteMcp() and a forced flow's links", () => {
+  it.each([
+    ["the first round's link", [0, 1]],
+    ["the later round's link", [1, 0]],
+  ] as const)(
+    "INV-4 INV-9: consent begun from %s still completes after the other link is visited",
+    async (_name, [winner, later]) => {
+      await withServer(async (server) => {
+        const storage = memoryStorage();
+        const vault = oauthVault(storage);
+        const connecta = createTestConnecta({
+          connectors: [connector()],
+          auth: callbackAuth,
+          maintainers: [CLERK_OPTIONS.userId],
+          logger: silentLogger,
+          storage,
+          vault,
+          publicUrl: BASE,
+        });
+        const namespace = connecta.registry.contextFor("svc", BASE).storage;
+        await seedGrant(namespace, { issuer, tokens: { access_token: "old", token_type: "Bearer" } });
+        const bearer = { Authorization: `Bearer ${CLERK_OPTIONS.token}` };
+        const forced = async (extra: Record<string, unknown> = {}) => {
+          const request = mcpRpc("tools/call", {
+            name: "authorize_connector",
+            arguments: { connector: "svc", force: true },
+            ...extra,
+            _meta: {
+              "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+              "io.modelcontextprotocol/clientInfo": { name: "auth-test", version: "1" },
+              "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {} } },
+            },
+          });
+          request.headers.set("MCP-Protocol-Version", "2026-07-28");
+          request.headers.set("Mcp-Method", "tools/call");
+          request.headers.set("Mcp-Name", "authorize_connector");
+          request.headers.set("Authorization", bearer.Authorization);
+          return (await readJsonRpc(await connecta.fetch(request))).result;
+        };
+        const visit = (link: string) => {
+          const target = new URL(link);
+          target.searchParams.set("start", "1");
+          return connecta.fetch(new Request(target, { headers: bearer }));
+        };
+
+        // The host accepts straight away, so both links exist before any browser moves.
+        const opening = await forced();
+        const next = await forced({
+          requestState: opening.requestState,
+          inputResponses: { connecta_auth: { action: "accept" } },
+        });
+        const links: string[] = [opening, next].map((round) => round.inputRequests.connecta_auth.params.url);
+
+        const first = await visit(links[winner]!);
+        expect(first.status).toBe(302);
+        const consentUrl = required(first.headers.get("Location") ?? undefined);
+        const epoch = await epochOf(namespace);
+        expect(epoch).toBeDefined();
+        const second = await visit(links[later]!);
+        expect(second.status).toBe(302);
+        // The later visit hands back that same consent in that same epoch: it reset nothing.
+        expect(second.headers.get("Location")).toBe(consentUrl);
+        expect(await epochOf(namespace)).toBe(epoch);
+
+        const callback = await connecta.fetch(
+          new Request(`${BASE}/oauth/callback/svc?code=consented&state=${stateOf(consentUrl)}`, { headers: bearer }),
+        );
+        expect(callback.status).toBe(200);
+        expect(server.counts.token).toBe(1);
+        const stored = new KvOAuthProvider(
+          "svc",
+          namespace,
+          REDIRECT,
+          undefined,
+          false,
+          vaultOAuthSealer(vault, "svc", undefined, silentLogger),
+        );
+        expect(await stored.tokens()).toMatchObject({ access_token: "access-1" });
+      });
+    },
+  );
+});
+
 describe("/oauth/callback/<id> route", () => {
   function callbackConnector(
     id: string,

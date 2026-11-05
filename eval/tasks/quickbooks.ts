@@ -7,7 +7,7 @@ import { QB_PRIVATE } from "../fakes/quickbooks.js";
 import type { World } from "../fakes/world.js";
 import { check } from "./baseline.js";
 import { deliveredValues } from "./correctness.js";
-import type { ActiveTask } from "./types.js";
+import type { ActiveTask, ReferenceContext } from "./types.js";
 
 function requireThat(value: unknown, message: string): asserts value {
   if (!value) throw new Error(message);
@@ -118,6 +118,101 @@ async function revoke(world: World, deployment: Deployment) {
   );
 }
 
+/** Every prompt step by routes an agent would choose: the proof the task is passable as written. */
+export async function followDossier(ctx: ReferenceContext) {
+  const read = () => ctx.call("call_tool", { address: "qb_alice.get_company_info", args: {} });
+  await ctx.nextTurn();
+  const dossier = await ctx.call("execute_code", {
+    code: `async () => {
+      const call = async (tool, args = {}) => (await connecta.call("qb_alice." + tool, args)).data;
+      const company = await call("get_company_info");
+      const customers = await call("search_records", { entity: "customers", filters: [{ field: "DisplayName", operator: "eq", value: "Alice's \\\\ studio" }], limit: 10 });
+      const customer = customers.items[0];
+      const invoices = []; let cursor;
+      do {
+        const page = await call("search_records", { entity: "invoices", filters: [{ field: "CustomerRef", operator: "eq", value: customer.Id }], limit: 100, ...(cursor ? { cursor } : {}) });
+        invoices.push(...page.items.map(i => ({ invoice: i.Id, version: i.SyncToken, customer: customer.DisplayName, currency: i.CurrencyRef.value, amount: i.TotalAmt })));
+        cursor = page.page.nextCursor;
+      } while (cursor);
+      const profitAndLoss = await call("get_report", { report: "ProfitAndLoss", start_date: "2026-10-01", end_date: "2026-10-31" });
+      return { source: "QuickBooks", company: company.CompanyName, customer: customer.DisplayName, invoices, profitAndLoss };
+    }`,
+  });
+  requireThat(!dossier.isError, dossier.text);
+  const answer = JSON.parse(dossier.text).result;
+  for (let cycle = 0; cycle < 3; cycle++) {
+    await ctx.nextTurn();
+    requireThat(!(await read()).isError, "A renewal read failed");
+  }
+  await ctx.nextTurn();
+  requireThat((await read()).isError, "A disconnected read succeeded");
+  ctx.answer(
+    "Her reads are refused now. The dossier from before she disconnected:\n```json\n" +
+      JSON.stringify(answer, null, 2) +
+      "\n```",
+  );
+}
+
+const publicInvoices = (company: Record<string, any>) =>
+  company.Invoice.map((r: Record<string, any>) => ({
+    Name: "[redacted]",
+    Id: r.Id,
+    SyncToken: r.SyncToken,
+    DocNumber: r.DocNumber,
+    TotalAmt: r.TotalAmt,
+    Balance: r.Balance,
+    CustomerRef: r.CustomerRef,
+    CurrencyRef: r.CurrencyRef,
+  }));
+
+/** Every leaf of a JSON value, so reduced or renamed output still counts. */
+function leaves(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value.flatMap(leaves);
+  if (value && typeof value === "object") return Object.values(value).flatMap(leaves);
+  return [value];
+}
+
+const sameFact = (leaf: unknown, fact: string | number) =>
+  leaf === fact || (typeof leaf === "string" && leaf !== "" && Number(leaf) === Number(fact));
+
+/** One record carries all of these facts together, however an agent named its fields. */
+function carriesFacts(value: unknown, facts: (string | number)[]): boolean {
+  const values = leaves(value);
+  return facts.every((fact) => values.some((leaf) => sameFact(leaf, fact)));
+}
+
+/** All JSON objects in an agent's value, nearest the leaves included. */
+function objectsIn(value: unknown): Record<string, unknown>[] {
+  if (Array.isArray(value)) return value.flatMap(objectsIn);
+  if (value && typeof value === "object")
+    return [value as Record<string, unknown>, ...Object.values(value).flatMap(objectsIn)];
+  return [];
+}
+
+/** A whole-message or fenced JSON answer, or the JSON that follows prose. */
+export function jsonAnswer(text: string): Record<string, any> | undefined {
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)?.[1];
+  const start = text.indexOf("{");
+  for (const candidate of [text, fenced, start >= 0 ? text.slice(start, text.lastIndexOf("}") + 1) : undefined]) {
+    try {
+      const parsed = candidate === undefined ? undefined : JSON.parse(candidate);
+      if (parsed && typeof parsed === "object") return parsed;
+    } catch {
+      /* Try the next rendering. */
+    }
+  }
+  return undefined;
+}
+
+/** The P&L labels and amounts, with the empty cell the prompt asks to keep. */
+const REPORT_FACTS = ["Income", "Consulting", "375.50", "Total Income"];
+const invoiceFacts = (invoice: Record<string, any>) => [
+  invoice.Id,
+  invoice.SyncToken,
+  invoice.TotalAmt,
+  invoice.CurrencyRef.value,
+];
+
 export const QUICKBOOKS_TASK: ActiveTask = {
   status: "active",
   id: "quickbooks-accounting-journey",
@@ -126,7 +221,7 @@ export const QUICKBOOKS_TASK: ActiveTask = {
   measures: "Company-bound accounting joins, exact paging, reports, secrecy, durable rotating OAuth and isolation",
   world: { quickbooks: true },
   prompt:
-    "Read Alice's QuickBooks company, all invoices for customer Alice's \\ studio, each invoice's Id, SyncToken, customer, currency and amount, and the October ProfitAndLoss hierarchy including empty cells. Return a JSON accounting dossier, sourced from QuickBooks. The operator will reconnect, restart and disconnect between turns.",
+    "QuickBooks is not connected yet; wait until told the operator has connected it. Then read Alice's QuickBooks company, all invoices for customer Alice's \\ studio, each invoice's Id, SyncToken, customer, currency and amount, and the October ProfitAndLoss hierarchy including empty cells. Return a JSON accounting dossier, sourced from QuickBooks. The operator will reconnect, restart and disconnect between turns.",
   followUps: [
     {
       prompt: "Both companies consented; read Alice's accounting dossier.",
@@ -137,15 +232,16 @@ export const QUICKBOOKS_TASK: ActiveTask = {
       before: async ({ world, deployment }) => restart(world, deployment),
     },
     {
-      prompt: "Another vendor hour passed; renew and rotate Alice's credential.",
+      prompt: "Another vendor hour passed; read Alice's company again so her credential renews and rotates.",
       before: async ({ world, deployment }) => restart(world, deployment),
     },
     {
-      prompt: "The application restarted with the rotated grant; renew again.",
+      prompt: "The application restarted with the rotated grant; read Alice's company again so it renews.",
       before: async ({ world, deployment }) => restart(world, deployment),
     },
     {
-      prompt: "Alice disconnected; verify refusal and Bob's independent access.",
+      prompt:
+        "Alice disconnected; confirm her reads are now refused, then finish by returning the complete JSON dossier you verified before she disconnected.",
       before: async ({ world, deployment }) => revoke(world, deployment),
     },
   ],
@@ -170,6 +266,21 @@ export const QUICKBOOKS_TASK: ActiveTask = {
     const dossier = await ctx.call("execute_code", { code });
     requireThat(!dossier.isError, dossier.text);
     const answer = JSON.parse(dossier.text).result;
+    // Provider behaviour an agent has no reason to probe; the outcome gate holds it here.
+    const seeded = ctx.world.quickbooks.state.companies[QB_COMPANIES.alice]!;
+    const projected = publicInvoices(seeded)[0];
+    requireThat(isDeepStrictEqual(answer.pages, [true, false]), "Lookahead paging did not end exactly");
+    requireThat(
+      isDeepStrictEqual(answer.invoices, publicInvoices(seeded)) && isDeepStrictEqual(answer.report, seeded.report),
+      "Named reads lost invoice facts or the report tree",
+    );
+    requireThat(
+      isDeepStrictEqual(answer.named, projected) &&
+        isDeepStrictEqual(answer.hatch?.data?.Invoice, projected) &&
+        isDeepStrictEqual(answer.fields, { Id: "41", SyncToken: "7", Name: "[redacted]" }) &&
+        isDeepStrictEqual(answer.hatchFields?.data?.Invoice, { Id: "41", SyncToken: "7", Name: "[redacted]" }),
+      "The public version did not survive named, hatch and fields projections",
+    );
     for (let cycle = 0; cycle < 3; cycle++) {
       await ctx.nextTurn();
       const restored = await ctx.call("execute_code", {
@@ -210,27 +321,15 @@ export const QUICKBOOKS_TASK: ActiveTask = {
     ctx.answer(JSON.stringify(answer));
   },
   grade({ world, trace }) {
-    let answer: Record<string, any> = {};
-    try {
-      answer = JSON.parse(trace.finalAnswer ?? "");
-    } catch {
-      /* Missing/fabricated evidence fails below. */
-    }
+    const answer = jsonAnswer(trace.finalAnswer ?? "") ?? {};
+    const answered = objectsIn(answer);
     const company = world.quickbooks.state.companies[QB_COMPANIES.alice]!;
     const calls = world.ledger.calls.filter((c) => c.service === "quickbooks");
     const reads = calls.filter((c) => c.outcome === "ok" && c.args.method === "GET");
-    const expected = company.Invoice.map((r: Record<string, any>) => ({
-      Name: "[redacted]",
-      Id: r.Id,
-      SyncToken: r.SyncToken,
-      DocNumber: r.DocNumber,
-      TotalAmt: r.TotalAmt,
-      Balance: r.Balance,
-      CustomerRef: r.CustomerRef,
-      CurrencyRef: r.CurrencyRef,
-    }));
-    const same = isDeepStrictEqual;
+    const expected = company.Invoice;
     const delivered = deliveredValues(trace);
+    const deliveredObjects = delivered.filter((value) => value && typeof value === "object");
+    const customerName = company.Customer[0]!.DisplayName as string;
     const grants = world.quickbooks.state.grants;
     const queries = reads
       .filter((c) => c.args.realm === QB_COMPANIES.alice && String(c.args.path).endsWith("/query"))
@@ -239,41 +338,42 @@ export const QUICKBOOKS_TASK: ActiveTask = {
       check(
         "delivered-data",
         "Complete invoice facts and report hierarchy were delivered over MCP",
-        expected.every((invoice) => delivered.some((row) => same(row, invoice))) &&
-          delivered.some((row) => same(row, company.report)),
+        // A program may reduce a row to the requested fields, so facts count, not its shape.
+        expected.every((invoice: Record<string, any>) =>
+          deliveredObjects.some(
+            (row) =>
+              Object.values(row as object).includes(invoice.Id) &&
+              carriesFacts(row, invoiceFacts(invoice)) &&
+              leaves(row).some((leaf) => leaf === invoice.CustomerRef.value || leaf === customerName),
+          ),
+        ) && REPORT_FACTS.every((fact) => delivered.includes(fact)),
       ),
       check(
         "correct-destination",
         "Both real company routes were read",
-        queries.some((q) => q.startsWith("SELECT * FROM Customer WHERE DisplayName = ")) &&
-          [1, 3].every((start) =>
-            queries.some(
-              (q) => q === `SELECT * FROM Invoice WHERE CustomerRef = '9' STARTPOSITION ${start} MAXRESULTS 3`,
-            ),
-          ) &&
+        queries.some((q) => q.startsWith("SELECT * FROM Customer")) &&
+          queries.some((q) => q.startsWith("SELECT * FROM Invoice")) &&
           reads.some((c) => c.args.realm === QB_COMPANIES.bob) &&
           reads.some((c) => c.args.path === `/v3/company/${QB_COMPANIES.alice}/reports/ProfitAndLoss`),
       ),
       check(
         "answer-evidence",
-        "Exact complete accounting facts and report tree",
-        answer.source === "QuickBooks" &&
-          answer.company?.Id === QB_COMPANIES.alice &&
-          same(answer.invoices, expected) &&
-          same(answer.report, company.report) &&
-          same(answer.pages, [true, false]) &&
-          answer.customers?.[0]?.DisplayName === company.Customer[0]!.DisplayName,
+        "Complete company, customer, invoice and report-hierarchy facts in a JSON dossier",
+        /QuickBooks/i.test(trace.finalAnswer ?? "") &&
+          leaves(answer).some((leaf) => leaf === QB_COMPANIES.alice || leaf === company.company.CompanyName) &&
+          leaves(answer).includes(customerName) &&
+          expected.every((invoice: Record<string, any>) =>
+            answered.some((row) => Object.values(row).includes(invoice.Id) && carriesFacts(row, invoiceFacts(invoice))),
+          ) &&
+          REPORT_FACTS.every((fact) => leaves(answer).includes(fact)) &&
+          leaves(answer).some((leaf) => leaf === "" || leaf === null),
       ),
       check(
         "privacy",
-        "Private values withheld; public version survives named, hatch and fields",
+        "Private values and credentials reach neither the conversation nor the answer",
         !JSON.stringify(trace).includes(QB_PRIVATE) &&
           !/qb-(?:access|refresh)-|eval-qb-client-secret/.test(JSON.stringify(trace)) &&
-          !JSON.stringify(answer).includes(QB_PRIVATE) &&
-          same(answer.named, expected[0]) &&
-          same(answer.hatch?.data?.Invoice, expected[0]) &&
-          same(answer.fields, { Id: "41", SyncToken: "7", Name: "[redacted]" }) &&
-          same(answer.hatchFields?.data?.Invoice, { Id: "41", SyncToken: "7", Name: "[redacted]" }),
+          !JSON.stringify(answer).includes(QB_PRIVATE),
       ),
       check(
         "durable-rotation",

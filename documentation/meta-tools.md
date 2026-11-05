@@ -26,6 +26,7 @@ owns the top-level MCP contract; it does not require reading the core internals.
 | Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)               |
 | Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)      |
 | List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface), [Eve agents](#eve-agents)                                                                      |
+| Read an endpoint's surface and connector roster    | [Endpoint facts](#endpoint-facts)                                                                                                           |
 | Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                             |
 
 ## Tool presentation
@@ -48,13 +49,20 @@ Approval belongs to the client. A read-only endpoint keeps all six tools, omits
 write tools from `search_tools` results and describe, and refuses every write
 call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
-`resources/read`) are documentation and may name tools the endpoint refuses. The four tools with structured-only success results
-advertise `outputSchema`. `search_tools`'s schema defines its typed failure,
-including every authorization-handoff field, once under `$defs.failure`;
-`catalogErrors[]` references it through `allOf` with `connector` required, and
-`queryAnalysis.catalogError` references it directly. The schema declares no
-`$schema`, and validators for drafts 4, 7, 2019-09 and 2020-12 accept the same
-pages. The two direct-call tools omit it because their default
+`resources/read`) are documentation and may name tools the endpoint refuses. The three tools with structured-only success results
+(`execute_code`, `search_tools`, `authorize_connector`) advertise an open
+`outputSchema`: required keys and top-level types, with every other field open.
+The schemas declare no `$schema`, and validators for drafts 4, 7, 2019-09 and
+2020-12 accept the same results. The server checks each successful result against
+its full contract before sending it, so the shapes this guide states hold though
+`tools/list` omits them. Both SDK edges exempt `isError: true` responses from
+output-schema validation. Failures on a `search_tools` page are one such shape: each
+`catalogErrors[]` entry and `queryAnalysis.catalogError` requires `code`, `message`
+and `retryable`, may carry `retryAfterMs`, `retry`, `nextAction`, `stale`, `ageMs`
+and the authorization-handoff fields (`recovery`, `status`, `authorizationUrl`,
+`operatorUrl`, `instructions`, `credential`), and has no others; a `catalogErrors[]`
+entry also requires `connector`, which `queryAnalysis.catalogError` may carry.
+The two direct-call tools omit `outputSchema` because their default
 mode returns native `content`. Default-mode successes declare
 `_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
 `data` and declares `format` in its complete result envelope.
@@ -128,7 +136,8 @@ The agent reports the limitation and can ask the operator for a writable connect
 never pauses, replays, or approves a program.
 
 Both search routes return the flat page specified under
-[lexical discovery](#lexical-discovery), using the catalog's shared output schema.
+[lexical discovery](#lexical-discovery), which the server validates against one
+catalog page contract.
 Describe returns an ordered tool list without pagination. Optional row metadata
 is omitted in this example:
 
@@ -145,17 +154,24 @@ The deployment-derived `execute_code` description carries a connector
 inventory before any catalog search — registry order and each canonical id,
 with no second name minted for programs. An entry adds the configured title
 only when it says more than the id: a title whose words the id already spells,
-such as `Google Calendar` for `google_calendar`, is dropped. Titles normalize
-whitespace and cap at 48 UTF-8 bytes. A connector with a guide says how to
-fetch it: `read first: skills({name:"connector:<id>"})` for a required guide,
-`guide: skills({name:"connector:<id>"})` otherwise. For example:
-`Connectors: crm (Customer CRM; read first: skills({name:"connector:crm"})), tickets.`
+such as `Google Calendar` for `google_calendar`, is dropped. It then adds the
+connector's configured description as a one-line purpose, unless that too only
+respells the id and title. Titles and purposes normalize whitespace; titles cap
+at 48 UTF-8 bytes and purposes at 60, clipping on a whole token; text with no token
+that fits is omitted. A connector whose guide is required
+carries a `*`, and one legend follows when an entry shown has the mark. Optional
+guides are not named here; search and describe name them. For example:
+`Connectors: crm* (Customer CRM; Current accounts and contracts), tickets. *Read connecta.skill("connector:<id>") before its first call.`
 
-The complete line caps at 1,024 UTF-8 bytes, which names every connector of a
-typical deployment. Past the cap, detail degrades before names do: titles are
-dropped first, then optional guide pointers. Only when bare ids and required
-guide pointers still exceed it do whole entries give way, in registry order, to
-an exact `+N more` count. The inventory reads only the configured registry: no
+Write each description so its first 60 bytes tell the connector apart from its
+neighbours. Purposes stay in this inventory, never in the instructions, which
+some hosts repeat on every tool.
+
+The complete line, legend included, caps at 1,024 UTF-8 bytes, which names every
+connector of a typical deployment. Past the cap, detail degrades before names do:
+purposes are dropped first, from the end of registry order, then titles. Only
+when bare ids still exceed it do whole entries give way, in registry order, to an
+exact `+N more` count. The inventory reads only the configured registry: no
 catalog load, no credential probe, no live status, no capability, and no
 replacement for canonical discovery or addressing. Search pages carry the same
 bounded title once per connector in `connectors[<id>].title`, so choosing an
@@ -341,12 +357,27 @@ A connector may attach a deployment-owned guide as markdown, keeping the
 original `usageGuide: string` configuration, or as
 `{ content, summary?, required? }` — which registers no connector and creates no
 shared runtime template. The skills catalog prepends Agent Skills frontmatter to
-`content` and preserves the guide body, including its whitespace.
+`content` for native `skills/get` and `resources/read`, and preserves the guide
+body, including its whitespace. The `skills` tool and `connecta.skill` return that
+body without the frontmatter; a downstream skill's file keeps its exact bytes on
+every reader. One read-only notice leads a guide: the endpoint's on a read-only
+endpoint, otherwise the connection's on a read-only connector.
 `summary` is normalized and refuses construction over 120 characters; absent,
 Connecta derives the same bounded fallback the skills listing uses from the
 guide's first meaningful body paragraph. `required: true` is reserved for
 generic API wrappers and cross-operation conventions a complete downstream
 schema cannot express.
+
+A maintained provider's guide states only what no schema, description or typed
+refusal already tells the agent where it acts. Generic rules live at the point of
+use: `cursor` and hatch `page` schemas for continuation, `fields` for narrowing,
+withheld values and cuts, hatch descriptions and `withheld` hints for operation
+discovery, and the `write_outcome_unknown` error for write-once. A hatch `page`
+with `hasMore: true` and no `nextCursor` also adds a `warnings` notice that the
+result is incomplete. Money units, account or environment selection, sensitive
+data reduction and "absence does not prove" rules stay in the guide, as does any
+disqualifier that no refusal enforces. A read-only connection is not served its
+guide's `writes` blocks.
 
 Describe results carry a `guide: "connector:<id>"` pointer and a
 `guideSummary`; a search page carries both once per connector in
@@ -410,16 +441,28 @@ or other live status reaches `tools/list` or the instructions, so the
 always-loaded surface stays byte-stable for a client's prompt cache.
 Instructions reflect the surface and endpoint write policy, subject to connector
 restrictions. When all admitted connectors are read-only, instructions state that
-writes are unavailable. They also include pool scope: at
-`/mcp/<pool>` and `/agent/<pool>`, a pool that sets a
-[`description`](./auth.md#pools) has it placed first after `Use skills. `, so
-the model learns that endpoint's scope, for example
-`Use skills. Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
-The guide pointer precedes the scope so both appear in the first 512 characters
-for a description of up to 500 characters. The routing rules follow. Meta instructions use compact equivalent routing rules
-when a scope is present. Plain `/mcp` never carries one. The description changes no tool or tool
-description, and `initialize` and `server/discover` stay `cacheScope: "private"`,
-so a client keeps what it learned per endpoint. Connector
+writes are unavailable. On the meta surface they open by saying what the endpoint
+reaches, for example `Gateway to connected services: crm, tickets.`, and then give
+the routes, the write policy and recovery through `nextAction`. A native pool omits
+the ids, because its tool names show them.
+
+The ids come only from the caller's admitted view, the same view the `execute_code`
+inventory reads: configured ids in registry order, never a value from the request,
+a catalog or a credential. A maintainer at plain `/mcp` sees every id; a person
+routed there sees only their pool's, and an id outside the admitted view never
+appears. Past 120 UTF-8 bytes, ids give way, in registry order, to an exact
+`+N more` count, and the inventory carries the fuller list.
+
+They also include pool scope: a pool that sets a
+[`description`](./auth.md#pools) has it placed first at `/mcp/<pool>` and
+`/agent/<pool>`, and for a person routed to that pool at plain `/mcp`, so the model
+learns that endpoint's scope, for example
+`Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
+A maintainer at plain `/mcp` receives none. The description changes no tool or tool
+description. Plain `/mcp` can serve different ids and scope to different callers at
+one URL, as its tool list and inventory already do, so `initialize` and
+`server/discover` stay `cacheScope: "private"`: a client keeps what it learned per
+caller and endpoint and never shares it. Connector
 guides stay scoped to the deployment that listed them even when two deployments
 use identical content, and a deployment with no connector guides receives none of
 the short conditional guide pointers in its tool definitions.
@@ -525,7 +568,9 @@ dropping the text copy waits on host-forwarding measurements showing supported
 clients do not need it. Direct-call failures set `isError: true` and carry the
 same `{ ok: false, error, durationMs, attempts }` envelope in both forms, whether
 `resultMode` is omitted, `"mcp"`, or `"value"`. Plain-text guidance stays
-text-only. Successful direct calls with `resultMode` omitted or `"mcp"` return
+text-only: a `skills` fetch returns the guide once, in `content`, and the tool
+advertises no `outputSchema`, while its listing and errors keep `structuredContent`.
+A program's `connecta.skill` returns its own `{ name, format, text }` value. Successful direct calls with `resultMode` omitted or `"mcp"` return
 their data only in `content`, with the downstream format in
 `_meta["dev.connecta/format"]`. They omit `structuredContent`, including on
 truncated results, so clients that prefer it cannot replace data or a preview
@@ -805,10 +850,12 @@ no paging route.
 
 Meta endpoints page inside a program. Native pools without code list `read_result` for the same bound handles. Program calls also
 return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
-A read's handle says to loop `connecta.result(handle, { offset })` until `!hasMore`
-only when every page at the connector's cap, plus two host calls spare, fits the
-calls its program has left. A handle's value is usually over 1 MiB, so at the
-default 20 calls and 24,000-byte cap it doesn't: its hint then gives the pages
+A handle within the program's [read ceiling](./code-mode.md#connectaresult-and-connectaskill)
+says to read it whole with `connecta.result(handle, { all: true })`, for one host call.
+Past the ceiling, a read's handle says to loop `connecta.result(handle, { offset })`
+until `!hasMore` only when every page at the connector's cap, plus two host calls
+spare, fits the calls its program has left. At the default 20 calls and 24,000-byte
+cap it doesn't: its hint then gives the pages
 to read in this program and in each new one, and says to return the reduction so
 far with `nextOffset` and continue from both, by `resultId`, inside the 15-minute
 retention. A loop past the budget ends in `budget_exceeded` with nothing returned.
@@ -846,6 +893,13 @@ A refused stash write cannot undo a downstream success. Direct calls and program
 a paging-unavailable notice, without a handle or recovery action. A write's
 notice still says it already ran. Activity records success; operator logs receive
 a fixed warning without storage error prose. Never repeat a write to recover output.
+
+A result a program retained is readable from later requests only once it has passed
+that run's final secret set. Otherwise it stays unreadable: paging answers
+`result_not_retained` with `retryable: false`, telling a read to rerun and a write
+not to repeat ([code mode `R4a`](./code-mode.md#results-and-projection)).
+A direct call's stash passes its own request's set when stored; a later direct call
+in another request shares no set with it.
 
 ## Lexical discovery
 
@@ -1217,13 +1271,19 @@ support (`connector`, `recovery`, `authorizationUrl` or `operatorUrl`,
 Give that link to the user once, then stop. Do not prompt again, retry, or reach
 the service another way until they confirm. If they already refused this
 connection in the conversation, only mention that the link is available.
-A failed signing or storage step leaves the refusal without a link. Connecta
+A failed signing or storage step leaves the refusal without a link. Its message
+says so: unless the user refused this connection, repeat the request once for a
+new link, then give that link to them, and stop if that repeat also fails. Connecta
 keeps no record of which clients refuse, so each new prompt to such a client
 ends the same way. Three prompts are allowed
 within one ten-minute retry window, then `auth_round_limit` ends the flow.
 Each state can be consumed once; concurrent or repeated retries are refused
-before dispatch. A Continue link from a pending restart requires that restart
-to start successfully before the browser can consume it.
+before dispatch. Accept does not mean a browser has opened the link, so every link
+in a flow stays live. A `force: true` flow's links, including a refusal's, share one
+reset: the first verified visit performs it and later visits continue it. A visit
+during a running start returns 409 without spending its link, and says to start a new
+connection request if it persists, because a new call is a new flow. A failed start
+lets the flow's next visit begin again.
 Host-owned invocation facts record the auth failure's origin and entry into
 all calls, including each classification, catalog freshness and classification
 digest. Raw fetches and custom connector transports cannot establish recovery
@@ -1441,7 +1501,7 @@ Unsupported task, Skills, and resource capabilities use the non-retryable
 Unknown skill names and connectors without a guide retain their local lookup
 diagnostic with `code: not_found` and a `nextAction` calling `skills` with no
 name to discover available names. They do not request service restoration.
-The search output schema describes action discriminators compactly; action
+The server's search page contract states action discriminators compactly; action
 advice is additive, while catalog error and authorization handoff fields retain
 their detailed contracts.
 A spent read continuation's fresh-call action takes precedence over generic
@@ -1747,7 +1807,16 @@ in `writes.unknown` even when the program caught the failure. When that write
 met an authorization verdict, the program's error is that verdict, as a direct
 call reports it: its code, `connector`, `recovery`, and `nextAction`, with
 `writeOutcome: "unknown"` and `reconciliationRequired: true`. Any other unknown
-write makes it `write_outcome_unknown`.
+write makes it `write_outcome_unknown`. Either error's `unknownWrites` lists at
+most ten such writes with their `address`, `code` and redacted `message`, and
+`unknownWritesTruncated` marks a write left out or a message dropped. A write whose
+tool answered `isError` carries `toolAnswered: true`, on a direct call too: its
+message is the tool's own words, up to 4,096 UTF-8 bytes, cut only between tokens
+and marked `… [truncated]`. Its outcome stays unknown because its handler ran before
+it answered, and `retry` says to check the target and to give the user any approval
+link or request id. A program's `write_outcome_unknown` leads its `message` with
+those words instead of repeating them in the entry. A later call the tool's words
+ask for, such as one carrying a provider's approval token, is a new deliberate call.
 
 The classification served for the call decides this advice, including deployment
 `classification` overrides. For example, `classification: { crm: { get_person:
@@ -1773,7 +1842,8 @@ at the downstream boundary, even when the agent may see the error's message.
 A pool set to `surface: "native"` lists each downstream tool as its own MCP
 tool instead of the six meta-tools, for clients that already defer tools behind
 their own search (Eve, Claude Code with tool search). The meta surface stays
-the default everywhere, and plain `/mcp` is always meta.
+the default everywhere. Plain `/mcp` is always meta for a maintainer; a person
+routed there by their one pool membership gets that pool's surface.
 
 ```ts
 pools: {
@@ -1835,7 +1905,10 @@ address, which never changes.
 **Annotations** come from the served classification only: a read is
 `{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
 write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
-whatever hints the downstream declared. A read-only endpoint or connector
+whatever hints the downstream declared. A deployment `"read"` override never
+produces read annotations for a tool whose source explicitly declares a write;
+`"read-repeatable"` does, and accepts that a host may repeat the call. See
+[deployment overrides](./integrating.md#another-remote-mcp-server). A read-only endpoint or connector
 leaves write tools out of the list, by the same rule search and describe use.
 
 **Calls take the existing paths.** A name selects its route: a read's name is the
@@ -1876,6 +1949,14 @@ deployment classification overrides it to read has a read's name and takes the
 `call_tool` route, and a host may resend it; do not override a write to read unless
 repeating it is harmless. This also applies to `call_tool` on the meta surface.
 
+**Known limit: a change Connecta has not seen.** Connecta enforces the catalog it
+holds. A vendor can change a tool from read to write before Connecta's catalog
+refreshes, and until then every read-annotated route treats that tool as a read:
+`call_tool`, a read-annotated native tool and programs on a read-only endpoint. A
+host may also resend such a call after a connection failure, so the vendor can
+receive it more than once. The catalog refresh closes this window, and nothing
+closes it sooner.
+
 **Listing.** `tools/list` is one page with no cursor (Eve's MCP client reads only the
 first page). A pool listing more than 1,000 tools fails `tools/list` with a
 JSON-RPC error asking the operator to narrow the pool; nothing is silently
@@ -1898,10 +1979,10 @@ same metadata; its tools return with the next listing that loads it. Listing nev
 starts authorization. The server still declares `tools.listChanged: false`.
 
 **Instructions** replace the meta routing text: call one known operation
-directly; with `execute_code`, use one program for several, dependent, or
-reduced calls; write tools are absent and refused on a read-only endpoint;
-never repeat a write; page a truncated result as its notice says. A pool
-`description` is appended as on meta endpoints.
+directly; with `execute_code`, combine several using each tool's `Program address`;
+state the endpoint's write policy; on a writable endpoint, never resend a write to
+see its output; follow `nextAction` on errors and truncated results. A pool
+`description` is placed first, as on meta endpoints.
 
 **Recovery.** `authorize_connector` remains listed even when a catalog fails.
 Its description lists all granted connector ids independently of catalog health.
@@ -1952,7 +2033,47 @@ production catalogs near the cap remain unmeasured.
 
 Starting with 0.35.0, the Eve helper ships separately as `@zackbart/connecta-eve`.
 Connecta core supplies the native pool surface and has no Eve dependency.
-Consult that package's documentation for its compatibility and setup.
+Consult that package's documentation for its compatibility and setup. The helper
+composes its Eve-specific guidance from [endpoint facts](#endpoint-facts) and
+places it before the server's own instructions; Connecta's text stays host-neutral.
+
+## Endpoint facts
+
+`server/discover` and `initialize` both advertise the endpoint in
+`capabilities.extensions["dev.connecta/endpoint"]`, so a client composing its
+own guidance can read what this request reached:
+
+```json
+{
+  "surface": "meta",
+  "executeCode": true,
+  "readOnly": false,
+  "connectors": [
+    { "id": "crm", "title": "Customer records", "readFirst": "connector:crm" },
+    { "id": "tickets" }
+  ]
+}
+```
+
+| Field                    | Meaning                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `surface`                | `"meta"` or `"native"`: the surface this request is served                                                         |
+| `executeCode`            | Whether `execute_code` is listed. Always `true` on meta                                                            |
+| `readOnly`               | The effective policy: the endpoint is read-only, or every connector it reaches is                                  |
+| `connectors[].id`        | Each canonical connector id the caller's scope reaches, in registry order                                          |
+| `connectors[].title`     | Present only when the title says more than the id; normalized and capped as in the [inventory](#discovery-context) |
+| `connectors[].readFirst` | Present only for a required guide: the name to pass to `skills`                                                    |
+
+The facts come from the admitted scope and deployment code, never from request
+arguments or `_meta`: a person on plain `/mcp` sees their one pool's connectors,
+a maintainer sees the whole catalog, and a refused caller gets the usual 404
+with no facts. The roster is the one `execute_code`'s inventory describes for
+the same caller, without its byte cap. Reading it loads no catalog, probes no
+credential, and records no activity. It says nothing about connector health or
+authorization, and grants nothing.
+
+A client that does not recognize the extension ignores it. An older server omits
+it; treat the surface as unknown rather than assuming one.
 
 ## Contributor reference
 

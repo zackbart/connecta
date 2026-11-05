@@ -58,3 +58,22 @@ export function advertisedSchema<T extends z.ZodType>(schema: T): StandardSchema
     },
   };
 }
+
+/**
+ * An output schema that advertises less than it enforces. The SDK validates each
+ * non-error result through `~standard.validate`, so the server keeps the full contract and
+ * a client's copy states only what it can use: required keys and top-level types,
+ * with every other field open.
+ */
+export function openOutputSchema<Input, Output>(
+  validator: StandardSchemaWithJSON<Input, Output>,
+  advertised: Record<string, unknown>,
+): StandardSchemaWithJSON<Input, Output> {
+  const json = deepFreeze(advertised);
+  return {
+    "~standard": {
+      ...validator["~standard"],
+      jsonSchema: { input: () => json, output: () => json },
+    },
+  };
+}

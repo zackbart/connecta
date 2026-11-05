@@ -14,8 +14,9 @@ import { InvocationService } from "../src/invocation.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { delegatesEachCall, knownProviderFailure } from "../src/provider-call.js";
 import { writeStateOf } from "../src/program-writes.js";
+import { sentSecretsFor } from "../src/sent-secrets.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
+import type { Connector, ConnectorContext, Executor, ExecutorProvider, ToolDef } from "../src/types.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.program-writes";
@@ -54,11 +55,16 @@ function scriptedExecutor(programs: Map<string, Program>): Executor {
 }
 
 interface WorldOptions {
+  classification?: Record<string, Record<string, "read" | "read-repeatable" | "write" | "hidden">>;
   readOnly?: boolean;
   /** The tracker stands for a boundary, so its own refusal marks hold (round 13). */
   provesRefusals?: boolean;
   write?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
-  read?: (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown;
+  read?: (name: string, args: Record<string, unknown>, context: ConnectorContext) => Promise<unknown> | unknown;
+  /** The tracker answers as a hosted MCP tool does, so `isError` is its own answer. */
+  trackerKind?: "mcp";
+  maxResultChars?: number;
+  logger?: typeof silentLogger;
 }
 
 function world(options: WorldOptions = {}) {
@@ -74,15 +80,15 @@ function world(options: WorldOptions = {}) {
       const readOnly: Partial<ToolDef> = { annotations: { readOnlyHint: true } };
       return [{ name: "get", ...readOnly }];
     },
-    async callTool(name, args) {
+    async callTool(name, args, context) {
       count(`reader.${name}`, args);
-      if (options.read) return await options.read(name, args as Record<string, unknown>);
+      if (options.read) return await options.read(name, args as Record<string, unknown>, context);
       return { id: (args as { id?: number }).id, title: "An issue" };
     },
   };
   const tracker: Connector = {
     id: "tracker",
-    kind: "api",
+    kind: options.trackerKind ?? "api",
     description: "Writes issues",
     async listTools() {
       return [
@@ -100,7 +106,10 @@ function world(options: WorldOptions = {}) {
     },
   };
   if (options.provesRefusals) delegatesEachCall(tracker);
-  const registry = makeRegistry([reader, tracker], { storage: memoryStorage() });
+  const registry = makeRegistry([reader, tracker], {
+    storage: memoryStorage(),
+    ...(options.classification ? { classification: options.classification } : {}),
+  });
   const activity: ActivityRequestContext = {
     recordTool: recordToolActivity,
     sink: { record: (event) => void events.push(event) },
@@ -110,9 +119,17 @@ function world(options: WorldOptions = {}) {
     logger: silentLogger,
   };
   const programs = new Map<string, Program>();
-  const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, activity, {
-    readOnly: options.readOnly,
-  });
+  const execute = createExecuteTool(
+    registry,
+    BASE,
+    scriptedExecutor(programs),
+    options.logger ?? silentLogger,
+    activity,
+    {
+      readOnly: options.readOnly,
+      ...(options.maxResultChars !== undefined ? { maxResultChars: options.maxResultChars } : {}),
+    },
+  );
   let next = 0;
   return {
     registry,
@@ -124,12 +141,252 @@ function world(options: WorldOptions = {}) {
       return execute({ code });
     },
     writes: () => calls.filter((call) => call.address.startsWith("tracker.")),
+    reads: () => calls.filter((call) => call.address.startsWith("reader.")),
   };
 }
 
 function value(result: { structuredContent?: Record<string, unknown> }): Record<string, any> {
   return required(result.structuredContent, "structured result") as Record<string, any>;
 }
+
+const LATE_SECRET = "Zqx79UVW_LATE_SECRET";
+const toolError = (text: string) => ({ isError: true, content: [{ type: "text", text }] });
+const registerLate =
+  (credential = LATE_SECRET) =>
+  (_name: string, _args: Record<string, unknown>, context: ConnectorContext) => {
+    sentSecretsFor(context).secret(credential);
+    return { ok: true };
+  };
+const attempt = async (call: () => Promise<unknown>) => {
+  try {
+    await call();
+  } catch {
+    // The program carries on, as one that catches a failed write can.
+  }
+};
+const programResult = (result: { content: { text?: string }[] }) => JSON.stringify(result);
+
+describe("what a program's unknown writes report", () => {
+  it.each([
+    ["a connector's error", "api", `${"x ".repeat(252)}${LATE_SECRET}`],
+    ["a connector's error far past the clip", "api", `${"x ".repeat(2_500)}${LATE_SECRET} tail`],
+    ["a tool's error", "mcp", `${"x ".repeat(252)}${LATE_SECRET}`],
+    ["a tool's error crossing the clip", "mcp", `${"x ".repeat(2_043)}${LATE_SECRET} tail`],
+    ["a tool's error with no boundary before it", "mcp", `${"x".repeat(4_090)}${LATE_SECRET} tail`],
+  ] as const)("INV-5: a credential a later call registers leaves no fragment of %s", async (_label, kind, text) => {
+    const w = world({
+      readOnly: false,
+      ...(kind === "mcp" ? { trackerKind: "mcp" as const } : {}),
+      write: () => {
+        if (kind === "mcp") return toolError(text);
+        throw new Error(text);
+      },
+      read: registerLate(),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      await connecta.call!("reader.get", {});
+      return "done";
+    });
+    const rendered = programResult(result);
+    expect(value(result).error.code).toBe("write_outcome_unknown");
+    expect(rendered).not.toContain("Zqx7");
+    expect(rendered).not.toContain("LATE_SECRET");
+  });
+
+  it("INV-5: a retained text cut through a credential shrinks to no fragment of it", async () => {
+    const long = `Zqx79UVW${"s".repeat(192)}`;
+    const w = world({
+      readOnly: false,
+      write: () => Promise.reject(new Error(`${long} `.repeat(90))),
+      read: registerLate(long),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      await connecta.call!("reader.get", {});
+      return "done";
+    });
+    const rendered = programResult(result);
+    expect(value(result).error.code).toBe("write_outcome_unknown");
+    expect(rendered).not.toContain("Zqx7");
+    expect(rendered).not.toContain("sssssss");
+  });
+
+  it("a connector's long failure fits the deployment's result limit and marks the cut", async () => {
+    const w = world({
+      readOnly: false,
+      maxResultChars: 1_024,
+      write: () => Promise.reject(new Error("word ".repeat(4_800))),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      return "done";
+    });
+    const { error } = value(result);
+    expect(new TextEncoder().encode(JSON.stringify(value(result))).length).toBeLessThanOrEqual(1_024);
+    expect(error.unknownWrites[0].message).toContain("… [truncated]");
+  });
+
+  it("marks what a limit too small for any report leaves out", async () => {
+    const w = world({
+      readOnly: false,
+      maxResultChars: 600,
+      write: () => Promise.reject(new Error("word ".repeat(4_800))),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      return "done";
+    });
+    const { error } = value(result);
+    expect(error.code).toBe("write_outcome_unknown");
+    expect(error.message).toContain("unknown outcome");
+    expect(error.unknownWritesTruncated).toBe(true);
+    expect(JSON.stringify(error)).not.toContain("word word word");
+  });
+
+  it("bounds every entry and the whole report, however many writes fail", async () => {
+    const w = world({ readOnly: false, write: () => Promise.reject(new Error(`"${"quoted word ".repeat(2_000)}"`)) });
+    const result = await w.run(async (connecta) => {
+      for (let index = 0; index < 10; index++) await attempt(() => connecta.call!("tracker.post", {}));
+      return "done";
+    });
+    const { error } = value(result);
+    expect(error.writes).toMatchObject({ unknown: 10 });
+    expect(new TextEncoder().encode(JSON.stringify(error.unknownWrites)).length).toBeLessThanOrEqual(8_192);
+    for (const entry of error.unknownWrites)
+      expect(new TextEncoder().encode(JSON.stringify(entry.message ?? "")).length).toBeLessThanOrEqual(4_096);
+    expect(error.unknownWrites[0].message).toContain("… [truncated]");
+    expect(error.unknownWritesTruncated).toBe(true);
+    expect(w.writes()).toHaveLength(10);
+  });
+
+  it("INV-6: the tool's words stay out of activity and the operator's log", async () => {
+    const logged: unknown[] = [];
+    const logger = {
+      ...silentLogger,
+      warn: (...args: unknown[]) => void logged.push(args),
+      error: (...args: unknown[]) => void logged.push(args),
+    };
+    const w = world({
+      readOnly: false,
+      trackerKind: "mcp",
+      logger,
+      write: () => toolError("Approve at https://vendor.example/apr_7Hq2"),
+    });
+    const result = await w.run(async (connecta) => {
+      await attempt(() => connecta.call!("tracker.post", {}));
+      return "done";
+    });
+    expect(value(result).error.message).toContain("https://vendor.example/apr_7Hq2");
+    expect(w.events.length).toBeGreaterThan(0);
+    expect(JSON.stringify(w.events)).not.toContain("apr_7Hq2");
+    expect(JSON.stringify(logged)).not.toContain("apr_7Hq2");
+  });
+});
+
+describe("the credential check on a program's outbound arguments", () => {
+  const STRIPE_STYLE = "sk_test_51Hq7ZpLm9TxV2bNw";
+  const afterCredential = async (credential: string, note: unknown, tool = "tracker.post") => {
+    const w = world({ readOnly: false, read: registerLate(credential) });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("reader.get", {});
+      return await connecta.call!(tool, { note });
+    });
+    return { result: value(result), sent: w.writes(), calls: w };
+  };
+
+  it.each([
+    ["names the public prefix", "Document the sk_test_ prefix"],
+    ["names only a prefix among other words", "keys look like sk_test_ or sk_live_ here"],
+    ["looks like a header line", "x-api-key: rotate this one"],
+  ])("INV-9: a write that %s is sent exactly as written", async (_label, note) => {
+    const { result, sent } = await afterCredential(STRIPE_STYLE, note);
+    expect(result.error).toBeUndefined();
+    expect(sent).toEqual([{ address: "tracker.post", args: { note } }]);
+  });
+
+  it.each([
+    ["the whole credential", STRIPE_STYLE],
+    ["it in framing", `Authorization: Bearer ${STRIPE_STYLE}`],
+    ["eight units past the prefix", "sk_test_51Hq7ZpL"],
+    ["eight units of its value alone", "51Hq7ZpL"],
+    ["its encoding", btoa(STRIPE_STYLE)],
+    ["its percent encoding inside a URL", `https://example.com/?k=${encodeURIComponent(`Bearer ${STRIPE_STYLE}`)}`],
+    ["it nested in JSON text", JSON.stringify({ deep: JSON.stringify({ key: STRIPE_STYLE }) })],
+  ])("INV-5: a write holding %s stays unsent", async (_label, note) => {
+    const { result, sent } = await afterCredential(STRIPE_STYLE, note);
+    expect(result.error.code).toBe("invalid_args");
+    expect(result.error.message).toContain("tracker.post was not sent");
+    expect(sent).toEqual([]);
+  });
+
+  it("states the limit: fewer than eight units past a public prefix are not a match", async () => {
+    const { result, sent } = await afterCredential(STRIPE_STYLE, "sk_test_51Hq7Zp");
+    expect(result.error).toBeUndefined();
+    expect(sent).toHaveLength(1);
+  });
+
+  it("a credential that is only its label and a short value matches whole", async () => {
+    expect((await afterCredential("sk_live_short12", "the sk_live_ prefix")).sent).toHaveLength(1);
+    expect((await afterCredential("sk_live_short12", "sk_live_short12")).sent).toEqual([]);
+  });
+
+  it("a JWT's public header segment is not a match; its payload is", async () => {
+    const header = "eyJhbGciOiJIUzI1NiJ9";
+    const token = `${header}.eyJzdWIiOiJhbGljZSJ9.c2lnbmF0dXJlLWJ5dGVz`;
+    expect((await afterCredential(token, `another token ${header}.eyJvdGhlciI6dHJ1ZX0.b3RoZXI`)).sent).toHaveLength(1);
+    expect((await afterCredential(token, token)).sent).toEqual([]);
+  });
+
+  it("an identifier sent beside a credential is public: a write naming it is sent", async () => {
+    const w = world({
+      readOnly: false,
+      read: (_name, _args, context) => {
+        sentSecretsFor(context).identifier("alice@example.com");
+        return { ok: true };
+      },
+    });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("reader.get", {});
+      return await connecta.call!("tracker.post", { assignee: "alice@example.com" });
+    });
+    expect(value(result).error).toBeUndefined();
+    expect(w.writes()).toEqual([{ address: "tracker.post", args: { assignee: "alice@example.com" } }]);
+  });
+
+  it("a private value an earlier call submitted never refuses a later write repeating it", async () => {
+    const w = world({
+      readOnly: false,
+      read: (_name, _args, context) => {
+        sentSecretsFor(context).arguments(
+          { note: "our ordinary repeated sentence" },
+          { type: "object", properties: { note: { type: "string", writeOnly: true } } },
+        );
+        return { ok: true };
+      },
+    });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("reader.get", {});
+      return await connecta.call!("tracker.post", { note: "our ordinary repeated sentence" });
+    });
+    expect(value(result).error).toBeUndefined();
+    expect(w.writes()).toEqual([{ address: "tracker.post", args: { note: "our ordinary repeated sentence" } }]);
+  });
+
+  it("a read sends a public prefix as written and still has a real match replaced", async () => {
+    const w = world({ readOnly: false, read: registerLate(STRIPE_STYLE) });
+    const result = await w.run(async (connecta) => {
+      await connecta.call!("reader.get", {});
+      await connecta.call!("reader.get", { query: "the sk_test_ prefix" });
+      await connecta.call!("reader.get", { query: `leaked ${STRIPE_STYLE}` });
+      return "done";
+    });
+    const reads = w.reads();
+    expect(value(result).error).toBeUndefined();
+    expect(reads[1]!.args).toEqual({ query: "the sk_test_ prefix" });
+    expect(JSON.stringify(reads[2]!.args)).not.toContain("51Hq7ZpL");
+  });
+});
 
 describe("writable-endpoint programs (#706, #820)", () => {
   it.each([
@@ -334,7 +591,7 @@ describe("writable-endpoint programs (#706, #820)", () => {
     expect(() => construct({ classification: { nope: { read: "read" } } })).toThrow('unknown connector "nope"');
     expect(() => construct({ classification: { notes: { missing: "read" } } })).toThrow('has no tool "missing"');
     expect(() => construct({ classification: { notes: { read: "never" } } })).toThrow(
-      'must be "read", "write", or "hidden"',
+      'must be "read", "read-repeatable", "write", or "hidden"',
     );
     expect(() => construct({ readOnly: "yes" })).toThrow("ConnectaConfig.readOnly must be true or false");
     expect(() => construct({ pools: { named: { tools: ["notes"], readOnly: 1 } } })).toThrow(
@@ -416,6 +673,164 @@ describe("classification and pool endpoints (#706)", () => {
     }
   });
 
+  it("INV-1 INV-2: a read override cannot make a declared write a read, and warns once per catalog change", async () => {
+    const logger = { ...silentLogger, warn: vi.fn() };
+    let sent = 0;
+    let raw: ToolDef[] = [
+      { name: "no_read", annotations: { readOnlyHint: false } },
+      { name: "no_read_additive", annotations: { readOnlyHint: false, destructiveHint: false } },
+      { name: "destructive", annotations: { destructiveHint: true } },
+      { name: "contradictory", annotations: { readOnlyHint: true, destructiveHint: true } },
+      { name: "malformed", annotations: { readOnlyHint: null as never } },
+      { name: "silent" },
+      { name: "silent_not_destructive", annotations: { destructiveHint: false } },
+      { name: "source_read", annotations: { readOnlyHint: true } },
+    ];
+    const connector: Connector = {
+      id: "crm",
+      listTools: async () => raw,
+      callTool: async () => {
+        sent++;
+        return { ok: true };
+      },
+    };
+    const classification = {
+      crm: Object.fromEntries(raw.map((tool) => [tool.name, "read" as const])),
+    };
+    const registry = makeRegistry([connector], { classification, logger });
+    const verdicts = async () =>
+      Object.fromEntries(
+        (await registry.getTools("crm", BASE, {})).map((tool) => [
+          tool.name,
+          [tool.classification, tool.annotations?.readOnlyHint, tool.annotations?.destructiveHint],
+        ]),
+      );
+    expect(await verdicts()).toEqual({
+      no_read: ["write", false, true],
+      no_read_additive: ["write", false, true],
+      destructive: ["write", false, true],
+      contradictory: ["write", false, true],
+      malformed: ["write", false, true],
+      silent: ["read", true, false],
+      silent_not_destructive: ["read", true, false],
+      source_read: ["read", true, false],
+    });
+    const warned = () => logger.warn.mock.calls.map(([message]) => String(message)).filter((m) => m.includes('"read"'));
+    expect(warned()).toHaveLength(5);
+    expect(warned().join("\n")).toContain('"crm.no_read"');
+    expect(warned().join("\n")).not.toContain('"crm.silent"');
+    await verdicts();
+    expect(warned()).toHaveLength(5);
+    raw = raw.slice(0, 2);
+    await verdicts();
+    expect(warned()).toHaveLength(7);
+
+    raw = [{ name: "no_read", annotations: { readOnlyHint: false } }];
+    const readOnly = createMetaTools(registry, BASE, { readOnly: true });
+    const refused = await readOnly.callTool({ address: "crm.no_read" });
+    expect(refused.structuredContent).toMatchObject({ error: { code: "read_only_endpoint" } });
+    const programs = new Map<string, Program>();
+    const code = "async () => program";
+    programs.set(code, (connecta) => connecta.call!("crm.no_read", {}));
+    const execute = createExecuteTool(registry, BASE, scriptedExecutor(programs), silentLogger, undefined, {
+      readOnly: true,
+    });
+    expect(value(await execute({ code })).error).toMatchObject({ code: "read_only_endpoint" });
+    expect(sent).toBe(0);
+  });
+
+  it("INV-1 INV-9: read-repeatable serves a declared write as a read in programs and keeps write accounting", async () => {
+    const classification = { tracker: { close_issue: "read-repeatable" as const } };
+    const writable = world({ classification });
+    const ran = value(await writable.run((connecta) => connecta.call!("tracker.close_issue", { id: 1 })));
+    expect(ran.error).toBeUndefined();
+    expect(writable.writes()).toHaveLength(1);
+
+    const readOnly = world({ classification, readOnly: true });
+    const found = value(
+      await readOnly.run(async (connecta) => {
+        const search = await connecta.search!({});
+        await connecta.call!("tracker.close_issue", { id: 1 });
+        return search.tools.map((tool: { address: string; classification: string }) => [
+          tool.address,
+          tool.classification,
+        ]);
+      }),
+    );
+    expect(found.error).toBeUndefined();
+    expect(found.result).toContainEqual(["tracker.close_issue", "read"]);
+    expect(readOnly.writes()).toHaveLength(1);
+
+    // Still a source write: a failure after dispatch is an unknown outcome, not a retry.
+    const failing = world({
+      classification,
+      write: () => {
+        throw new ConnectorCallError("unavailable", "Downstream failed.");
+      },
+    });
+    const failed = value(await failing.run((connecta) => connecta.call!("tracker.close_issue", { id: 1 })));
+    expect(failed.error).toMatchObject({ retryable: false });
+    expect(failing.writes()).toHaveLength(1);
+  });
+
+  it("INV-1 INV-9: read-repeatable reports an unknown outcome when an opaque connector loses the answer", async () => {
+    let sent = 0;
+    const connector: Connector = {
+      id: "crm",
+      listTools: async () => [{ name: "update", annotations: { readOnlyHint: false } }],
+      callTool: async () => {
+        sent++;
+        throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+      },
+    };
+    const registry = makeRegistry([connector], { classification: { crm: { update: "read-repeatable" } } });
+    const result = await createMetaTools(registry, BASE).callTool({ address: "crm.update" });
+    expect(result.structuredContent).toMatchObject({ error: { retryable: false, writeOutcome: "unknown" } });
+    expect(sent).toBe(1);
+  });
+
+  it("INV-1 INV-11: read-repeatable warns about nothing, and an unknown verdict names it", async () => {
+    const logger = { ...silentLogger, warn: vi.fn() };
+    const connector: Connector = {
+      id: "crm",
+      listTools: async () => [
+        { name: "update", annotations: { readOnlyHint: false } },
+        { name: "plain", annotations: { readOnlyHint: false } },
+      ],
+      callTool: async () => null,
+    };
+    const registry = makeRegistry([connector], {
+      classification: { crm: { update: "read-repeatable", plain: "read" } },
+      logger,
+    });
+    const tools = await registry.getTools("crm", BASE, {});
+    expect(tools.map((tool) => [tool.name, tool.classification, tool.annotations?.readOnlyHint])).toEqual([
+      ["update", "read", true],
+      ["plain", "write", false],
+    ]);
+    const warnings = logger.warn.mock.calls.map(([message]) => String(message)).filter((m) => m.includes("override"));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('"crm.plain"');
+    expect(warnings[0]).toContain('"read-repeatable"');
+    expect(() => makeRegistry([connector], { classification: { crm: { update: "repeatable" as never } } })).toThrow(
+      '"read-repeatable"',
+    );
+  });
+
+  it("INV-1: a static connector reports a refused read override once, at construction", async () => {
+    const logger = { ...silentLogger, warn: vi.fn() };
+    const connector = api("notes", {
+      tools: [{ name: "update", description: "Update", annotations: { readOnlyHint: false }, handler: () => ({}) }],
+    });
+    const registry = makeRegistry([connector], { classification: { notes: { update: "read" } }, logger });
+    const warned = () =>
+      logger.warn.mock.calls.filter(([message]) => String(message).includes('"notes.update" to "read"'));
+    expect(warned()).toHaveLength(1);
+    await registry.getTools("notes", BASE, {});
+    await registry.getTools("notes", BASE, {});
+    expect(warned()).toHaveLength(1);
+  });
+
   it("INV-1 INV-11: absent runtime overrides stay dormant and apply on return; static typos fail construction", async () => {
     for (const verdict of ["read", "write", "hidden"] as const) {
       let present = false;
@@ -457,7 +872,7 @@ describe("classification and pool endpoints (#706)", () => {
     ];
     const raw: ToolDef[] = [
       { name: "mislabeled", annotations: { readOnlyHint: true } },
-      { name: "mixed", annotations: { readOnlyHint: false } },
+      { name: "mixed" },
       { name: "constructor", classification: "read" },
       ...hintCases.map(([annotations], index) => ({ name: `hint_${index}`, ...(annotations ? { annotations } : {}) })),
     ];

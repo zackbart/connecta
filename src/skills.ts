@@ -21,64 +21,117 @@ import { closeScopeOnExit } from "./runtime/connector-scope.js";
 import { sentSecretsForRequest } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
-import type {
-  Connector,
-  ConnectorContext,
-  ConnectorSkill,
-  ConnectorSkillResourceContents,
-  AgentRouteNames,
-} from "./types.js";
+import type { Connector, ConnectorContext, ConnectorSkill, ConnectorSkillResourceContents } from "./types.js";
 
 /** Trusted diagnostics constructed from the caller-visible local registry. */
 export class SkillLookupError extends ConnectorCallError {}
 
 // The meta instructions and built-in guides use the meta names: built-in guides
 // are byte-identical across deployments, and the eval code arm replaces usage.
-const ROUTE = `Choose a route before discovery. One known-address read uses ${META_ROUTES.read}; one known-address write uses ${META_ROUTES.write}. Unknown-address read-only work starts with ${META_ROUTES.program} to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Sample unfamiliar reads.`;
-const RECOVERY = `When an auth error includes a handoff, give it to the user or operator. Use ${META_ROUTES.authorize} for a fresh link. Page resultId notices and format:"paged" handles with connecta.result(handleOrId, { page? }). Missing guidance/repair only: skills tool "usage" or connecta.skill("usage").`;
+const WRITE_POLICY =
+  "This endpoint permits writes, subject to connector restrictions; the host owns approval. Never resend a write to see its output.";
+const READ_ONLY_POLICY = "This endpoint can't perform writes; no write route exists here.";
+const RECOVERY = "On errors and truncated results, follow nextAction; give auth links to the user or operator.";
+/** A guide can name a write step, so its notice says what happens to one. */
+const READ_ONLY_GUIDE_NOTICE =
+  "This endpoint can't perform writes; guide steps that change data will be refused. No write route exists on this endpoint.";
 
-/**
- * The always-loaded MCP `instructions` string. An endpoint is writable or
- * read-only: a writable one lets programs and call_destructive_tool write,
- * and the client owns approval; a read-only one omits write tools from search
- * and describe and refuses every write call. Guides may still name them.
- */
-function writePolicy(readOnly: boolean, routes: AgentRouteNames): string {
-  return readOnly
-    ? "This endpoint can't perform writes; guide steps that change data will be refused. No write route exists on this endpoint."
-    : `This endpoint permits writes through ${routes.write}${routes.program === META_ROUTES.program ? ` and ${routes.program}` : ""}, subject to connector restrictions; the host owns approval.`;
+const policy = (readOnly: boolean) => (readOnly ? READ_ONLY_POLICY : WRITE_POLICY);
+
+/** Connector ids in instructions; execute_code's inventory carries the rest. */
+const INSTRUCTION_CONNECTORS_MAX_BYTES = 120;
+
+/** Ids in roster order, then an exact count once they pass the byte cap. Ids are ASCII. */
+function connectorList(ids: readonly string[]): string {
+  if (ids.length === 0) return "none";
+  const all = ids.join(", ");
+  if (all.length <= INSTRUCTION_CONNECTORS_MAX_BYTES) return all;
+  for (let shown = ids.length - 1; shown > 0; shown--) {
+    const line = [...ids.slice(0, shown), `+${ids.length - shown} more`].join(", ");
+    if (line.length <= INSTRUCTION_CONNECTORS_MAX_BYTES) return line;
+  }
+  return `+${ids.length} more`;
 }
 
-export const CONNECTA_INSTRUCTIONS = `${ROUTE} ${writePolicy(false, META_ROUTES)} Never repeat a write to recover its output. ${RECOVERY}`;
-
 /**
- * The instructions one endpoint serves: pool scope and guide pointer first,
- * then stable routing rules. Plain `/mcp` and a
- * pool without a description serve the constant unchanged. The description
- * comes from deployment config for the pool the request was admitted through;
- * nothing a request sends reaches it.
+ * The instructions one endpoint serves: pool scope, what the endpoint reaches,
+ * routing, write policy, recovery. The description comes from deployment config
+ * for the pool the request was admitted through. `connectorIds` is that
+ * request's admitted roster, the same one execute_code's inventory discloses:
+ * configured ids only, in registry order, with no catalog, call or auth state.
+ * A native pool omits them because its tool names already show them.
  */
 export function endpointInstructions(
-  description?: string,
-  native?: { executeCode: boolean },
-  readOnly = false,
+  description: string | undefined,
+  native: { executeCode: boolean } | undefined,
+  readOnly: boolean,
+  connectorIds: readonly string[],
 ): string {
   const instructions = native
     ? nativeInstructions(native.executeCode, readOnly)
-    : readOnly
-      ? `Choose a route before discovery. One known read uses ${META_ROUTES.read}; other read work uses ${META_ROUTES.program} to discover, call and return the answer. ${writePolicy(true, META_ROUTES)} Never repeat a write for output. ${RECOVERY}`
-      : CONNECTA_INSTRUCTIONS;
-  if (description === undefined) return instructions;
-  const routing = native
-    ? instructions
-    : `Known read: ${META_ROUTES.read}${readOnly ? "" : `; known write: ${META_ROUTES.write}`}. Other work: ${META_ROUTES.program}; discover and call together, return answers, sample unfamiliar reads. ${writePolicy(readOnly, META_ROUTES)} Never repeat writes for output. Give auth handoffs to user/operator; ${META_ROUTES.authorize} refreshes links. Page resultId/format:"paged" with connecta.result(handleOrId,{page?}).`;
-  return `Use skills. ${description} ${routing}`;
+    : `Gateway to connected services: ${connectorList(connectorIds)}. One known read: ${META_ROUTES.read}. ${readOnly ? "" : `One known write: ${META_ROUTES.write}. `}Everything else: one ${META_ROUTES.program} program that searches, calls and returns the answer. ${policy(readOnly)} ${RECOVERY}`;
+  return description === undefined ? instructions : `${description} ${instructions}`;
 }
 
 /** Instructions for pools whose host searches the listed native tools. */
 export function nativeInstructions(executeCode: boolean, readOnly = false): string {
   const routes = routeNames(executeCode ? "native-code" : "native");
-  return `Annotations classify reads/writes. Call known tools directly; ${executeCode ? `combine work in ${routes.program} using tool descriptions’ program addresses.` : "find tools with your host's search."} ${writePolicy(readOnly, routes)} Never repeat a write for output. Give auth handoffs to the user/operator. Tools missing? Ask the operator to repair, then reconnect. Follow nextAction to page with ${executeCode ? `connecta.result in ${routes.program}` : "read_result"}. ${routes.skills} lists guidance.`;
+  return `Call known tools directly; ${executeCode ? `combine several in ${routes.program} using each tool's Program address.` : "find others with your host's search."} ${policy(readOnly)} ${RECOVERY} Tools missing: ask the operator to repair, then reconnect.`;
+}
+
+/** The `capabilities.extensions` key carrying {@link endpointExtension}. */
+export const ENDPOINT_EXTENSION = "dev.connecta/endpoint";
+
+const inventoryWords = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+/** Text that only respells what its entry already shows ("Google Calendar" for google_calendar) adds nothing. */
+export function addsInformation(shown: string, text: string): boolean {
+  const words = inventoryWords(text);
+  const shownWords = inventoryWords(shown);
+  return words.join("") !== shownWords.join("") && words.some((word) => !shownWords.includes(word));
+}
+
+/** Clips on a whole token, so text with no token that fits leaves nothing to show. */
+export const inventoryNote = (text: string, maxBytes: number) => {
+  const clipped = boundedEchoText(text, maxBytes);
+  return clipped === "…" ? undefined : clipped;
+};
+
+/** A connector's bounded title for inventories, or undefined when it adds nothing to the id or cannot fit. */
+export function connectorInventoryTitle(connector: Connector): string | undefined {
+  const title = connector.title?.replace(/\s+/g, " ").trim();
+  return title && addsInformation(connector.id, title) ? inventoryNote(title, 45) : undefined;
+}
+
+/**
+ * Facts about the endpoint this request reached, for a client composing its own
+ * host-specific guidance. Built only from the admitted scope and configuration:
+ * `connectors` is the caller's registry view, the roster `execute_code` and
+ * `authorize_connector` already describe, and nothing here loads a catalog.
+ */
+export function endpointExtension(
+  connectors: readonly Connector[],
+  native: boolean,
+  executeCode: boolean,
+  readOnly: boolean,
+) {
+  return {
+    surface: native ? "native" : "meta",
+    executeCode,
+    readOnly,
+    connectors: connectors.map((connector) => {
+      const title = connectorInventoryTitle(connector);
+      return {
+        id: connector.id,
+        ...(title ? { title } : {}),
+        ...(connectorGuideRequired(connector) ? { readFirst: connectorSkillName(connector.id) } : {}),
+      };
+    }),
+  };
 }
 
 /** True when at least one of `connectors` carries a usage guide. */
@@ -149,11 +202,17 @@ export function connectorSkillName(connectorId: string): string {
   return `${CONNECTOR_SKILL_PREFIX}${connectorId}`;
 }
 
-/** The connector's guide, or undefined when it declares none (or a blank one). */
-export function connectorGuide(connector: Connector): string | undefined {
+/** The guide as authored, or undefined when the connector declares none (or a blank one). */
+function authoredGuide(connector: Connector): string | undefined {
   const guide = connector.usageGuide;
   const content = typeof guide === "string" ? guide : guide?.content;
-  if (!content || content.trim() === "") return undefined;
+  return !content || content.trim() === "" ? undefined : content;
+}
+
+/** The connector's guide with its connection's read-only notice, or undefined when it has none. */
+export function connectorGuide(connector: Connector): string | undefined {
+  const content = authoredGuide(connector);
+  if (content === undefined) return undefined;
   return connector.readOnly === true
     ? `This connection can't perform writes; guide steps that change data will be refused. No write route exists for this connection.\n\n${content}`
     : content;
@@ -404,6 +463,12 @@ function localRecord(name: string, uri: string, description: string, content: st
   return { entry: { uri, frontmatter: { name, description }, resources: "dynamic" }, content, aliases };
 }
 
+/** A local record's text after the frontmatter block Connecta wrote ahead of it. */
+function localSkillBody(text: string): string {
+  const close = text.indexOf("\n---\n", 3);
+  return close === -1 ? text : text.slice(close + "\n---\n".length).replace(/^\n/, "");
+}
+
 /** JSON frontmatter is YAML too; no runtime provider imports or filesystem reads. */
 function validSkillName(name: string): boolean {
   return name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name);
@@ -493,7 +558,11 @@ const localRecordsNative = /* @__PURE__ */ registerAuth(
       const guides = identities.map(({ connector, name, legacy }) => {
         const description = connectorGuideSummary(connector)!;
         const root = `skill://connecta/connectors/${encodeURIComponent(name)}`;
-        const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${readOnly ? `${writePolicy(true, META_ROUTES)}\n\n` : ""}${connectorGuide(connector)!}`;
+        // One read-only notice: the endpoint's already covers its connections.
+        const guide = readOnly
+          ? `${READ_ONLY_GUIDE_NOTICE}\n\n${authoredGuide(connector)!}`
+          : connectorGuide(connector)!;
+        const content = `---\n${JSON.stringify({ name, description }, null, 2)}\n---\n\n${guide}`;
         return {
           ...localRecord(name, `${root}/SKILL.md`, description, content, [
             connectorSkillName(connector.id),
@@ -833,6 +902,9 @@ export class SkillsRegistry {
                   cacheScope: "private";
                 }>(self, "read", [record.entry.uri]),
               )).contents[0]!;
+              // Connecta prepends frontmatter to local guides for native SKILL.md; a
+              // tool reader wants only the body. Downstream files keep their bytes.
+              if (!record.files && typeof content.text === "string") return localSkillBody(content.text);
               const origin = record.files ? `${downstreamOrigin(record.connector!.id)}\n\n` : "";
               if (typeof content.text === "string") return origin + content.text;
               try {

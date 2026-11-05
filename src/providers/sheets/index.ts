@@ -113,6 +113,7 @@ export const sheets = defineApiProvider<SheetsOptions>({
   errors,
   safety: () => safety,
   probe,
+  blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,

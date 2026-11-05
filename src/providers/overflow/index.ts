@@ -129,6 +129,8 @@ export const overflow = defineApiProvider<OverflowOptions>({
   pageSize: { default: DEFAULT_PAGE_SIZE, max: MAX_PAGE_SIZE },
   credential: API_KEY_CREDENTIAL,
   authenticate,
+  // docs.overflow.co/api-reference/authentication: "Public identifier"; x-api-key is the secret.
+  publicIdentifierHeaders: ["x-client-id"],
   admit,
   errors,
   idempotencyKey: false,

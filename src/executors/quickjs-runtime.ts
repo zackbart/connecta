@@ -13,7 +13,7 @@ import type { CallErrorDetails } from "../errors.js";
 import { getQuickJS, type QuickJSContext, type QuickJSDeferredPromise, type QuickJSHandle } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
 import { InvocationFailure } from "../invocation-failure.js";
-import { msg } from "../errors.js";
+import { msg, tokenPrefix } from "../errors.js";
 import { withoutProgramTerminator } from "../program-source.js";
 import { hostCallLabel, MAX_QUICKJS_LOG_TRANSPORT_BYTES, serializedBytes } from "./quickjs-protocol.js";
 
@@ -43,10 +43,8 @@ const MAX_LOG_MARKER_TRANSPORT_BYTES = Math.max(
   logTransportBytes(LOG_ENTRY_LIMIT_MARKER),
   logTransportBytes(LOG_SIZE_LIMIT_MARKER),
 );
-// Keep one host result below the range where quickjs-emscripten@0.32.0 can
-// nondeterministically fail during runtime disposal under concurrent load.
-// This still lets guest code reduce data more than ten times larger than
-// connecta's final response budget.
+// Bounds what one host result puts in the guest. This still lets guest code
+// reduce data more than ten times larger than connecta's final response budget.
 const MAX_HOST_RESULT_BYTES = 256 * 1024;
 
 function logTransportBytes(entry: string): number {
@@ -191,7 +189,7 @@ function installBridge(
     // but slicing here keeps only a bounded string alive in `logs`.
     let entry = ctx.getString(h);
     if (entry.length > MAX_LOG_ENTRY_CHARS) {
-      entry = `${entry.slice(0, MAX_LOG_ENTRY_CHARS)}…[entry truncated]`;
+      entry = `${tokenPrefix(entry, MAX_LOG_ENTRY_CHARS)}…[entry truncated]`;
     }
     const entryTransportBytes = logTransportBytes(entry);
     if (
@@ -253,7 +251,7 @@ function installBridge(
           h.dispose();
         } else {
           const error = ctx.newError();
-          const message = ctx.unwrapResult(ctx.evalCode(JSON.stringify(msg(reply.error).slice(0, 4_000))));
+          const message = ctx.unwrapResult(ctx.evalCode(JSON.stringify(tokenPrefix(msg(reply.error), 4_000))));
           ctx.setProp(error, "message", message);
           message.dispose();
           if (reply.error instanceof InvocationFailure) {
@@ -293,6 +291,8 @@ function installBridge(
  */
 export interface QuickJsExecutionResult extends ExecuteResult {
   timedOut?: boolean;
+  /** Settles once the run's runtime is freed; false when freeing it failed. */
+  tornDown?: Promise<boolean>;
 }
 
 /**
@@ -309,6 +309,13 @@ export async function executeQuickJs(
   const { timeoutMs, cpuTimeMs, memoryLimitBytes, maxStackSizeBytes } = options;
   const QuickJS = await getQuickJS();
   const ctx = QuickJS.newContext();
+  // quickjs-emscripten-core 0.32.0's executePendingJobs reads its context out-pointer through a
+  // typed array, which detaches when WASM memory grows during the job pass. It then reads
+  // undefined and calls newContext({ contextPointer: undefined }), which creates a context
+  // nothing frees, and freeing the runtime aborts. A run has this one context, and that lookup
+  // is the only thing here that reaches newContext, so it always means this one.
+  // Remove once a release fixes it: justjake/quickjs-emscripten#240, fix in PR #248.
+  ctx.runtime.newContext = () => ctx;
   const deadline = Date.now() + timeoutMs;
   const timeoutError = `Execution timed out after ${timeoutMs}ms.`;
   const cpuTimeoutError = `Execution exceeded the ${cpuTimeMs}ms guest CPU budget.`;
@@ -339,7 +346,16 @@ export async function executeQuickJs(
   let describeError: QuickJSHandle | undefined;
   const logs: string[] = [];
   const bridge = installBridge(ctx, providers, logs, onLog);
-  const finish = <T extends ExecuteResult>(r: T): T => {
+  // A failed free leaves this child's WASM module unusable, but the answer is already in host memory.
+  const dispose = (): boolean => {
+    try {
+      ctx.dispose();
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const finish = <T extends ExecuteResult>(r: T): T & { tornDown: Promise<boolean> } => {
     bridge.aborted = true;
     describeError?.dispose();
     for (const failure of bridge.failures) failure.error.dispose();
@@ -352,18 +368,18 @@ export async function executeQuickJs(
     // stragglers are waiting on. Arming before the pending check (and
     // synchronously, before the first await) closes the settle-before-arm
     // window: any settle after this point resolves the promise we await.
-    if (bridge.pending === 0) ctx.dispose();
-    else {
-      void (async () => {
-        armWake(bridge);
-        while (bridge.pending > 0) {
-          await bridge.waitForSettle;
-          armWake(bridge);
-        }
-        ctx.dispose();
-      })();
-    }
-    return logs.length > 0 ? { ...r, logs } : r;
+    const tornDown =
+      bridge.pending === 0
+        ? Promise.resolve(dispose())
+        : (async () => {
+            armWake(bridge);
+            while (bridge.pending > 0) {
+              await bridge.waitForSettle;
+              armWake(bridge);
+            }
+            return dispose();
+          })();
+    return { ...r, ...(logs.length > 0 ? { logs } : {}), tornDown };
   };
   const rejected = (error: QuickJSHandle): QuickJsExecutionResult => {
     // Interrupt/deadline facts are host state, never inferred by inspecting
@@ -373,7 +389,7 @@ export async function executeQuickJs(
     const call = bridge.failures.find((failure) => ctx.eq(failure.error, error))?.call;
     let description: unknown = { name: "Error", message: "Program threw a value." };
     const type = ctx.typeof(error);
-    if (type === "string") description = ctx.getString(error).slice(0, 4000);
+    if (type === "string") description = tokenPrefix(ctx.getString(error), 4000);
     else if (type === "number") description = ctx.getNumber(error);
     else if (type === "undefined") description = "undefined";
     else if (type === "boolean") description = ctx.eq(error, ctx.true);
@@ -383,7 +399,9 @@ export async function executeQuickJs(
       const described = runGuest(() => ctx.callFunction(describe, ctx.undefined, error));
       if (described.error) described.error.dispose();
       else {
-        description = JSON.parse(ctx.getString(described.value)) ?? description;
+        const parsed = JSON.parse(ctx.getString(described.value)) as { name?: unknown } | null;
+        if (typeof parsed?.name === "string") parsed.name = tokenPrefix(parsed.name, 64);
+        description = parsed ?? description;
         described.value.dispose();
       }
       if (wallInterrupted || Date.now() >= deadline) return timedOut();
@@ -400,7 +418,7 @@ export async function executeQuickJs(
     const location = /:(\d+)(?::\d+)?\)?(?:\n|$)/.exec(stack);
     return {
       result: undefined,
-      error: formatGuestError(description).slice(0, 4000),
+      error: tokenPrefix(formatGuestError(description), 4000),
       failure: {
         name,
         ...(call ? { call } : {}),
@@ -448,8 +466,9 @@ export async function executeQuickJs(
           for (let i = 0; i < prototypes.length; i++) {
             if (prototype === prototypes[i][0]) { name = prototypes[i][1]; break; }
           }
-          return stringify({ __proto__: null, name: text("name", name, 64),
-            message: text("message", "Program threw a value.", 4000), stack: text("stack", "", 1000) });
+          // One unit past the host's cuts, which read it to tell a finished token from an open one.
+          return stringify({ __proto__: null, name: text("name", name, 65),
+            message: text("message", "Program threw a value.", 4001), stack: text("stack", "", 1000) });
         };
       })()`),
   );

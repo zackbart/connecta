@@ -137,6 +137,17 @@ export class FakeCcb {
         return respond(person);
       }
     }
+    // The vendor's dedicated contact route changes the same profile.
+    if (/^\/individuals\/\d+\/contact_info$/.test(path) && request.method === "PUT") {
+      const person = this.state.people.find((p) => p.id === Number(path.split("/")[2]));
+      if (!person) return respond({ message: "Record not found." }, 404);
+      const values = body as Record<string, unknown>;
+      if (Object.keys(values).length !== 1 || typeof values.email !== "string") return respond({}, 412);
+      person.email = values.email;
+      this.state.updated.push(person.id);
+      if (this.fault === "update-500") return respond({ message: "The update response was lost." }, 500);
+      return respond(person);
+    }
     if (path === "/search/individuals/results" && request.method === "POST") {
       const config = (body as { configuration?: { filter_profile_type?: string[] } }).configuration;
       const types = config?.filter_profile_type ?? ["active"];

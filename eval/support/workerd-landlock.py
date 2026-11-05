@@ -33,7 +33,8 @@ def main():
             try:
                 with open(f"/proc/{entry}/stat") as stream:
                     parents[int(entry)] = int(stream.read().rsplit(")", 1)[1].split()[1])
-            except FileNotFoundError:
+            # A process exiting mid-read surfaces as ESRCH, not just a missing file.
+            except (FileNotFoundError, ProcessLookupError):
                 continue
     def owned(pid):
         seen = set()
@@ -53,12 +54,12 @@ def main():
             fds = os.listdir(f"/proc/{pid}/fd")
         # A non-dumpable descendant (a sandboxed agent CLI) hides its fds. Its
         # ports stay denied, which fails closed for this allowlist.
-        except (FileNotFoundError, PermissionError):
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
             continue
         for fd in fds:
             try:
                 target = os.readlink(f"/proc/{pid}/fd/{fd}")
-            except (FileNotFoundError, PermissionError):
+            except (FileNotFoundError, PermissionError, ProcessLookupError):
                 continue
             if target.startswith("socket:["):
                 inodes.add(target[8:-1])

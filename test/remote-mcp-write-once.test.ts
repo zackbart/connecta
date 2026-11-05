@@ -58,12 +58,19 @@ type Answer =
   | "reset"
   | "refused"
   | "timeout"
-  | "deadline";
+  | "deadline"
+  | "isError"
+  | "isErrorLong";
+
+const APPROVAL_TEXT = "Request apr_7Hq2: https://vendor.example/approve/apr_7Hq2?sig=c0ffee0123456789";
+const LONG_TOOL_ERROR = `Approval required. ${"This write needs a person. ".repeat(40)}${APPROVAL_TEXT} then call again.`;
 
 function setup(
   options: {
     oauth?: boolean;
     overrideRead?: boolean;
+    /** create_item keeps its declared write and the deployment accepts repeats. */
+    repeatable?: boolean;
     sameOriginOAuth?: boolean;
     public?: boolean;
     missingReadHints?: boolean;
@@ -74,6 +81,8 @@ function setup(
     versionNegotiation?: "legacy" | "auto";
     /** Runs as a tools/call is answered 401, before the answer reaches connecta. */
     onUnauthorized?: () => void;
+    /** What an `isErrorLong` answer says instead of the default long error. */
+    toolError?: string;
   } = {},
 ) {
   const applied: string[] = [];
@@ -81,7 +90,11 @@ function setup(
   const downstream = httpDownstream((server) => {
     server.registerTool(
       "create_item",
-      { inputSchema: z.object({ id: z.number() }), annotations: { readOnlyHint: false } },
+      // A read override applies only where the server is silent about the tool.
+      {
+        inputSchema: z.object({ id: z.number(), note: z.string().optional() }),
+        ...(options.overrideRead && !options.repeatable ? {} : { annotations: { readOnlyHint: false } }),
+      },
       async ({ id }) => {
         applied.push(`create_item ${id}`);
         return { content: [{ type: "text", text: JSON.stringify({ created: id }) }] };
@@ -98,6 +111,7 @@ function setup(
   });
   /** Every tools/call POST that left connecta, by tool name and bearer token. */
   const sent: Array<{ name: string; authorization: string | null }> = [];
+  const sentArgs: unknown[] = [];
   let refreshes = 0;
   const requests: { url: string; headers: Headers }[] = [];
   /** How the next tools/call per tool is answered; "pass" lets it through. */
@@ -147,6 +161,7 @@ function setup(
     const answer = answers.get(name) ?? "pass";
     if (answer === "refused") throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
     sent.push({ name, authorization });
+    sentArgs.push((rpc.params as { arguments?: unknown }).arguments);
     if (answer === 401 && (options.public || authorization === `Bearer ${STALE}`)) {
       options.onUnauthorized?.();
       return new Response(null, {
@@ -165,6 +180,27 @@ function setup(
     // gateway, the connection, or the server's own answer fails the call.
     const reply = await downstream.fetch(downstream.url, init);
     if (answer === "pass" || answer === 401) return reply;
+    // The handler ran, then the tool answers for call 2: "isError" names calls by `id`.
+    if (answer === "isError" || answer === "isErrorLong") {
+      if ((rpc.params as { arguments?: { id?: number } }).arguments?.id !== 2) return reply;
+      await reply.body?.cancel();
+      return Response.json({
+        jsonrpc: "2.0",
+        id: (rpc as { id?: unknown }).id,
+        result: {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text:
+                answer === "isError"
+                  ? "Vendor refused: HEADER_CREDENTIAL is not allowed"
+                  : (options.toolError ?? LONG_TOOL_ERROR),
+            },
+          ],
+        },
+      });
+    }
     if ((answer === 307 || answer === 308) && url.endsWith("?moved")) return reply;
     await reply.body?.cancel();
     if (answer === 307 || answer === 308)
@@ -230,7 +266,10 @@ function setup(
     ...(options.overrideRead
       ? {
           classification: {
-            svc: { create_item: "read", ...(options.missingReadHints ? { list_items: "read" as const } : {}) },
+            svc: {
+              create_item: options.repeatable ? "read-repeatable" : "read",
+              ...(options.missingReadHints ? { list_items: "read" as const } : {}),
+            },
           },
         }
       : {}),
@@ -273,14 +312,19 @@ function setup(
     };
   };
   /** Run a program that calls one tool, catching its failure or not. */
-  const program = async (caught: boolean, count = 1, tool = "create_item") => {
+  const program = async (
+    caught: boolean,
+    count = 1,
+    tool = "create_item",
+    extra: (id: number) => Record<string, unknown> = () => ({}),
+  ) => {
     const execute = createExecuteTool(
       registry,
       BASE,
       scriptedExecutor(async (fns) => {
         for (let id = 1; id <= count; id++) {
           try {
-            await required(fns.call)(`svc.${tool}`, tool === "create_item" ? { id } : {});
+            await required(fns.call)(`svc.${tool}`, { ...(tool === "create_item" ? { id } : {}), ...extra(id) });
           } catch (error) {
             if (!caught) throw error;
           }
@@ -306,6 +350,7 @@ function setup(
     applied,
     answers,
     sent: (name: string) => sent.filter((entry) => entry.name === name),
+    sentArgs: () => sentArgs,
     resumed: () => resumed,
     refreshes: () => refreshes,
   };
@@ -370,6 +415,23 @@ async function authRecoveryRow(surface: "program" | "call_tool") {
     await app.close();
   }
 }
+
+it.each([
+  ["reset", false],
+  [503, false],
+  [401, true],
+] as const)(
+  "INV-1 INV-9: read-repeatable still sends a declared write once when answered %s",
+  async (answer, oauth) => {
+    const flow = setup({ overrideRead: true, repeatable: true, oauth });
+    if (oauth) await flow.seedOAuth();
+    flow.answers.set("create_item", answer);
+    const failed = await flow.outcome("create_item", { id: 1 });
+    expect(failed.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(flow.sent("create_item")).toHaveLength(1);
+    vi.unstubAllGlobals();
+  },
+);
 
 it.each(["auto", "legacy"] as const)(
   "requires OAuth on the catalog path when tokens disappear before a replacement provider binds (%s)",
@@ -1022,6 +1084,130 @@ describe("remote MCP writes and SDK recoveries under a new JSON-RPC id", () => {
     flow.answers.set("list_items", 502);
     await flow.outcome("list_items");
     expect(flow.sent("list_items")).toHaveLength(2);
+  });
+});
+
+describe("program arguments matching a credential this request sent", () => {
+  it("INV-9: a later write is refused before dispatch, never sent altered, and its failure is known", async () => {
+    const flow = setup();
+    const result = await flow.program(false, 2, "create_item", (id) =>
+      id === 2 ? { note: "copied HEADER_CREDENTIAL" } : {},
+    );
+    expect(result.error).toMatchObject({
+      code: "invalid_args",
+      retryable: false,
+      writes: { succeeded: 1, failed: 0, unknown: 0 },
+    });
+    expect(result.error.message).toContain("svc.create_item was not sent");
+    expect(result.error.message).not.toContain("HEADER_CREDENTIAL");
+    expect(flow.sent("create_item")).toHaveLength(1);
+    expect(flow.applied).toEqual(["create_item 1"]);
+  });
+
+  it("INV-9: a program's later writes with ordinary arguments are sent as written", async () => {
+    const flow = setup();
+    const result = await flow.program(false, 3, "create_item", (id) => ({ note: `ordinary note ${id}` }));
+    expect(result.error).toBeUndefined();
+    expect(flow.sent("create_item")).toHaveLength(3);
+    expect(flow.applied).toEqual(["create_item 1", "create_item 2", "create_item 3"]);
+  });
+
+  it("a later read keeps the filtered value and is still sent", async () => {
+    const flow = setup();
+    const result = await flow.program(false, 2, "list_items", (id) =>
+      id === 2 ? { note: "copied HEADER_CREDENTIAL" } : {},
+    );
+    expect(result.error).toBeUndefined();
+    expect(flow.sent("list_items")).toHaveLength(2);
+  });
+});
+
+describe("remote MCP writes whose tool answers isError", () => {
+  it("INV-9: a program's later write reports the tool's redacted words, stays unknown and is never sent again", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isError");
+    const result = await flow.program(true, 3);
+    expect(result.error).toMatchObject({
+      code: "write_outcome_unknown",
+      retryable: false,
+      writes: { succeeded: 2, failed: 0, unknown: 1 },
+    });
+    const [failure, ...others] = result.error.unknownWrites;
+    expect(others).toEqual([]);
+    expect(failure).toMatchObject({ address: "svc.create_item", code: "connector_call_failed", toolAnswered: true });
+    expect(result.error.message.startsWith("svc.create_item answered: Vendor refused")).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("HEADER_CREDENTIAL");
+    // Each write left once, and this tool's handler ran even for the one it refused.
+    expect(flow.sent("create_item")).toHaveLength(3);
+    expect(flow.applied).toEqual(["create_item 1", "create_item 2", "create_item 3"]);
+    expect(result).not.toHaveProperty("result");
+  });
+
+  it("INV-9: a direct write says its tool answered, with its outcome still unknown", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isError");
+    const failed = await flow.outcome("create_item", { id: 2 });
+    expect(failed.error).toMatchObject({ retryable: false, writeOutcome: "unknown", toolAnswered: true });
+    expect(failed.error!.message).toContain("Vendor refused");
+    expect(flow.sent("create_item")).toHaveLength(1);
+  });
+});
+
+describe("a long tool error holding an approval link", () => {
+  it("INV-9: a program's result leads with the tool's words, whole, and offers no rerun", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isErrorLong");
+    const result = await flow.program(true, 3);
+    const { message, unknownWrites } = result.error;
+    expect(result.error).toMatchObject({ code: "write_outcome_unknown", writes: { succeeded: 2, unknown: 1 } });
+    expect(message.startsWith("svc.create_item answered: Approval required.")).toBe(true);
+    expect(message).toContain(APPROVAL_TEXT);
+    expect(message).toContain("unknown outcome");
+    expect(message).toContain("Read its target");
+    expect(message).toContain("Give the user any approval link");
+    expect(message).toContain("Do not rerun this program");
+    // The words appear once: the entry they came from points at the failure, not a copy.
+    expect(unknownWrites).toEqual([{ address: "svc.create_item", code: "connector_call_failed", toolAnswered: true }]);
+    expect(flow.sent("create_item")).toHaveLength(3);
+  });
+
+  it("INV-9: a direct write gets the link whole, says its outcome is unknown, and sends once", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isErrorLong");
+    const failed = await flow.outcome("create_item", { id: 2 });
+    expect(failed.error).toMatchObject({ retryable: false, writeOutcome: "unknown", toolAnswered: true });
+    expect(failed.error!.message).toContain(APPROVAL_TEXT);
+    expect((failed.error as { retry?: string }).retry).toContain("Give the user any approval link");
+    expect(flow.sent("create_item")).toHaveLength(1);
+  });
+
+  it("a link crossing the bound is left out whole, with the cut marked, never cut in the middle", async () => {
+    const lead = "Approval required. ".repeat(215);
+    const flow = setup({ toolError: `${lead}${APPROVAL_TEXT}` });
+    flow.answers.set("create_item", "isErrorLong");
+    for (const message of [
+      (await flow.outcome("create_item", { id: 2 })).error!.message,
+      (await flow.program(true, 2)).error.message,
+    ]) {
+      expect(new TextEncoder().encode(message.split("\n\n")[0]!).length).toBeLessThan(4_200);
+      expect(message).toContain("… [truncated]");
+      expect(message).not.toContain("apr_7Hq2");
+      expect(message).not.toContain("https://vendor");
+    }
+  });
+
+  it("INV-9: the provider's approval_token is a new deliberate call, sent as written, whichever route it takes", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "isErrorLong");
+    expect((await flow.outcome("create_item", { id: 2 })).error?.writeOutcome).toBe("unknown");
+    flow.answers.clear();
+    const args = { id: 2, approval_token: "apt_8Kd3mQz1Vb7Yx0Lp" };
+    expect((await flow.outcome("create_item", args)).error).toBeUndefined();
+    expect(flow.sentArgs().at(-1)).toEqual(args);
+    const program = await flow.program(false, 2, "create_item", () => ({ approval_token: args.approval_token }));
+    expect(program.error).toBeUndefined();
+    expect(flow.sentArgs().at(-1)).toEqual({ ...args });
+    expect(flow.sent("create_item")).toHaveLength(4);
   });
 });
 

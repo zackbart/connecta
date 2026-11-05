@@ -42,11 +42,17 @@ import {
   checkLargeProgramRead,
   checkPreviewProgram,
   checkLargeProgramWrite,
+  checkRetainedResultsPassFinalSet,
+  checkRetainedResultsSameRunAndCost,
+  checkRetainedResultsUnreadableWhileSealing,
+  retainedSealingCases,
+  wholeReadSealingCases,
   checkProgramResultBom,
   checkProgramResultSurrogates,
   checkProgramReturnFallback,
   checkProgramReturnPaging,
   checkProgramReturnWriteWarning,
+  checkTransferReclaim,
 } from "./program-result-cases.js";
 
 async function loadWorkerExecutor(options: { timeout?: number } = {}): Promise<Executor | undefined> {
@@ -417,6 +423,11 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
+    it(`[L6] INV-9: ${custom ? "customExecutor: " : ""}reclaims finished reads and keeps a failed run's write output`, async () => {
+      await checkTransferReclaim(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 30_000);
     it(`INV-3 INV-9: ${custom ? "customExecutor: " : ""}oversized program reads arrive whole through bounded stash pages`, async () => {
       await checkLargeProgramRead(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
@@ -432,6 +443,31 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     });
+    it(`INV-5: ${custom ? "customExecutor: " : ""}a retained result is readable from later runs only if it passes its run's final secret set`, async () => {
+      await checkRetainedResultsPassFinalSet(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
+    it(`INV-5: ${custom ? "customExecutor: " : ""}same-run paging keeps working and a run pays no extra storage to seal`, async () => {
+      await checkRetainedResultsSameRunAndCost(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
+    for (const [title, check] of Object.entries(wholeReadSealingCases)) {
+      it(`[S11, R4a] INV-5: ${custom ? "customExecutor: " : ""}${title}`, async () => {
+        await check(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+      }, 60_000);
+    }
+    for (const [title, check] of Object.entries(retainedSealingCases)) {
+      it(`INV-5 INV-7: ${custom ? "customExecutor: " : ""}${title}`, async () => {
+        await check(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+      }, 60_000);
+    }
+    it(`INV-5: ${custom ? "customExecutor: " : ""}at every step of sealing another request reads only what sealing published`, async () => {
+      await checkRetainedResultsUnreadableWhileSealing(
+        custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
+      );
+    }, 60_000);
     it(`INV-3 INV-6: ${custom ? "customExecutor: " : ""}codec array hooks cannot change host validation and repair`, async () => {
       const executor = required(workerExecutor);
       await checkHostFailureArrays(custom ? customExecutor(executor, { lifecycle: "self-managed" }) : executor);

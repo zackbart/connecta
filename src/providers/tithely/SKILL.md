@@ -39,6 +39,7 @@ task needs named people.
 - A charge a recurring gift produced has `recurring: true`; a one-time gift
   has `recurring: false`.
 
+<!-- when: writes -->
 ## Writes
 
 - Every write moves money or changes a donor's records. Bodies are form
@@ -51,6 +52,7 @@ task needs named people.
 - Tithe.ly reports most refusals as HTTP 200 with `status: "fail"` and a
   reason but no code. They arrive as `connector_call_failed`; read the reason
   before deciding what to do next.
+<!-- end -->
 
 ## Not available
 

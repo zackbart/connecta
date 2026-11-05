@@ -9,10 +9,13 @@ checkouts have independent locks. Install the `flock` CLI with Homebrew
 (`brew install flock`) where unavailable. The OS releases locks when holders exit,
 including SIGKILL; never delete the persistent `.flock` file (that would split the
 lock). No stale owner directory or PID recovery is needed. Node and fake listeners bind port 0. Child deployments
-that need a public URL before startup retry bind collisions at most three times,
-only during initial startup. Wrangler's inspector and internal proxy use explicit
-ports so Landlock can allow callbacks before workerd starts; a startup collision
-retries the entire process group with fresh ports. Reader and writer fairness is
+that need a public URL before startup retry bind collisions at most three times.
+Wrangler's inspector and internal proxy use explicit ports so Landlock can allow
+callbacks before workerd starts; a startup collision retries the entire process
+group with fresh ports. A restart keeps its public port, because the origin has
+already been served, so it redraws only the internal ports and waits between
+attempts. Claims in `~/.cache/connecta-eval-ports` keep other evals on the machine
+from drawing a port during that gap, and a claim from a dead process is ignored. Reader and writer fairness is
 not guaranteed: sustained readers can delay a build up to the 1,800 s lock
 acquisition timeout.
 
@@ -33,6 +36,8 @@ paging, one Stripe refund, reconciliation after a committed refund answered
 HTTP 500, a read-only pool's refusal, the identity-checked `/connect` handoff,
 that handoff from a client that auto-declines URL elicitation (its controls fail
 a refusal with no link, a second prompt and a read from another connector),
+a host that dispatches `accept` before its browser visit lands (a control for a
+forced reconnect and an auth-gated read: every link works, with one forced start),
 a secret rotation that never reads a value, and the QuickBooks accounting
 and named-write journeys, plus a Granola workspace meeting dossier. Provider journeys also cover
 CCB read-only POST search, a Planning Center Services join, Breeze GET-shaped
@@ -91,7 +96,11 @@ the original two Worker entries use a local Access stand-in. The original four t
 `/health`, MCP initialize, the six-tool list, an `execute_code` read and the
 operator page in headless Chromium. Targets with a write-capable fake make
 one `call_destructive_tool` write and verify exactly one downstream write and
-the resulting fake state; targets without one claim no write. Steps are bounded
+the resulting fake state; targets without one claim no write. `node-fakes` and
+`worker-fakes` also run sequential writes through one `execute_code` program on
+one connection: two land, the tool refuses the third with its own error, and the
+fourth never leaves. The check reads the fake's state, its count of physical writes,
+and the `write_outcome_unknown` result, which must lead with the tool's words. Steps are bounded
 to two minutes, child process groups stop on exit or signal, and any failed
 check exits nonzero with the results JSON. Install Chromium once with
 `pnpm run test:browser:install`.
@@ -121,13 +130,20 @@ company/owner isolation, and coordinates consecutive vendor-hour renewals with
 identical refresh bytes,
 then rotates and persists new bytes across application reconstruction.
 Disconnecting Alice must revoke the fake Intuit grant and invalidate its old
-access token while Bob keeps working. Accounting evidence
-includes exact lookahead pages, customer joins, nested report rows and empty
-cells, plus named/hatch/fields secrecy while retaining public SyncToken.
+access token while Bob keeps working. The fake answers every query `search_records`
+can build from its live rows, with filters, paging and hidden inactive master
+records, and refuses anything else as Intuit refuses an unknown column. The grader
+reads physical reads, delivered facts and the facts in a JSON dossier, however the
+agent named them. The reference also asserts exact lookahead pages and named, hatch
+and fields secrecy that retains the public SyncToken. A second no-model route follows
+the prompt with other queries and a reduced dossier, and must pass.
 Hostile paths, raw SQL and unreviewed writes must send no vendor request.
 The separate `quickbooks-write-journey` opts into the three named writes while
 preserving the original read-only task. Both QuickBooks smoke targets also run
-this compact journey. A stateful vendor commits customer names, arbitrates two
+this compact journey. Its prompt gives the exact intents and their requestIds,
+which also select each vendor failure, so an agent meets the same failures as the
+reference. A no-model route following only those steps must pass; the probes an
+agent has no reason to send stay asserted in the reference. A stateful vendor commits customer names, arbitrates two
 concurrent sparse updates against a caller-read SyncToken (one winner, one
 5010 conflict), and computes invoice tax and rounding from fixture settings.
 The grader checks exact requestid/body/company, committed state, preserved
@@ -189,6 +205,58 @@ pnpm run build
 pnpm run eval:agent --runner codex --models gpt-6-luna --tasks p5-known-read-routing --repeats 1
 pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
 ```
+
+Eve requires Node 24+ and the installed `eve@1.0.0-rc.4` dependency in
+`packages/connecta-eve/`. `eval:agent --runner eve` and `eval:selftest --eve-only`
+rebuild the helper first, so a batch cannot test a stale one; with `--no-build`, or
+when calling the runner directly, a missing helper build or install fails with the
+command to run. Run it with:
+
+```sh
+pnpm run eval:agent --runner eve --models gpt-6.1-sol --target worker --grading outcome --tasks cross-connector-join,p5-result-paging,p5-trusted-program-write
+pnpm run eval:selftest --eve-only
+```
+
+Each Eve trial creates an app outside the checkout and symlinks those exact
+local packages, without installing or fetching dependencies. It authors
+`connectaConnection({ url, pool, getToken })` and `connectaInstructions` together,
+disables default tools and extensions, and uses `chatgpt()` through the existing
+Codex app-server sign-in. The child preserves HOME for that sign-in, omits
+CODEX_HOME and API keys, and never reads login files. No login is started by
+the runner. The observed model has an explicit 128,000-token context window.
+The provider request inventory allows only Eve search/tool and the trial's
+Connecta tools; response metadata must confirm the requested model. Unexpected
+interactions (including parked approval or sign-in) fail closed. The helper
+approval policy approves allowed tools and refuses denied or unknown tools.
+A host connection authorization failure reported inside search results stops
+the batch through `stopsBatch`, as do model authentication and rate limits.
+
+Eve deferred calls are recorded under their inner Connecta tool names so the
+same graders apply. `eve__search` stays in `metrics.otherTools`. Tokens come
+from Eve usage events; no dollar cost is inferred for subscription usage.
+Both deployment targets and the six, five, code, native and native-no-code arms
+use the same runner, except where the target refuses an arm. Eve searches count as
+host searches, and Eve's first usage event supplies the first request's input
+tokens. A native read is called as `<connection>__<connector>__<tool>` and a native write as
+`<connection>__<connector>__WRITE__<tool>`. Eve emits
+no event for a deferred name it cannot resolve, so the model wrapper records those
+calls and the trace shows each as one failed `eve__tool` in `metrics.otherTools`.
+On native-no-code, `auth-required-recovery` is N/A: Eve relists tools each step,
+but the runner fixes its approvals and address map at session start.
+
+To test a helper change, `--eve-connection <name>` sets the connection's file name
+and tool prefix, and passes the name to `connectaInstructions`. `--eve-description
+<text>` sets the description and `--eve-default-description` omits it so the
+helper's default applies. The runner's default stays `connecta` with `Connecta task
+tools`, so earlier batches stay comparable, and any override is recorded in the
+result file's `config.eve`.
+
+Each server and its app-server descendants occupy a tracked process group,
+with a trial deadline and TERM/KILL cleanup. `--eve-only` drives a search, a
+mistaken name and a read with Eve's `mockModel()` through its real HTTP server, the
+batch path and the grader on every arm, on Node, on native over Worker, and under
+a custom connection and description. It also checks write denial on six and native
+and an invalid-token batch stop, needs no credentials, and makes no model calls.
 
 Codex uses the signed-in `codex` CLI, `~/.codex/auth.json`, and defaults to
 `gpt-6-luna`. Its isolated temporary `CODEX_HOME` contains only that credential

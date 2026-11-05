@@ -18,9 +18,10 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Deferred, Duration, Effect, Exit, Schedule, Scope } from "effect";
 import { AdmissionController, ExecutorAdmissionError, ExecutorExecutionError } from "../executor-admission.js";
-import { msg } from "../errors.js";
+import { msg, tokenPrefix } from "../errors.js";
 import { InvocationFailure } from "../invocation-failure.js";
 import { brandExecutor } from "../executor-contract.js";
+import { PROGRAM_RESULT_READ_BYTES } from "../program-result.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import { admit } from "../runtime/admission.js";
 import { awaitExecutorLease, executorProgram, provideExecutorProgram } from "../runtime/executor.js";
@@ -179,7 +180,7 @@ function nonNegativeWhole(value: number | undefined, fallback: number, name: str
 function errorPayload(error: unknown): string {
   return JSON.stringify({
     ok: false,
-    error: msg(error).slice(0, MAX_ERROR_CHARS),
+    error: tokenPrefix(msg(error), MAX_ERROR_CHARS),
     ...(error instanceof InvocationFailure ? { call: error.details } : {}),
   } satisfies HostResultPayload);
 }
@@ -239,6 +240,7 @@ class QuickJsChildPool implements AdmittingExecutor {
   private readonly slots: ChildSlot[];
   private readonly available: ChildSlot[];
   private readonly runtimeOptions: QuickJsRuntimeOptions;
+  readonly maxReadBytes: number;
   // Scope closes still in flight, so close() can wait out every child rather
   // than only the ones it retired itself.
   private readonly retiring = new Set<Deferred.Deferred<void>>();
@@ -261,6 +263,13 @@ class QuickJsChildPool implements AdmittingExecutor {
       maxStackSizeBytes: positiveWhole(options.maxStackSizeBytes, DEFAULT_STACK_LIMIT_BYTES, "maxStackSizeBytes"),
     };
     this.deadlineMs = this.runtimeOptions.timeoutMs;
+    // Parsing and then using a value costs CPU and heap in proportion to its size,
+    // so a tighter budget reads less, and no budget reads past the fixed cap.
+    this.maxReadBytes = Math.min(
+      Math.floor((PROGRAM_RESULT_READ_BYTES * this.runtimeOptions.cpuTimeMs) / DEFAULT_CPU_TIME_MS),
+      2 * 1024 * 1024,
+      Math.floor(this.runtimeOptions.memoryLimitBytes / 16),
+    );
     this.slots = Array.from({ length: concurrency }, () => ({
       crashes: [],
       notBefore: 0,
@@ -653,9 +662,15 @@ class QuickJsChildPool implements AdmittingExecutor {
         const entry: unknown = JSON.parse(message.payloadJson);
         if (typeof entry !== "string") return;
         const separator = active.logs.length > 0 ? 1 : 0;
-        const retained = entry.slice(0, MAX_EXECUTE_LOG_CHARS + 1 - active.logChars - separator);
-        active.logs.push(retained);
-        active.logChars += separator + retained.length;
+        const room = MAX_EXECUTE_LOG_CHARS + 1 - active.logChars - separator;
+        if (entry.length > room) {
+          // A cut between tokens can stop short of the bound, so its marker signals the loss.
+          active.logs.push(`${tokenPrefix(entry, room)}…[entry truncated]`);
+          active.logChars = MAX_EXECUTE_LOG_CHARS + 1;
+        } else {
+          active.logs.push(entry);
+          active.logChars += separator + entry.length;
+        }
       } catch {
         /* Malformed log messages carry no output. */
       }
@@ -697,7 +712,12 @@ class QuickJsChildPool implements AdmittingExecutor {
       slot.backoff = undefined;
       slot.notBefore = 0;
       this.resolveActive(slot, payload.outcome);
-      if (payload.timedOut) {
+      if (payload.retire) {
+        console.warn(
+          "[connecta] QuickJS could not free a finished run's runtime. Its answer stands; replacing the child.",
+        );
+      }
+      if (payload.timedOut || payload.retire) {
         // A timed-out host call may still retain QuickJS handles. A fresh child
         // is cheaper and safer than reusing a context with unknown stragglers.
         // The runtime sets this flag itself: matching error text here would let

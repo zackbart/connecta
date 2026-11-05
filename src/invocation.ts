@@ -12,6 +12,7 @@ import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } fr
 import { CatalogService, type ResolvedCatalogTool } from "./catalog-service.js";
 import {
   boundedEchoText,
+  clipText,
   classificationCode,
   classifyCallError,
   classifyWithoutAdvice,
@@ -33,6 +34,7 @@ import {
   failureRecord,
   logFailure,
   recordedToolName,
+  labelErrorClass,
 } from "./operator-record.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { causeError, runEdge, withDeadlineEffect } from "./runtime/run.js";
@@ -166,7 +168,19 @@ function isCallerCancellation(error: unknown, signal: AbortSignal | undefined): 
  * plain `Error`: untyped and non-retryable. It is a read's answer; for a
  * write it is a 2xx reply after which the handler may have applied it.
  */
-class DownstreamToolError extends Error {}
+class DownstreamToolError extends Error {
+  /** Everything it said, kept for a program's report; the message is what fits a result. */
+  readonly #text: string;
+  constructor(text: string) {
+    super(clipText(text));
+    this.#text = text;
+  }
+  fullText(): string {
+    return this.#text;
+  }
+}
+// Records tell the tool's own answer from a transport or runtime failure.
+labelErrorClass(DownstreamToolError, "DownstreamToolError");
 
 function isTimeoutFailure(error: CallErrorDetails): boolean {
   const code = error.details?.code;
@@ -185,12 +199,10 @@ function assertRawMcpSuccess(kind: ResolvedCatalogTool["connector"]["kind"], res
   };
   if (!mcpResult.isError) return;
   throw new DownstreamToolError(
-    boundedEchoText(
-      mcpResult.content
-        ?.filter((block) => block.type === "text")
-        .map((block) => block.text ?? "")
-        .join("") || "Downstream tool call failed",
-    ),
+    mcpResult.content
+      ?.filter((block) => block.type === "text")
+      .map((block) => block.text ?? "")
+      .join("\n") || "Downstream tool call failed",
   );
 }
 
@@ -239,6 +251,12 @@ export type InvocationOutcome<T> =
        * (an MCP `isError`). Absent when nothing was dispatched.
        */
       answered?: boolean;
+      /**
+       * A tool's complete `isError` text when `error.message` holds what fit. A
+       * program's write report redacts it again at the end of the run; it stays in
+       * memory for this request and never reaches activity or a log.
+       */
+      failureText?: string;
     });
 
 /**
@@ -363,6 +381,7 @@ export class InvocationService {
       const recoveryState = recoveryRecord();
       let preInvocationAuthFailure = false;
       let answered = false;
+      let failureText: string | undefined;
       // A dispatched failure's advice to send it again, composed by enrich
       // only once the outcome allows it (resendAdvice), and its advice to
       // reuse an idempotency key, only where that key protects the whole
@@ -428,8 +447,7 @@ export class InvocationService {
             : error;
         const recovery = recoveryState.facts;
         const enteredWrite =
-          dispatchedToConnector &&
-          ((resolved !== undefined && resolved.definition.classification !== "read") || sentSourceWrite());
+          dispatchedToConnector && ((resolved !== undefined && isWriteLike(resolved.definition)) || sentSourceWrite());
         // A known answer alone is not dispatch evidence. Require an owned,
         // complete ledger with a positively recorded auxiliary resource read;
         // an empty ledger, custom entry or interruption proves nothing.
@@ -450,7 +468,7 @@ export class InvocationService {
           return {
             ...error,
             code: "write_outcome_unknown",
-            message: `${error.message} Its outcome is unknown. Check the target before repeating this call.`,
+            message: `${error.message} It was sent once; its outcome is unknown. Check the target before repeating this call.`,
             retryable: false,
             ...(sentSourceWrite() ? { writeOutcome: "unknown" as const } : {}),
             connector: target.connector.id,
@@ -497,7 +515,9 @@ export class InvocationService {
             writeOutcome: "unknown",
             ...(!recovery && error.retry === undefined
               ? {
-                  retry: "No safe replay action exists. Re-read the target to reconcile whether the write took effect.",
+                  retry: error.toolAnswered
+                    ? "Its outcome is unknown: its handler ran before it answered, so check its target before acting. Give the user any approval link or request id in the message. Connecta will not resend it; a call the tool's words ask for is a new call."
+                    : "No safe replay action exists. Re-read the target to reconcile whether the write took effect.",
                 }
               : {}),
           };
@@ -694,7 +714,7 @@ export class InvocationService {
         // recorded requests alone decide whether a 401 left it unknown.
         if (
           dispatchedToConnector &&
-          (resolved?.definition.classification !== "read" || sentSourceWrite()) &&
+          (resolved === undefined || isWriteLike(resolved.definition) || sentSourceWrite()) &&
           (error.code === "cancelled" || isTimeoutFailure(error))
         ) {
           const departed = settleWrite(logicalCall?.sent ?? [], undefined, true);
@@ -743,6 +763,7 @@ export class InvocationService {
           ...defined({ resolved }),
           dispatched: dispatchedToConnector,
           ...(dispatchedToConnector ? { answered } : {}),
+          ...defined({ failureText }),
           error: details,
         });
         // A write refused only because its program had already returned
@@ -825,9 +846,10 @@ export class InvocationService {
           argumentEcho = echoedCallArgs(args ?? {}, target.definition.inputSchema);
           sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
 
-          const write = target.definition.classification !== "read";
-          const writeLike = isWriteLike(target.definition);
-          if (writeLike && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
+          // Admission and presentation follow the served class. Dispatch and failure
+          // handling follow this: a source write served as a read still sends once.
+          const write = isWriteLike(target.definition);
+          if (write && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
           const input =
             context.source !== "execute_code"
@@ -837,7 +859,7 @@ export class InvocationService {
           const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
           if (
             expectedDigest !== undefined &&
-            (writeLike ||
+            (write ||
               target.classificationFresh !== true ||
               (yield* Effect.promise(() => classificationDigest(target.definition))) !== expectedDigest)
           ) {
@@ -887,7 +909,7 @@ export class InvocationService {
           }
 
           // Source writes keep program write accounting; only effective writes spend W10 budget.
-          if (writeLike && context.beforeWrite) {
+          if (write && context.beforeWrite) {
             const decision = yield* context.beforeWrite(target, args ?? {});
             if (decision.kind === "refuse") {
               unrecorded = decision.unrecorded === true;
@@ -980,7 +1002,7 @@ export class InvocationService {
                 this.catalog.requestScope,
                 {
                   address: canonicalAddress,
-                  classification: writeLike ? "write" : "read",
+                  classification: write ? "write" : "read",
                   fresh: target.classificationFresh === true,
                 },
                 target.definition,
@@ -1068,6 +1090,11 @@ export class InvocationService {
             const details = carryFailureFacts(attemptError, classifyWithoutAdvice(sentSecrets.redact(attemptError)));
             // An inner call's verdict that does not hold for this one is withdrawn.
             if (failureWrite && !answered) forgetProviderFailure(details);
+            // The tool's own words, which a program's write accounting keeps.
+            if (failureWrite && attemptError === thrown && thrown instanceof DownstreamToolError) {
+              details.toolAnswered = true;
+              failureText = thrown.fullText();
+            }
             return details;
           }
           if ("pastDeadline" in attempt.value) return attempt.value.pastDeadline;
@@ -1125,7 +1152,7 @@ export class InvocationService {
       // Q8 settles a result too: a write an undeclared 401 left unknown is no
       // success, whatever its handler made of the 401, and its result is not
       // processed.
-      if (dispatchedToConnector && (completed.definition.classification !== "read" || sentSourceWrite())) {
+      if (dispatchedToConnector && (isWriteLike(completed.definition) || sentSourceWrite())) {
         const unknown = settleWriteResult(logicalCall?.sent ?? []);
         if (unknown) {
           failureAdvice = failureKeyAdvice = undefined;

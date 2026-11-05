@@ -7,149 +7,119 @@
 
 ## Identity first
 
-A People person id joins records across products. Resolve people by identity,
-then join on `person_id`; names can repeat. A membership, scheduled person,
-workflow card and person each have their own record id.
+The People person id joins products; names repeat, so join on `person_id`.
+Memberships, scheduled people and workflow cards have their own ids. `get_me`
+gives the organization's time zone: bare dates mean its local day, and exact
+boundaries need an offset. Name filters are exact unless the value ends in `%`.
 
-`get_me` identifies the token's user and the organization's time zone. Bare
-dates mean the organization's local day; use a timestamp with an offset for
-an exact boundary. Name filters are exact unless their value ends in `%`.
+An old person id may be merged: read `/people/v2/person_mergers` with
+`where[person_to_remove_id]` and follow `person_to_keep_id`. An empty history
+does not prove no merge happened.
 
-An old person id may have been merged. Read `/people/v2/person_mergers` with
-`where[person_to_remove_id]`, follow `person_to_keep_id`, then read that profile.
-An empty history does not establish that a person was merged.
-
-Reduce pastoral information inside `execute_code` and return aggregates unless
-the task needs named people. A named projection omits some safe vendor fields;
-read the indexed record when the task needs those fields.
+Pastoral data: reduce inside `execute_code` and return aggregates unless the task
+needs named people. Named reads omit some fields; read the indexed record when the
+task needs them.
 
 <!-- when: people -->
-## People and follow-up
+## People
 
-Resolve a person before changing their profile. An omitted attribute leaves
-the current value alone; `null` clears it. Archiving a person is reversible;
-deleting a profile is permanent.
+Workflow cards join people to a workflow and its ordered steps. Custom values and
+form answers need their field records for names and types.
+<!-- end -->
 
-Workflow cards join people to a workflow and its ordered steps. Resolve both
-the card id and its person id before acting on a card. Snoozing needs a duration;
-promoting a card completes its step, while skipping moves on without completing
-it. A workflow card note and a profile note are different records. Profile note
-categories can notify their subscribers.
-
-Custom field values need their field-definition records to supply names and
-data types. Form answers similarly join submissions, values and fields; the
-API cannot submit a form on someone's behalf.
+<!-- when: people-writes -->
+An omitted attribute stays; `null` clears it. Archiving is reversible; deleting a
+profile is permanent. Resolve the card id and its person id before acting on a
+workflow card. Promoting completes a step; skipping moves on without completing
+it. Card notes and profile notes are different records, and note categories can
+notify subscribers. No named form-submission tool exists; the generic hatch
+admits that endpoint as a destructive operation.
 <!-- end -->
 
 <!-- when: lists -->
-Saved People lists are live cross-product queries. Their results are only as
-fresh as their last refresh. Refreshing a list can fire its automations, such
-as adding a person to a workflow, and is a write even when the task is a count.
+Saved lists are only as fresh as their last refresh. Refreshing can fire
+automations, such as adding someone to a workflow, so it is a write even for a count.
 <!-- end -->
 
 <!-- when: services -->
-## Services plans and schedules
+## Services
 
-Resolve the service type before finding a dated plan. Plan times define the
-service dates. `get_plan` combines the plan, order of service and scheduled
-team; a cut section can be read through its indexed items or team-members path.
-Item durations are seconds, so divide by 60 when reporting minutes.
-
-Scheduling needs a team and may need a position. `C` means confirmed, `U`
-unconfirmed and `D` declined. Preparing a notification and sending it are
-different actions. A song item's identity comes from its song and arrangement;
-musical keys are not credentials. Services cannot upload a file through this
-connection.
+Resolve the service type before a dated plan; plan times define its service dates.
+A cut `get_plan` section reads through its indexed items or team-members path. Item
+durations are seconds. Schedule status: `C` confirmed, `U` unconfirmed, `D`
+declined. Preparing a notification and sending it are different actions. Services
+cannot upload a file through this connection.
 <!-- end -->
 
 <!-- when: groups -->
-## Groups membership joins
+## Groups
 
-Use a group's membership records to distinguish leaders from members. On this
-API version memberships carry no person attributes; `include=person` supplies
-names, and the related person id supplies contact details and other product
-records. The API can change memberships and group settings, but cannot create
-a group, create a meeting or record group attendance.
+Memberships distinguish leaders from members but carry no person attributes;
+`include=person` supplies names, and the person id supplies contact details.
 <!-- end -->
 
 <!-- when: check-ins -->
-## Check-Ins occurrences
+## Check-Ins
 
-An event is recurring; its event period is a dated occurrence. Period counts
-are the efficient attendance answer. Individual check-ins join a person to a
-period, and date filtering uses the period's start, not the check-in's creation
-time. The API cannot check anyone in or out.
+An event recurs; its period is a dated occurrence. Period counts are the efficient
+attendance answer. Date filters use the period start, not the check-in creation time.
 <!-- end -->
 
 <!-- when: calendar -->
-## Calendar occurrences
+## Calendar
 
-Event instances expand recurrence into occurrences. A booking can return a
-`BookedEvent` stub when the user lacks access to its event. Events, instances
-and times are read-only; tags, resources, rooms and folders have write APIs.
+Event instances expand recurrence. A booking can return a `BookedEvent` stub when
+the user lacks access to its event.
 <!-- end -->
 
 <!-- when: registrations -->
 ## Registrations
 
-A signup describes a registration event. Its attendee records join back to
-People and distinguish active, waitlisted and canceled attendees. This API
-cannot register someone.
+Attendee records join to People and separate active, waitlisted and canceled attendees.
 <!-- end -->
 
 <!-- when: giving -->
-## Giving amounts and donor joins
+## Giving
 
-Amounts are integer cents with an explicit currency. A donation's designations
-allocate it across funds; do not count a donation once per designation. Join
-donors by person id and funds by fund id. Recurring schedules and the donations
-they produce are different records. Creating/editing a donation, refunding it
-or committing a batch changes financial records; named giving tools only read.
+Amounts are integer cents with a currency. Designations split a donation across
+funds, so never count a donation once per designation. Recurring schedules and the
+donations they produce are different records. Named giving tools only read.
+<!-- end -->
+
+<!-- when: giving-writes -->
+Creating, editing or refunding a donation or committing a batch changes financial
+records.
 <!-- end -->
 
 <!-- when: publishing -->
 ## Publishing
 
-Episodes, channels and resources are available through the indexed API. A public
-Church Center link and a media resource are different things; use the record
-the task asks for. Signed download URL generation is refused because the
-private link would remain withheld.
+A Church Center link and a media resource are different records; use the one the
+task asks for.
 <!-- end -->
 
 <!-- when: webhooks -->
 ## Webhooks
 
-A subscription names an event and callback destination. Signing keys, private
-download destinations and opaque event/delivery payloads or headers remain
-withheld. Status and event metadata are available for audits.
-Webhook signing-key rotation is refused: the new credential cannot be returned
-or installed on the receiver through this connection.
+Signing keys, private destinations and event payloads stay withheld; status and
+event metadata remain available for audits.
 <!-- end -->
 
 <!-- when: api -->
 ## Organization API
 
-The organization API includes application metadata and personal-access-token
-inventory. Inventory records describe tokens; they do not return their values.
-Revoking a token is a write and may interrupt another integration, including
-this connection if its own token is revoked.
+Token inventory never returns values.
+<!-- end -->
+
+<!-- when: api-writes -->
+Revoking a token is a write that may break another integration, including this
+connection.
 <!-- end -->
 
 <!-- when: limited -->
 ## Product boundary
 
-Some products are unavailable on this connection. People lists and their rules
-are unavailable because they can query another product. Webhook payloads and
-changes to existing subscriptions are unavailable because their ids do not name
-their product. A new subscription must name a reachable product's event.
-
-Stored workflow cards, notes, custom fields and form answers remain readable
-when reachable: staff or automations may have copied information into them.
-The connection does not infer the provenance of those stored records.
+Some products are unavailable. A new webhook subscription must name a reachable
+product's event. Stored workflow cards, notes, custom fields and form answers stay
+readable and may contain copied information; provenance is not inferred.
 <!-- end -->
-
-## Not available
-
-Only reviewed product versions and indexed operations are callable. File
-uploads use a separate host this connection does not reach. Credentials and
-private calendar access codes cannot be recovered through a tool.
