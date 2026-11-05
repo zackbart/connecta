@@ -148,8 +148,8 @@ describe("guest API contract (QuickJS executor)", () => {
     expect(ceiling({ cpuTimeMs: 60_000 })).toBe(2 * 1024 * 1024);
     expect(ceiling({ cpuTimeMs: 60_000, memoryLimitBytes: 16 * 1024 * 1024 })).toBe(1024 * 1024);
   });
-  it("[S11] a run keeps its answer when freeing its runtime aborts the child", async () => {
-    // Reproducible with this value: a large return, then a whole read of it in the same child.
+  it("[S11] a whole read of a large return leaves its child in place", async () => {
+    // A large return, then a whole read of it in the same child, grows memory during a job pass.
     const pool = quickJsExecutor({ cpuTimeMs: 5_000 });
     const registry = makeRegistry(
       [
@@ -173,12 +173,17 @@ describe("guest API contract (QuickJS executor)", () => {
         code: `async () => { await connecta.call("store.noop"); return { text: '雪"\\\\\\n'.repeat(150000) }; }`,
       });
       const { resultId } = made.structuredContent!.result as { resultId: string };
+      const child = (pool as unknown as { slots: { child?: { process: { pid: number } } }[] }).slots[0]!.child?.process
+        .pid;
       for (let run = 0; run < 3; run++) {
         const read = await execute({
           code: `async () => (await connecta.result(${JSON.stringify(resultId)}, { all: true })).data.text.length`,
         });
         expect(read.isError, JSON.stringify(read.structuredContent)).toBeUndefined();
         expect(read.structuredContent!.result).toBe(600_000);
+        expect(
+          (pool as unknown as { slots: { child?: { process: { pid: number } } }[] }).slots[0]!.child?.process.pid,
+        ).toBe(child);
       }
     } finally {
       await pool.close?.();

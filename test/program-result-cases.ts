@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { expect, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 import { api } from "../src/connectors/api.js";
@@ -1453,7 +1454,7 @@ export async function checkRetainedResultsUnreadableWhileSealing(executor: Execu
   for (const step of observed) expectNoForms(step.text);
 }
 
-/** A finished read's stash is reclaimed; a write's waits for the run; a disclosed handle stays. */
+/** A finished read's stash is reclaimed; a write's and a disclosed handle's stay until they expire. */
 export async function checkTransferReclaim(executor: Executor): Promise<void> {
   const storage = memoryStorage();
   const bytes = 600_000;
@@ -1490,17 +1491,14 @@ export async function checkTransferReclaim(executor: Executor): Promise<void> {
   expect(await charges()).toBe(0);
   expect(await stored()).toEqual([]);
 
-  // Write in a successful run: released with the run.
+  // Write: its stash stays until it expires, whether or not the run succeeds.
   out = await run(`async () => (await connecta.call("store.write")).data.length`);
   expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(bytes);
-  expect(await charges()).toBe(0);
-  expect(await stored()).toEqual([]);
-
-  // Write in a failed run: the output's bytes stay until they expire (INV-9).
-  out = await run(`async () => { await connecta.call("store.write"); throw new Error("after the write"); }`);
-  expect(out.isError).toBe(true);
   expect(await charges()).toBe(1);
   expect(await stored()).not.toEqual([]);
+  out = await run(`async () => { await connecta.call("store.write"); throw new Error("after the write"); }`);
+  expect(out.isError).toBe(true);
+  expect(await charges()).toBe(2);
 
   // An oversized return's nextAction, edited at its mark, reduces the whole value.
   out = await run(`async () => ({ rows: Array.from({ length: 400 }, (_, i) => ({ i, pad: "x".repeat(80) })) })`);
@@ -1519,8 +1517,8 @@ export async function checkTransferReclaim(executor: Executor): Promise<void> {
   expect(length).toBe(big);
   out = await run(`async () => (await connecta.result(${JSON.stringify(id)}, { all: true })).data.length`);
   expect(out.structuredContent!.result, JSON.stringify(out.structuredContent)).toBe(big);
-  // The failed run's write, the oversized return, and the handle.
-  expect(await charges()).toBe(3);
+  // The two writes, the oversized return, and the handle.
+  expect(await charges()).toBe(4);
 }
 
 /** A whole read is paging repeated: it sees exactly what a page may, and never more. */
@@ -1658,24 +1656,88 @@ export const wholeReadSealingCases: Record<string, (executor: Executor) => Promi
     expect(await inner.list(RESULT_PREFIX)).toEqual([]);
     expect(await inner.get("result-stash:v1:ledger")).toBeNull();
   },
-  "a stalled reclaim costs its charge, never the answer": async (executor) => {
-    for (const tool of ["read", "write"]) {
+  "stalled reclaim costs several reads their charges, never their answer": async (executor) => {
+    const inner = memoryStorage();
+    let deletes = 0;
+    const stalled: KVStorage = {
+      ...inner,
+      delete: (key) => {
+        if (!key.startsWith(RESULT_PREFIX)) return inner.delete(key);
+        deletes++;
+        return new Promise<never>(() => {});
+      },
+    };
+    const { registry } = retainedRegistry(stalled, { echoed: () => ({ keep: "kept", pad: "x".repeat(300_000) }) });
+    const started = Date.now();
+    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: `async () => {
+        let kept = 0;
+        for (let i = 0; i < 4; i++) if ((await connecta.call("vault.read")).data.keep === "kept") kept++;
+        return kept;
+      }`,
+    });
+    expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe(4);
+    // One reclaim spent the run's budget and the others never tried.
+    expect(deletes).toBeGreaterThan(0);
+    expect(deletes).toBeLessThanOrEqual(16);
+    expect(Date.now() - started).toBeLessThan(10_000);
+  },
+  "slow deletes add at most the run's reclaim budget across its reads": async (executor) => {
+    const time = async (delayMs: number) => {
       const inner = memoryStorage();
-      const stalled: KVStorage = {
+      let running = 0;
+      let peak = 0;
+      const slow: KVStorage = {
         ...inner,
-        delete: (key) => (key.startsWith(RESULT_PREFIX) ? new Promise<never>(() => {}) : inner.delete(key)),
+        delete: async (key) => {
+          if (key.startsWith(RESULT_PREFIX)) {
+            peak = Math.max(peak, ++running);
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+            running--;
+          }
+          return inner.delete(key);
+        },
       };
-      const { registry } = retainedRegistry(stalled, { echoed: () => ({ keep: "kept", pad: "x".repeat(300_000) }) });
+      const { registry } = retainedRegistry(slow, { echoed: () => ({ keep: "kept", pad: "x".repeat(950_000) }) });
       const started = Date.now();
-      const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
-        readOnly: false,
-        hostCallTimeoutMs: 250,
-        watchdogMs: 4_000,
-      })({ code: `async () => (await connecta.call("vault.${tool}")).data.keep` });
-      expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe("kept");
-      // The ceiling is the watchdog plus a margin of at most 2 seconds.
-      expect(Date.now() - started).toBeLessThan(6_000);
-    }
+      const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+        code: `async () => {
+          let kept = 0;
+          for (let i = 0; i < 4; i++) if ((await connecta.call("vault.read")).data.keep === "kept") kept++;
+          return kept;
+        }`,
+      });
+      expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe(4);
+      return { elapsed: Date.now() - started, peak };
+    };
+    const fast = await time(0);
+    const slow = await time(100);
+    // Sequentially these 80 deletes add 8 seconds.
+    expect(slow.peak).toBeGreaterThan(1);
+    expect(slow.elapsed - fast.elapsed).toBeLessThan(3_000);
+  },
+  "reclaim stops at its budget and starts no storage work after that": async (executor) => {
+    const inner = memoryStorage();
+    let deletes = 0;
+    const slow: KVStorage = {
+      ...inner,
+      delete: async (key) => {
+        if (key.startsWith(RESULT_PREFIX)) {
+          deletes++;
+          await new Promise((resolve) => setTimeout(resolve, 1_200));
+        }
+        return inner.delete(key);
+      },
+    };
+    const { registry } = retainedRegistry(slow, { echoed: () => ({ keep: "kept", pad: "x".repeat(950_000) }) });
+    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: `async () => (await connecta.call("vault.read")).data.keep`,
+    });
+    expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe("kept");
+    const started = deletes;
+    expect(started).toBeLessThanOrEqual(16);
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(deletes).toBe(started);
   },
 };
 
@@ -1701,13 +1763,13 @@ export async function checkReclaimAfterSealingBegan(): Promise<void> {
   const registry = { releaseResult } as unknown as RegistryView;
   held.add(entry("given-back"));
   held.add(entry("kept"));
-  await releaseStashedResult(registry, held, "given-back", 3);
+  await Effect.runPromise(releaseStashedResult(registry, held, "given-back", 3));
   expect(releaseResult).toHaveBeenCalledTimes(1);
   expect(held.stored("given-back")).toBeUndefined();
   // An id this run never held is not this run's to give back.
-  await releaseStashedResult(registry, held, "someone-elses", 3);
+  await Effect.runPromise(releaseStashedResult(registry, held, "someone-elses", 3));
   expect(releaseResult).toHaveBeenCalledTimes(1);
   expect(held.close().map(({ id }) => id)).toEqual(["kept"]);
-  await releaseStashedResult(registry, held, "kept", 3);
+  await Effect.runPromise(releaseStashedResult(registry, held, "kept", 3));
   expect(releaseResult).toHaveBeenCalledTimes(1);
 }

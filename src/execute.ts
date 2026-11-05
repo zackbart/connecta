@@ -77,6 +77,8 @@ const EXECUTE_MAX_HOST_CALLS = CONFIG_DEFAULTS.execute.maxHostCalls;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
 /** Above every program in the recorded evals, below the QuickJS IPC ceiling. */
 const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
+/** All of one run's stash reclaim, in milliseconds of waiting on storage. */
+const RECLAIM_BUDGET_MS = 1_000;
 /**
  * The outer ceiling on one execution. It sits above both executors' own
  * deadlines (QuickJS 30s, the Dynamic Worker 60s), so a healthy executor
@@ -569,8 +571,6 @@ interface SandboxLimits {
   programWrites?: ProgramWrites | undefined;
   /** What `connecta.result(id, { all: true })` delivers. */
   readBytes?: number | undefined;
-  /** Stashes of delivered write outputs, kept until the run succeeds. */
-  finishedWrites?: { id: string; totalBytes: number }[] | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
   /** Set when a program read a result field off an unawaited host call. */
@@ -675,12 +675,12 @@ function sandboxProvider(
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
   // These are transfer cursors only. All result bytes live in the existing stash.
-  // `owned` marks a stash only this transfer can name, because the guest never saw
-  // its handle. A guest-supplied id stays readable until it expires.
+  // `reclaim` marks a read's stash only this transfer can name, because the guest never saw
+  // its handle. A guest-supplied id stays readable until it expires; a write's stash expires too.
   const readBytes = limits.readBytes ?? PROGRAM_RESULT_READ_BYTES;
   const transfers = new Map<
     string,
-    { id: string; offset: number; owned?: { totalBytes: number; write: boolean }; finished?: boolean }
+    { id: string; offset: number; reclaim?: { totalBytes: number }; finished?: boolean }
   >();
   const nativeResults = new Map<string, GuestNativeBlock[]>();
   const transportResult = (value: { format: string }, write: boolean) => {
@@ -691,13 +691,30 @@ function sandboxProvider(
         transfers.set(transfer, {
           id: handle.resultId,
           offset: 0,
-          owned: { totalBytes: handle.totalBytes, write },
+          ...(write ? {} : { reclaim: { totalBytes: handle.totalBytes } }),
         });
-        return { transfer, handle };
+        return { transfer, handle, ...(write ? {} : { reclaim: true }) };
       }
     }
     return value;
   };
+  // Slow storage may cost a run its reclaim, never its answer: all of a run's reclaim shares
+  // this much time, and once it's spent the rest of the run's entries just wait to expire.
+  let reclaimLeftMs = RECLAIM_BUDGET_MS;
+  const reclaim = (id: string, totalBytes: number) =>
+    Effect.suspend(() => {
+      if (reclaimLeftMs <= 0) return Effect.void;
+      const started = Date.now();
+      return releaseStashedResult(registry, limits.heldResults, id, totalBytes).pipe(
+        Effect.timeoutOrElse({ duration: Duration.millis(reclaimLeftMs), orElse: () => Effect.void }),
+        Effect.ignore,
+        Effect.ensuring(
+          Effect.sync(() => {
+            reclaimLeftMs -= Date.now() - started;
+          }),
+        ),
+      );
+    });
   const dispatchDeadlineAt = limits.readDeadlineAt ?? limits.programDeadlineAt;
   /** Budget and account for writes a writable endpoint admits. */
   const invocationContext = (
@@ -1054,21 +1071,19 @@ function sandboxProvider(
       if (limits.unawaited) limits.unawaited.read = true;
     },
     call,
-    result: (id, options, signal, onStage) =>
-      Effect.tryPromise({
+    result: (id, options, signal, onStage) => {
+      const finished = typeof id === "string" ? transfers.get(id) : undefined;
+      if (finished?.finished) {
+        // The prelude has the whole value, so a read gives its bytes back.
+        transfers.delete(id as string);
+        return finished.reclaim
+          ? reclaim(finished.id, finished.reclaim.totalBytes).pipe(Effect.as({}))
+          : Effect.succeed({});
+      }
+      return Effect.tryPromise({
         try: async () => {
           const transfer = typeof id === "string" ? transfers.get(id) : undefined;
           const transferId = id;
-          if (transfer?.finished) {
-            // The prelude has the whole value. A read gives its bytes back now;
-            // a write's stay until the run succeeds, so a failure can't lose them (INV-9).
-            transfers.delete(transferId as string);
-            if (transfer.owned?.write)
-              limits.finishedWrites?.push({ id: transfer.id, totalBytes: transfer.owned.totalBytes });
-            else if (transfer.owned)
-              await releaseStashedResult(registry, limits.heldResults, transfer.id, transfer.owned.totalBytes);
-            return {};
-          }
           if (transfer) {
             id = transfer.id;
             options = { offset: transfer.offset, maxBytes: PROGRAM_RESULT_PAGE_BYTES };
@@ -1134,7 +1149,7 @@ function sandboxProvider(
             );
           if (transfer) {
             if (page.structuredContent?.hasMore) transfer.offset = page.structuredContent.nextOffset as number;
-            else if (transfer.owned) transfer.finished = true;
+            else if (transfer.reclaim) transfer.finished = true;
             else transfers.delete(transferId as string);
           }
           if (whole) {
@@ -1153,7 +1168,8 @@ function sandboxProvider(
           return page.structuredContent;
         },
         catch: (err) => err,
-      }),
+      });
+    },
     skill: (name, _options, utilitySignal) =>
       Effect.tryPromise({
         try: async () => {
@@ -1682,7 +1698,6 @@ export function createExecuteTool(
         maxResultChars,
       );
       const resultDependencies: ProgramResultDependency[] = [];
-      const finishedWrites: { id: string; totalBytes: number }[] = [];
       const dispatchController = new AbortController();
       const terminal = Deferred.makeUnsafe<never, InvocationFailure>();
       let budgetFailure: InvocationFailure | undefined;
@@ -1753,7 +1768,6 @@ export function createExecuteTool(
                 routes: config.routes,
                 programWrites,
                 readBytes,
-                finishedWrites,
                 resultDependencies,
                 dispatchController,
                 unawaited,
@@ -1829,38 +1843,20 @@ export function createExecuteTool(
         unawaited,
         // Emitted text shares the return cap; a follow-up page run gets all of it.
         guardResult: (value: unknown) =>
-          // A return that may itself need stashing gets the room back first. Best effort, so
-          // slow storage spends only a part of what the answer and sealing still have.
-          Effect.forEach(
-            programWrites.hasUnknown ? [] : finishedWrites,
-            ({ id, totalBytes }) =>
-              Effect.tryPromise({
-                try: () => releaseStashedResult(registry, heldResults, id, totalBytes),
-                catch: (error) => error,
-              }).pipe(Effect.ignore),
-            { discard: true },
-          ).pipe(
-            Effect.timeoutOrElse({
-              duration: Duration.millis(Math.max(1, Math.floor((ceiling.answerBy - Date.now()) / 4))),
-              orElse: () => Effect.void,
-            }),
-            Effect.andThen(
-              authCall<unknown>(guardProgramReturn, [
-                value,
-                registry,
-                baseUrl,
-                [...new Map(resultDependencies.map((dependency) => [JSON.stringify(dependency), dependency])).values()],
-                sentSecrets,
-                logger,
-                maxResultChars - emitted.textChars,
-                programWrites.hasSucceeded,
-                maxResultChars,
-                heldResults,
-                ceiling.answerBy,
-                readBytes,
-              ]),
-            ),
-          ),
+          authCall<unknown>(guardProgramReturn, [
+            value,
+            registry,
+            baseUrl,
+            [...new Map(resultDependencies.map((dependency) => [JSON.stringify(dependency), dependency])).values()],
+            sentSecrets,
+            logger,
+            maxResultChars - emitted.textChars,
+            programWrites.hasSucceeded,
+            maxResultChars,
+            heldResults,
+            ceiling.answerBy,
+            readBytes,
+          ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
         Effect.flatMap((exit) =>

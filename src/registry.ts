@@ -383,6 +383,9 @@ const STASH_COMPLETION_TIMEOUT_MS = 15_000;
 /** Reservation, chunk writes and completion share one finite outer budget. */
 const STASH_TIMEOUT_MS = STASH_WRITE_TIMEOUT_MS + STASH_COMPLETION_TIMEOUT_MS;
 
+/** Chunks one release deletes at a time; a stash holds at most 32. */
+const STASH_RELEASE_CONCURRENCY = 16;
+
 /** Stop waiting without starting background storage work after the deadline. */
 function completeStash(effect: Effect.Effect<unknown, unknown, Storage>): Effect.Effect<void, unknown, Storage> {
   return effect.pipe(
@@ -1453,8 +1456,11 @@ export class Registry implements RegistryView {
             const charge = yield* stashCharge(id);
             // Bytes first: a failed delete keeps its charge, so the ledger never
             // undercounts what storage holds.
-            for (let index = 0; index < chunkCount; index++)
-              yield* storageDelete(partition + resultKeys.chunk(id, index));
+            yield* Effect.forEach(
+              Array.from({ length: chunkCount }, (_, index) => partition + resultKeys.chunk(id, index)),
+              (key) => storageDelete(key),
+              { concurrency: STASH_RELEASE_CONCURRENCY, discard: true },
+            );
             yield* swapStashLedger((live) =>
               live.some((entry) => entry[0] === charge)
                 ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
@@ -1798,6 +1804,14 @@ class ScopedRegistryView implements RegistryView {
   }
   static {
     provideRegistryPrograms(ScopedRegistryView.prototype, {
+      releaseResult: (self, id, chunkCount) =>
+        registryProgram(
+          self.root,
+          "releaseResult",
+          id,
+          chunkCount,
+          self.scope.subjectKey ? scopes.subject(self.scope.subjectKey) : scopes.results,
+        ),
       stashResult: (self, id, chunks, ttlSeconds, options = {}) =>
         registryProgram(self.root, "stashResult", id, chunks, ttlSeconds, {
           ...options,

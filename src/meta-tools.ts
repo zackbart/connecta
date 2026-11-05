@@ -1,3 +1,4 @@
+import { Effect } from "effect";
 import { operationActivity } from "./operation-activity.js";
 import { SkillLookupError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
@@ -235,14 +236,22 @@ function serializedWithBinary(value: unknown): { text: string; binary: boolean }
  * writes a header for whatever the ledger still holds, so the id leaves the ledger first.
  * Once sealing has begun it owns the entry, which keeps its charge until it expires.
  */
-export async function releaseStashedResult(
+export function releaseStashedResult(
   registry: RegistryView,
   held: HeldResults | undefined,
   id: string,
   totalBytes: number,
-): Promise<void> {
-  if (held && !held.discard(id)) return;
-  await registry.releaseResult(id, Math.max(1, Math.ceil(totalBytes / resultChunkBytes(totalBytes))));
+): Effect.Effect<void, unknown> {
+  return Effect.suspend(() =>
+    held && !held.discard(id)
+      ? Effect.void
+      : registryProgram(
+          registry,
+          "releaseResult",
+          id,
+          Math.max(1, Math.ceil(totalBytes / resultChunkBytes(totalBytes))),
+        ),
+  );
 }
 
 /**

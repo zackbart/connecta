@@ -86,10 +86,10 @@ Otherwise fetch for units, pagination, aliases, or sequences.
 
 ## Large results and recovery
 
-Follow nextOffset in UTF-8 bytes, reassemble and reduce inside one program. Use the
-returned id in place of result-id below; this example assumes documented JSON.
+Large results carry resultId. Follow nextOffset in UTF-8 bytes, reassemble and reduce
+inside one program. Use that id for result-id below; this example assumes documented JSON.
 
-Calls inline up to 1 MiB. Larger values return
+Calls inline up to 1 MiB; larger return
 \`{ format: "paged", valueFormat, resultId?, totalBytes, hint }\`. Follow its hint:
 \`connecta.result(handle, { all: true })\` gives \`{ data, format }\` for one host call,
 or throws result_too_large; then page. IDs last 15 minutes; only explicit

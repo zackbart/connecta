@@ -3,8 +3,9 @@
 // lasts, so every way a run can end leaves nothing a reader can open unless sealing wrote
 // that chunk. Sealing waits until the run can no longer add to its secret set, and only
 // then writes the headers of entries that pass that set. Stored bytes never change, so an
-// offset issued for an entry stays valid. A run costs no extra writes, and reads stored
-// bytes back only for entries the set grew past.
+// offset issued for an entry stays valid. A reclaimed transfer leaves this ledger first and
+// gets no header. Sealing costs no extra writes, and reads stored bytes back only for
+// entries the set grew past.
 import { Duration, Effect } from "effect";
 import { authStorage } from "./auth/native.js";
 import { PendingWork } from "./runtime/request-scope.js";

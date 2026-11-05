@@ -139,8 +139,8 @@ export function guestInitializer(): string {
       } while (page.hasMore);
       const whole = { data: value.handle.valueFormat === "json" ? JSON.parse(text) : text,
         format: value.handle.valueFormat };
-      // Nothing can name these bytes now, so the host may reclaim them.
-      try { await hostResult(value.transfer); } catch {}
+      // Nothing can name a read's bytes now, so the host may reclaim them.
+      if (value.reclaim) try { await hostResult(value.transfer); } catch {}
       return whole;
     } catch { return value.handle; }
   }
@@ -159,10 +159,11 @@ export function guestInitializer(): string {
       push(parts, page.text);
     }
     const text = join(parts, "");
-    if (!id || id.valueFormat !== "text") {
-      // A bare id doesn't say which format it stored; JSON is the common one.
-      try { return { data: JSON.parse(text), format: "json" }; } catch {}
-    }
+    const stored = id ? id.valueFormat : undefined;
+    if (stored === "text") return { data: text, format: "text" };
+    // A handle's JSON that won't parse throws; only a bare id, which doesn't say, may be text.
+    if (stored === "json") return { data: JSON.parse(text), format: "json" };
+    try { return { data: JSON.parse(text), format: "json" }; } catch {}
     return { data: text, format: "text" };
   }
   async function call() {

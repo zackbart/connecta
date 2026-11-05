@@ -263,9 +263,8 @@ class QuickJsChildPool implements AdmittingExecutor {
       maxStackSizeBytes: positiveWhole(options.maxStackSizeBytes, DEFAULT_STACK_LIMIT_BYTES, "maxStackSizeBytes"),
     };
     this.deadlineMs = this.runtimeOptions.timeoutMs;
-    // Parsing and then using a value costs CPU in proportion to its size, so a
-    // tighter budget reads less. The fixed cap keeps the run well below the sizes
-    // where freeing its runtime often aborted a child in measurements.
+    // Parsing and then using a value costs CPU and heap in proportion to its size,
+    // so a tighter budget reads less, and no budget reads past the fixed cap.
     this.maxReadBytes = Math.min(
       Math.floor((PROGRAM_RESULT_READ_BYTES * this.runtimeOptions.cpuTimeMs) / DEFAULT_CPU_TIME_MS),
       2 * 1024 * 1024,

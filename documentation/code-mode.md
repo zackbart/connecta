@@ -438,8 +438,9 @@ larger carries a `resultId`.
 
 `await connecta.result(handleOrId, { all: true })` returns the whole stored value
 as `{ data, format }`, for one host call however many transfer pages it takes
-(`L6`). A handle's `valueFormat` decides the format. A bare id parses as JSON when
-it can, and is text otherwise, so pass the handle when the difference matters.
+(`L6`). A handle's `valueFormat` decides the format, and JSON that won't parse throws.
+A bare id parses as JSON when it can, and is text otherwise, so pass the handle when
+the difference matters.
 `all` takes no other option; `{ all: false }` is ordinary paging. Each transfer
 page takes the same bindings, rechecks and deadline as an explicit page: a result
 its run did not publish (`R4a`) fails with its usual code, and a slow page is a
@@ -447,9 +448,7 @@ catchable `timeout`.
 
 The read ceiling is 1.5 MiB of the stored UTF-8. `quickJsExecutor()` scales it by
 `cpuTimeMs / 250`, at most 2 MiB and at most a sixteenth of `memoryLimitBytes`:
-parsing a value and using it costs CPU in proportion to its size, and freeing a run
-that parsed near 3 MB often aborted its child. A teardown abort keeps the finished
-run's answer and replaces the child, at any size. The Dynamic Worker
+parsing a value and using it costs CPU and heap in proportion to its size. The Dynamic Worker
 uses 1.5 MiB; Miniflare read 16 MB without failing, but that says nothing about
 production isolate limits. A custom executor may set `maxReadBytes` lower. Over it the call throws
 `result_too_large`, catchable, naming the size and the ceiling, after one host call
@@ -1235,15 +1234,15 @@ round-trip losslessly.
 
 Stashes retain their existing bindings, 15-minute expiry, per-connector page
 caps and aggregate capacity charges on memory, SQLite and D1. Capacity exhaustion
-or a storage failure returns a successful notice without a `resultId`. A value
-reconstructed through transfer pages gives its stash back: the guest never saw a
-handle for it, so nothing can name those bytes. A read's goes as soon as the value
-is whole, and a write's when the run succeeds with no unknown write, so a failed
-run cannot lose a completed write's output (`W9`). Giving back removes the entry
-from the run's memory ledger first, so sealing (`R4a`) has nothing to publish for it;
-once sealing has begun the entry stays until it expires. A handle the guest received
-keeps its charge until it expires, including after `{ all: true }`. Release is
-best effort, and a failure leaves the charge to expire. A failed
+or a storage failure returns a successful notice without a `resultId`. A read's
+value reconstructed through transfer pages gives its stash back once it is whole: the
+guest never saw a handle for it, so nothing can name those bytes. Giving back removes
+the entry from the run's memory ledger first, so sealing (`R4a`) has nothing to publish
+for it; once sealing has begun the entry stays until it expires. All of a run's giving
+back shares a one-second budget, and once that is spent the rest of the run's entries
+stay until they expire, so slow storage never costs the answer. A write's stash, and a
+handle the guest received, keep their charge until they expire, including after
+`{ all: true }`. A failed
 automatic reconstruction retains the handle. Neither result path reissues the
 call or changes a completed write into a failed or unknown write. Guest returns use the same store when they exceed the presentation cap (`R2`–`R4`).
 Pages from a later run see these results only after the run publishes them (`R4a`).

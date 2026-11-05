@@ -3967,12 +3967,14 @@ return fs;
   },
   {
     clauses: "S11, L6",
-    name: "result { all: true } keeps text as text and sniffs a bare id",
+    name: "result { all: true } keeps text as text, sniffs a bare id and refuses JSON that won't parse",
     code: `async () => {
       const handle = await connecta.call("shapes.textOfBytes", { bytes: 1100000 });
       const whole = await connecta.result(handle, { all: true });
       const byId = await connecta.result(handle.resultId, { all: true });
-      return { format: whole.format, length: whole.data.length, ends: whole.data.endsWith("t"), bareId: byId.format, bareLength: byId.data.length };
+      let claimed;
+      try { await connecta.result({ ...handle, valueFormat: "json" }, { all: true }); } catch (err) { claimed = err.name; }
+      return { format: whole.format, length: whole.data.length, ends: whole.data.endsWith("t"), bareId: byId.format, bareLength: byId.data.length, claimed };
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
@@ -3982,6 +3984,8 @@ return fs;
         ends: true,
         bareId: "text",
         bareLength: 1_100_000,
+        // A handle that says JSON is never quietly handed back as text.
+        claimed: "SyntaxError",
       });
     },
   },
