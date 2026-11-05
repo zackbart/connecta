@@ -241,7 +241,11 @@ export const DISCOVERY_TASKS: ActiveTask[] = [
         "contract read from the current CRM",
         called(world, "revhub.list_contracts") || called(world, "revhub.get_contract"),
       ),
-      answerCheck(trace, { anywhere: [RENEWAL], line: /2027/, notOnLine: /2026/ }),
+      // The line must state this date and no other: "2027" alone admits the wrong month.
+      answerCheck(trace, {
+        anywhere: [RENEWAL],
+        line: new RegExp(`^[^\\d]*(?:${RENEWAL.source})[^\\d]*$`, "i"),
+      }),
       // Reading the retired twin is harmless when the answer comes from the current
       // CRM, so it is reported, not failed. The two checks above catch a real mix-up.
       noCallsTo(world, ["salesdesk"], true),
@@ -673,7 +677,14 @@ export const DISCOVERY_ANSWER_CONTROLS: Record<string, { accept: string[]; rejec
     accept: [
       "It ends on January 15, 2027.\nANSWER: January 15, 2027",
       "The retired CRM still shows 2026-01-15, but the current contract ends 2027-01-15.\nANSWER: 2027-01-15",
+      "It renews on the 15th of January.\nANSWER: 15 January 2027",
+      "It ends on 1/15/2027.\nANSWER: 1/15/2027",
     ],
-    reject: ["It ended 2026-01-15; the renewal is 2027-01-15.\nANSWER: 2026-01-15"],
+    reject: [
+      "It ended 2026-01-15; the renewal is 2027-01-15.\nANSWER: 2026-01-15",
+      "Contract ctr_502 ends 2027-01-15.\nANSWER: 2027-02-15",
+      "Contract ctr_502 ends 2027-01-15.\nANSWER: 2027",
+      "Contract ctr_502 ends 2027-01-15.\nANSWER: 2027-01-15 or 2027-02-15",
+    ],
   },
 };
