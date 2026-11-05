@@ -53,9 +53,12 @@ export function batchFailures(file: AgentResultFile): string[] {
   const problems: string[] = [];
   if (file.stopped) problems.push(`batch stopped: ${file.stopped}`);
   const seen = new Map<string, number>();
+  const graph = file.config.servedGraph?.hash;
   for (const trial of file.trials) {
     const key = `${trial.task} ${trial.model} #${trial.repeat}`;
     seen.set(key, (seen.get(key) ?? 0) + 1);
+    if (graph && trial.status !== "skipped" && trial.servedGraph !== graph)
+      problems.push(`${key}: served graph ${trial.servedGraph ?? "unrecorded"}, not this batch's ${graph}`);
     if (
       !file.config.tasks.includes(trial.task) ||
       !file.config.models.includes(trial.model) ||

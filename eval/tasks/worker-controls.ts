@@ -8,7 +8,7 @@ import { Server as HttpServer } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
 import { createSocket as createDgramSocket } from "node:dgram";
 import { existsSync } from "node:fs";
-import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import {
   Server as NetServer,
   connect as connectNet,
@@ -21,7 +21,10 @@ import { join, sep } from "node:path";
 import { playReference } from "../agent/reference.js";
 import { gradeTask } from "./grading.js";
 import { crossTarget, compare } from "../compare.js";
-import { startVendorGateway } from "../deploy/worker.js";
+import { connectionLost, stopsBatch, trialInfraFailure, WORKER_RELOADED } from "../agent/infra.js";
+import { batchFailures } from "../agent/verdict.js";
+import { claimPairGraph, freezeWorkerGraph, refuseMislabelledGraph } from "../support/worker-graph.js";
+import { startVendorGateway, startWorkerDeployment } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
 import { fakeTransportState, routeFakeVendor } from "../fakes/transport.js";
 import type { AgentResultFile } from "../report/summary.js";
@@ -466,12 +469,21 @@ async function fixture(target: "node" | "worker", surface: "six" | "code"): Prom
   const file: AgentResultFile = {
     ...frozen,
     protocol: runProtocol("synthetic-selftest-pair"),
-    config: { ...frozen.config, surface, grading: "outcome", tasks: [id], repeats: 1, target },
+    config: {
+      ...frozen.config,
+      surface,
+      grading: "outcome",
+      tasks: [id],
+      repeats: 1,
+      target,
+      ...(target === "worker" ? { servedGraph: { hash: "graph", inputs: 1, matchesHead: true } } : {}),
+    },
     trials: [
       {
         ...structuredClone(source),
         surface,
         target,
+        ...(target === "worker" ? { servedGraph: "graph" } : {}),
         runner: "codex",
         grading: "outcome",
         taskDefinitionsHash: runProtocol().taskDefinitionsHash,
@@ -482,6 +494,62 @@ async function fixture(target: "node" | "worker", surface: "six" | "code"): Prom
   };
   delete file.regrade;
   return file;
+}
+
+/** Runner-specific fields and the served graph are part of what a comparison must match. */
+export async function comparatorServedControls() {
+  const fresh = fixture;
+  // Eve arms compare on Eve's own version and served model, not on empty Codex fields.
+  const eveArm = async (surface: "six" | "code") => {
+    const file = await fresh("worker", surface);
+    file.config.runner = "eve";
+    file.eveVersion = "1.0.0-rc.1";
+    delete file.codexVersion;
+    const trial = file.trials[0]!;
+    trial.runner = "eve";
+    trial.eve = { ...trial.codex!, version: "1.0.0-rc.1" };
+    delete trial.codex;
+    return file;
+  };
+  const eveArmSix = await eveArm("six");
+  compare(eveArmSix, await eveArm("code"));
+  const otherEve = await eveArm("code");
+  otherEve.eveVersion = "1.0.0-rc.2";
+  otherEve.trials[0]!.eve = { ...otherEve.trials[0]!.eve!, version: "1.0.0-rc.2" };
+  refused(() => compare(eveArmSix, otherEve), "Eve arms on different Eve versions compared");
+  const otherServed = await eveArm("code");
+  otherServed.trials[0]!.eve = { ...otherServed.trials[0]!.eve!, servedModel: "another-model" };
+  try {
+    compare(eveArmSix, otherServed);
+    throw new Error("Eve arms with different served models compared");
+  } catch (error) {
+    if (!/served model for/.test(String(error)))
+      throw new Error(`Eve served models were not compared: ${String(error)}`);
+  }
+  // Each arm's graph must be recorded, match its commit, and match the other arm's.
+  const graphs: [string, (file: AgentResultFile) => void][] = [
+    [
+      "another arm's graph",
+      (f) => {
+        f.config.servedGraph!.hash = "other";
+        f.trials[0]!.servedGraph = "other";
+      },
+    ],
+    ["no recorded graph", (f) => delete f.config.servedGraph],
+    ["a graph that differs from its commit", (f) => (f.config.servedGraph!.matchesHead = false)],
+    ["a trial that served another graph", (f) => (f.trials[0]!.servedGraph = "other")],
+    ["a trial with no recorded graph", (f) => delete f.trials[0]!.servedGraph],
+  ];
+  for (const [label, change] of graphs) {
+    const six = await fresh("worker", "six"),
+      code = await fresh("worker", "code");
+    change(code);
+    refused(() => compare(six, code), `Comparison accepted ${label}`);
+    const batch = await fresh("worker", "six");
+    change(batch);
+    if (label.startsWith("a trial") && !batchFailures(batch).some((problem) => problem.includes("served graph")))
+      throw new Error(`A batch accepted ${label}`);
+  }
 }
 
 /** Node and worker results pair only as a diagnostic, and only from measured, consistent batches. */
@@ -822,6 +890,294 @@ export async function injectionControls() {
 }
 
 /** Force a candidate to be occupied by another listener, then recover before serving. */
+/**
+ * Agent trials serve a frozen snapshot, so a source edit in this checkout must not
+ * reach one, and a reload that does happen must be reported as a reload. Smokes keep
+ * Wrangler's bundler and watcher, so build hooks that rewrite identical bytes would
+ * reload them. Every edited file here is this control's own; hooks must not write.
+ */
+export async function workerReloadControls() {
+  if (stopsBatch(WORKER_RELOADED) || /authentication/i.test(WORKER_RELOADED))
+    throw new Error("A Worker reload must read as its own infrastructure error");
+  const hooks = () => {
+    for (const script of ["generate-version", "build-operator-ui"]) {
+      const { status } = spawnSync(process.execPath, [join(ROOT, "scripts", `${script}.mjs`)], { stdio: "inherit" });
+      if (status !== 0) throw new Error(`${script} failed`);
+    }
+  };
+  hooks();
+  const dir = await mkdtemp(join(tmpdir(), "connecta-worker-reload-"));
+  const entry = join(dir, "worker.ts");
+  const dep = join(dir, "dep.ts");
+  // Module state resets on reload. Random values are refused at global scope.
+  await writeFile(
+    entry,
+    `import { revision } from "./dep.ts";
+import { CONNECTA_VERSION } from ${JSON.stringify(join(ROOT, "src", "version.ts"))};
+import * as ui from ${JSON.stringify(join(ROOT, "src", "operator-ui", "generated.ts"))};
+let instance;
+export default { fetch: () => new Response(JSON.stringify({ instance: (instance ??= crypto.randomUUID()), revision, version: CONNECTA_VERSION, ui: Object.keys(ui).length })) };
+`,
+  );
+  const v1 = `export const revision = 1;\n`;
+  await writeFile(dep, v1);
+  const served = async (origin: string) =>
+    (await (await fetch(origin)).json()) as { instance: string; revision: number };
+  let settleMs = 5_000;
+  let smoke: Awaited<ReturnType<typeof wranglerDev>> | undefined;
+  let trial: Awaited<ReturnType<typeof wranglerDev>> | undefined;
+  const world = new World();
+  let deployment: Awaited<ReturnType<typeof startWorkerDeployment>> | undefined;
+  try {
+    // The smoke shape. Prove the watcher is live with real edits first, repeated
+    // because a watcher still starting misses a write, then require the hooks to do nothing.
+    smoke = await wranglerDev({ name: "connecta-worker-reload-smoke", main: entry });
+    const before = await served(smoke.origin);
+    let revision = 1;
+    const calibrating = Date.now();
+    let lastWrite = 0;
+    for (;;) {
+      if (Date.now() - calibrating > 90_000) throw new Error("Editing a bundle input did not reload a smoke Worker");
+      if (Date.now() - lastWrite > 5_000) {
+        await writeFile(dep, `export const revision = ${++revision};\n`);
+        lastWrite = Date.now();
+      }
+      if ((await served(smoke.origin).catch(() => before)).instance !== before.instance) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    // Scale later negative waits to the latency just measured on this machine.
+    settleMs = Math.max(settleMs, (Date.now() - lastWrite) * 3);
+    // A write already on its way would read as a reload below, so let it land.
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
+    const reloaded = await served(smoke.origin);
+    hooks();
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
+    if ((await served(smoke.origin)).instance !== reloaded.instance)
+      throw new Error("Rerunning build hooks reloaded a Worker under Wrangler's bundler");
+    await smoke.close();
+    smoke = undefined;
+    console.log("ok   rerunning the build hooks leaves a Worker under Wrangler's bundler alone");
+
+    // The agent-trial shape: the same edit never reaches its frozen snapshot.
+    trial = await wranglerDev({ name: "connecta-worker-reload-trial", main: entry, freeze: true });
+    const snapshot = join(trial.persist, "snapshot", "worker.mjs");
+    const bytes = await readFile(snapshot, "utf8");
+    const frozen = await served(trial.origin);
+    await writeFile(dep, `export const revision = ${++revision};\n`);
+    await new Promise((resolve) => setTimeout(resolve, settleMs));
+    const after = await served(trial.origin);
+    if (
+      after.instance !== frozen.instance ||
+      after.revision !== frozen.revision ||
+      (await readFile(snapshot, "utf8")) !== bytes
+    )
+      throw new Error("A source edit reached a running trial's snapshot");
+    await trial.close();
+    trial = undefined;
+    console.log("ok   a source edit leaves a running trial's snapshot and module instance unchanged");
+
+    // Reload detection, through the real deployment and its real token rotation.
+    await world.start();
+    deployment = await startWorkerDeployment(world.connectorSpecs());
+    const initialize = () =>
+      fetch(deployment!.mcpUrl, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${deployment!.token}`,
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: {
+            protocolVersion: "2025-06-18",
+            capabilities: {},
+            clientInfo: { name: "reload-control", version: "1" },
+          },
+        }),
+      });
+    const failure = async () =>
+      trialInfraFailure(
+        await deployment!.reloaded!(),
+        await connectionLost(deployment!.mcpUrl, deployment!.token),
+        "the conversation's own failure",
+      );
+    hooks();
+    if (await deployment.reloaded!()) throw new Error("Rerunning build hooks reloaded a live trial");
+    if ((await initialize()).status !== 200) throw new Error("The issued token stopped working without a reload");
+    if ((await failure()) !== "the conversation's own failure")
+      throw new Error("A healthy deployment must leave the conversation's own failure in place");
+    await deployment.processControl!.restart();
+    if ((await initialize()).status !== 401) throw new Error("A reloaded Worker should refuse the earlier token");
+    if (!(await connectionLost(deployment.mcpUrl, deployment.token))?.includes("rejected"))
+      throw new Error("A reload's rejected token must look like a lost connection to that check alone");
+    if ((await failure()) !== WORKER_RELOADED)
+      throw new Error("A reload must be reported instead of a lost connection");
+    await deployment.processControl!.stop();
+    if (await deployment.reloaded!()) throw new Error("A stopped Worker must not read as reloaded");
+    if (!(await failure())?.includes("unreachable"))
+      throw new Error("A stopped Worker must be reported as an unreachable deployment");
+    console.log("ok   a restarted Worker reports a reload; a stopped one reports a lost connection");
+  } finally {
+    await smoke?.close();
+    await trial?.close();
+    await deployment?.close();
+    await world.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * A batch serves one graph, however sources move around it. Editing between two boots
+ * proves the hazard: a boot that bundles for itself serves the edit under the same
+ * clean label. Files here are this control's own, in throwaway checkouts.
+ */
+export async function workerGraphControls() {
+  const dir = await mkdtemp(join(tmpdir(), "connecta-worker-graph-"));
+  const git = (cwd: string, ...args: string[]) => {
+    const run = spawnSync(
+      "git",
+      ["-c", "user.name=eval", "-c", "user.email=eval@example.com", "-c", "commit.gpgsign=false", ...args],
+      { cwd, encoding: "utf8" },
+    );
+    if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr}`);
+    return run.stdout.trim();
+  };
+  const checkout = async (name: string, revision: number) => {
+    const root = join(dir, name);
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      join(root, "worker.ts"),
+      `import { revision } from "./dep.ts";\nexport default { fetch: () => new Response(String(revision)) };\n`,
+    );
+    await writeFile(join(root, "dep.ts"), `export const revision = ${revision};\n`);
+    await writeFile(join(root, ".gitignore"), "generated.ts\n");
+    git(root, "init", "-q");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "seed");
+    return { root, entry: join(root, "worker.ts"), dep: join(root, "dep.ts") };
+  };
+  const served = async (origin: string) => await (await fetch(origin)).text();
+  const armed: { close(): Promise<void> }[] = [];
+  const boot = async (options: Parameters<typeof wranglerDev>[0]) => {
+    const dev = await wranglerDev(options);
+    armed.push(dev);
+    return dev;
+  };
+  try {
+    const first = await checkout("first", 1);
+    const graph = await freezeWorkerGraph(first.entry, first.root);
+    if (!graph.matchesHead) throw new Error("A clean checkout's graph must match its commit");
+    refuseMislabelledGraph(graph, { commit: git(first.root, "rev-parse", "--short=12", "HEAD"), dirty: false });
+
+    const before = await boot({ name: "connecta-graph-before", main: first.entry, graph });
+    await writeFile(first.dep, `export const revision = 2;\n`);
+    const after = await boot({ name: "connecta-graph-after", main: first.entry, graph });
+    const perBoot = await boot({ name: "connecta-graph-per-boot", main: first.entry, freeze: true });
+    if ((await served(perBoot.origin)) !== "2") throw new Error("The hazard control did not reach the edited source");
+    if ((await served(before.origin)) !== "1" || (await served(after.origin)) !== "1")
+      throw new Error("A source edit split one batch's graph across its trials");
+    for (const dev of [before, after])
+      if ((await dev.servedGraph()) !== graph.hash) throw new Error("A trial did not report its batch's graph");
+    await writeFile(join(after.persist, "snapshot", "worker.mjs"), "// altered\n");
+    if ((await after.servedGraph()) === graph.hash)
+      throw new Error("An altered snapshot still read as the batch's graph");
+    console.log("ok   a source edit between trials cannot split a batch's one frozen graph");
+
+    // The edit also has to stop a batch from claiming the commit it no longer serves.
+    const edited = await freezeWorkerGraph(first.entry, first.root);
+    if (edited.hash === graph.hash || edited.matchesHead) throw new Error("An edited graph read as the commit");
+    const head = git(first.root, "rev-parse", "--short=12", "HEAD");
+    refused(
+      () => refuseMislabelledGraph(edited, { commit: head, dirty: false }),
+      "A clean label covered an edited graph",
+    );
+    refuseMislabelledGraph(edited, { commit: head, dirty: true });
+    refused(
+      () => refuseMislabelledGraph(graph, { commit: "000000000000", dirty: false }),
+      "A batch labelled another commit than its graph",
+    );
+    // An ignored input isn't in the commit, so it needs its own proof. A generated file
+    // must match its generator, using the real path and script name; installed packages
+    // are pinned by the lockfile; any other ignored or untracked source is dirty.
+    const stray = await checkout("stray", 1);
+    const generated = join(stray.root, "src", "operator-ui", "generated.ts");
+    await mkdir(join(stray.root, "src", "operator-ui"), { recursive: true });
+    await mkdir(join(stray.root, "scripts"), { recursive: true });
+    await mkdir(join(stray.root, "node_modules", "pinned"), { recursive: true });
+    await writeFile(
+      join(stray.root, "scripts", "build-operator-ui.mjs"),
+      `import { readFileSync } from "node:fs";\nprocess.exit(readFileSync("src/operator-ui/generated.ts", "utf8") === "export default 1;\\n" ? 0 : 1);\n`,
+    );
+    await writeFile(join(stray.root, "node_modules", "pinned", "index.js"), "export default 0;\n");
+    await writeFile(generated, "export default 1;\n");
+    await writeFile(join(stray.root, "other-generated.ts"), "export default 0;\n");
+    await writeFile(
+      join(stray.root, ".gitignore"),
+      "node_modules/\nsrc/operator-ui/generated.ts\nother-generated.ts\n",
+    );
+    const entryUsing = (...imports: string[]) =>
+      `${imports.map((path, index) => `import extra${index} from ${JSON.stringify(path)};`).join("\n")}\nimport { revision } from "./dep.ts";\nexport default { fetch: () => new Response(String(revision + ${imports.map((_, index) => `extra${index}`).join(" + ")})) };\n`;
+    await writeFile(stray.entry, entryUsing("./src/operator-ui/generated.ts", "./node_modules/pinned/index.js"));
+    git(stray.root, "add", "-A");
+    git(stray.root, "commit", "-qm", "use generated");
+    const generatedGraph = await freezeWorkerGraph(stray.entry, stray.root);
+    if (!generatedGraph.matchesHead) throw new Error("A generated input matching its generator read as dirty");
+    await writeFile(generated, "export default 2;\n");
+    const stale = await freezeWorkerGraph(stray.entry, stray.root);
+    if (stale.hash === generatedGraph.hash) throw new Error("A stale generated input kept its graph's identity");
+    if (stale.matchesHead) throw new Error("A stale generated input read as the commit");
+    const staleHead = git(stray.root, "rev-parse", "--short=12", "HEAD");
+    refused(
+      () => refuseMislabelledGraph(stale, { commit: staleHead, dirty: false }),
+      "A clean label covered stale generated code",
+    );
+    await writeFile(generated, "export default 1;\n");
+    await writeFile(stray.entry, entryUsing("./src/operator-ui/generated.ts", "./other-generated.ts"));
+    git(stray.root, "add", "-A");
+    git(stray.root, "commit", "-qm", "use an ignored file no generator covers");
+    if ((await freezeWorkerGraph(stray.entry, stray.root)).matchesHead)
+      throw new Error("An ignored input with no generator read as the commit");
+    await writeFile(stray.dep, `export { default as revision } from "./untracked.ts";\n`);
+    await writeFile(join(stray.root, "untracked.ts"), "export default 3;\n");
+    await writeFile(stray.entry, entryUsing("./src/operator-ui/generated.ts"));
+    git(stray.root, "add", "dep.ts", "worker.ts");
+    git(stray.root, "commit", "-qm", "use untracked");
+    if ((await freezeWorkerGraph(stray.entry, stray.root)).matchesHead)
+      throw new Error("An untracked source read as the commit");
+    // The real generator keeps the interface this relies on.
+    const realGenerator = spawnSync(process.execPath, [join(ROOT, "scripts", "build-operator-ui.mjs"), "--check"], {
+      cwd: ROOT,
+      stdio: "inherit",
+    });
+    if (realGenerator.status !== 0) throw new Error("The operator UI generator's --check mode failed");
+    console.log("ok   a clean label refuses any Worker graph that differs from its commit");
+
+    // Arms from separate worktrees agree on sources, wherever each checkout lives.
+    const same = await checkout("elsewhere/same", 1);
+    const other = await checkout("elsewhere/other", 7);
+    const sameGraph = await freezeWorkerGraph(same.entry, same.root);
+    const otherGraph = await freezeWorkerGraph(other.entry, other.root);
+    if (sameGraph.hash !== graph.hash) throw new Error("Identical sources in two worktrees differ in identity");
+    if (otherGraph.hash === graph.hash) throw new Error("Different sources in two worktrees share an identity");
+    const pairs = join(dir, "pairs");
+    await claimPairGraph("pair/one", graph.hash, pairs);
+    await claimPairGraph("pair/one", sameGraph.hash, pairs);
+    await rejects(
+      () => claimPairGraph("pair/one", otherGraph.hash, pairs),
+      /Batch refused/,
+      "An arm with different sources joined a pair",
+    );
+    await claimPairGraph("pair/two", otherGraph.hash, pairs);
+    console.log("ok   arms from separate worktrees share one graph identity, and a mismatch refuses");
+  } finally {
+    await Promise.allSettled(armed.map((dev) => dev.close()));
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
 export async function portCollisionControls() {
   const competitor = await serveFetch(async () => new Response("competitor"));
   const port = competitor.port;

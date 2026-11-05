@@ -4,7 +4,6 @@
  * process group. Every group still running when the harness exits, or when it
  * receives SIGINT/SIGTERM, is killed, so no workerd outlives the run.
  */
-import { build } from "esbuild";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
@@ -12,7 +11,9 @@ import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimental_readRawConfig } from "wrangler";
+import { createHash } from "node:crypto";
 import { retryBind } from "./serve.js";
+import { freezeWorkerGraph, type WorkerGraph } from "./worker-graph.js";
 import { ROOT } from "./meta.js";
 
 /**
@@ -180,6 +181,8 @@ export interface WranglerDev {
   origin: string;
   /** Local D1 and wrangler's bundle scratch; removed by close(). */
   persist: string;
+  /** The frozen graph this boot serves, verified against its bytes on disk. */
+  servedGraph(): Promise<string | undefined>;
   process(): ReturnType<typeof startProcess>;
   /** Everything each wrangler process of this trial printed, restarts included. */
   transcripts(): string[];
@@ -216,6 +219,8 @@ export async function wranglerDev(options: {
    * Agent trials need it; smokes leave it off so they exercise Wrangler's bundler.
    */
   freeze?: boolean;
+  /** Serve this batch's graph rather than bundling `main` again for this boot. */
+  graph?: WorkerGraph;
 }): Promise<WranglerDev> {
   const persist = await mkdtemp(join(tmpdir(), `${options.name}-`));
   const { rawConfig: example } = experimental_readRawConfig({
@@ -258,20 +263,13 @@ export async function wranglerDev(options: {
     origin = `http://127.0.0.1:${port}`;
   };
   const snapshot = join(persist, "snapshot", "worker.mjs");
-  if (options.freeze) {
+  const freeze = options.freeze || options.graph !== undefined;
+  let graph: WorkerGraph | undefined;
+  if (freeze) {
     try {
-      await build({
-        entryPoints: [options.main],
-        outfile: snapshot,
-        bundle: true,
-        format: "esm",
-        platform: "neutral",
-        conditions: ["workerd", "worker", "browser"],
-        mainFields: ["module", "main"],
-        external: ["cloudflare:*", "node:*"],
-        tsconfig: join(ROOT, "tsconfig.json"),
-        logLevel: "silent",
-      });
+      graph = options.graph ?? (await freezeWorkerGraph(options.main));
+      await mkdir(join(persist, "snapshot"), { recursive: true });
+      await writeFile(snapshot, graph.bundle);
     } catch (error) {
       await rm(persist, { recursive: true, force: true });
       throw error;
@@ -281,8 +279,8 @@ export async function wranglerDev(options: {
     config,
     JSON.stringify({
       name: options.name,
-      main: options.freeze ? snapshot : options.main,
-      ...(options.freeze ? { no_bundle: true } : {}),
+      main: freeze ? snapshot : options.main,
+      ...(freeze ? { no_bundle: true } : {}),
       compatibility_date: example.compatibility_date,
       compatibility_flags: example.compatibility_flags,
       d1_databases: example.d1_databases,
@@ -346,6 +344,13 @@ export async function wranglerDev(options: {
       return origin;
     },
     persist,
+    servedGraph: async () => {
+      if (!graph) return undefined;
+      const bytes = await readFile(snapshot);
+      return createHash("sha256").update(bytes).digest("hex") === graph.bundleHash
+        ? graph.hash
+        : "the served snapshot changed";
+    },
     process: () => live,
     transcripts: () => started.map((entry) => entry.transcript()),
     restart: async () => {

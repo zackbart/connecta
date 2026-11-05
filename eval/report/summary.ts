@@ -29,6 +29,8 @@ export interface AgentResultFile {
     maxBudgetUsd?: number;
     mcpOutputTokens?: number | "host default";
     runner?: "codex" | "claude" | "eve";
+    /** Worker target: the one source graph every trial served. */
+    servedGraph?: { hash: string; inputs: number; matchesHead: boolean };
     /** Eve only: the helper configuration under test. */
     eve?: import("../agent/eve.js").EveConnection;
     /** Absent in results written before the worker target existed: node. */

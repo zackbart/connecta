@@ -390,6 +390,32 @@ because the Worker imports the package by name from `dist/`.
   - A trial stops its group when it ends. The first SIGINT/SIGTERM stops the
     batch in order; a second kills every group at once. Process exit also kills
     any group still tracked.
+- **One graph per batch.** A worker batch bundles `eval/deploy/worker-agent.ts` once
+  and every trial serves those bytes, so a source edit cannot split a batch. Its
+  identity, `config.servedGraph.hash`, hashes the exact bytes bundled under paths from
+  the checkout root, so identical sources match across worktrees. A batch recorded
+  clean refuses to start if its graph differs from that commit, including a generated
+  input that doesn't match its generator's `--check`. With `--pair-id`, the
+  first arm records its graph in `~/.cache/connecta-eval-pairs`, and a later arm with a
+  different graph refuses before any trial, so use a new pair id for a rerun. Each
+  trial verifies and records what it served. A mismatch stops the batch and fails it,
+  and `eval:compare` refuses arms with a missing, mismatched or uncommitted graph.
+  `--allow-mismatch` remains an explicit NON-COMPARABLE diagnostic for six/code.
+- **Reloads.** Agent trials serve that snapshot with Wrangler's bundling and watch
+  off, so a source edit in this checkout cannot reach a running trial. Each module instance rotates the agent
+  token and starts a new program log, so `eval:agent` compares the token after each
+  conversation. If it changed, because the process restarted or the served snapshot
+  did, the trial records `Worker reloaded during the trial` as an ungraded
+  infrastructure error, ahead of the rejected token that reload causes. A process
+  that stopped answering reads as a lost connection instead.
+
+  Smokes keep Wrangler's bundler and watcher. Their inputs reach `src/` through
+  tsconfig paths, and the shared `dist/` lease does not cover those, so a rewrite can
+  reload them even with identical bytes. The build hooks (`pretest`, `pretypecheck`,
+  `prebuild` and similar) therefore write only changed bytes, so `check` or
+  `test:browser` can run beside a smoke. A real edit of `src/` or `eval/deploy/`
+  during a smoke still reloads it, so do not edit those there.
+
 - **Network isolation, and its limits.** Isolation differs between wrangler's
   Node processes and the native workerd process.
   - **Wrangler's Node processes** run with `WRANGLER_SEND_METRICS=false` and
