@@ -20,11 +20,33 @@ const seed = ccbState();
 const filtered = seed.people.filter((p) => p.active && p.campus_id === 1).length;
 const inactive = seed.people.filter((p) => !p.active).length;
 const standard = () => REST_TOOL_KINDS.has("ccb.ccb_api_read");
-const target = seed.people.find((p) => p.id === CCB_TARGET)!;
-const listCanReturnTarget = (query: Record<string, string>) => {
-  const name = (query.name ?? "").toLowerCase();
-  return `${target.name} ${target.email} ${CCB_NEW_EMAIL}`.toLowerCase().includes(name);
+const isProfile = (value: unknown) => {
+  if (!value || typeof value !== "object") return false;
+  const facts = Object.values(value).map(String);
+  return facts.includes(String(CCB_TARGET)) && facts.includes(CCB_NEW_EMAIL);
 };
+const carriesProfile = (value: unknown): boolean =>
+  isProfile(value) ||
+  (Boolean(value) && typeof value === "object" && Object.values(value as object).some(carriesProfile));
+const isWrite = (address: unknown) => REST_TOOL_KINDS.get(String(address)) !== "read";
+/**
+ * A successful read delivered Alice's id with her updated email. That email exists
+ * only after the write, so its order is implied, and a write's own reply is excluded.
+ * A program also has to have read the profile, not just returned the write's reply.
+ */
+function readBackProfile(world: World, trace: AgentTrace): boolean {
+  const direct = trace.toolUses.filter((u) => u.tool !== "execute_code" && !isWrite(u.input.address));
+  if (deliveredValues({ ...trace, toolUses: direct }).some(isProfile)) return true;
+  const programs = trace.toolUses.filter((u) => u.tool === "execute_code");
+  return (
+    deliveredValues({ ...trace, toolUses: programs }).some(isProfile) &&
+    world.programs.some((p) =>
+      p.calls.some(
+        (c) => c.name === "connecta.call" && c.outcome === "ok" && !isWrite(c.args[0]) && carriesProfile(c.result),
+      ),
+    )
+  );
+}
 function grade(i: number, world: World, trace: AgentTrace): Check[] {
   const calls = world.ledger.calls.filter((c) => c.service === "ccb");
   const writes = calls.filter((c) => c.kind === "write");
@@ -84,10 +106,8 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
           c.seq > (write?.seq ?? Infinity) &&
           c.args.method === "GET" &&
           c.outcome === "ok" &&
-          (c.args.path === `/individuals/${CCB_TARGET}` ||
-            // A list that can return her profile reads it too; another person's search cannot.
-            (c.args.path === "/individuals" && listCanReturnTarget((c.args.query ?? {}) as Record<string, string>))),
-      ),
+          (c.args.path === `/individuals/${CCB_TARGET}` || c.args.path === "/individuals"),
+      ) && readBackProfile(world, trace),
     );
     evidence &&= answer.includes(String(CCB_TARGET)) && answer.includes(CCB_NEW_EMAIL);
   } else {

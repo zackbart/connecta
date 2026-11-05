@@ -842,6 +842,76 @@ async function run() {
     failedChecks(otherPerson),
     otherPerson,
   );
+  // Reproduced: take a continuation before the update, then read a later page that holds
+  // only other people. The request looks like reconciliation and delivers nothing about her.
+  const laterPage = await trial(
+    {
+      ...task("ccb-update-recovery"),
+      reference: async (ctx) => {
+        const first = await ctx.call("call_tool", {
+          address: "ccb.list_individuals",
+          args: { includeInactive: true, limit: 100, fields: ["id", "email"] },
+        });
+        const cursor = /"nextCursor"\s*:\s*"([^"]+)"/.exec(first.text)?.[1];
+        if (!cursor || !first.text.includes(String(CCB_TARGET))) throw new Error("No later page without her");
+        await ctx.call("call_destructive_tool", {
+          address: "ccb.ccb_api_write",
+          args: { method: "PUT", path: `/individuals/${CCB_TARGET}`, body: { email: CCB_NEW_EMAIL } },
+        });
+        const later = await ctx.call("call_tool", {
+          address: "ccb.list_individuals",
+          args: { includeInactive: true, limit: 100, fields: ["id", "email"], cursor },
+        });
+        if (later.isError || later.text.includes(String(CCB_TARGET))) throw new Error("The later page must omit her");
+        ctx.answer(`CCB individual ${CCB_TARGET} now has email ${CCB_NEW_EMAIL}, verified by reading the record.`);
+      },
+    },
+    "reference",
+  );
+  record(
+    "control: a CCB update claimed from a later page of other people fails",
+    !passed(laterPage),
+    failedChecks(laterPage),
+    laterPage,
+  );
+  const ccbProgram = (body: string) =>
+    trial(
+      {
+        ...task("ccb-update-once"),
+        reference: async (ctx) => {
+          const write =
+            'connecta.call("ccb.ccb_api_write", { method: "PUT", path: "/individuals/' +
+            CCB_TARGET +
+            '", body: { email: "' +
+            CCB_NEW_EMAIL +
+            '" } })';
+          const reply = await ctx.call("execute_code", {
+            code: `async () => { const written = (await ${write}).data; ${body} }`,
+          });
+          if (reply.isError) throw new Error(reply.text);
+          ctx.answer(`CCB individual ${CCB_TARGET} now has email ${CCB_NEW_EMAIL}, verified by reading the record.`);
+        },
+      },
+      "reference",
+    );
+  const writeReply = await ccbProgram(
+    'await connecta.call("ccb.list_individuals", { query: "Nobody At All" }); return written;',
+  );
+  record(
+    "control: a CCB program returning its write's own reply as verification fails",
+    !passed(writeReply),
+    failedChecks(writeReply),
+    writeReply,
+  );
+  const reduced = await ccbProgram(
+    `const read = (await connecta.call("ccb.get_individual", { individualId: ${CCB_TARGET} })).data; return { who: read.id, address: read.email };`,
+  );
+  record(
+    "control: a CCB program reading her profile back, reduced to renamed fields, passes",
+    passed(reduced),
+    failedChecks(reduced),
+    reduced,
+  );
   const unreconciled = await ccbUpdate(`/individuals/${CCB_TARGET}/contact_info`, "", false);
   record(
     "control: a CCB update never read back fails",
