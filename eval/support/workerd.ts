@@ -372,6 +372,12 @@ export async function wranglerDev(options: {
 }
 
 /**
+ * Above every port the Fetch standard blocks. The highest is 10080: a Worker drawn
+ * there is healthy, but fetch refuses it with "bad port", so /health never answers.
+ */
+export const FIRST_EVAL_PORT = 10_081;
+
+/**
  * Evals in other checkouts draw from the same range, and a restarting Worker's
  * public port is unbound until its new process binds it. Claims keep them from
  * drawing it in that gap. A claim from a dead process is stale; without a usable
@@ -427,7 +433,7 @@ async function unclaimedPort(): Promise<number> {
     // Not Linux: the IANA ephemeral range starts at 49152; stay below the Linux default too.
   }
   for (let tries = 0; tries < 50; tries++) {
-    const candidate = 10_000 + Math.floor(Math.random() * Math.max(1, floor - 10_000));
+    const candidate = FIRST_EVAL_PORT + Math.floor(Math.random() * Math.max(1, floor - FIRST_EVAL_PORT));
     const server = createServer();
     const bound = await new Promise<boolean>((resolve) => {
       server.once("error", () => resolve(false));

@@ -33,6 +33,7 @@ import { World, type WorldOptions } from "../fakes/world.js";
 import { servedDelayStats, serveFetch, retryBind } from "../support/serve.js";
 import {
   claimPort,
+  FIRST_EVAL_PORT,
   groupMembers,
   killAllProcesses,
   releasePortClaim,
@@ -844,6 +845,10 @@ export async function portCollisionControls() {
       "Repeated collisions must fail boundedly",
     );
     if (failures !== 3) throw new Error("Collision retries were not bounded");
+    // fetch refuses the port below the draw floor, so a Worker there could never pass /health.
+    const refusal = await fetch(`http://127.0.0.1:${FIRST_EVAL_PORT - 1}/`).catch((error: Error) => error);
+    if (!(refusal instanceof Error) || !/bad port/.test(String(refusal.cause)))
+      throw new Error("The eval port floor no longer sits just above fetch's blocked ports");
     // A claimed port stays unavailable to other evals until its owner dies or releases it.
     const claimed = 9_999;
     await releasePortClaim(claimed);
