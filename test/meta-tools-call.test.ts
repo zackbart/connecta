@@ -1564,7 +1564,11 @@ describe("previews of reads over the cap", () => {
       });
       const registry = makeRegistry([connector], { classification: { crm: { list: "read" } } });
       const mt = createMetaTools(registry, BASE, { programTool: "execute_code" });
-      const seen = await call(mt);
+      // call_tool refuses a source-declared write, so only the write route can reach this.
+      const sent = await mt.callDestructiveTool({ address: "crm.list", args: {} });
+      const text = (sent.content[0] as { text: string }).text;
+      const newline = text.indexOf("\n");
+      const seen = { notice: JSON.parse(text.slice(0, newline)), body: text.slice(newline + 1) };
       expect(seen.notice).not.toHaveProperty("rows");
       expect(seen.notice.hint).toContain("This write already ran");
       // Repeating it inside a program is the replay the notice forbids.
