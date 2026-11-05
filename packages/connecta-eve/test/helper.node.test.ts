@@ -14,6 +14,8 @@ import {
 } from "eve/instructions";
 // Eve keeps a defineDynamic() function behind a private symbol; read it as its runtime does.
 import { dynamicEvaluate } from "../node_modules/eve/dist/src/dynamic/definition.js";
+import { withAgentApproval } from "../node_modules/eve/dist/src/approval/agent.js";
+import { listToolMetadata } from "../node_modules/eve/dist/src/execution/catalog/connection-auth.js";
 import { rankCandidates } from "../node_modules/eve/dist/src/execution/catalog/rank.js";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
@@ -138,6 +140,40 @@ it("defines real Eve connections, endpoint defaults, rotating app auth and appro
   });
   vi.stubEnv("CONNECTA_URL", "");
   expect(() => connectaEndpoint()).toThrow("CONNECTA_URL");
+});
+
+it("lets Eve's agent-wide approval add a gate to a connection but never remove one", async () => {
+  const resolved = (policy: unknown) => policy as (context: ApprovalContext) => Promise<unknown>;
+  const write = approvalContext({ readOnlyHint: false });
+  const gateEverything = () => "user-approval" as const;
+  const leaveAlone = () => undefined;
+  const url = "https://connecta.example.com/agent/assistant";
+  const unattended = connectaConnection({ url, description: "CRM" }).approval;
+  expect(await resolved(withAgentApproval(gateEverything, unattended))(write)).toBe("user-approval");
+  expect(await resolved(withAgentApproval(leaveAlone, unattended))(write)).toBe("not-applicable");
+  const gated = connectaConnection({ url, description: "CRM", gateWrites: true }).approval;
+  expect(await resolved(withAgentApproval(leaveAlone, gated))(write)).toBe("user-approval");
+  expect(await resolved(withAgentApproval(() => "approved" as const, gated))(write)).toBe("user-approval");
+});
+
+it("gives a hung connection 10 seconds to list before Eve reports it unavailable", async () => {
+  vi.useFakeTimers();
+  try {
+    const listing = listToolMetadata(
+      { connectionName: "connecta" } as Parameters<typeof listToolMetadata>[0],
+      { getToolMetadata: () => new Promise(() => {}) } as unknown as Parameters<typeof listToolMetadata>[1],
+    );
+    const outcome = expect(listing).rejects.toThrow('"connecta" did not list its tools within 10s. Try again later.');
+    await vi.advanceTimersByTimeAsync(9_999);
+    let settled = false;
+    void listing.catch(() => (settled = true));
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await outcome;
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("discovers instructions, falls back to initialize/SSE, caches successes and fails open", async () => {
