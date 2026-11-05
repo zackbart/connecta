@@ -81,7 +81,7 @@ describe("public package boundary", () => {
   it("is configured as a public package that ships built output", () => {
     expectTypeOf<RemoteMcpOptions["headers"]>().toEqualTypeOf<Record<string, string> | undefined>();
     expectTypeOf<NonNullable<ConnectaConfig["classification"]>[string][string]>().toEqualTypeOf<
-      "read" | "write" | "hidden"
+      "read" | "read-repeatable" | "write" | "hidden"
     >();
     expect(packageJson.private).not.toBe(true);
     expect(packageJson.publishConfig?.access).toBe("public");

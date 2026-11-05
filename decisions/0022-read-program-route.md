@@ -25,6 +25,8 @@ annotated read-only, refusing every write-like call below the sandbox.
   is a source write stays out even when an override serves it as a read over a silent
   source. `call_tool` still runs that tool, because the override asserted it is safe to
   repeat; the program route is new, so no deployment relies on the wider position.
+  `"read-repeatable"` runs here, because that value is the deployment accepting a resend,
+  which is the only thing the refusal guards against.
 - **Discovery lists writes with `callable: false`.** Omitting them recreates a false absence, the
   failure read-only endpoints already document. A page-level note was rejected because
   programs reduce pages and would drop it, while a marker stays on the selected entry.

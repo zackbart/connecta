@@ -14,10 +14,12 @@ import {
 } from "eve/instructions";
 // Eve keeps a defineDynamic() function behind a private symbol; read it as its runtime does.
 import { dynamicEvaluate } from "../node_modules/eve/dist/src/dynamic/definition.js";
+import { rankCandidates } from "../node_modules/eve/dist/src/execution/catalog/rank.js";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
 import { api } from "../../../src/connectors/api.js";
 import { memoryStorage } from "../../../src/storage/memory.js";
+import { CONNECTA_VERSION } from "../src/version.js";
 import {
   connectaConnection,
   connectaEndpoint,
@@ -29,7 +31,13 @@ import {
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
+
+// What the helper prepends when a server advertises no endpoint facts.
+const EVE_GUIDE =
+  'Connecta tools are deferred: call eve__tool({ name: "connecta__<tool>", input }). Names in this guidance and in nextAction omit the "connecta__" prefix.';
+const guided = (text: string) => `Connecta guidance:\n${EVE_GUIDE}\n${text}`;
 
 // Assignment checks use real Eve types, including the public return types.
 type IsAny<T> = 0 extends 1 & T ? true : false;
@@ -155,8 +163,8 @@ it("discovers instructions, falls back to initialize/SSE, caches successes and f
     getToken: () => token,
     fetch: fetcher,
   });
-  expect(await turn(instructions)).toMatchObject({ content: "Connecta guidance:\nModern guidance" });
-  expect(await turn(instructions)).toMatchObject({ content: "Connecta guidance:\nModern guidance" });
+  expect(await turn(instructions)).toMatchObject({ content: guided("Modern guidance") });
+  expect(await turn(instructions)).toMatchObject({ content: guided("Modern guidance") });
   expect(requests).toHaveLength(1);
   expect(requests[0]?.method).toBe("server/discover");
   expect(requests[0]?.headers.get("MCP-Protocol-Version")).toBe("2026-07-28");
@@ -165,7 +173,7 @@ it("discovers instructions, falls back to initialize/SSE, caches successes and f
   state = "legacy";
   token = "cta_rotated";
   const legacy = await turn(instructions);
-  expect(legacy).toMatchObject({ content: "Connecta guidance:\nLegacy guidance" });
+  expect(legacy).toMatchObject({ content: guided("Legacy guidance") });
   expect(requests.slice(1).map((r) => [r.method, r.authorization])).toEqual([
     ["server/discover", "Bearer cta_rotated"],
     ["initialize", "Bearer cta_rotated"],
@@ -197,22 +205,22 @@ it("keeps one result per turn and session across Eve's repeated evaluations", as
     ttlMs: 0,
   });
   const alice = session(instructions);
-  expect(await alice("turn_1")).toMatchObject({ content: "Connecta guidance:\nGuidance 1" });
+  expect(await alice("turn_1")).toMatchObject({ content: guided("Guidance 1") });
   expect(signal).toBeInstanceOf(AbortSignal);
   vi.setSystemTime(Date.now() + 1);
   // A later model call in the same turn reuses the memo despite the expired cache.
-  expect(await alice("turn_1")).toMatchObject({ content: "Connecta guidance:\nGuidance 1" });
+  expect(await alice("turn_1")).toMatchObject({ content: guided("Guidance 1") });
   expect(fetches).toBe(1);
   // Memos are per session: another session's same turn ID fetches its own.
   vi.setSystemTime(Date.now() + 1);
-  expect(await session(instructions)("turn_1")).toMatchObject({ content: "Connecta guidance:\nGuidance 2" });
+  expect(await session(instructions)("turn_1")).toMatchObject({ content: guided("Guidance 2") });
   vi.setSystemTime(Date.now() + 1);
-  expect(await alice("turn_2")).toMatchObject({ content: "Connecta guidance:\nGuidance 3" });
+  expect(await alice("turn_2")).toMatchObject({ content: guided("Guidance 3") });
   // Before the first turn the key is null, and it is reused like any other.
   const bob = session(instructions);
   vi.setSystemTime(Date.now() + 1);
-  expect(await bob(null)).toMatchObject({ content: "Connecta guidance:\nGuidance 4" });
-  expect(await bob(null)).toMatchObject({ content: "Connecta guidance:\nGuidance 4" });
+  expect(await bob(null)).toMatchObject({ content: guided("Guidance 4") });
+  expect(await bob(null)).toMatchObject({ content: guided("Guidance 4") });
   expect(fetches).toBe(4);
 });
 
@@ -249,8 +257,8 @@ it("rethrows Eve's cancellation without keeping a result or delaying other sessi
   expect(fetches).toBe(1);
   // No backoff started: a healthy session fetches at once, and the cancelled
   // turn kept nothing, so its retry gets the guidance too.
-  expect(await session(instructions)("turn_1")).toMatchObject({ content: "Connecta guidance:\nHealthy guidance" });
-  expect(await alice("turn_1")).toMatchObject({ content: "Connecta guidance:\nHealthy guidance" });
+  expect(await session(instructions)("turn_1")).toMatchObject({ content: guided("Healthy guidance") });
+  expect(await alice("turn_1")).toMatchObject({ content: guided("Healthy guidance") });
   expect(fetches).toBe(2);
 });
 
@@ -280,7 +288,7 @@ it.each(["network", "timeout"])(
     expect(await turn(instructions)).toBeNull();
     expect(methods).toHaveLength(1);
     vi.setSystemTime(Date.now() + 1);
-    expect(await turn(instructions)).toMatchObject({ content: "Connecta guidance:\nRecovered guidance" });
+    expect(await turn(instructions)).toMatchObject({ content: guided("Recovered guidance") });
     expect(methods).toEqual(["server/discover", "server/discover"]);
   },
 );
@@ -383,4 +391,309 @@ it("projects opt-in deferred skills through real Eve with caller policy before a
     method: "tools/call",
     params: { name: "skills", arguments: { name: "connector:crm" } },
   });
+});
+
+// A real local Connecta over HTTP, as the Eve app reaches a deployment.
+async function localConnecta(
+  pool: Partial<NonNullable<Parameters<typeof createConnecta>[0]["pools"]>[string]>,
+  run: (url: string, token: string) => Promise<void>,
+) {
+  const storage = memoryStorage();
+  const token = (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant", "test")).token;
+  const read = { annotations: { readOnlyHint: true }, handler: () => ({ ok: true }) };
+  const app = createConnecta({
+    readOnly: false,
+    storage,
+    accessTokens: accessTokens(storage),
+    agents: ["assistant"],
+    pools: { assistant: { members: ["agent:assistant"], tools: ["crm", "billing", "tickets"], ...pool } },
+    connectors: [
+      api("crm", { tools: [{ name: "list_invoices", description: "List customer invoices", ...read }] }),
+      api("billing", { tools: [{ name: "get_invoice", description: "Get one invoice", ...read }] }),
+      api("tickets", { tools: [{ name: "send_email", description: "Send an email", ...read }] }),
+    ],
+    executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
+  });
+  const server = createServer(async (req, res) => {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const response = await app.fetch(
+      new Request(`http://127.0.0.1${req.url}`, {
+        method: req.method ?? "POST",
+        headers: req.headers as Record<string, string>,
+        body: Buffer.concat(chunks),
+      }),
+    );
+    res.writeHead(response.status, Object.fromEntries(response.headers));
+    res.end(Buffer.from(await response.arrayBuffer()));
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Missing port");
+    await run(`http://127.0.0.1:${address.port}`, token);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await app.close();
+  }
+}
+
+// `facts` is what a server advertises in capabilities.extensions.
+function discovering(
+  facts: unknown,
+  server: { name: string; version: string } = { name: "connecta", version: CONNECTA_VERSION },
+) {
+  return vi.fn<typeof fetch>(async () =>
+    Response.json({
+      result: {
+        instructions: "Server text.",
+        capabilities: { extensions: { "dev.connecta/endpoint": facts } },
+        _meta: { "io.modelcontextprotocol/serverInfo": server },
+      },
+    }),
+  );
+}
+
+const META_GUIDE = (name: string, reachable: string) =>
+  `Connecta tools are deferred: call eve__tool({ name: "${name}__<tool>", input }). Names in this guidance and in nextAction omit the "${name}__" prefix. Go straight to ${name}__execute_code without eve__search, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }. eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program. Reachable: ${reachable}.`;
+
+it("prefixes the server's text with the guide for each surface, from a real endpoint's facts", async () => {
+  const guide = async (pool: Parameters<typeof localConnecta>[0], connection?: string) => {
+    let content = "";
+    await localConnecta(pool, async (url, token) => {
+      const result = await turn(
+        connectaInstructions({ url, pool: "assistant", getToken: () => token, ...(connection ? { connection } : {}) }),
+      );
+      content = (result as { content: string }).content;
+    });
+    return content.replace(/^Connecta guidance:\n/, "").split("\n");
+  };
+  const [meta, metaServer] = await guide({});
+  expect(meta).toBe(META_GUIDE("connecta", "crm, billing, tickets"));
+  expect(metaServer).toContain("execute_code");
+  expect(Buffer.byteLength(meta!)).toBeLessThanOrEqual(620);
+  // A connection is named after its file, which the helper is told.
+  const [renamed] = await guide({}, "workspace");
+  expect(renamed).toBe(META_GUIDE("workspace", "crm, billing, tickets"));
+  expect(renamed).not.toContain("connecta__");
+  const [native, nativeServer] = await guide({ surface: "native" });
+  // The guide comes first because it answers this server sentence for Eve, which refreshes its list.
+  expect(nativeServer).toContain("Tools missing: ask the operator to repair, then reconnect.");
+  expect(native).toBe(
+    `Connecta tools are deferred: call eve__tool({ name: "connecta__<connector>__<tool>", input }), with writes named "connecta__<connector>__WRITE__<tool>". Find them with eve__search; scope one connector with "connecta__<connector>__", not "<connector>__". Names in this guidance and in nextAction omit "connecta__". For several, dependent or reduced calls, go straight to connecta__execute_code with { code: "async () => { ... }" }, using each tool's Program address. Tools missing: connecta__authorize_connector returns a link; give it to the user or operator once and stop. Eve lists tools again every step, so a repair needs no reconnect. Connectors: crm, billing, tickets.`,
+  );
+  const [lean] = await guide({ surface: "native", executeCode: false });
+  expect(lean).toContain('"connecta__<connector>__"');
+  expect(lean).not.toContain("execute_code");
+  // A read-only endpoint lists no write, so the guide names none.
+  expect((await guide({ surface: "native", readOnly: true }))[0]).not.toContain("WRITE");
+});
+
+it("reads the same facts through the legacy initialize fallback", async () => {
+  await localConnecta({}, async (url, token) => {
+    const legacyOnly: typeof fetch = async (input, init) =>
+      JSON.parse(String(init?.body)).method === "server/discover"
+        ? Response.json({ error: { code: -32601 } }, { status: 404 })
+        : fetch(input, init);
+    const result = await turn(
+      connectaInstructions({ url, pool: "assistant", getToken: () => token, fetch: legacyOnly }),
+    );
+    expect((result as { content: string }).content).toContain("Reachable: crm, billing, tickets.");
+  });
+});
+
+it("keeps Eve's search from widening: the default description matches no capability query", async () => {
+  await localConnecta({}, async (url, token) => {
+    const response = await fetch(`${url}/agent/assistant`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+    });
+    const { result } = (await response.json()) as {
+      result: { tools: { name: string; description: string; inputSchema: Record<string, unknown> }[] };
+    };
+    const search = (query: string, description: string) =>
+      rankCandidates(
+        query,
+        result.tools.map((tool) => ({
+          ...tool,
+          connection: { name: "connecta", description },
+          result: () => tool,
+          fullName: `connecta__${tool.name}`,
+        })),
+      ).map((candidate: { name: string }) => candidate.name);
+    const description = connectaConnection({ url }).description;
+    expect(result.tools).toHaveLength(6);
+    for (const query of ["invoices", "get invoice", "send an email", "delete"]) {
+      expect(search(query, description)).toEqual([]);
+    }
+    // Why the roster belongs in instructions: in the description, one word hits every tool.
+    expect(search("invoices", "CRM, invoices and tickets")).toHaveLength(6);
+  });
+});
+
+it("degrades the roster by bytes, sanitizes it, and treats malformed facts as absent", async () => {
+  const content = async (facts: unknown) => {
+    const result = await turn(
+      connectaInstructions({ url: "https://connecta.example.com", getToken: () => "cta", fetch: discovering(facts) }),
+    );
+    return (result as { content: string }).content;
+  };
+  const meta = { surface: "meta", executeCode: true, readOnly: false };
+  expect(
+    await content({
+      ...meta,
+      connectors: [
+        { id: "crm", title: " Customer\n records ", readFirst: "connector:crm" },
+        { id: "wiki" },
+        { id: 7 },
+        null,
+      ],
+    }),
+  ).toContain('Reachable: crm (Customer records; read first: connecta__skills { name: "connector:crm" }), wiki.');
+  const native = await content({
+    surface: "native",
+    executeCode: true,
+    connectors: [{ id: "crm", readFirst: "connector:crm" }],
+  });
+  // Native tool descriptions already carry their guide pointer.
+  expect(native).toContain("Connectors: crm.");
+  const titled = Array.from({ length: 12 }, (_, index) => ({ id: `c${index}`, title: "x".repeat(60) }));
+  const untitled = await content({ ...meta, connectors: titled });
+  expect(untitled).toContain("Reachable: c0, c1, c2,");
+  expect(untitled).not.toContain("xxx");
+  const many = Array.from({ length: 300 }, (_, index) => ({ id: `connector_${index}` }));
+  const capped = await content({ ...meta, connectors: many });
+  const roster = /Reachable: (.*)\.\n/.exec(capped)?.[1] ?? "";
+  expect(Buffer.byteLength(roster)).toBeLessThanOrEqual(512);
+  const omitted = Number(/; \+(\d+) more$/.exec(roster)?.[1]);
+  expect(roster.split(", ").length + omitted).toBe(300);
+  expect(await content({ ...meta, connectors: [] })).not.toContain("Reachable:");
+  for (const malformed of [
+    undefined,
+    "native",
+    { surface: "other", executeCode: true, connectors: [] },
+    { surface: "meta" },
+  ]) {
+    expect(await content(malformed)).toBe(guided("Server text."));
+  }
+  expect(() => connectaInstructions({ connection: 'x" }), do(' })).toThrow("agent/connections");
+});
+
+it("defaults the connection description and warns when one gives the model no domain", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const url = "https://connecta.example.com";
+  expect(connectaConnection({ url }).description).toBe("Connecta integration gateway.");
+  connectaConnection({ url, description: "Shared CRM and tickets for the assistant." });
+  connectaConnection({ url, description: "Member records, giving and event registration." });
+  expect(warn).not.toHaveBeenCalled();
+  for (const description of [
+    "tools through Connecta",
+    "Acme's company tools through Connecta.",
+    "Connecta tools",
+    "MCP gateway",
+  ]) {
+    warn.mockClear();
+    connectaConnection({ url, description });
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn.mock.calls[0]![0]).toContain("no domain information");
+  }
+});
+
+it("sends extra headers beside auth without letting them replace it", async () => {
+  vi.stubEnv("CONNECTA_ACCESS_TOKEN", "cta_agent");
+  let service = "first";
+  const headers = () => ({ "CF-Access-Client-Id": service, Authorization: "Bearer forged", "Mcp-Method": "forged" });
+  const fixed = connectaConnection({ url: "https://connecta.example.com", headers: { "X-Edge": "fixed" } });
+  expect(fixed.headers).toEqual({ "X-Edge": "fixed" });
+  const dynamic = connectaConnection({ url: "https://connecta.example.com", headers });
+  if (typeof dynamic.headers !== "function") throw new Error("Missing header resolver");
+  service = "second";
+  expect(await dynamic.headers({} as never)).toMatchObject({ "CF-Access-Client-Id": "second" });
+  const fetcher = discovering(undefined);
+  await turn(connectaInstructions({ url: "https://connecta.example.com", headers, fetch: fetcher }));
+  const sent = new Headers(fetcher.mock.calls[0]![1]!.headers);
+  expect(sent.get("CF-Access-Client-Id")).toBe("second");
+  expect(sent.get("Authorization")).toBe("Bearer cta_agent");
+  expect(sent.get("Mcp-Method")).toBe("server/discover");
+  // A plain object, so an app's wrapping fetch can still spread it.
+  expect(fetcher.mock.calls[0]![1]!.headers).not.toBeInstanceOf(Headers);
+  const skillFetch = vi.fn<typeof fetch>(async () =>
+    Response.json({ result: { content: [{ type: "text", text: "G" }] } }),
+  );
+  const skill = connectaSkill({
+    url: "https://connecta.example.com",
+    name: "connector:crm",
+    description: "CRM",
+    headers,
+    fetch: skillFetch,
+  });
+  await dynamicEvaluate(skill)({
+    memo: async (_key: unknown, fn: (ctx: unknown) => unknown) => fn({ abortSignal: new AbortController().signal }),
+    turn: { id: "one" },
+  } as unknown as DynamicContext);
+  const skillSent = new Headers(skillFetch.mock.calls[0]![1]!.headers);
+  expect(skillSent.get("CF-Access-Client-Id")).toBe("second");
+  expect(skillSent.get("Mcp-Name")).toBe("skills");
+});
+
+it("warns once per endpoint when the server is on another release line", async () => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const [major, minor, patch] = CONNECTA_VERSION.split(".");
+  const evaluate = (server: { name: string; version: string }, ttlMs?: number) =>
+    connectaInstructions({
+      url: "https://connecta.example.com",
+      getToken: () => "cta",
+      fetch: discovering(undefined, server),
+      ...(ttlMs === undefined ? {} : { ttlMs }),
+    });
+  await turn(evaluate({ name: "connecta", version: `${major}.${minor}.${Number(patch) + 1}` }));
+  await turn(evaluate({ name: "acme", version: "1" }));
+  await turn(evaluate({ name: "connecta", version: "unknown" }));
+  expect(warn).not.toHaveBeenCalled();
+  const skewed = evaluate({ name: "connecta", version: `${major}.${Number(minor) + 1}.0` }, 0);
+  await turn(skewed);
+  vi.setSystemTime(Date.now() + 1);
+  await turn(skewed);
+  expect(warn).toHaveBeenCalledOnce();
+  expect(warn.mock.calls[0]![0]).toContain("different releases");
+  // Remote version text and URL credentials never reach logs.
+  warn.mockClear();
+  await turn(
+    connectaInstructions({
+      url: "https://alice:url-secret@connecta.example.com/path-secret/agent/assistant?token=query-secret",
+      getToken: () => "cta",
+      fetch: discovering(undefined, { name: "connecta", version: `${Number(major) + 1}.0.0 Bearer token-secret` }),
+    }),
+  );
+  expect(warn).toHaveBeenCalledOnce();
+  const logged = String(warn.mock.calls[0]![0]);
+  expect(logged).toContain(`${Number(major) + 1}.0.x`);
+  expect(logged).toContain("https://connecta.example.com");
+  expect(logged).not.toMatch(/Bearer|token-secret|url-secret|query-secret|path-secret|alice/);
+  // Legacy initialize carries serverInfo in the result instead.
+  warn.mockClear();
+  await turn(
+    connectaInstructions({
+      url: "https://connecta.example.com",
+      getToken: () => "cta",
+      fetch: async () =>
+        Response.json({
+          result: { instructions: "Text", serverInfo: { name: "connecta", version: `${Number(major) + 1}.0.0` } },
+        }),
+    }),
+  );
+  expect(warn).toHaveBeenCalledOnce();
+});
+
+it("generates the helper's version from its release", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+  expect(CONNECTA_VERSION).toBe(manifest.version);
 });

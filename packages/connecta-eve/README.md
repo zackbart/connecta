@@ -31,10 +31,7 @@ Create `agent/connections/connecta.ts`:
 ```ts
 import { connectaConnection } from "@zackbart/connecta-eve";
 
-export default connectaConnection({
-  pool: "assistant",
-  description: "Shared CRM and tickets for the assistant.",
-});
+export default connectaConnection({ pool: "assistant" });
 ```
 
 Create `agent/instructions/connecta.ts`:
@@ -43,6 +40,25 @@ Create `agent/instructions/connecta.ts`:
 import { connectaInstructions } from "@zackbart/connecta-eve";
 
 export default connectaInstructions({ pool: "assistant" });
+```
+
+`description` is optional. Eve shows it in its catalog listing and matches its
+words against every search query for every tool of the connection, so the default
+is a fixed neutral line. If you set one, describe the domain in prose, such as
+`"Member records, giving and event registration."`. Do not list connectors or
+operations: on a three-connector meta pool, `"CRM, invoices and tickets"` made the
+query `"invoices"` return all six routing tools, 9.4 KB measured, and tells the
+model nothing about the operations behind them. The instructions carry the roster.
+A string such as
+`"Company tools through Connecta"` tells the model nothing, so the helper warns
+at startup.
+
+Eve names a connection after its file. If yours is not `connecta.ts`, say so in
+the instructions, or the model is told tool names that do not exist:
+
+```ts
+// agent/connections/workspace.ts gives the model workspace__* tools.
+export default connectaInstructions({ pool: "assistant", connection: "workspace" });
 ```
 
 Both factories accept `url` to override `CONNECTA_URL`. With `pool`, the URL is
@@ -55,6 +71,16 @@ Auth is app-owned. The default token comes from `CONNECTA_ACCESS_TOKEN`, read
 again for each request, so rotation requires no process restart. A `getToken`
 callback can return a string or a promise of one; it overrides the environment.
 No user's identity is forwarded.
+
+`headers` adds request headers beside the bearer, such as a service token for an
+edge in front of Connecta. Pass the same value to every factory. A function runs
+for each request, so a rotated secret needs no restart. On guidance and skill
+requests, the helper's own `Authorization` and MCP protocol headers always win.
+
+```ts
+const headers = () => ({ "X-Edge-Token": process.env.EDGE_TOKEN ?? "" });
+export default connectaConnection({ pool: "assistant", headers });
+```
 
 ## Choosing the pool at runtime
 
@@ -170,6 +196,30 @@ dispatch, Connecta applies its current classification; a writable pool can
 execute the write without a fresh approval. A read-only pool refuses it.
 
 ## Endpoint instructions
+
+Eve hides MCP tools behind `eve__tool` under a `<connection>__` prefix, and
+`eve__search` covers listed tools only. Connecta's text is host-neutral, so the
+helper places an Eve guide before it, built from the endpoint's
+[facts](https://github.com/zackbart/connecta/blob/main/documentation/meta-tools.md#endpoint-facts):
+
+- **Meta pools:** call `eve__tool({ name: "connecta__execute_code", input })`
+  directly, with a short example program. `eve__search` sees the routing tools and
+  never a downstream operation, so its empty result does not mean a capability is
+  missing. Reachable connectors are listed by id.
+- **Native pools:** a read is `connecta__<connector>__<tool>` and a write
+  `connecta__<connector>__WRITE__<tool>`. Scope a search with
+  `"connecta__<connector>__"`, use `execute_code` for several, dependent or reduced
+  calls (omitted when the pool has none), and when tools are missing get a link from
+  `connecta__authorize_connector` for the user or operator. Eve lists tools again on
+  each step, so the repair needs no reconnect, unlike a host that keeps its first
+  list.
+- **Older servers without facts:** only the naming rule.
+
+The guide adds about 600 bytes with three connectors. Its roster stays under 512
+bytes: titles go first, then whole entries give way to a `+N more` count. Names
+in Connecta's text and in `nextAction` stay unprefixed, and the guide says so.
+The helper warns once per endpoint when a server named `connecta` is on a
+different major or minor release from the helper.
 
 Instructions use `server/discover` (MCP 2026-07-28), falling back to legacy
 `initialize` when discovery returns a response without guidance, including a

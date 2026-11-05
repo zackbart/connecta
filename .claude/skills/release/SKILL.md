@@ -41,8 +41,8 @@ version or bump either package to work around a failed publish.
    The second command skips the clean-tree check because the core bump is already uncommitted.
    The helper and core share every release tag and version; retain both lockfiles.
    Set `templates/node/package.json`'s exact `@zackbart/connecta` dependency to
-   that version too. Run `node scripts/generate-version.mjs` and commit both
-   generated version files with the manifests.
+   that version too. Run `node scripts/generate-version.mjs` and commit its
+   three generated version files with the manifests.
    When updating Eve, change its devDependency pin, supported peer range and
    `pnpm-workspace.yaml`'s exact `minimumReleaseAgeExclude` entry together.
 2. Review release-status wording in `README.md`, `guides/`, `documentation/`,

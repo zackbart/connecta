@@ -4,7 +4,7 @@ import { utf8Length } from "./bytes.js";
 import { catalogOwnerPartition } from "./catalog-policy.js";
 import { registerAuthMethod } from "./auth/native.js";
 import { META_ROUTES, routeToolInPlace } from "./agent-routes.js";
-import { isWriteLike } from "./tool-safety.js";
+import { readProgramRefuses } from "./tool-safety.js";
 import type { AgentRouteNames } from "./types.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import {
@@ -2000,7 +2000,7 @@ export class CatalogService {
             ...(schemaKeys?.outputKeys && !renderedOutput?.truncated ? { outputKeys: schemaKeys.outputKeys } : {}),
             ...(match.tool.annotations ? { annotations: match.tool.annotations } : {}),
             classification: match.tool.classification,
-            ...(this.markUncallableWrites && isWriteLike(match.tool) ? { callable: false as const } : {}),
+            ...(this.markUncallableWrites && readProgramRefuses(match.tool) ? { callable: false as const } : {}),
             ...(requiredReasons
               ? {
                   guideRequired: true as const,
@@ -2466,7 +2466,7 @@ export class CatalogService {
           ...(output.source ? { outputSchemaSource: output.source } : {}),
           ...(tool.annotations ? { annotations: tool.annotations } : {}),
           classification: tool.classification,
-          ...(this.markUncallableWrites && isWriteLike(tool) ? { callable: false as const } : {}),
+          ...(this.markUncallableWrites && readProgramRefuses(tool) ? { callable: false as const } : {}),
         };
       });
     });

@@ -26,6 +26,7 @@ owns the top-level MCP contract; it does not require reading the core internals.
 | Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)                 |
 | Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)        |
 | List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface), [Eve agents](#eve-agents)                                                                        |
+| Read an endpoint's surface and connector roster    | [Endpoint facts](#endpoint-facts)                                                                                                             |
 | Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                               |
 
 ## Tool presentation
@@ -126,8 +127,11 @@ naming `call_destructive_tool` and `execute_code`. Its code is
 `destructive_tool_requires_approval`, or `read_only_endpoint` for a read-only
 connector, which has no write route. A program can read and then attempt a write; it
 gets that refusal with zero writes sent, and catching it or using
-`Promise.allSettled` changes nothing. A tool a deployment override serves as a read
-over a silent source is still refused here, though `call_tool` runs it.
+`Promise.allSettled` changes nothing. A plain `"read"` override does not bring a source
+write here: a tool it serves as a read over a silent source is refused, though `call_tool`
+runs it. `"read-repeatable"` is the exception, because the deployment accepted that a host
+may repeat the call, and a host can resend a whole read program: such a tool runs here
+unmarked, and a resent program can reach the vendor twice.
 
 **Discovery lists writes, marked.** `connecta.search` and `connecta.describe` return
 them with `callable: false`, and no other entry carries the field. Writes are not
@@ -1234,13 +1238,19 @@ support (`connector`, `recovery`, `authorizationUrl` or `operatorUrl`,
 Give that link to the user once, then stop. Do not prompt again, retry, or reach
 the service another way until they confirm. If they already refused this
 connection in the conversation, only mention that the link is available.
-A failed signing or storage step leaves the refusal without a link. Connecta
+A failed signing or storage step leaves the refusal without a link. Its message
+says so: unless the user refused this connection, repeat the request once for a
+new link, then give that link to them, and stop if that repeat also fails. Connecta
 keeps no record of which clients refuse, so each new prompt to such a client
 ends the same way. Three prompts are allowed
 within one ten-minute retry window, then `auth_round_limit` ends the flow.
 Each state can be consumed once; concurrent or repeated retries are refused
-before dispatch. A Continue link from a pending restart requires that restart
-to start successfully before the browser can consume it.
+before dispatch. Accept does not mean a browser has opened the link, so every link
+in a flow stays live. A `force: true` flow's links, including a refusal's, share one
+reset: the first verified visit performs it and later visits continue it. A visit
+during a running start returns 409 without spending its link, and says to start a new
+connection request if it persists, because a new call is a new flow. A failed start
+lets the flow's next visit begin again.
 Host-owned invocation facts record the auth failure's origin and entry into
 all calls, including each classification, catalog freshness and classification
 digest. Raw fetches and custom connector transports cannot establish recovery
@@ -1799,7 +1809,8 @@ at the downstream boundary, even when the agent may see the error's message.
 A pool set to `surface: "native"` lists each downstream tool as its own MCP
 tool instead of the six meta-tools, for clients that already defer tools behind
 their own search (Eve, Claude Code with tool search). The meta surface stays
-the default everywhere, and plain `/mcp` is always meta.
+the default everywhere. Plain `/mcp` is always meta for a maintainer; a person
+routed there by their one pool membership gets that pool's surface.
 
 ```ts
 pools: {
@@ -1862,7 +1873,8 @@ address, which never changes.
 `{ readOnlyHint: true, destructiveHint: false, openWorldHint: true }` and a
 write `{ readOnlyHint: false, destructiveHint: true, openWorldHint: true }`,
 whatever hints the downstream declared. A deployment `"read"` override never
-produces read annotations for a tool whose source explicitly declares a write; see
+produces read annotations for a tool whose source explicitly declares a write;
+`"read-repeatable"` does, and accepts that a host may repeat the call. See
 [deployment overrides](./integrating.md#another-remote-mcp-server). A read-only endpoint or connector
 leaves write tools out of the list, by the same rule search and describe use.
 
@@ -1988,7 +2000,47 @@ production catalogs near the cap remain unmeasured.
 
 Starting with 0.35.0, the Eve helper ships separately as `@zackbart/connecta-eve`.
 Connecta core supplies the native pool surface and has no Eve dependency.
-Consult that package's documentation for its compatibility and setup.
+Consult that package's documentation for its compatibility and setup. The helper
+composes its Eve-specific guidance from [endpoint facts](#endpoint-facts) and
+places it before the server's own instructions; Connecta's text stays host-neutral.
+
+## Endpoint facts
+
+`server/discover` and `initialize` both advertise the endpoint in
+`capabilities.extensions["dev.connecta/endpoint"]`, so a client composing its
+own guidance can read what this request reached:
+
+```json
+{
+  "surface": "meta",
+  "executeCode": true,
+  "readOnly": false,
+  "connectors": [
+    { "id": "crm", "title": "Customer records", "readFirst": "connector:crm" },
+    { "id": "tickets" }
+  ]
+}
+```
+
+| Field                    | Meaning                                                                                                            |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `surface`                | `"meta"` or `"native"`: the surface this request is served                                                         |
+| `executeCode`            | Whether `execute_code` is listed. Always `true` on meta                                                            |
+| `readOnly`               | The effective policy: the endpoint is read-only, or every connector it reaches is                                  |
+| `connectors[].id`        | Each canonical connector id the caller's scope reaches, in registry order                                          |
+| `connectors[].title`     | Present only when the title says more than the id; normalized and capped as in the [inventory](#discovery-context) |
+| `connectors[].readFirst` | Present only for a required guide: the name to pass to `skills`                                                    |
+
+The facts come from the admitted scope and deployment code, never from request
+arguments or `_meta`: a person on plain `/mcp` sees their one pool's connectors,
+a maintainer sees the whole catalog, and a refused caller gets the usual 404
+with no facts. The roster is the one `execute_code`'s inventory describes for
+the same caller, without its byte cap. Reading it loads no catalog, probes no
+credential, and records no activity. It says nothing about connector health or
+authorization, and grants nothing.
+
+A client that does not recognize the extension ignores it. An older server omits
+it; treat the surface as unknown rather than assuming one.
 
 ## Contributor reference
 

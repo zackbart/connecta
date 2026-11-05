@@ -78,7 +78,12 @@ import {
   stashLedgerKeys,
 } from "./storage/keys.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
-import { carryToolClassification, classifyTool, sourceDeclaresWrite } from "./tool-safety.js";
+import {
+  carryToolClassification,
+  classifyTool,
+  sourceDeclaresWrite,
+  type ClassificationOverride,
+} from "./tool-safety.js";
 import type {
   CatalogAccessObservation,
   Connector,
@@ -162,7 +167,7 @@ function frozenFacts(tools: ToolDef[]): ToolDef[] {
 export interface RegistryOptions {
   publicUrl?: string | undefined;
   oauthClientName?: string | undefined;
-  classification?: Readonly<Record<string, Readonly<Record<string, "read" | "write" | "hidden">>>> | undefined;
+  classification?: Readonly<Record<string, Readonly<Record<string, ClassificationOverride>>>> | undefined;
   storage: KVStorage;
   /** Internal deployment root, preserved when a personal registry partitions storage. */
   rootStorage?: KVStorage;
@@ -504,7 +509,7 @@ export class Registry implements RegistryView {
   private readonly observedOutputSchemas: ObservedOutputSchemas;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
-  private readonly classification: Readonly<Record<string, Readonly<Record<string, "read" | "write" | "hidden">>>>;
+  private readonly classification: Readonly<Record<string, Readonly<Record<string, ClassificationOverride>>>>;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
   private readonly oauthPartition = {};
@@ -579,8 +584,10 @@ export class Registry implements RegistryView {
     Object.freeze(this.classification);
     for (const [id, overrides] of Object.entries(this.classification)) {
       for (const [name, verdict] of Object.entries(overrides)) {
-        if (!name || (verdict !== "read" && verdict !== "write" && verdict !== "hidden")) {
-          throw new Error(`ConnectaConfig.classification.${id}.${name}: expected "read", "write", or "hidden"`);
+        if (!name || !["read", "read-repeatable", "write", "hidden"].includes(verdict)) {
+          throw new Error(
+            `ConnectaConfig.classification.${id}.${name}: expected "read", "read-repeatable", "write", or "hidden"`,
+          );
         }
       }
       const connector = this.connectors.get(id);
@@ -1189,19 +1196,23 @@ export class Registry implements RegistryView {
   private publishTool(id: string, tool: ToolDef): ToolDef {
     const override = this.classification[id]?.[tool.name];
     const classification = classifyTool(tool, override === "hidden" ? undefined : override);
-    return carryToolClassification(tool, {
-      ...structuredClone(tool),
-      classification,
-      ...(override !== undefined
-        ? {
-            annotations: {
-              ...structuredClone(tool.annotations),
-              readOnlyHint: override === "read" && classification === "read",
-              destructiveHint: override === "write" || (override === "read" && classification === "write"),
-            },
-          }
-        : {}),
-    });
+    return carryToolClassification(
+      tool,
+      {
+        ...structuredClone(tool),
+        classification,
+        ...(override !== undefined
+          ? {
+              annotations: {
+                ...structuredClone(tool.annotations),
+                readOnlyHint: override !== "hidden" && classification === "read",
+                destructiveHint: override !== "hidden" && classification === "write",
+              },
+            }
+          : {}),
+      },
+      override === "read-repeatable" || undefined,
+    );
   }
 
   /** Construction-only view for the secret-free static config description. */
@@ -1215,7 +1226,7 @@ export class Registry implements RegistryView {
   private validateClassification(
     id: string,
     tools: readonly ToolDef[],
-    overrides?: Readonly<Record<string, "read" | "write" | "hidden">>,
+    overrides?: Readonly<Record<string, ClassificationOverride>>,
     partition?: object,
   ): void {
     if (!overrides) return;
@@ -1242,7 +1253,7 @@ export class Registry implements RegistryView {
         const reports = staticCatalog ? partition === undefined && this.opts.constructionChecks !== false : true;
         if (override === "read" && reports && sourceDeclaresWrite(tool)) {
           this.opts.logger.warn(
-            `classification override ${quoted} to "read" is not applied because the connector declares this tool a write; it stays a write`,
+            `classification override ${quoted} to "read" is not applied because the connector declares this tool a write; it stays a write. "read-repeatable" serves it as a read and accepts that hosts may repeat it`,
           );
         }
         continue;

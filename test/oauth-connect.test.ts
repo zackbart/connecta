@@ -357,7 +357,11 @@ describe("clerk OAuth connection", () => {
       flow.browser(authorizationUrl, "alice"),
       flow.browser(authorizationUrl, "alice"),
     ]);
-    expect(responses.map((response) => response.status).sort()).toEqual([302, 400]);
+    // The second visit either sees the spent link or waits on the start it lost to.
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      302,
+      expect.toSatisfy((s) => s === 400 || s === 409),
+    ]);
     expect(flow.startAuth).toHaveBeenCalledOnce();
     expect((await flow.callback("alice")).status).toBe(200);
     expect((await flow.browser(authorizationUrl, "alice")).status).toBe(400);

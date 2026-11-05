@@ -71,9 +71,11 @@ try {
     assert.equal((await selected.auth.getToken()).token, token);
     assert.equal(await connection.approval({ toolName: "write" }), "not-applicable");
     assert.equal(gateConnectaWrites({ toolName: "write" }), "user-approval");
-    const instructions = connectaInstructions({ url: connection.url, getToken: () => token, fetch: async () => Response.json({ result: { instructions: "CRM guidance" } }) });
+    const instructions = connectaInstructions({ url: connection.url, connection: "workspace", getToken: () => token, fetch: async () => Response.json({ result: { instructions: "CRM guidance", capabilities: { extensions: { "dev.connecta/endpoint": { surface: "meta", executeCode: true, connectors: [{ id: "crm" }] } } } } }) });
     const memo = async (_key, fn) => fn({ idempotencyKey: "turn_1", abortSignal: new AbortController().signal });
-    assert.equal((await evaluate(instructions, { memo, turn: { id: "turn_1" } })).content, "Connecta guidance:\\nCRM guidance");
+    const guidance = (await evaluate(instructions, { memo, turn: { id: "turn_1" } })).content;
+    assert.match(guidance, /^Connecta guidance:\\nConnecta tools are deferred: call eve__tool\\(\\{ name: "workspace__<tool>", input \\}\\)\\./);
+    assert.match(guidance, /Reachable: crm\\.\\nCRM guidance$/);
   `,
   );
   run(process.execPath, ["smoke.mjs"], work);

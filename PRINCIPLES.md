@@ -42,7 +42,7 @@ links the executable checks.
 
 - **INV-1: Fail-closed classification.** A runtime-discovered tool is a read exactly when
   `readOnlyHint === true` and `destructiveHint !== true`; otherwise it is a write.
-  Deployment code may override a tool to read, write, or hidden. Hidden tools
+  Deployment code may override a tool to read, read-repeatable, write, or hidden. Hidden tools
   cannot be discovered or called. For remote MCP, source classification uses
   only server annotations; deployment overrides never relax replay safety.
   A tool whose source explicitly declares a write (`readOnlyHint: false`,
@@ -50,6 +50,9 @@ links the executable checks.
   override and is never served read-annotated, because a host may resend a
   read-annotated call. Where the source is silent, the override is the only
   evidence, so it serves as a read and asserts that the call is safe to repeat.
+  Read-repeatable is the explicit opt-in: the deployment has checked the tool and
+  accepts that hosts may repeat it, so it serves as a read even over a declared
+  write, and a host's resend can reach the vendor twice. Connecta still sends it once.
   Effective or source write forbids Connecta's own replay and makes an ambiguous
   dispatched failure non-retryable. Missing or contradictory hints fail closed.
 - **INV-2: Writes respect the endpoint.** Each endpoint scope (plain `/mcp`,

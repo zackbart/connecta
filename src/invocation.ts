@@ -5,7 +5,7 @@ import type { AgentRouteNames } from "./types.js";
 import { authCall, registerAuthMethod } from "./auth/native.js";
 import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import { hasControlCharacters } from "./tool-name.js";
-import { cloneTool, isWriteLike, READ_PROGRAM_SOURCE, writeRefusal } from "./tool-safety.js";
+import { cloneTool, isWriteLike, READ_PROGRAM_SOURCE, readProgramRefuses, writeRefusal } from "./tool-safety.js";
 import { Cause, Context, Effect, Exit, type Scope } from "effect";
 import { type ActivityCallSource, type ActivityRequestContext, type AgentFriction } from "./activity.js";
 import { CallAdmissionError, isCallAdmissionError, type CallAdmissionPermit } from "./call-admission.js";
@@ -450,8 +450,7 @@ export class InvocationService {
             : error;
         const recovery = recoveryState.facts;
         const enteredWrite =
-          dispatchedToConnector &&
-          ((resolved !== undefined && resolved.definition.classification !== "read") || sentSourceWrite());
+          dispatchedToConnector && ((resolved !== undefined && isWriteLike(resolved.definition)) || sentSourceWrite());
         // A known answer alone is not dispatch evidence. Require an owned,
         // complete ledger with a positively recorded auxiliary resource read;
         // an empty ledger, custom entry or interruption proves nothing.
@@ -718,7 +717,7 @@ export class InvocationService {
         // recorded requests alone decide whether a 401 left it unknown.
         if (
           dispatchedToConnector &&
-          (resolved?.definition.classification !== "read" || sentSourceWrite()) &&
+          (resolved === undefined || isWriteLike(resolved.definition) || sentSourceWrite()) &&
           (error.code === "cancelled" || isTimeoutFailure(error))
         ) {
           const departed = settleWrite(logicalCall?.sent ?? [], undefined, true);
@@ -850,9 +849,10 @@ export class InvocationService {
           argumentEcho = echoedCallArgs(args ?? {}, target.definition.inputSchema);
           sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
 
-          const write = target.definition.classification !== "read";
-          const writeLike = isWriteLike(target.definition);
-          if (writeLike && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
+          // Admission and presentation follow the served class. Dispatch and failure
+          // handling follow this: a source write served as a read still sends once.
+          const write = isWriteLike(target.definition);
+          if (write && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
           const input = !isProgram(context.source)
             ? downstreamContinuation(this.catalog.requestScope, target.connector.id, canonicalAddress)
@@ -861,7 +861,7 @@ export class InvocationService {
           const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
           if (
             expectedDigest !== undefined &&
-            (writeLike ||
+            (write ||
               target.classificationFresh !== true ||
               (yield* Effect.promise(() => classificationDigest(target.definition))) !== expectedDigest)
           ) {
@@ -887,7 +887,7 @@ export class InvocationService {
           }
           // Below the sandbox: no guest code can reach past this, and catching it sends nothing.
           if (context.source === READ_PROGRAM_SOURCE) {
-            if (writeLike) {
+            if (readProgramRefuses(target.definition)) {
               return framingError(
                 "destructive_tool_requires_approval",
                 `Tool "${canonicalAddress}" can write, so ${READ_PROGRAM_SOURCE} refused it and nothing was sent. Use call_destructive_tool for this one call, or execute_code for a program that writes; the MCP host can request approval for either.`,
@@ -919,7 +919,7 @@ export class InvocationService {
           }
 
           // Source writes keep program write accounting; only effective writes spend W10 budget.
-          if (writeLike && context.beforeWrite) {
+          if (write && context.beforeWrite) {
             const decision = yield* context.beforeWrite(target, args ?? {});
             if (decision.kind === "refuse") {
               unrecorded = decision.unrecorded === true;
@@ -1012,7 +1012,7 @@ export class InvocationService {
                 this.catalog.requestScope,
                 {
                   address: canonicalAddress,
-                  classification: writeLike ? "write" : "read",
+                  classification: write ? "write" : "read",
                   fresh: target.classificationFresh === true,
                 },
                 target.definition,
@@ -1162,7 +1162,7 @@ export class InvocationService {
       // Q8 settles a result too: a write an undeclared 401 left unknown is no
       // success, whatever its handler made of the 401, and its result is not
       // processed.
-      if (dispatchedToConnector && (completed.definition.classification !== "read" || sentSourceWrite())) {
+      if (dispatchedToConnector && (isWriteLike(completed.definition) || sentSourceWrite())) {
         const unknown = settleWriteResult(logicalCall?.sent ?? []);
         if (unknown) {
           failureAdvice = failureKeyAdvice = undefined;

@@ -4,6 +4,9 @@
  * that that CLI natively implements URL elicitation. `auto-decline` stands for a
  * client that declares URL elicitation and refuses without showing anyone the
  * prompt, as observed from the Agent SDK. It never opens the link it was given.
+ * `accept-first` keeps a real host's ordering: accept is consent to open the link,
+ * not proof that it opened, so the retry goes out before the visit lands. `capable`
+ * instead finishes the visit first, which makes a round's outcome deterministic.
  */
 import type { Deployment } from "../deploy/node.js";
 import { serveFetch } from "../support/serve.js";
@@ -59,12 +62,13 @@ export async function startAuthHost(
       }
       const action = mode === "auto-decline" ? "decline" : "accept";
       onEvent({ type: "eval_url_elicitation", connector: "oauth", url: link, action });
-      if (action === "accept") await deployment.openConnect(link);
+      if (mode === "capable") await deployment.openConnect(link);
       ({ response, reply } = await dispatch({
         ...modern,
         requestState: reply.result.requestState,
         inputResponses: { connecta_auth: { action } },
       }));
+      if (mode === "accept-first") await deployment.openConnect(link);
     }
     return Response.json(reply, { status: response.status });
   });
