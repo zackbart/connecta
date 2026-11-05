@@ -322,12 +322,14 @@ describe("server /mcp end-to-end", () => {
     const callTool = vi.fn(async () => {
       throw new Error("inventory must not call a connector");
     });
-    type Spec = string | { id: string; title?: string; guide?: "optional" | "required" | undefined };
+    type Spec =
+      | string
+      | { id: string; title?: string; description?: string; guide?: "optional" | "required" | undefined };
     const connector = (spec: Spec): Connector => {
-      const { id, title, guide } = typeof spec === "string" ? { id: spec } : spec;
+      const { id, title, description, guide } = typeof spec === "string" ? { id: spec } : spec;
       return {
         id,
-        description: id,
+        description: description ?? id,
         ...(title ? { title } : {}),
         ...(guide ? { usageGuide: { content: `# ${id}`, required: guide === "required" } } : {}),
         listTools,
@@ -371,6 +373,51 @@ describe("server /mcp end-to-end", () => {
     expect(await inventory([{ id: "notes_alice", title: "notes alice", guide: "optional" }])).toBe(
       "Connectors: notes_alice.",
     );
+    // A purpose sits beside the id and title, normalized like a title, unless it only respells them.
+    expect(
+      await inventory([
+        { id: "crm", title: "Customer CRM", description: " Current\n accounts   and contracts. ", guide: "required" },
+        { id: "crm_old", description: "Retired CRM: audit lookups only" },
+        { id: "tickets", title: "Support tickets", description: "Support tickets" },
+        { id: "notes", description: "Notes" },
+      ]),
+    ).toBe(
+      'Connectors: crm* (Customer CRM; Current accounts and contracts), crm_old (Retired CRM: audit lookups only), tickets (Support tickets), notes. *Read connecta.skill("connector:<id>") before its first call.',
+    );
+    // A purpose caps at 60 UTF-8 bytes on a whole token, never splitting a character.
+    const capped = (await inventory([{ id: "crm", description: "données clients ".repeat(8) }]))!;
+    expect(capped).toMatch(/^Connectors: crm \(données clients( données clients)*( données)?…\)\.$/);
+    expect(bytes(capped.slice("Connectors: crm (".length, -2))).toBeLessThanOrEqual(60);
+    // Text with no token that fits leaves nothing to show, so the entry is the bare id.
+    expect(await inventory([{ id: "crm", description: "é".repeat(40) }])).toBe("Connectors: crm.");
+    expect(await inventory([{ id: "crm", title: "é".repeat(40) }])).toBe("Connectors: crm.");
+    expect(await inventory([{ id: "crm", title: "Customer CRM", description: "é".repeat(40) }])).toBe(
+      "Connectors: crm (Customer CRM).",
+    );
+    // Past the cap purposes go first, from the end of registry order, before any title or name.
+    const described = Array.from({ length: 16 }, (_, index) => ({
+      id: `service_${String(index).padStart(2, "0")}`,
+      title: `Team ${index} workspace`,
+      description: `Purpose ${index} of this deployment's long-running work`,
+      guide: index === 15 ? ("required" as const) : undefined,
+    }));
+    const partial = (await inventory(described))!;
+    expect(bytes(partial)).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
+    expect(partial).toContain("service_00 (Team 0 workspace; Purpose 0 of this deployment's long-running work), ");
+    expect(partial).toContain("Purpose 1 of this");
+    expect(partial).not.toContain("Purpose 15 of this");
+    for (let index = 0; index < 16; index++) expect(partial).toContain(`Team ${index} workspace`);
+    expect(partial).toMatch(/service_15\* \(Team 15 workspace\)\. \*Read /);
+    expect(await inventory(described)).toBe(partial);
+    // The entry that first misses is the one that would have overflowed the cap.
+    const nextPurpose = /Purpose (\d+) of this/g;
+    const kept = [...partial.matchAll(nextPurpose)].map((match) => Number(match[1]));
+    expect(kept).toEqual(kept.map((_, index) => index));
+    const withOneMore = partial.replace(
+      `service_${String(kept.length).padStart(2, "0")} (Team ${kept.length} workspace)`,
+      `service_${String(kept.length).padStart(2, "0")} (Team ${kept.length} workspace; Purpose ${kept.length} of this deployment's long-running work)`,
+    );
+    expect(bytes(withOneMore)).toBeGreaterThan(CONNECTOR_INVENTORY_MAX_BYTES);
     // A ten-connector deployment with titles and guides is named in full.
     const ten: Spec[] = Array.from({ length: 10 }, (_, index) => ({
       id: `service_${index}`,
@@ -422,6 +469,24 @@ describe("server /mcp end-to-end", () => {
       expect(bytes(line)).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
     }
     expect((await executeDescription(ids)).length).toBeLessThan(3_750);
+    // Codex repeats instructions on every tool, so purposes stay in this inventory alone.
+    const purposeApp = createTestConnecta({
+      connectors: [connector({ id: "crm", title: "Customer CRM", description: "Current accounts and contracts" })],
+      auth: machineAuth(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const initialized = await readJsonRpc(
+      await mcpRpc(
+        purposeApp,
+        "initialize",
+        { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "probe", version: "0.0.0" } },
+        { token: TOKEN },
+      ),
+    );
+    expect(initialized.result.instructions).toContain("crm");
+    expect(initialized.result.instructions).not.toContain("Current accounts");
+    await purposeApp.close();
     expect(listTools).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();
   });

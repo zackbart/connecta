@@ -88,17 +88,23 @@ const inventoryWords = (text: string) =>
     .split(/[^\p{L}\p{N}]+/u)
     .filter(Boolean);
 
-/**
- * A connector's bounded title for inventories, or undefined when it only
- * respells the id ("Google Calendar" for google_calendar) and so adds nothing.
- */
+/** Text that only respells what its entry already shows ("Google Calendar" for google_calendar) adds nothing. */
+export function addsInformation(shown: string, text: string): boolean {
+  const words = inventoryWords(text);
+  const shownWords = inventoryWords(shown);
+  return words.join("") !== shownWords.join("") && words.some((word) => !shownWords.includes(word));
+}
+
+/** Clips on a whole token, so text with no token that fits leaves nothing to show. */
+export const inventoryNote = (text: string, maxBytes: number) => {
+  const clipped = boundedEchoText(text, maxBytes);
+  return clipped === "…" ? undefined : clipped;
+};
+
+/** A connector's bounded title for inventories, or undefined when it adds nothing to the id or cannot fit. */
 export function connectorInventoryTitle(connector: Connector): string | undefined {
   const title = connector.title?.replace(/\s+/g, " ").trim();
-  if (!title) return undefined;
-  const words = inventoryWords(title);
-  const idWords = inventoryWords(connector.id);
-  const informative = words.join("") !== idWords.join("") && words.some((word) => !idWords.includes(word));
-  return informative ? boundedEchoText(title, 45) : undefined;
+  return title && addsInformation(connector.id, title) ? inventoryNote(title, 45) : undefined;
 }
 
 /**

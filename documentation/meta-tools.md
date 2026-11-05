@@ -154,17 +154,24 @@ The deployment-derived `execute_code` description carries a connector
 inventory before any catalog search — registry order and each canonical id,
 with no second name minted for programs. An entry adds the configured title
 only when it says more than the id: a title whose words the id already spells,
-such as `Google Calendar` for `google_calendar`, is dropped. Titles normalize
-whitespace and cap at 48 UTF-8 bytes. A connector whose guide is required
+such as `Google Calendar` for `google_calendar`, is dropped. It then adds the
+connector's configured description as a one-line purpose, unless that too only
+respells the id and title. Titles and purposes normalize whitespace; titles cap
+at 48 UTF-8 bytes and purposes at 60, clipping on a whole token; text with no token
+that fits is omitted. A connector whose guide is required
 carries a `*`, and one legend follows when an entry shown has the mark. Optional
 guides are not named here; search and describe name them. For example:
-`Connectors: crm* (Customer CRM), tickets. *Read connecta.skill("connector:<id>") before its first call.`
+`Connectors: crm* (Customer CRM; Current accounts and contracts), tickets. *Read connecta.skill("connector:<id>") before its first call.`
+
+Write each description so its first 60 bytes tell the connector apart from its
+neighbours. Purposes stay in this inventory, never in the instructions, which
+some hosts repeat on every tool.
 
 The complete line, legend included, caps at 1,024 UTF-8 bytes, which names every
 connector of a typical deployment. Past the cap, detail degrades before names do:
-titles are dropped first. Only when bare ids still exceed it do whole entries
-give way, in registry order, to an exact `+N more` count. The inventory reads
-only the configured registry: no
+purposes are dropped first, from the end of registry order, then titles. Only
+when bare ids still exceed it do whole entries give way, in registry order, to an
+exact `+N more` count. The inventory reads only the configured registry: no
 catalog load, no credential probe, no live status, no capability, and no
 replacement for canonical discovery or addressing. Search pages carry the same
 bounded title once per connector in `connectors[<id>].title`, so choosing an

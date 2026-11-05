@@ -66,7 +66,9 @@ import { executorProgram } from "./runtime/executor.js";
 import {
   connectorGuide,
   connectorGuideRequired,
+  addsInformation,
   connectorInventoryTitle,
+  inventoryNote,
   hasConnectorGuides,
   SkillsRegistry,
 } from "./skills.js";
@@ -2194,10 +2196,14 @@ function discardedEmits(emitted: EmitCollector): {
 /** Follows the inventory only when an entry shown carries the mark; `*` cannot appear in an id. */
 const REQUIRED_GUIDE_LEGEND = ' *Read connecta.skill("connector:<id>") before its first call.';
 
+/** Deployment configuration, normalized and capped like a title: a one-line purpose, never a paragraph. */
+const CONNECTOR_PURPOSE_MAX_BYTES = 57;
+
 /**
  * Every configured connector, from configuration alone. Detail degrades before
- * names do: titles go first, and only past the byte cap do whole entries give
- * way to an exact omission count. Search and describe name optional guides.
+ * names do: purposes go first, from the end of registry order, then titles, and
+ * only past the byte cap do whole entries give way to an exact omission count.
+ * Search and describe name optional guides.
  */
 function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"]>): string {
   const prefix = "Connectors: ";
@@ -2206,15 +2212,33 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
   const guideFirst = (connector: (typeof connectors)[number]) =>
     connectorGuide(connector) !== undefined && connectorGuideRequired(connector);
   const legend = (shown: typeof connectors) => (shown.some(guideFirst) ? REQUIRED_GUIDE_LEGEND : "");
-  const entry = (connector: (typeof connectors)[number], titled: boolean): string => {
+  const entry = (connector: (typeof connectors)[number], titled: boolean, withPurpose = false): string => {
     const name = guideFirst(connector) ? `${connector.id}*` : connector.id;
     const title = titled ? connectorInventoryTitle(connector) : undefined;
-    return title ? `${name} (${title})` : name;
+    const description = connector.description?.replace(/\s+/g, " ").trim().replace(/\.$/, "");
+    const shown = `${connector.id} ${connector.title?.replace(/\s+/g, " ").trim() ?? ""}`;
+    const purpose =
+      withPurpose && description && addsInformation(shown, description)
+        ? inventoryNote(description, CONNECTOR_PURPOSE_MAX_BYTES)
+        : undefined;
+    const notes = [title, purpose].filter((note) => note !== undefined);
+    return notes.length > 0 ? `${name} (${notes.join("; ")})` : name;
   };
-  for (const titled of [true, false]) {
-    const line = `${prefix}${connectors.map((connector) => entry(connector, titled)).join(", ")}.${legend(connectors)}`;
-    if (fits(line)) return line;
+  const described = (purposes: number) =>
+    `${prefix}${connectors.map((connector, index) => entry(connector, true, index < purposes)).join(", ")}.${legend(connectors)}`;
+  if (fits(described(0))) {
+    // The most entries, in registry order, whose purposes still fit.
+    let shown = 0;
+    let over = connectors.length + 1;
+    while (over - shown > 1) {
+      const middle = Math.floor((shown + over) / 2);
+      if (fits(described(middle))) shown = middle;
+      else over = middle;
+    }
+    return described(shown);
   }
+  const untitled = `${prefix}${connectors.map((connector) => entry(connector, false)).join(", ")}.${legend(connectors)}`;
+  if (fits(untitled)) return untitled;
   const truncated = (shown: number) => {
     const kept = connectors.slice(0, shown);
     const names = kept.map((connector) => entry(connector, false)).join(", ");

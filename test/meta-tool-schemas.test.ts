@@ -223,7 +223,8 @@ const BUDGETS = {
     call_destructive_tool: 300,
     // Grew to say when no call is needed: an auth error that already carries its link.
     authorize_connector: 510,
-    execute_code: 2_850,
+    // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial.
+    execute_code: 2_890,
   },
   // Open summaries: the full contracts stay on the server, in meta-output.ts.
   outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170 },
