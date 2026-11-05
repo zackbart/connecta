@@ -2274,10 +2274,12 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
 /**
  * Short by design: Codex carries every description in each turn's tool list and
  * `execute_code` already holds the full declaration. It still names the guest
- * calls, so a host that loads only this tool can write a program.
+ * calls and the connectors, so a host that loads only this tool can write a
+ * program and tell similar connectors apart.
  */
-const READ_PROGRAM_DESCRIPTION = (hostLimits: { maxHostCalls: number }) =>
-  `Run a read-only JavaScript program without write approval: same sandbox and connecta API as ${META_ROUTES.program}, ${hostLimits.maxHostCalls} host calls. Use it for read work at an unknown address, joins, loops and reductions. Each call that can write is refused before dispatch with its next step, and catching the refusal sends nothing. search and describe list those tools with callable: false; ${META_ROUTES.write} and ${META_ROUTES.program} run them. Use async () => { ... } with connecta.search({ query }), connecta.describe({ address }), connecta.call(address, args), connecta.result(resultId, { page }), and return the answer.`;
+const READ_PROGRAM_DESCRIPTION = (hostLimits: { maxHostCalls: number }, inventory: string) =>
+  `Run a read-only JavaScript program without write approval: same sandbox and connecta API as ${META_ROUTES.program}, ${hostLimits.maxHostCalls} host calls. Use it for read work at an unknown address, joins, loops and reductions. Each call that can write is refused before dispatch with its next step, and catching the refusal sends nothing. search and describe list those tools with callable: false; ${META_ROUTES.write} and ${META_ROUTES.program} run them. Use async () => { ... } with connecta.search({ query }), connecta.describe({ address }), connecta.call(address, args), connecta.result(resultId, { page }), and return the answer.
+${inventory}`;
 
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
@@ -2290,14 +2292,14 @@ const executeDescription = (
   routes: AgentRouteNames = META_ROUTES,
   readRoute = false,
 ) =>
-  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the host approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : readRoute ? `One known read: ${routes.read}. One known write: ${routes.write}. Read programs: ${READ_PROGRAM_SOURCE}. Other: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the host approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
+  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may write; the host approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : readRoute ? `One known read: ${routes.read}. One known write: ${routes.write}. Read programs: ${READ_PROGRAM_SOURCE}. Other: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may write; the host approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or timers. API:
 \`\`\`ts
 ${GUEST_API_DECLARATION}
 \`\`\`
-search and describe return objects, not arrays.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle: follow its hint. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call; over the limit the program returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction when paging is available.
+search and describe return objects, not arrays.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle: follow its hint. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call; over the limit the program returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction.
 
 ${readOnly ? "" : "Never repeat writes for output. "}emit(result) or emit(block) forwards MCP blocks; authored image/audio data is base64. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; text shares the return cap. connecta.skill("usage"): repair.`;
 
@@ -2468,7 +2470,7 @@ export function registerExecuteTool(
     server.registerTool(
       READ_PROGRAM_SOURCE,
       {
-        description: READ_PROGRAM_DESCRIPTION(hostLimits),
+        description: READ_PROGRAM_DESCRIPTION(hostLimits, connectorInventory(connectors)),
         inputSchema: EXECUTE_INPUT,
         outputSchema: EXECUTE_OUTPUT,
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },

@@ -994,6 +994,55 @@ describe("execute_read_code registration", () => {
     );
     expect(JSON.parse(result.content[0].text.split("\n")[0]).nextAction).toMatchObject({ tool: "execute_read_code" });
   });
+
+  it("offers it for a read's preview only where it is listed", async () => {
+    const items = Array.from({ length: 1_000 }, (_, id) => ({ id: `row_${id}`, pad: "x".repeat(40) }));
+    const docs = api("docs", {
+      tools: [
+        {
+          name: "read",
+          description: "Read",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object" },
+          handler: () => ({ items }),
+        },
+      ],
+    });
+    for (const [options, tool] of [
+      [{ readOnly: false }, "execute_read_code"],
+      [{ readOnly: false, execute: { readRoute: false } }, "execute_code"],
+      [{ readOnly: true }, "execute_code"],
+    ] as const) {
+      const { result } = await readJsonRpc(
+        await mcpRpc(
+          makeDeployment({ ...options, connectors: [docs] }),
+          "tools/call",
+          { name: "call_tool", arguments: { address: "docs.read" } },
+          { token: TOKEN },
+        ),
+      );
+      const notice = JSON.parse(result.content[0].text.split("\n")[0]);
+      expect(notice.rows).toMatchObject({ path: "items", count: 1_000 });
+      expect(notice.nextAction.tool).toBe(tool);
+      expect(notice.hint).toContain(`run nextAction in ${tool}`);
+    }
+  });
+
+  it("carries the inventory execute_code does, so a host that loads only this tool sees purposes", async () => {
+    const tools = (await list(
+      makeDeployment({
+        readOnly: false,
+        connectors: [api("crm", { title: "Customer CRM", description: "Current accounts and contracts", tools: [] })],
+      }),
+    )) as unknown as Array<{ name: string; description: string }>;
+    const inventory = (name: string) =>
+      tools
+        .find((tool) => tool.name === name)!
+        .description.split("\n")
+        .find((line) => line.startsWith("Connectors: "));
+    expect(inventory("execute_read_code")).toBe("Connectors: crm (Customer CRM; Current accounts and contracts).");
+    expect(inventory("execute_read_code")).toBe(inventory("execute_code"));
+  });
 });
 
 describe("execute_code registration (code mode)", () => {
@@ -1040,7 +1089,7 @@ describe("execute_code registration (code mode)", () => {
       );
     }
     const description = await executeDescription();
-    expect(description).toContain("Writable endpoint: programs may read and write; the host approves.");
+    expect(description).toContain("Writable endpoint: programs may write; the host approves.");
     expect(description).not.toContain("resume_execution");
   });
 

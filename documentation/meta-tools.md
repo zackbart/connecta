@@ -140,7 +140,8 @@ the marker on the entry it selects where it would drop a page-level note.
 `search_tools` remains the unprompted way to find a write's address outside a program.
 
 **Handles.** `connecta.result` works with the existing stash bindings: a `resultId`
-from a direct read or a read program pages from a read program on the same endpoint.
+from a direct read or a read program pages, or reads whole with `{ all: true }`, from a
+read program on the same endpoint.
 Follow-up text from `call_tool`, `search_tools` and both program routes names this route
 on endpoints that list it, including paging a writing program's oversized return, so
 paging costs no write approval and cannot resend the write.
@@ -207,8 +208,8 @@ Live connector probing is not a fourth: the operator pages and `/health` own it.
 
 ## Discovery context
 
-The deployment-derived `execute_code` description carries a connector
-inventory before any catalog search — registry order and each canonical id,
+The deployment-derived `execute_code` and `execute_read_code` descriptions carry
+one connector inventory before any catalog search — registry order and each canonical id,
 with no second name minted for programs. An entry adds the configured title
 only when it says more than the id: a title whose words the id already spells,
 such as `Google Calendar` for `google_calendar`, is dropped. It then adds the
@@ -767,6 +768,10 @@ rows from the start of the list up to 1,500 bytes, and every value outside it.
 spell reads `["a.b"].items`, and a root array reads `(root)`. `rows.keys` samples
 up to 40 keys of at most 64 characters from the first 50 rows; `rows.count` and
 `totalBytes` describe the whole result.
+
+On an endpoint that lists `execute_read_code`, the hint and `nextAction` name it instead
+of `execute_code`. A preview only ever follows a read, and its program reads only the
+retained result, so it runs on either route.
 
 **Text.** Text that is not JSON, or an API connector's text value, returns its line
 count in `text.lines`, then its first 1,200 and last 800 bytes around a marker saying

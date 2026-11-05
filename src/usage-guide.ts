@@ -16,8 +16,7 @@ Route as the server instructions and ${META_ROUTES.program}'s first sentence say
 Read one account with ${META_ROUTES.read}: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
 On a read-only endpoint search omits writes (guides may name them) and each
 fails read_only_endpoint; tell the user. Unannotated tools fail closed to writes.
-Where listed, ${READ_PROGRAM_SOURCE} runs read-only programs and marks writes \`callable: false\`.
-Connecta classifies and routes a requested write; the host owns approval.
+Where listed, ${READ_PROGRAM_SOURCE} refuses writes, marked \`callable: false\`.
 
 ## The global and the envelopes
 

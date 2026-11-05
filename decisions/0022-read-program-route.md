@@ -19,7 +19,8 @@ pooled, and prompts per trial fell from 1.8 to 0.3 on Codex and 2.3 to 1.5 on Cl
 ## Decision
 
 `execute_read_code` is a seventh meta tool on writable `/mcp` and `/mcp/<pool>`,
-annotated read-only, refusing every write-like call below the sandbox.
+annotated read-only, refusing every write-like call below the sandbox, except a tool a
+deployment set to `"read-repeatable"`.
 
 - **Refusal uses `isWriteLike`.** A host may resend a read-annotated call, so a tool that
   is a source write stays out even when an override serves it as a read over a silent

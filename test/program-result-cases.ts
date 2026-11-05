@@ -7,6 +7,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools, releaseStashedResult } from "../src/meta-tools.js";
 import { PROGRAM_RESULT_INLINE_BYTES } from "../src/program-result.js";
+import { routeNames } from "../src/route-names.js";
 import { HeldResults, type HeldResult } from "../src/result-seal.js";
 import { PendingWork } from "../src/runtime/request-scope.js";
 import { sentSecretsFor, sentSecretsForRequest } from "../src/sent-secrets.js";
@@ -313,6 +314,65 @@ export async function checkPreviewProgram(executor: Executor, storage: KVStorage
       format: address.endsWith("rows") ? "json" : "text",
       same: true,
     });
+  }
+
+  // Where the read route is listed, a preview offers it, and what it offers runs there.
+  const readRoutes = routeNames("read-route");
+  const readMeta = createMetaTools(registry, BASE, { programTool: readRoutes.program, routes: readRoutes });
+  const readRun = createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
+    readProgram: true,
+    routes: readRoutes,
+    followUpRoutes: readRoutes,
+  });
+  for (const address of ["large.rows", "large.text", "remote.rows", "remote.text"]) {
+    const direct = await readMeta.callTool({ address });
+    const text = (direct.content[0] as { text: string }).text;
+    const notice = JSON.parse(text.slice(0, text.indexOf("\n")));
+    expect(notice.nextAction.tool, address).toBe("execute_read_code");
+    expect(notice.hint, address).toContain("run nextAction in execute_read_code");
+    expect(notice.hint, address).not.toContain("execute_code");
+    const offered = await readRun(notice.nextAction.arguments);
+    expect(offered.isError, JSON.stringify(offered.structuredContent)).toBeUndefined();
+    expect(offered.structuredContent!.result, address).toEqual(
+      address.endsWith("rows")
+        ? { count: 2_000, rows: rows.slice(0, 5) }
+        : { lines: 6_000, matches: ["FAIL: the real one"] },
+    );
+    // The same handle reads whole on that route, for one host call.
+    const whole = await readRun({
+      code: `async () => {
+        const { data, format } = await connecta.result(${JSON.stringify(notice.resultId)}, { all: true });
+        return { format, size: typeof data === "string" ? data.length : data["a.b"].rows.length };
+      }`,
+    });
+    expect(whole.isError, JSON.stringify(whole.structuredContent)).toBeUndefined();
+    expect((whole.structuredContent!.result as { size: number }).size, address).toBe(
+      address.endsWith("rows") ? 2_000 : log.length,
+    );
+    expect(whole.structuredContent!.diagnostics ?? {}).not.toHaveProperty("writes");
+  }
+
+  // An oversized return reads whole on the read route, from whichever program made it.
+  const writingRun = createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
+    followUpRoutes: readRoutes,
+  });
+  for (const made of [writingRun, readRun]) {
+    const big = await made({
+      code: `async () => ({ rows: Array.from({ length: 2000 }, (_, i) => ({ i, pad: "x".repeat(80) })) })`,
+    });
+    const notice = big.structuredContent!.result as {
+      hint: string;
+      nextAction: { tool: string; arguments: { code: string } };
+    };
+    expect(notice.nextAction.tool).toBe("execute_read_code");
+    expect(notice.hint).toContain("{ all: true }");
+    expect(notice.hint).not.toContain("execute_code");
+    const unedited = await readRun(notice.nextAction.arguments);
+    expect(unedited.isError, JSON.stringify(unedited.structuredContent)).toBeUndefined();
+    const edited = await readRun({
+      code: notice.nextAction.arguments.code.replace(/return .*; \}$/, "return data.rows.length; }"),
+    });
+    expect(edited.structuredContent!.result, JSON.stringify(edited.structuredContent)).toBe(2_000);
   }
 }
 

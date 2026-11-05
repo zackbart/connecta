@@ -527,7 +527,7 @@ function serveMcp(
       const diagnostics = native
         ? { ...native, catalogErrors: [] as string[], staleCatalogs: [] as string[] }
         : undefined;
-      // One answer for the program tool this request lists and its results may offer.
+      // The program tool this request lists and its reads may offer: the read route, where listed.
       const programTool = !native || native.executeCode ? directRoutes.program : undefined;
       const nativeRoute = registerMetaTools(server, registry, {
         native: diagnostics,

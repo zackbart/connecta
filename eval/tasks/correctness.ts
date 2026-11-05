@@ -4,7 +4,7 @@ import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 import type { Surface } from "../agent/surface.js";
 
-const DELIVERED_TOOLS = ["call_tool", "call_destructive_tool", "execute_code", "read_result"];
+const DELIVERED_TOOLS = ["call_tool", "call_destructive_tool", "execute_code", "execute_read_code", "read_result"];
 const PAGING_KEYS = new Set(["page", "pagination", "paging"]);
 
 function parseJson(text: string): unknown {
@@ -107,7 +107,7 @@ export function deliveredReducedCount(trace: AgentTrace, count: number): boolean
         Object.entries(value as object).some(([key, item]) => !PAGING_KEYS.has(key) && found(item)));
   return trace.toolUses.some(
     (use) =>
-      use.tool === "execute_code" &&
+      (use.tool === "execute_code" || use.tool === "execute_read_code") &&
       !use.isError &&
       resultTexts(use).some((text) => {
         const body = parseJson(text) as { result?: unknown } | undefined;

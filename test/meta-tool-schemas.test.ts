@@ -230,12 +230,13 @@ const BUDGETS = {
     // Grew to say when no call is needed: an auth error that already carries its link.
     authorize_connector: 510,
     // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial.
-    execute_code: 2_900,
-    execute_read_code: 700,
+    execute_code: 2_890,
+    // Carries the same inventory: a host may load only this tool for read work.
+    execute_read_code: 730,
   },
   // Open summaries: the full contracts stay on the server, in meta-output.ts.
   outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170, execute_read_code: 170 },
-  usage: 5_600,
+  usage: 5_500,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
   searchPage: { default: 470, compact: 730 },
