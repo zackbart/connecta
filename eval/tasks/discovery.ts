@@ -93,7 +93,26 @@ interface AnswerSpec {
   line?: RegExp;
   /** Must not appear on the last ANSWER line: another record's fact. */
   notOnLine?: RegExp;
+  /** The requested facts: each must appear on the last ANSWER line. */
+  lineFacts?: RegExp[];
+  /** Every amount these patterns bind, anywhere in the answer, must equal `amount`. */
+  bound?: { patterns: RegExp[]; amount: number };
 }
+
+/** A figure written as money: "$20,000", "$18.75k" or "18,750". */
+const MONEY = String.raw`(\$\s?\d[\d,]*(?:\.\d+)?k?|\d{1,3}(?:,\d{3})+(?:\.\d+)?)(?![\d,]|\.\d)`;
+/** "$12,000 in the 90+ bucket" labels a part of the balance, not the balance. */
+const NOT_A_BUCKET = String.raw`(?!\s+(?:is |are |sits? )?(?:in|at|over|past)\b[^.;\n]{0,25}(?:bucket|days?))`;
+
+const moneyValue = (text: string) => {
+  const digits = Number(text.replace(/[$,\s]|k$/gi, ""));
+  return /k$/i.test(text) ? digits * 1000 : digits;
+};
+
+const agreesWithBound = (answer: string, bound: NonNullable<AnswerSpec["bound"]>) =>
+  bound.patterns.every((pattern) =>
+    [...answer.matchAll(pattern)].every((match) => moneyValue(match[1]!) === bound.amount),
+  );
 
 function answerCheck(trace: AgentTrace, spec: AnswerSpec): Check {
   const answer = finalText(trace);
@@ -105,6 +124,8 @@ function answerCheck(trace: AgentTrace, spec: AnswerSpec): Check {
       line.toLowerCase() !== "unavailable" &&
       spec.anywhere.every((pattern) => pattern.test(answer)) &&
       (!spec.line || spec.line.test(line)) &&
+      (spec.lineFacts ?? []).every((fact) => fact.test(line)) &&
+      (!spec.bound || agreesWithBound(answer, spec.bound)) &&
       !spec.notOnLine?.test(line),
     answer.slice(0, 500),
   );
@@ -200,7 +221,21 @@ export const DISCOVERY_TASKS: ActiveTask[] = [
         "customer receivables were actually read",
         called(world, "finance.aged_receivables_report") || called(world, "finance.list_invoices"),
       ),
-      answerCheck(trace, { anywhere: [CEDAR, CEDAR_OWED], line: CEDAR, notOnLine: /harbor|pine paper/i }),
+      answerCheck(trace, {
+        anywhere: [CEDAR, CEDAR_OWED],
+        lineFacts: [CEDAR, CEDAR_OWED],
+        notOnLine: /harbor|pine paper/i,
+        bound: {
+          amount: 18_750,
+          patterns: [
+            new RegExp(String.raw`\bcedar(?: foods)?\b[^\n.;$\d]{0,12}${MONEY}${NOT_A_BUCKET}`, "gi"),
+            new RegExp(
+              String.raw`\bcedar(?: foods)?\b[^\n.;]*?\b(?:owes?|owed|owing|balance|total(?:s|ing|ed|led)?)\b[^\n$\d]{0,20}${MONEY}${NOT_A_BUCKET}`,
+              "gi",
+            ),
+          ],
+        },
+      }),
       onlyReads(world),
     ],
     reference: async (ctx) => {
@@ -267,7 +302,13 @@ export const DISCOVERY_TASKS: ActiveTask[] = [
       check("correct-destination", "invoices were actually read", called(world, "finance.list_invoices")),
       answerCheck(trace, {
         anywhere: [/INV-3120/, /INV-3127/, /5[,.\s]?350/],
+        lineFacts: [/INV-3120/, /INV-3127/, /\b5[,.\s]?350\b/],
         notOnLine: /INV-3098|INV-3141/,
+        // A subtotal is its own figure, so only the total itself is bound.
+        bound: {
+          amount: 5_350,
+          patterns: [new RegExp(String.raw`(?<![-\w])(?:total(?:s|ing|ed|led)?|sum)\b[^\n$\d]{0,20}${MONEY}`, "gi")],
+        },
       }),
       noCallsTo(world, ["reporting.invoices_export"]),
       onlyReads(world),
@@ -670,8 +711,37 @@ export const DISCOVERY_ANSWER_CONTROLS: Record<string, { accept: string[]; rejec
     ],
   },
   "discovery-nohint-overdue": {
-    accept: ["**Cedar Foods** owes $18,750, over 90 days late.\n\n**ANSWER: Cedar Foods — $18,750**"],
-    reject: ["Harbor Logistics owes the most, $31,200. Cedar Foods owes $18,750.\nANSWER: Harbor Logistics"],
+    accept: [
+      "**Cedar Foods** owes $18,750, over 90 days late.\n\n**ANSWER: Cedar Foods — $18,750**",
+      "Cedar Foods has $18,750 in the 90+ day bucket.\nANSWER: Cedar Foods, $18,750",
+      // Other customers and separately labelled age buckets are legitimate extra figures.
+      "Harbor Logistics owes $31,200, but only 30 days late. Cedar Foods owes $18,750.\nANSWER: Cedar Foods, $18,750",
+      "Cedar Foods has $12,000 in the 90+ bucket and owes $18,750 overall.\nANSWER: Cedar Foods, $18,750 (94 days overdue; $12,000 is in the 90+ bucket)",
+      "Cedar Foods is 94 days overdue.\nANSWER: Cedar Foods, 18.75k",
+    ],
+    reject: [
+      "Harbor Logistics owes the most, $31,200. Cedar Foods owes $18,750.\nANSWER: Harbor Logistics",
+      "Cedar Foods owes $18,750.\nANSWER: Cedar Foods, $20,000",
+      "Cedar Foods owes $18,750.\nANSWER: Cedar Foods",
+      "The ageing report shows $18,750.\nANSWER: $18,750",
+      "Cedar Foods owes $20,000.\nANSWER: Cedar Foods, $18,750",
+      "Cedar Foods, $18,750.\nANSWER: Cedar Foods — $20,000, or $18,750",
+    ],
+  },
+  "discovery-lookalike-invoices": {
+    accept: [
+      "INV-3120 and INV-3127.\nANSWER: INV-3120, INV-3127, total $5,350",
+      // Invoice subtotals are legitimate extra figures.
+      "INV-3120 is $4,200 and INV-3127 is $1,150, totalling $5,350.\nANSWER: INV-3120 ($4,200), INV-3127 ($1,150), total $5,350",
+      "Subtotal $5,000 plus $350 tax on INV-3120 and INV-3127.\nANSWER: INV-3120, INV-3127, total $5,350.00",
+    ],
+    reject: [
+      "They total $5,350.\nANSWER: INV-3120, INV-3127, total $99,999",
+      "INV-3120 and INV-3127 total $5,350.\nANSWER: INV-3120, INV-3127",
+      "The total is $5,350 across INV-3120.\nANSWER: INV-3120, total $5,350",
+      "The total is $99,999.\nANSWER: INV-3120, INV-3127, total $5,350",
+      "INV-3120 and INV-3127.\nANSWER: INV-3120, INV-3127, total $5,350, total $99,999",
+    ],
   },
   "discovery-lookalike-crm": {
     accept: [
