@@ -447,8 +447,7 @@ export class InvocationService {
             : error;
         const recovery = recoveryState.facts;
         const enteredWrite =
-          dispatchedToConnector &&
-          ((resolved !== undefined && resolved.definition.classification !== "read") || sentSourceWrite());
+          dispatchedToConnector && ((resolved !== undefined && isWriteLike(resolved.definition)) || sentSourceWrite());
         // A known answer alone is not dispatch evidence. Require an owned,
         // complete ledger with a positively recorded auxiliary resource read;
         // an empty ledger, custom entry or interruption proves nothing.
@@ -847,9 +846,10 @@ export class InvocationService {
           argumentEcho = echoedCallArgs(args ?? {}, target.definition.inputSchema);
           sentSecrets.arguments(args ?? {}, target.definition.inputSchema);
 
-          const write = target.definition.classification !== "read";
-          const writeLike = isWriteLike(target.definition);
-          if (writeLike && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
+          // Admission and presentation follow the served class. Dispatch and failure
+          // handling follow this: a source write served as a read still sends once.
+          const write = isWriteLike(target.definition);
+          if (write && context.writeTimeoutMs !== undefined) timeoutMs = context.writeTimeoutMs;
           const canonicalAddress = `${target.connector.id}.${target.toolName}`;
           const input =
             context.source !== "execute_code"
@@ -859,7 +859,7 @@ export class InvocationService {
           const expectedDigest = replayClassificationDigest(this.catalog.requestScope, canonicalAddress);
           if (
             expectedDigest !== undefined &&
-            (writeLike ||
+            (write ||
               target.classificationFresh !== true ||
               (yield* Effect.promise(() => classificationDigest(target.definition))) !== expectedDigest)
           ) {
@@ -909,7 +909,7 @@ export class InvocationService {
           }
 
           // Source writes keep program write accounting; only effective writes spend W10 budget.
-          if (writeLike && context.beforeWrite) {
+          if (write && context.beforeWrite) {
             const decision = yield* context.beforeWrite(target, args ?? {});
             if (decision.kind === "refuse") {
               unrecorded = decision.unrecorded === true;
@@ -1002,7 +1002,7 @@ export class InvocationService {
                 this.catalog.requestScope,
                 {
                   address: canonicalAddress,
-                  classification: writeLike ? "write" : "read",
+                  classification: write ? "write" : "read",
                   fresh: target.classificationFresh === true,
                 },
                 target.definition,

@@ -251,8 +251,8 @@ Remote catalogs evolve. Discovery, direct calls, and programs enforce the
 current annotations and `ConnectaConfig.classification` overrides. A leftover
 `classify` option throws at construction and names that map. Provider reviews,
 schema pins, `optional`, and `unlisted: "hide"` are removed. Missing or
-contradictory hints make the source class write. Contradictory hints also keep
-the effective class write; missing hints do not, under a read override. Review behavior before setting a read override;
+contradictory hints make the source class write. Under `"read"`, contradictory hints also keep
+the effective class write and missing hints do not. `"read-repeatable"` serves either as a read. Review behavior before setting a read override;
 classification does not replace downstream scopes or caller grants.
 
 ## A hand-written HTTP capability

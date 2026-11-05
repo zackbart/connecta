@@ -773,6 +773,22 @@ describe("classification and pool endpoints (#706)", () => {
     expect(failing.writes()).toHaveLength(1);
   });
 
+  it("INV-1 INV-9: read-repeatable reports an unknown outcome when an opaque connector loses the answer", async () => {
+    let sent = 0;
+    const connector: Connector = {
+      id: "crm",
+      listTools: async () => [{ name: "update", annotations: { readOnlyHint: false } }],
+      callTool: async () => {
+        sent++;
+        throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } });
+      },
+    };
+    const registry = makeRegistry([connector], { classification: { crm: { update: "read-repeatable" } } });
+    const result = await createMetaTools(registry, BASE).callTool({ address: "crm.update" });
+    expect(result.structuredContent).toMatchObject({ error: { retryable: false, writeOutcome: "unknown" } });
+    expect(sent).toBe(1);
+  });
+
   it("INV-1 INV-11: read-repeatable warns about nothing, and an unknown verdict names it", async () => {
     const logger = { ...silentLogger, warn: vi.fn() };
     const connector: Connector = {
