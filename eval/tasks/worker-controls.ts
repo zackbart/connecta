@@ -8,7 +8,7 @@ import { Server as HttpServer } from "node:http";
 import { spawn, spawnSync } from "node:child_process";
 import { createSocket as createDgramSocket } from "node:dgram";
 import { existsSync } from "node:fs";
-import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import {
   Server as NetServer,
   connect as connectNet,
@@ -22,6 +22,7 @@ import { playReference } from "../agent/reference.js";
 import { gradeTask } from "./grading.js";
 import { crossTarget, compare } from "../compare.js";
 import { connectionLost, stopsBatch, trialInfraFailure, WORKER_RELOADED } from "../agent/infra.js";
+import { batchFailures } from "../agent/verdict.js";
 import { startVendorGateway, startWorkerDeployment } from "../deploy/worker.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER, viaGateway } from "../deploy/gateway-fetch.js";
 import { fakeTransportState, routeFakeVendor } from "../fakes/transport.js";
@@ -33,6 +34,7 @@ import { isInjected, NO_INJECTION, parseInjection, type Injection } from "../fak
 import { World, type WorldOptions } from "../fakes/world.js";
 import { servedDelayStats, serveFetch, retryBind } from "../support/serve.js";
 import { groupMembers, killAllProcesses, stopAllProcesses, WRANGLER_ENV, wranglerDev } from "../support/workerd.js";
+import { claimPairGraph, freezeWorkerGraph, refuseMislabelledGraph } from "../support/worker-graph.js";
 import { ACTIVE_TASKS } from "./index.js";
 import { PROVIDER_EVALS } from "./providers.generated.js";
 
@@ -458,12 +460,21 @@ async function fixture(target: "node" | "worker", surface: "six" | "code"): Prom
   const file: AgentResultFile = {
     ...frozen,
     protocol: runProtocol("synthetic-selftest-pair"),
-    config: { ...frozen.config, surface, grading: "outcome", tasks: [id], repeats: 1, target },
+    config: {
+      ...frozen.config,
+      surface,
+      grading: "outcome",
+      tasks: [id],
+      repeats: 1,
+      target,
+      ...(target === "worker" ? { servedGraph: { hash: "graph", inputs: 1, matchesHead: true } } : {}),
+    },
     trials: [
       {
         ...structuredClone(source),
         surface,
         target,
+        ...(target === "worker" ? { servedGraph: "graph" } : {}),
         runner: "codex",
         grading: "outcome",
         taskDefinitionsHash: runProtocol().taskDefinitionsHash,
@@ -488,6 +499,51 @@ export async function comparatorTargetControls() {
   }
   if (!compare(await fresh("worker", "six"), await fresh("worker", "code")).includes("target worker"))
     throw new Error("Two worker arms did not compare as worker");
+  // Eve arms compare on Eve's own version and served model, not on empty Codex fields.
+  const eveArm = async (surface: "six" | "code") => {
+    const file = await fresh("worker", surface);
+    file.config.runner = "eve";
+    file.eveVersion = "1.0.0-rc.1";
+    delete file.codexVersion;
+    const trial = file.trials[0]!;
+    trial.runner = "eve";
+    trial.eve = { ...trial.codex!, version: "1.0.0-rc.1" };
+    delete trial.codex;
+    return file;
+  };
+  const eveArmSix = await eveArm("six");
+  compare(eveArmSix, await eveArm("code"));
+  const otherEve = await eveArm("code");
+  otherEve.eveVersion = "1.0.0-rc.2";
+  otherEve.trials[0]!.eve = { ...otherEve.trials[0]!.eve!, version: "1.0.0-rc.2" };
+  refused(() => compare(eveArmSix, otherEve), "Eve arms on different Eve versions compared");
+  const otherServed = await eveArm("code");
+  otherServed.trials[0]!.eve = { ...otherServed.trials[0]!.eve!, servedModel: "another-model" };
+  refused(() => compare(eveArmSix, otherServed), "Eve arms with different served models compared");
+  // Each arm's graph must be recorded, match its commit, and match the other arm's.
+  const graphs: [string, (file: AgentResultFile) => void][] = [
+    [
+      "another arm's graph",
+      (f) => {
+        f.config.servedGraph!.hash = "other";
+        f.trials[0]!.servedGraph = "other";
+      },
+    ],
+    ["no recorded graph", (f) => delete f.config.servedGraph],
+    ["a graph that differs from its commit", (f) => (f.config.servedGraph!.matchesHead = false)],
+    ["a trial that served another graph", (f) => (f.trials[0]!.servedGraph = "other")],
+    ["a trial with no recorded graph", (f) => delete f.trials[0]!.servedGraph],
+  ];
+  for (const [label, change] of graphs) {
+    const six = await fresh("worker", "six"),
+      code = await fresh("worker", "code");
+    change(code);
+    refused(() => compare(six, code), `Comparison accepted ${label}`);
+    const batch = await fresh("worker", "six");
+    change(batch);
+    if (label.startsWith("a trial") && !batchFailures(batch).some((problem) => problem.includes("served graph")))
+      throw new Error(`A batch accepted ${label}`);
+  }
   const mutations: [string, (file: AgentResultFile) => void][] = [
     ["a node trial in a worker batch", (f) => (f.trials[0]!.target = "node")],
     ["a missing protocol", (f) => delete f.protocol],
@@ -939,6 +995,118 @@ export default { fetch: () => new Response(JSON.stringify({ instance: (instance 
     await trial?.close();
     await deployment?.close();
     await world.stop();
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * A batch serves one graph, however sources move around it. Editing between two boots
+ * proves the hazard: a boot that bundles for itself serves the edit under the same
+ * clean label. Files here are this control's own, in throwaway checkouts.
+ */
+export async function workerGraphControls() {
+  const dir = await mkdtemp(join(tmpdir(), "connecta-worker-graph-"));
+  const git = (cwd: string, ...args: string[]) => {
+    const run = spawnSync(
+      "git",
+      ["-c", "user.name=eval", "-c", "user.email=eval@example.com", "-c", "commit.gpgsign=false", ...args],
+      { cwd, encoding: "utf8" },
+    );
+    if (run.status !== 0) throw new Error(`git ${args.join(" ")}: ${run.stderr}`);
+    return run.stdout.trim();
+  };
+  const checkout = async (name: string, revision: number) => {
+    const root = join(dir, name);
+    await mkdir(root, { recursive: true });
+    await writeFile(
+      join(root, "worker.ts"),
+      `import { revision } from "./dep.ts";\nexport default { fetch: () => new Response(String(revision)) };\n`,
+    );
+    await writeFile(join(root, "dep.ts"), `export const revision = ${revision};\n`);
+    await writeFile(join(root, ".gitignore"), "generated.ts\n");
+    git(root, "init", "-q");
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "seed");
+    return { root, entry: join(root, "worker.ts"), dep: join(root, "dep.ts") };
+  };
+  const served = async (origin: string) => await (await fetch(origin)).text();
+  const armed: { close(): Promise<void> }[] = [];
+  const boot = async (options: Parameters<typeof wranglerDev>[0]) => {
+    const dev = await wranglerDev(options);
+    armed.push(dev);
+    return dev;
+  };
+  try {
+    const first = await checkout("first", 1);
+    const graph = await freezeWorkerGraph(first.entry, first.root);
+    if (!graph.matchesHead) throw new Error("A clean checkout's graph must match its commit");
+    refuseMislabelledGraph(graph, { commit: git(first.root, "rev-parse", "--short=12", "HEAD"), dirty: false });
+
+    const before = await boot({ name: "connecta-graph-before", main: first.entry, graph });
+    await writeFile(first.dep, `export const revision = 2;\n`);
+    const after = await boot({ name: "connecta-graph-after", main: first.entry, graph });
+    const perBoot = await boot({ name: "connecta-graph-per-boot", main: first.entry, freeze: true });
+    if ((await served(perBoot.origin)) !== "2") throw new Error("The hazard control did not reach the edited source");
+    if ((await served(before.origin)) !== "1" || (await served(after.origin)) !== "1")
+      throw new Error("A source edit split one batch's graph across its trials");
+    for (const dev of [before, after])
+      if ((await dev.servedGraph()) !== graph.hash) throw new Error("A trial did not report its batch's graph");
+    await writeFile(join(after.persist, "snapshot", "worker.mjs"), "// altered\n");
+    if ((await after.servedGraph()) === graph.hash)
+      throw new Error("An altered snapshot still read as the batch's graph");
+    console.log("ok   a source edit between trials cannot split a batch's one frozen graph");
+
+    // The edit also has to stop a batch from claiming the commit it no longer serves.
+    const edited = await freezeWorkerGraph(first.entry, first.root);
+    if (edited.hash === graph.hash || edited.matchesHead) throw new Error("An edited graph read as the commit");
+    const head = git(first.root, "rev-parse", "--short=12", "HEAD");
+    refused(
+      () => refuseMislabelledGraph(edited, { commit: head, dirty: false }),
+      "A clean label covered an edited graph",
+    );
+    refuseMislabelledGraph(edited, { commit: head, dirty: true });
+    refused(
+      () => refuseMislabelledGraph(graph, { commit: "000000000000", dirty: false }),
+      "A batch labelled another commit than its graph",
+    );
+    // Ignored inputs aren't in any commit and aren't dirt, but an untracked source is.
+    const stray = await checkout("stray", 1);
+    await writeFile(
+      stray.entry,
+      `import { revision } from "./dep.ts";\nimport extra from "./generated.ts";\nexport default { fetch: () => new Response(String(revision + extra)) };\n`,
+    );
+    await writeFile(join(stray.root, "generated.ts"), "export default 1;\n");
+    git(stray.root, "add", "-A");
+    git(stray.root, "commit", "-qm", "use generated");
+    if (!(await freezeWorkerGraph(stray.entry, stray.root)).matchesHead)
+      throw new Error("An ignored generated input read as dirty");
+    await writeFile(stray.dep, `export { default as revision } from "./untracked.ts";\n`);
+    await writeFile(join(stray.root, "untracked.ts"), "export default 3;\n");
+    git(stray.root, "add", "dep.ts");
+    git(stray.root, "commit", "-qm", "use untracked");
+    if ((await freezeWorkerGraph(stray.entry, stray.root)).matchesHead)
+      throw new Error("An untracked source read as the commit");
+    console.log("ok   a clean label refuses any Worker graph that differs from its commit");
+
+    // Arms from separate worktrees agree on sources, wherever each checkout lives.
+    const same = await checkout("elsewhere/same", 1);
+    const other = await checkout("elsewhere/other", 7);
+    const sameGraph = await freezeWorkerGraph(same.entry, same.root);
+    const otherGraph = await freezeWorkerGraph(other.entry, other.root);
+    if (sameGraph.hash !== graph.hash) throw new Error("Identical sources in two worktrees differ in identity");
+    if (otherGraph.hash === graph.hash) throw new Error("Different sources in two worktrees share an identity");
+    const pairs = join(dir, "pairs");
+    await claimPairGraph("pair/one", graph.hash, pairs);
+    await claimPairGraph("pair/one", sameGraph.hash, pairs);
+    await rejects(
+      () => claimPairGraph("pair/one", otherGraph.hash, pairs),
+      /Batch refused/,
+      "An arm with different sources joined a pair",
+    );
+    await claimPairGraph("pair/two", otherGraph.hash, pairs);
+    console.log("ok   arms from separate worktrees share one graph identity, and a mismatch refuses");
+  } finally {
+    await Promise.allSettled(armed.map((dev) => dev.close()));
     await rm(dir, { recursive: true, force: true });
   }
 }

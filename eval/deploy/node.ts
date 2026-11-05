@@ -47,6 +47,8 @@ export interface Deployment {
   reloaded?(): Promise<boolean>;
   /** Worker target only: restart or stop its process, as reload controls need. */
   processControl?: { restart(): Promise<void>; stop(): Promise<void> };
+  /** Worker target only: the frozen graph this deployment serves. */
+  servedGraph?(): Promise<string | undefined>;
   /** The operator saving a credential in the connection page. */
   openConnect(url: string): Promise<void>;
   setCredential(connectorId: string, value: string): Promise<void>;

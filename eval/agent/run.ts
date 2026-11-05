@@ -21,6 +21,7 @@ import { startAuthHost } from "./auth-host.js";
 import { connectionLost, infraError, stopsBatch, trialInfraFailure } from "./infra.js";
 import { saveGradeInputs, type SavedGradeInputs } from "./saved.js";
 import { runProtocol } from "../support/meta.js";
+import { freezeWorkerGraph, type WorkerGraph } from "../support/worker-graph.js";
 import { conversationCompletion } from "./completion.js";
 import {
   countBy,
@@ -72,6 +73,8 @@ export interface TrialResult {
   /** Absent in results written before the worker target existed: node. */
   target?: Target;
   surface?: Surface;
+  /** Worker target: the frozen graph this trial served. */
+  servedGraph?: string;
   grading?: Grading;
   model: string;
   repeat: number;
@@ -116,6 +119,8 @@ export interface TrialResult {
 
 interface TrialOptions {
   target?: Target;
+  /** Worker target: the one graph every trial of this batch serves. */
+  graph?: WorkerGraph;
   /** Opt-in latency and fault injection; none by default. */
   injection?: Injection;
   surface?: Surface;
@@ -204,7 +209,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
   try {
     await world.start();
     for (const { service, fault } of task.faults ?? []) world.service(service).faults.push(fault);
-    const deployment = (cleanupDeployment = await startDeployment(target, world, task, surfaceArm));
+    const deployment = (cleanupDeployment = await startDeployment(target, world, task, surfaceArm, options.graph));
     const hostEvents: StreamEvent[] = [];
     const host = (cleanupHost = task.host
       ? await startAuthHost(deployment, task.host.urlElicitation, (e) => hostEvents.push(e))
@@ -266,6 +271,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       },
     });
     const reloaded = await deployment.reloaded?.();
+    const servedGraph = await deployment.servedGraph?.();
     const lost = await connectionLost(deployment.mcpUrl, deployment.token);
     world.programs = await observedPrograms(deployment).catch((failure: unknown) => {
       if (lost) return deployment.programs;
@@ -335,7 +341,9 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       ? "interrupted by operator"
       : run.timedOut
         ? `${options.runner ?? "codex"} trial timed out`
-        : trialInfraFailure(reloaded, lost, infraError(run.events, run.exitCode, trace.loadedTools));
+        : servedGraph !== options.graph?.hash && options.graph
+          ? `served graph ${servedGraph} is not this batch's ${options.graph.hash}`
+          : trialInfraFailure(reloaded, lost, infraError(run.events, run.exitCode, trace.loadedTools));
     const completed = conversationCompletion(trace, run.turnStarts.length, run.timedOut, run.aborted).check;
     const unprompted: Check = {
       id: "no-confirmation-needed",
@@ -357,6 +365,7 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
       grading,
       model,
       repeat,
+      ...(servedGraph ? { servedGraph } : {}),
       status: error ? "error" : passed ? "pass" : "fail",
       ...(error ? { error } : {}),
       checks,
@@ -422,6 +431,8 @@ export async function runBatch(
   repeats: number,
   options: BatchOptions,
 ): Promise<{ trials: TrialResult[]; stopped?: string }> {
+  // One graph for the whole batch, so a source edit cannot split it across trials.
+  if (options.target === "worker" && !options.graph) options = { ...options, graph: await freezeWorkerGraph() };
   const queue: { task: ActiveTask; model: string; repeat: number }[] = [];
   for (let repeat = 1; repeat <= repeats; repeat += 1) {
     for (const task of tasks) for (const model of models) queue.push({ task, model, repeat });

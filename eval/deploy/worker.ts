@@ -23,6 +23,7 @@ import type { ConnectorSpec } from "../fakes/world.js";
 import { ROOT } from "../support/meta.js";
 import { servedMarkers, serveFetch } from "../support/serve.js";
 import { logDir, wranglerDev } from "../support/workerd.js";
+import type { WorkerGraph } from "../support/worker-graph.js";
 import { evalMcpPath, type EvalComposition } from "./compose.js";
 import { GATEWAY_ERROR_HEADER, GATEWAY_TOKEN_HEADER, VENDOR_URL_HEADER } from "./gateway-fetch.js";
 import type { Deployment } from "./node.js";
@@ -148,6 +149,7 @@ export async function startWorkerDeployment(
   everyPool: string[] = [],
   d1LatencyMs = 0,
   surface: Surface = "six",
+  graph?: WorkerGraph,
 ): Promise<Deployment> {
   const gateway = await startVendorGateway();
   const since = Date.now();
@@ -189,6 +191,7 @@ export async function startWorkerDeployment(
       publicUrlVar: true,
       // A reload would rotate the token the agent's host already holds.
       freeze: true,
+      ...(graph ? { graph } : {}),
     });
     const origin = dev.origin;
     const control = async (path: string, init?: RequestInit) => {
@@ -220,6 +223,7 @@ export async function startWorkerDeployment(
         }
       },
       processControl: { restart: () => dev!.restart(), stop: () => dev!.stop() },
+      servedGraph: () => dev!.servedGraph(),
       openConnect: async () => {
         throw new Error("The worker target has no fake OAuth connection page.");
       },

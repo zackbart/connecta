@@ -81,7 +81,7 @@ export function trialInfraFailure(
 }
 
 export function stopsBatch(error: string | undefined): boolean {
-  return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified/i.test(
+  return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified|served graph/i.test(
     error ?? "",
   );
 }
