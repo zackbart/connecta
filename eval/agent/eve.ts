@@ -36,7 +36,7 @@ export function eveVersion(): string {
   const problem = eveHelperProblem();
   if (problem) throw new Error(problem);
   const version = JSON.parse(readFileSync(join(helper, "node_modules/eve/package.json"), "utf8")).version;
-  if (version !== "1.0.0-rc.1") throw new Error(`Eve runner requires eve@1.0.0-rc.1; got ${version}`);
+  if (version !== "1.0.0-rc.4") throw new Error(`Eve runner requires eve@1.0.0-rc.4; got ${version}`);
   return version;
 }
 
@@ -85,7 +85,7 @@ export async function runEve(options: CodexOptions & EveConnection & { testModel
       JSON.stringify({
         name: "connecta-eval-eve",
         type: "module",
-        dependencies: { eve: "1.0.0-rc.1", "@zackbart/connecta-eve": `file:${helper}` },
+        dependencies: { eve: "1.0.0-rc.4", "@zackbart/connecta-eve": `file:${helper}` },
       }),
     );
     const endpoint = new URL(options.mcpUrl);
