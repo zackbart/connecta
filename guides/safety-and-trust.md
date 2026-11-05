@@ -74,9 +74,7 @@ credentials as another boundary where possible.
 The Eve helper defaults to unattended authorized writes. For interactive use,
 `gateWrites: true` asks before tools not marked read-only; an explicit Eve
 approval policy takes precedence. The AI app owns approvals. It may ask based
-on an earlier tool label. If a
-read becomes a write, a writable pool can execute it without a fresh
-approval; a read-only pool refuses it. `execute_read_code` is the exception an app need not ask about: it refuses anything that can change data. It can still read, so a page's text can try to talk an agent into sending data through a read action; see [read programs](../documentation/meta-tools.md#read-programs). Connecta does not pause a program to
+on an earlier tool label. If a native tool becomes a write, its cached read name is refused before dispatch. Refresh `tools/list` and use the write's name; approval follows the host's policy. Read-only pools refuse writes. `execute_read_code` is the exception an app need not ask about: it refuses anything that can change data. It can still read, so a page's text can try to talk an agent into sending data through a read action; see [read programs](../documentation/meta-tools.md#read-programs). Connecta does not pause a program to
 ask a person partway through.
 
 See [read-only setup](../documentation/integrating.md#make-one-connection-read-only)

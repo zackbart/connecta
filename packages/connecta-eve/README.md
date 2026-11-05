@@ -219,9 +219,7 @@ An agent-wide `approval` in Eve's `agent.ts` runs beside the connection's policy
 and the stricter result wins. It can add a gate to Connecta tools, including under
 the default `never()`, and cannot remove one that `gateWrites` set.
 
-The gate uses the host's cached annotations. If a read becomes a write before
-dispatch, Connecta applies its current classification; a writable pool can
-execute the write without a fresh approval. A read-only pool refuses it.
+The gate uses the host's cached annotations. If a native tool becomes a write, its cached read name is refused before dispatch. Refresh `tools/list` and use the write's name; approval follows the host's policy. Read-only pools refuse writes.
 
 ## Endpoint instructions
 
