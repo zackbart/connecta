@@ -1656,6 +1656,75 @@ export const wholeReadSealingCases: Record<string, (executor: Executor) => Promi
     expect(await inner.list(RESULT_PREFIX)).toEqual([]);
     expect(await inner.get("result-stash:v1:ledger")).toBeNull();
   },
+  "a long run of reads stays under D1's query limit, whatever reclaim frees": async (executor) => {
+    const inner = memoryStorage();
+    let queries = 0;
+    const counted = new Proxy(inner, {
+      get(target, name, receiver) {
+        const member = Reflect.get(target, name, receiver) as unknown;
+        if (typeof member !== "function") return member;
+        return (...args: unknown[]) => {
+          queries++;
+          return Reflect.apply(member, target, args) as unknown;
+        };
+      },
+    });
+    const { registry } = retainedRegistry(counted, { echoed: () => ({ keep: "kept", pad: "x".repeat(950_000) }) });
+    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      code: `async () => {
+        let inlined = 0;
+        for (let i = 0; i < 20; i++) if ((await connecta.call("vault.read")).format === "json") inlined++;
+        return inlined;
+      }`,
+    });
+    expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBeUndefined();
+    // Reclaimed reads inline, as do those the stash then holds; the rest get a handle, as without reclaim.
+    expect(outcome.structuredContent!.result).toBeGreaterThanOrEqual(3);
+    // Room is left under 1,000 for the request's other queries. Uncapped this is about 2,000.
+    expect(queries).toBeLessThan(900);
+  },
+  "a redacted JSON number says to page rather than failing to parse": async (executor) => {
+    const secret = "123456789012";
+    const registry = new Registry(
+      [
+        {
+          id: "store",
+          kind: "api",
+          async listTools() {
+            return ["read", "use"].map((name) => ({ name, annotations: { readOnlyHint: true } }));
+          },
+          async callTool(name, _args, ctx) {
+            if (name === "use") {
+              sentSecretsFor(ctx).add(secret);
+              return "used";
+            }
+            return { n: Number(secret), PAD };
+          },
+        },
+      ],
+      { storage: memoryStorage(), logger: silentLogger },
+    );
+    const outcome = await createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+    )({
+      code: `async () => {
+        const handle = await connecta.call("store.read");
+        await connecta.call("store.use");
+        try { await connecta.result(handle, { all: true }); return "parsed"; }
+        catch (err) {
+          const page = await connecta.result(handle, { offset: 0, maxBytes: 40 });
+          return { message: err.message, paged: page.text.includes("[redacted]") };
+        }
+      }`,
+    });
+    expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toEqual({
+      message: expect.stringContaining("Page it with { offset } instead"),
+      paged: true,
+    });
+  },
   "stalled reclaim costs several reads their charges, never their answer": async (executor) => {
     const inner = memoryStorage();
     let deletes = 0;

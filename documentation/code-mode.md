@@ -438,7 +438,8 @@ larger carries a `resultId`.
 
 `await connecta.result(handleOrId, { all: true })` returns the whole stored value
 as `{ data, format }`, for one host call however many transfer pages it takes
-(`L6`). A handle's `valueFormat` decides the format, and JSON that won't parse throws.
+(`L6`). A handle's `valueFormat` decides the format. JSON that won't parse, as when
+redaction replaced a number, throws and says to page instead.
 A bare id parses as JSON when it can, and is text otherwise, so pass the handle when
 the difference matters.
 `all` takes no other option; `{ all: false }` is ordinary paging. Each transfer
@@ -1238,9 +1239,9 @@ or a storage failure returns a successful notice without a `resultId`. A read's
 value reconstructed through transfer pages gives its stash back once it is whole: the
 guest never saw a handle for it, so nothing can name those bytes. Giving back removes
 the entry from the run's memory ledger first, so sealing (`R4a`) has nothing to publish
-for it; once sealing has begun the entry stays until it expires. All of a run's giving
-back shares a one-second budget, and once that is spent the rest of the run's entries
-stay until they expire, so slow storage never costs the answer. A write's stash, and a
+for it; once sealing has begun the entry stays until it expires. A run gives back at
+most three stashes within a shared one-second budget, and the rest of its entries stay
+until they expire, so neither slow storage nor a long run of reads costs the answer. A write's stash, and a
 handle the guest received, keep their charge until they expire, including after
 `{ all: true }`. A failed
 automatic reconstruction retains the handle. Neither result path reissues the

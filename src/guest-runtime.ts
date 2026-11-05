@@ -162,7 +162,7 @@ export function guestInitializer(): string {
     const stored = id ? id.valueFormat : undefined;
     if (stored === "text") return { data: text, format: "text" };
     // A handle's JSON that won't parse throws; only a bare id, which doesn't say, may be text.
-    if (stored === "json") return { data: JSON.parse(text), format: "json" };
+    if (stored === "json") try { return { data: JSON.parse(text), format: "json" }; } catch { throw new NativeError("This result can't be parsed whole, because redaction can leave its JSON invalid. Page it with { offset } instead."); }
     try { return { data: JSON.parse(text), format: "json" }; } catch {}
     return { data: text, format: "text" };
   }

@@ -3973,7 +3973,7 @@ return fs;
       const whole = await connecta.result(handle, { all: true });
       const byId = await connecta.result(handle.resultId, { all: true });
       let claimed;
-      try { await connecta.result({ ...handle, valueFormat: "json" }, { all: true }); } catch (err) { claimed = err.name; }
+      try { await connecta.result({ ...handle, valueFormat: "json" }, { all: true }); } catch (err) { claimed = err.message; }
       return { format: whole.format, length: whole.data.length, ends: whole.data.endsWith("t"), bareId: byId.format, bareLength: byId.data.length, claimed };
     }`,
     check(outcome) {
@@ -3985,7 +3985,7 @@ return fs;
         bareId: "text",
         bareLength: 1_100_000,
         // A handle that says JSON is never quietly handed back as text.
-        claimed: "SyntaxError",
+        claimed: expect.stringContaining("Page it with { offset } instead"),
       });
     },
   },

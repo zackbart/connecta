@@ -80,6 +80,11 @@ const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
 /** All of one run's stash reclaim, in milliseconds of waiting on storage. */
 const RECLAIM_BUDGET_MS = 1_000;
 /**
+ * Reclaims per run. Each freed slot lets another read stash and page again, so unbounded
+ * reclaim keeps a program spending storage queries that a full stash would have ended.
+ */
+const RECLAIM_MAX_PER_RUN = 3;
+/**
  * The outer ceiling on one execution. It sits above both executors' own
  * deadlines (QuickJS 30s, the Dynamic Worker 60s), so a healthy executor
  * always reports its own timeout first and this fires only for one that
@@ -701,9 +706,11 @@ function sandboxProvider(
   // Slow storage may cost a run its reclaim, never its answer: all of a run's reclaim shares
   // this much time, and once it's spent the rest of the run's entries just wait to expire.
   let reclaimLeftMs = RECLAIM_BUDGET_MS;
+  let reclaimsLeft = RECLAIM_MAX_PER_RUN;
   const reclaim = (id: string, totalBytes: number) =>
     Effect.suspend(() => {
-      if (reclaimLeftMs <= 0) return Effect.void;
+      if (reclaimLeftMs <= 0 || reclaimsLeft <= 0) return Effect.void;
+      reclaimsLeft--;
       const started = Date.now();
       return releaseStashedResult(registry, limits.heldResults, id, totalBytes).pipe(
         Effect.timeoutOrElse({ duration: Duration.millis(reclaimLeftMs), orElse: () => Effect.void }),
