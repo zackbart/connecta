@@ -519,8 +519,11 @@ function serveMcp(
       const diagnostics = native
         ? { ...native, catalogErrors: [] as string[], staleCatalogs: [] as string[] }
         : undefined;
+      // One answer for the program tool this request lists and its results may offer.
+      const programTool = !native || native.executeCode ? "execute_code" : undefined;
       const nativeRoute = registerMetaTools(server, registry, {
         native: diagnostics,
+        programTool,
         routes,
         authElicitation,
         client,
@@ -544,7 +547,7 @@ function serveMcp(
         requestSignal,
         ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
       });
-      if (!native || native.executeCode) {
+      if (programTool) {
         registerExecuteTool(server, registry, {
           authElicitation,
           client,

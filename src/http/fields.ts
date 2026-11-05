@@ -224,13 +224,16 @@ export function boundWarnings(warnings: readonly string[]): string[] {
   return omitted ? [...kept, `${omitted} more warning${omitted === 1 ? "" : "s"} omitted.`] : kept;
 }
 
+/** Enough declared names to repair a path; a wide contract's full list costs more than most replies. */
+const NAMED_CHARS = 160;
+
 /** Declared names listed in one warning, within its character budget. */
 function named(names: readonly string[]): string {
   let text = "";
   let shown = 0;
   for (const name of names) {
     const next = text ? `${text}, ${name}` : name;
-    if (next.length > WARNING_BUDGET.chars - 200) break;
+    if (next.length > NAMED_CHARS) break;
     text = next;
     shown += 1;
   }
@@ -255,6 +258,8 @@ export function fieldsMisses(
   const flat = (values: readonly unknown[]): unknown[] =>
     values.flatMap((value) => (Array.isArray(value) ? flat(value) : [value]));
   const contract = declared.map((path) => segments(path.replace(/^\[\]\.?/, "")));
+  // Misses stopping at the same place list its names once.
+  const listed = new Map<string, number>();
   return fields.flatMap((field, index) => {
     const path = segments(field);
     let values = flat([data]);
@@ -274,11 +279,13 @@ export function fieldsMisses(
             .map((parts) => parts[depth]!),
         ),
       ];
-      return [
-        `fields/${index} matched nothing in this response after value safety and privacy filtering, at segment ${depth + 1}; ${
-          names.length ? `declared there: ${named(names)}` : "the operation declares no properties there"
-        }.`,
-      ];
+      const opening = `fields/${index} matched nothing after filtering, at segment ${depth + 1}`;
+      if (!names.length) return [`${opening}; nothing is declared there.`];
+      const list = named(names);
+      const earlier = listed.get(list);
+      if (earlier !== undefined) return [`${opening}; declared there: same as fields/${earlier}.`];
+      listed.set(list, index);
+      return [`${opening}; declared there: ${list}.`];
     }
     return [];
   });

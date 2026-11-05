@@ -32,6 +32,7 @@ import {
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 import {
   checkLargeProgramRead,
+  checkPreviewProgram,
   checkLargeProgramWrite,
   checkProgramPagingFailure,
   checkRetainedResultsPassFinalSet,
@@ -114,6 +115,9 @@ describe("guest API contract (QuickJS executor)", () => {
   });
   it("INV-3 INV-9: oversized program reads arrive whole through bounded stash pages", async () => {
     await checkLargeProgramRead(executor);
+  });
+  it("INV-5: a preview's program runs as offered, and values and handles stay byte-identical", async () => {
+    await checkPreviewProgram(executor);
   });
   it("INV-2 INV-9: oversized program writes run once and return a shared pageable handle", async () => {
     await checkLargeProgramWrite(executor);

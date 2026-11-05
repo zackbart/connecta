@@ -55,6 +55,29 @@ function deployment(options: { classification?: Record<string, Record<string, "r
         },
       },
       {
+        name: "list_people",
+        description: "List people",
+        annotations: { readOnlyHint: true },
+        inputSchema: { type: "object" },
+        handler: async () => ({
+          people: Array.from({ length: 1_000 }, (_, id) => ({
+            id: `p${id}`,
+            name: `Person ${id}`,
+            active: id % 2 === 0,
+          })),
+          has_more: false,
+        }),
+      },
+      {
+        name: "list_created",
+        description: "List created people",
+        annotations: { readOnlyHint: false, destructiveHint: false },
+        inputSchema: { type: "object" },
+        handler: async () => ({
+          people: Array.from({ length: 1_000 }, (_, id) => ({ id: `p${id}`, name: `Person ${id}` })),
+        }),
+      },
+      {
         name: "export.all",
         description: "Export everything",
         annotations: { readOnlyHint: true },
@@ -219,6 +242,8 @@ describe("native tool surface", () => {
         [
           "crm__WRITE__create_person",
           "crm__get_person",
+          "crm__WRITE__list_created",
+          "crm__list_people",
           await nativeToolName("crm", "export.all", "read"),
           "execute_code",
           "authorize_connector",
@@ -1308,6 +1333,70 @@ describe("native tool surface", () => {
     expect(make({ executeCode: false })).toThrow('ConnectaConfig.pools.x.executeCode needs surface: "native"');
     expect(make({ surface: "both" })).toThrow('ConnectaConfig.pools.x.surface must be "meta" or "native".');
     expect(make({ surface: "native", executeCode: false })).not.toThrow();
+  });
+});
+
+describe("previews of reads over the cap, by surface", () => {
+  const notice = (result: { content: Array<{ text: string }> }) => {
+    const text = result.content[0]!.text;
+    return { text, notice: JSON.parse(text.slice(0, text.indexOf("\n"))), body: text.slice(text.indexOf("\n") + 1) };
+  };
+
+  it("offers the program on a meta pool", async () => {
+    const { connecta, token } = await admitted();
+    const direct = (
+      await rpc(
+        connecta,
+        token,
+        "meta",
+        "tools/call",
+        { name: "call_tool", arguments: { address: "crm.list_people", args: {} } },
+        false,
+      )
+    ).result;
+    const { notice: seen, body } = notice(direct);
+    expect(seen.rows).toMatchObject({ path: "people", count: 1_000, keys: ["id", "name", "active"] });
+    expect(seen.nextAction.tool).toBe("execute_code");
+    expect(JSON.parse(body).has_more).toBe(false);
+  });
+
+  it("offers it on a native pool with code, through the tool's own name", async () => {
+    const { connecta, token } = await admitted();
+    const direct = (await rpc(connecta, token, "native", "tools/call", { name: "crm__list_people", arguments: {} }))
+      .result;
+    const { notice: seen } = notice(direct);
+    expect(seen.rows.count).toBe(1_000);
+    expect(seen.hint).toContain("execute_code");
+    expect(seen.nextAction.tool).toBe("execute_code");
+  });
+
+  it("keeps the first bytes and read_result on a native pool without code, which lists no program", async () => {
+    const { connecta, token } = await admitted();
+    const listed = (await rpc(connecta, token, "nocode", "tools/list", {})).result.tools.map(
+      (tool: { name: string }) => tool.name,
+    );
+    expect(listed).toContain("read_result");
+    expect(listed).not.toContain("execute_code");
+    const direct = (await rpc(connecta, token, "nocode", "tools/call", { name: "crm__list_people", arguments: {} }))
+      .result;
+    const { notice: seen } = notice(direct);
+    expect(seen.nextAction.tool).toBe("read_result");
+    expect(seen).not.toHaveProperty("rows");
+    expect(seen.nextOffset).toBe(24_000);
+  });
+
+  it("INV-9: keeps a write's first bytes and its warning on every surface", async () => {
+    const { connecta, token } = await admitted();
+    for (const [pool, name, args] of [
+      ["meta", "call_destructive_tool", { address: "crm.list_created", args: {} }],
+      ["native", "crm__WRITE__list_created", {}],
+    ] as const) {
+      const direct = (await rpc(connecta, token, pool, "tools/call", { name, arguments: args }, false)).result;
+      const { notice: seen } = notice(direct);
+      expect(seen.hint).toContain("This write already ran");
+      expect(seen).not.toHaveProperty("rows");
+      expect(seen.nextOffset).toBe(24_000);
+    }
   });
 });
 

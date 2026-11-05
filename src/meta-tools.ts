@@ -55,6 +55,7 @@ import {
 } from "./registry.js";
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
+import { isWriteLike } from "./tool-safety.js";
 import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
@@ -62,6 +63,7 @@ import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
 import type { Logger, ToolDef } from "./types.js";
 import { PROGRAM_RESULT_PAGE_BYTES, PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
+import { previewResult, type ResultPreview } from "./result-preview.js";
 import type { NativeCallRoute } from "./native-tools.js";
 
 export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
@@ -310,6 +312,13 @@ interface ResultStash {
   held?: { results: HeldResults; passed: number; format: "json" | "text"; binary: boolean };
   /** A program return no larger than this is offered whole, to reduce, in nextAction. */
   readBytes?: number;
+  /**
+   * The tool that runs a preview's program on this surface; without one a read
+   * past its cap keeps its first bytes. A paging tool does not stand in: the rows
+   * a preview leaves out could only be read a page at a time, the route that lost
+   * the answer in documentation/meta-tools.md#result-representation.
+   */
+  programTool?: string;
 }
 
 /** Calls a whole-result loop leaves the program, so it can also act on what it finds. */
@@ -807,6 +816,40 @@ function noticeFirst(notice: object, preview: string): ToolResult {
 }
 
 /**
+ * The view of a read past its cap, or undefined for its first bytes. A call that
+ * may have written is never reshaped, whatever a deployment override calls it: its
+ * result is its only copy, and repeating it to look again is forbidden (INV-9).
+ */
+function previewOf(text: string, bytes: Uint8Array, results: ResultStash, format: "json" | "text") {
+  if (!results.programTool || results.write) return undefined;
+  // The program this offers has to reach every byte within the run's host calls.
+  if (!loopFits(results.cap, bytes.length, results.programHostCalls ?? CONFIG_DEFAULTS.execute.maxHostCalls))
+    return undefined;
+  return previewResult(text, format, results.cap);
+}
+
+/**
+ * A preview's notice. It says what the body holds and what it leaves out, and
+ * since a host may prompt for or refuse the program, what to do without it.
+ */
+function previewNotice(view: ResultPreview, id: string, totalBytes: number, tool: string) {
+  return {
+    truncated: true,
+    resultId: id,
+    totalBytes,
+    ...view.fields,
+    hint: `${view.shown} All of it is retained for ${RESULT_TTL_SECONDS / 60} minutes: run nextAction in ${tool}, editing its last line to ${view.noun === "rows" ? "filter, join or count the rows" : "search for what you need"}, instead of reading pages by hand. If ${tool} is refused or unavailable, the rest can't be read here: narrow this read with its own filter, limit or fields arguments, or say what was not read.`,
+    nextOffset: 0,
+    nextAction: {
+      tool,
+      arguments: {
+        code: `async () => { let text = "", offset = 0, page; do { page = await connecta.result(${JSON.stringify(id)}, { offset }); text += page.text; offset = page.nextOffset; } while (page.hasMore); ${view.reduce} }`,
+      },
+    },
+  };
+}
+
+/**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
  * full text and return a JSON truncation notice pointing at connecta.result,
  * followed by the first `cap` bytes. The preview is a byte prefix of what
@@ -815,7 +858,13 @@ function noticeFirst(notice: object, preview: string): ToolResult {
  * decision doesn't encode it twice.
  */
 
-const guardEncoded = function (text: string, bytes: Uint8Array, results: ResultStash, cap: number) {
+const guardEncoded = function (
+  text: string,
+  bytes: Uint8Array,
+  results: ResultStash,
+  cap: number,
+  format: "json" | "text",
+) {
   return authFlow<GuardedResult<ToolResult>>(function* () {
     if (bytes.length <= cap) {
       return {
@@ -834,13 +883,19 @@ const guardEncoded = function (text: string, bytes: Uint8Array, results: ResultS
         bytes: head.length,
       }),
     );
+    // A preview needs the retained copy its program reads, so a failed stash keeps the first bytes.
+    const view = notice.resultId === undefined ? undefined : previewOf(text, bytes, results, format);
+    if (view && notice.resultId !== undefined) {
+      const shown = previewNotice(view, notice.resultId, bytes.length, results.programTool!);
+      return { result: noticeFirst(shown, view.body), truncated: true };
+    }
     return { result: noticeFirst(notice, dec.decode(head)), truncated: true };
   });
 };
 
 /** {@link guardEncoded} over a string that has not been measured yet. */
 
-const guardText = function (text: string, results: ResultStash, cap: number) {
+const guardText = function (text: string, results: ResultStash, cap: number, format: "json" | "text") {
   return authFlow<GuardedResult<ToolResult>>(function* () {
     // `JSON.stringify`'s type says `string` where its behavior says `string |
     // undefined`, so TypeScript alone does not keep a non-string out of here.
@@ -849,7 +904,7 @@ const guardText = function (text: string, results: ResultStash, cap: number) {
     // through it the way issue #42 describes.
     const serialized: string = typeof text === "string" ? text : serializeResultText(text);
     const body = results.secrets?.text(serialized) ?? serialized;
-    return yield* upwardStep(guardEncoded(body, enc.encode(body), results, cap));
+    return yield* upwardStep(guardEncoded(body, enc.encode(body), results, cap, format));
   });
 };
 
@@ -908,7 +963,7 @@ function escapedHeadOf(bytes: Uint8Array, cap: number): string {
  * the full envelope is stashed and pages through `connecta.result`.
  */
 
-const guardContent = function (content: TextContent[], results: ResultStash, cap: number) {
+const guardContent = function (content: TextContent[], results: ResultStash, cap: number, format: "json" | "text") {
   return authFlow<GuardedResult<ToolResult>>(function* () {
     content = results.secrets?.redact({ content }).content ?? content;
     const only = content.length === 1 ? content[0] : undefined;
@@ -916,7 +971,7 @@ const guardContent = function (content: TextContent[], results: ResultStash, cap
       const bytes = enc.encode(only.text);
       // Under the cap the block passes through untouched, annotations included.
       if (bytes.length <= cap) return { result: { content }, truncated: false };
-      return yield* upwardStep(guardEncoded(only.text, bytes, results, cap));
+      return yield* upwardStep(guardEncoded(only.text, bytes, results, cap, format));
     }
     let text: string;
     try {
@@ -1057,6 +1112,8 @@ function metaToolsForRequest(
     downstreamInput?: boolean;
     /** A native endpoint without execute_code: truncation notices page with read_result. */
     pagingTool?: "read_result" | undefined;
+    /** The tool on this request's surface that runs programs, which a read past its cap may offer. */
+    programTool?: string | undefined;
     /** Route names this request's text uses; meta by default. */
     routes?: AgentRouteNames | undefined;
     /** `execute.maxResultChars`, which sizes the pages truncation notices ask programs to read. */
@@ -1213,9 +1270,10 @@ function metaToolsForRequest(
                       tool: resolved.definition.name,
                       classification: resolved.definition.classification === "read" ? "read" : "write",
                     },
-                    write: resolved.definition.classification !== "read",
+                    write: isWriteLike(resolved.definition),
                     cap,
                     ...(opts.pagingTool ? { pagingTool: opts.pagingTool } : {}),
+                    ...(opts.programTool ? { programTool: opts.programTool } : {}),
                     ...(opts.maxProgramResultChars !== undefined ? { programChars: opts.maxProgramResultChars } : {}),
                     ...(opts.maxProgramHostCalls !== undefined ? { programHostCalls: opts.maxProgramHostCalls } : {}),
                     set: authMethod((id: string, value: string[], ttlSeconds: number) =>
@@ -1260,14 +1318,14 @@ function metaToolsForRequest(
                         },
                       ];
                     }
-                    const guarded = yield* upwardStep(guardContent(content, results, cap));
+                    const guarded = yield* upwardStep(guardContent(content, results, cap, format));
                     // Native blocks and bounded previews are the result. A format-only
                     // structuredContent hides them in clients that prefer that field.
                     guarded.result._meta = { "dev.connecta/format": format };
                     return processed(guarded.result, guarded.truncated);
                   }
                   const value = result;
-                  const guarded = yield* upwardStep(guardText(serializeResultText(value), results, cap));
+                  const guarded = yield* upwardStep(guardText(serializeResultText(value), results, cap, format));
                   guarded.result._meta = { "dev.connecta/format": format };
                   return processed(guarded.result, guarded.truncated, { value });
                 }),
@@ -1871,6 +1929,8 @@ export function registerMetaTools(
      * has no execute_code, and return the route native tool calls take.
      */
     native?: { executeCode: boolean; catalogErrors: string[]; staleCatalogs: string[] } | undefined;
+    /** The tool this request lists for programs, which a read past its cap may offer. */
+    programTool?: string | undefined;
     /** Route names this request's text uses; meta by default. */
     routes?: AgentRouteNames | undefined;
   },
@@ -1878,6 +1938,7 @@ export function registerMetaTools(
   const mt = createMetaTools(registry, ctx.baseUrl, {
     maxProgramResultChars: ctx.maxProgramResultChars,
     maxProgramHostCalls: ctx.maxProgramHostCalls,
+    programTool: ctx.programTool,
     routes: ctx.routes,
     ...(ctx.native && !ctx.native.executeCode ? { pagingTool: "read_result" as const } : {}),
     ...(ctx.native ? { activitySource: "native" as const } : {}),
