@@ -33,6 +33,7 @@ import {
   guardProgramReturn,
   jsonResult,
   pageProgramResult,
+  releaseStashedResult,
   type ProgramResultDependency,
   type ResultReadStage,
   type ToolResult,
@@ -40,6 +41,7 @@ import {
 import {
   PROGRAM_RESULT_INLINE_BYTES,
   PROGRAM_RESULT_PAGE_BYTES,
+  PROGRAM_RESULT_READ_BYTES,
   PROGRAM_RESULT_WIRE_BYTES,
   type ProgramResultHandle,
 } from "./program-result.js";
@@ -52,6 +54,8 @@ import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js
 import { EXECUTE_OUTPUT } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { readResource } from "./resource-read.js";
+import { failureRecord, logFailure } from "./operator-record.js";
+import { HeldResults, sealHeldResults } from "./result-seal.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import { normalizeTimeoutMs } from "./timeout.js";
@@ -62,7 +66,7 @@ import { executorProgram } from "./runtime/executor.js";
 import {
   connectorGuide,
   connectorGuideRequired,
-  connectorSkillName,
+  connectorInventoryTitle,
   hasConnectorGuides,
   SkillsRegistry,
 } from "./skills.js";
@@ -73,6 +77,13 @@ const EXECUTE_MAX_HOST_CALLS = CONFIG_DEFAULTS.execute.maxHostCalls;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
 /** Above every program in the recorded evals, below the QuickJS IPC ceiling. */
 const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
+/** All of one run's stash reclaim, in milliseconds of waiting on storage. */
+const RECLAIM_BUDGET_MS = 1_000;
+/**
+ * Reclaims per run. Each freed slot lets another read stash and page again, so unbounded
+ * reclaim keeps a program spending storage queries that a full stash would have ended.
+ */
+const RECLAIM_MAX_PER_RUN = 3;
 /**
  * The outer ceiling on one execution. It sits above both executors' own
  * deadlines (QuickJS 30s, the Dynamic Worker 60s), so a healthy executor
@@ -563,10 +574,14 @@ interface SandboxLimits {
   maxWrites?: number | undefined;
   /** The program's writes, for close and drain. */
   programWrites?: ProgramWrites | undefined;
+  /** What `connecta.result(id, { all: true })` delivers. */
+  readBytes?: number | undefined;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
   /** Set when a program read a result field off an unawaited host call. */
   unawaited?: { read: boolean } | undefined;
+  /** The run's retained results, which it seals when it ends. */
+  heldResults?: HeldResults | undefined;
 }
 
 /** Numeric accounting only; no addresses, arguments, or results. */
@@ -665,19 +680,48 @@ function sandboxProvider(
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
   // These are transfer cursors only. All result bytes live in the existing stash.
-  const transfers = new Map<string, { id: string; offset: number }>();
+  // `reclaim` marks a read's stash only this transfer can name, because the guest never saw
+  // its handle. A guest-supplied id stays readable until it expires; a write's stash expires too.
+  const readBytes = limits.readBytes ?? PROGRAM_RESULT_READ_BYTES;
+  const transfers = new Map<
+    string,
+    { id: string; offset: number; reclaim?: { totalBytes: number }; finished?: boolean }
+  >();
   const nativeResults = new Map<string, GuestNativeBlock[]>();
-  const transportResult = (value: { format: string }) => {
+  const transportResult = (value: { format: string }, write: boolean) => {
     if (value.format === "paged") {
       const handle = value as ProgramResultHandle;
       if (handle.resultId && handle.totalBytes <= PROGRAM_RESULT_INLINE_BYTES) {
         const transfer = `transfer:${crypto.randomUUID()}`;
-        transfers.set(transfer, { id: handle.resultId, offset: 0 });
-        return { transfer, handle };
+        transfers.set(transfer, {
+          id: handle.resultId,
+          offset: 0,
+          ...(write ? {} : { reclaim: { totalBytes: handle.totalBytes } }),
+        });
+        return { transfer, handle, ...(write ? {} : { reclaim: true }) };
       }
     }
     return value;
   };
+  // Slow storage may cost a run its reclaim, never its answer: all of a run's reclaim shares
+  // this much time, and once it's spent the rest of the run's entries just wait to expire.
+  let reclaimLeftMs = RECLAIM_BUDGET_MS;
+  let reclaimsLeft = RECLAIM_MAX_PER_RUN;
+  const reclaim = (id: string, totalBytes: number) =>
+    Effect.suspend(() => {
+      if (reclaimLeftMs <= 0 || reclaimsLeft <= 0) return Effect.void;
+      reclaimsLeft--;
+      const started = Date.now();
+      return releaseStashedResult(registry, limits.heldResults, id, totalBytes).pipe(
+        Effect.timeoutOrElse({ duration: Duration.millis(reclaimLeftMs), orElse: () => Effect.void }),
+        Effect.ignore,
+        Effect.ensuring(
+          Effect.sync(() => {
+            reclaimLeftMs -= Date.now() - started;
+          }),
+        ),
+      );
+    });
   const dispatchDeadlineAt = limits.readDeadlineAt ?? limits.programDeadlineAt;
   /** Budget and account for writes a writable endpoint admits. */
   const invocationContext = (
@@ -714,6 +758,7 @@ function sandboxProvider(
           // Dispatch succeeded before presentation began. Cancellation of paging
           // cannot turn this completed write into an unknown or failed write.
           sending.settle?.("ok");
+          const write = resolved.definition.classification !== "read";
           const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
             authCall<Awaited<ReturnType<typeof pageProgramResult>>>(pageProgramResult, [
               registry,
@@ -725,6 +770,8 @@ function sandboxProvider(
               requestScope,
               { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
               wireBytes,
+              limits.heldResults,
+              readBytes,
             ]);
           const envelope =
             resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
@@ -750,7 +797,7 @@ function sandboxProvider(
             !Array.isArray(content) ||
             !content.some((block) => block && ["image", "audio", "resource", "resource_link"].includes(block.type))
           ) {
-            return transportResult(yield* page(value, format));
+            return transportResult(yield* page(value, format), write);
           }
           const unavailablePresentation = (): ProgramResultHandle => ({
             format: "paged",
@@ -777,7 +824,7 @@ function sandboxProvider(
             }
           } catch (error) {
             if (!(error instanceof NativePresentationLimit)) throw error;
-            const result = dataKey === undefined ? undefined : transportResult(yield* page(value, format));
+            const result = dataKey === undefined ? undefined : transportResult(yield* page(value, format), write);
             const notice = unavailablePresentation();
             return result ? { value: result, native: { value: notice } } : notice;
           }
@@ -792,7 +839,7 @@ function sandboxProvider(
           });
           let valueResult: unknown;
           if (native.format === "paged") {
-            valueResult = result ? transportResult(result) : undefined;
+            valueResult = result ? transportResult(result, write) : undefined;
             if (!native.resultId || native.totalBytes > PROGRAM_RESULT_INLINE_BYTES) {
               return valueResult ? { value: valueResult, native: { value: native } } : native;
             }
@@ -802,14 +849,14 @@ function sandboxProvider(
           // absent or connector-owned blocks.
           if (!retained) {
             const notice = native.format === "paged" ? native : unavailablePresentation();
-            const valueResult = result ? transportResult(result) : undefined;
+            const valueResult = result ? transportResult(result, write) : undefined;
             return valueResult ? { value: valueResult, native: { value: notice } } : notice;
           }
           const ref = crypto.randomUUID();
           nativeResults.set(ref, retained);
           return {
             ...(valueResult ? { value: valueResult } : {}),
-            native: { ref, value: transportResult(native), dataKey },
+            native: { ref, value: transportResult(native, write), dataKey },
           };
         }),
     ),
@@ -1009,6 +1056,7 @@ function sandboxProvider(
   const meta = createMetaTools(registry, baseUrl, {
     readOnly: limits.readOnly,
     requestScope,
+    heldResults: limits.heldResults,
     onResultRead: (dependencies) => limits.resultDependencies?.push(...dependencies),
   });
   const catalogDependency = (connector: string, tool?: string) => {
@@ -1030,8 +1078,16 @@ function sandboxProvider(
       if (limits.unawaited) limits.unawaited.read = true;
     },
     call,
-    result: (id, options, signal, onStage) =>
-      Effect.tryPromise({
+    result: (id, options, signal, onStage) => {
+      const finished = typeof id === "string" ? transfers.get(id) : undefined;
+      if (finished?.finished) {
+        // The prelude has the whole value, so a read gives its bytes back.
+        transfers.delete(id as string);
+        return finished.reclaim
+          ? reclaim(finished.id, finished.reclaim.totalBytes).pipe(Effect.as({}))
+          : Effect.succeed({});
+      }
+      return Effect.tryPromise({
         try: async () => {
           const transfer = typeof id === "string" ? transfers.get(id) : undefined;
           const transferId = id;
@@ -1051,6 +1107,14 @@ function sandboxProvider(
             );
           }
           const args = { ...((options ?? {}) as Record<string, unknown>) };
+          const whole = args.all === true;
+          if (args.all === false) delete args.all;
+          if ((whole && Object.keys(args).length > 1) || (args.all !== undefined && !whole)) {
+            throw new InvocationFailure(
+              utilityRecovery("invalid_args", "Use connecta.result(handleOrId, { all: true }) with no other options."),
+            );
+          }
+          delete args.all;
           if (
             Object.keys(args).some((key) => !["page", "offset", "maxBytes"].includes(key)) ||
             (args.page !== undefined &&
@@ -1092,12 +1156,27 @@ function sandboxProvider(
             );
           if (transfer) {
             if (page.structuredContent?.hasMore) transfer.offset = page.structuredContent.nextOffset as number;
+            else if (transfer.reclaim) transfer.finished = true;
             else transfers.delete(transferId as string);
+          }
+          if (whole) {
+            const totalBytes = page.structuredContent?.totalBytes as number;
+            if (totalBytes > readBytes) {
+              throw guestFailure(
+                "result_too_large",
+                `This result is ${totalBytes} bytes and connecta.result(id, { all: true }) reads at most ${readBytes}. Page it with { offset } and keep only what you need from each page.`,
+              );
+            }
+            if (!page.structuredContent?.hasMore) return page.structuredContent;
+            const started = `transfer:${crypto.randomUUID()}`;
+            transfers.set(started, { id, offset: page.structuredContent.nextOffset as number });
+            return { ...page.structuredContent, transfer: started };
           }
           return page.structuredContent;
         },
         catch: (err) => err,
-      }),
+      });
+    },
     skill: (name, _options, utilitySignal) =>
       Effect.tryPromise({
         try: async () => {
@@ -1289,7 +1368,8 @@ function sandboxProvider(
         return [
           name,
           (...args: unknown[]) => {
-            if (budgetFailure) return stopped;
+            // Once sealing begins the run's secret set is final, so nothing new may start.
+            if (budgetFailure || limits.heldResults?.accepts() === false) return stopped;
             // Uncounted: one per run; any further call through the bridge ends the run.
             if (budget === "once") {
               if (++notices > 1)
@@ -1339,7 +1419,7 @@ function sandboxProvider(
               activity?.recordOperation && ["search", "describe", "result", "skill"].includes(name)
                 ? operationActivity(activity, registry, name as "search" | "describe" | "result" | "skill", guarded)
                 : guarded;
-            const settled = runEdge(
+            const running = runEdge(
               operationEffect.pipe(
                 Effect.catch((error) => {
                   if (deadline && hostAccessSignal?.aborted)
@@ -1366,7 +1446,9 @@ function sandboxProvider(
                   return typedFailure(error);
                 }),
               ),
-            ).then(
+            );
+            limits.heldResults?.track(running);
+            const settled = running.then(
               (value) => {
                 if (counted) hostCalls.succeeded++;
                 return budgetFailure ? stopped : redactAgentOutput(sentSecrets, value);
@@ -1599,6 +1681,7 @@ export function createExecuteTool(
   };
   const hostCallTimeoutMs = resolveBudget(config.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS);
   const maxResultChars = resolveBudget(config.maxResultChars, MAX_EXECUTE_RESULT_CHARS);
+  const readBytes = resolveBudget(executor.maxReadBytes, PROGRAM_RESULT_READ_BYTES);
 
   const play = (
     program: string,
@@ -1608,10 +1691,12 @@ export function createExecuteTool(
     hostCalls: HostCalls,
     programWrites: ProgramWrites,
     unawaited: { read: boolean },
+    retention: { note?: string },
     ceiling: ResponseCeiling,
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
+      const heldResults = new HeldResults(sentSecrets, requestOwner(requestScope).credentialReads);
       const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
       const emitted = new EmitCollector(
         resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
@@ -1689,9 +1774,11 @@ export function createExecuteTool(
                 maxWrites: config.maxWrites,
                 routes: config.routes,
                 programWrites,
+                readBytes,
                 resultDependencies,
                 dispatchController,
                 unawaited,
+                heldResults,
               },
               requestScope,
             ),
@@ -1773,7 +1860,9 @@ export function createExecuteTool(
             maxResultChars - emitted.textChars,
             programWrites.hasSucceeded,
             maxResultChars,
+            heldResults,
             ceiling.answerBy,
+            readBytes,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
@@ -1784,7 +1873,20 @@ export function createExecuteTool(
           budgetFailure ? Effect.sleep(Duration.millis(1)).pipe(Effect.as(exit)) : Effect.succeed(exit),
         ),
       );
-      return Effect.flatMap(exited, (exit) => {
+      // Every way a run answers can carry a result id, so every one of them seals, by the
+      // time the response must be on its way. A sealing cut short leaves entries unreadable.
+      const sealRun = Effect.suspend(() =>
+        sealHeldResults(heldResults, registry.resultsStorage(), ceiling.answerBy, callerSignal),
+      ).pipe(
+        Effect.tap(({ refused, refusedWrite }) =>
+          Effect.sync(() => {
+            if (refused === 0) return;
+            retention.note = refusedWrite ? RESULTS_REFUSED_WRITE_NOTE : RESULTS_REFUSED_NOTE;
+            logFailure(logger, "result paging unavailable", failureRecord({}));
+          }),
+        ),
+      );
+      const answered = Effect.flatMap(exited, (exit) => {
         // A synchronous fire-and-forget burst can also settle its executor in
         // this turn. The host's terminal refusal always wins over that value.
         if (budgetFailure instanceof HostCallBudgetExceeded) {
@@ -1815,6 +1917,7 @@ export function createExecuteTool(
           ),
         );
       });
+      return Effect.tap(answered, () => sealRun);
     });
 
   return authMethod(
@@ -1827,6 +1930,7 @@ export function createExecuteTool(
         const hostCalls: HostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
         const programWrites = new ProgramWrites();
         const unawaited = { read: false };
+        const retention: { note?: string } = {};
         const ceiling = responseCeiling(config.requestStartedAt ?? Date.now(), watchdog.ms);
         const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
@@ -1848,6 +1952,7 @@ export function createExecuteTool(
             hostCalls,
             programWrites,
             unawaited,
+            retention,
             ceiling,
           );
         });
@@ -1867,7 +1972,12 @@ export function createExecuteTool(
               // Calls abandoned by the guest are failed when the run cancels them.
               // Connecta attaches its own integers after the envelope check.
               const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
-              const note = finishedRunNote(result, hostCalls.attempted, programWrites.sent, unawaited.read);
+              const note = [
+                finishedRunNote(result, hostCalls.attempted, programWrites.sent, unawaited.read),
+                retention.note,
+              ]
+                .filter(Boolean)
+                .join(" ");
               result.structuredContent = {
                 ...result.structuredContent,
                 ...(note ? { note } : {}),
@@ -1885,6 +1995,9 @@ export function createExecuteTool(
   );
 }
 
+const RESULTS_REFUSED_NOTE =
+  "A result this run retained was not kept for later runs, so paging its id from a new program may fail. Rerun the read for a fresh result.";
+const RESULTS_REFUSED_WRITE_NOTE = `${RESULTS_REFUSED_NOTE} A write's output among them may not be retrievable: that write already ran, so do not repeat it.`;
 const UNAWAITED_HINT = "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.";
 const SENT_NOTE =
   "Its writes were already sent. Do not rerun it, even with a fix: read their targets in a new program.";
@@ -2078,47 +2191,38 @@ function discardedEmits(emitted: EmitCollector): {
   return emitted.blocks.length > 0 ? { emittedDiscarded: emitted.blocks.length } : {};
 }
 
-const inventoryWords = (text: string) =>
-  text
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}]+/u)
-    .filter(Boolean);
-
-/** A title that only respells the id ("Google Calendar" for google_calendar) adds nothing. */
-function titleAddsInformation(id: string, title: string): boolean {
-  const words = inventoryWords(title);
-  const idWords = inventoryWords(id);
-  return words.join("") !== idWords.join("") && words.some((word) => !idWords.includes(word));
-}
+/** Follows the inventory only when an entry shown carries the mark; `*` cannot appear in an id. */
+const REQUIRED_GUIDE_LEGEND = ' *Read connecta.skill("connector:<id>") before its first call.';
 
 /**
  * Every configured connector, from configuration alone. Detail degrades before
- * names do: titles go first, then optional guide pointers, and only past the
- * byte cap do whole entries give way to an exact omission count.
+ * names do: titles go first, and only past the byte cap do whole entries give
+ * way to an exact omission count. Search and describe name optional guides.
  */
 function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"]>): string {
   const prefix = "Connectors: ";
   if (connectors.length === 0) return `${prefix}none.`;
   const fits = (line: string) => boundedEchoText(line, CONNECTOR_INVENTORY_MAX_BYTES) === line;
-  const entry = (connector: (typeof connectors)[number], detail: number): string => {
-    const notes: string[] = [];
-    const title = connector.title?.replace(/\s+/g, " ").trim();
-    if (detail >= 2 && title && titleAddsInformation(connector.id, title)) notes.push(boundedEchoText(title, 45));
-    const required = connectorGuideRequired(connector);
-    if (connectorGuide(connector) && (required || detail >= 1)) {
-      const fetch = `skills({name:"${connectorSkillName(connector.id)}"})`;
-      notes.push(required ? `read first: ${fetch}` : `guide: ${fetch}`);
-    }
-    return notes.length > 0 ? `${connector.id} (${notes.join("; ")})` : connector.id;
+  const guideFirst = (connector: (typeof connectors)[number]) =>
+    connectorGuide(connector) !== undefined && connectorGuideRequired(connector);
+  const legend = (shown: typeof connectors) => (shown.some(guideFirst) ? REQUIRED_GUIDE_LEGEND : "");
+  const entry = (connector: (typeof connectors)[number], titled: boolean): string => {
+    const name = guideFirst(connector) ? `${connector.id}*` : connector.id;
+    const title = titled ? connectorInventoryTitle(connector) : undefined;
+    return title ? `${name} (${title})` : name;
   };
-  for (const detail of [2, 1, 0]) {
-    const line = `${prefix}${connectors.map((connector) => entry(connector, detail)).join(", ")}.`;
+  for (const titled of [true, false]) {
+    const line = `${prefix}${connectors.map((connector) => entry(connector, titled)).join(", ")}.${legend(connectors)}`;
     if (fits(line)) return line;
   }
-  const entries = connectors.map((connector) => entry(connector, 0));
+  const truncated = (shown: number) => {
+    const kept = connectors.slice(0, shown);
+    const names = kept.map((connector) => entry(connector, false)).join(", ");
+    return `${prefix}${names}${shown > 0 ? "; " : ""}+${connectors.length - shown} more.${legend(kept)}`;
+  };
   let shown = 0;
-  while (fits(`${prefix}${entries.slice(0, shown + 1).join(", ")}; +${entries.length - shown - 1} more.`)) shown++;
-  return `${prefix}${entries.slice(0, shown).join(", ")}${shown > 0 ? "; " : ""}+${entries.length - shown} more.`;
+  while (fits(truncated(shown + 1))) shown++;
+  return truncated(shown);
 }
 
 const executeDescription = (
@@ -2131,16 +2235,16 @@ const executeDescription = (
   native = false,
   routes: AgentRouteNames = META_ROUTES,
 ) =>
-  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the client approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the client approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
+  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may read and write; the host approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may read and write; the host approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
 ${connectorInventory(connectors)}
 
-Use async () => { ... }, no arguments. No portable ambient capabilities. API:
+Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or timers. API:
 \`\`\`ts
 ${GUEST_API_DECLARATION}
 \`\`\`
-search and describe return objects, not arrays. Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle; read it with connecta.result(handle, { offset }), which pages by UTF-8 byte offset. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call. Promise.allSettled keeps per-call errors, but exceeding the host-call limit ends the program. Near it, return page.nextCursor; resume next program. When paging is available, an oversized return carries resultId and nextAction.
+search and describe return objects, not arrays.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle: follow its hint. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call; over the limit the program returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction when paging is available.
 
-Never repeat writes for output. emit(result) or emit(block) from result.content forwards MCP blocks unchanged; an authored Block's image/audio data is base64. emit needs no await. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes. Text shares result cap. connecta.skill("usage"): repair${connectorGuides ? ", guide handling" : ""}.`;
+${readOnly ? "" : "Never repeat writes for output. "}emit(result) or emit(block) forwards MCP blocks; authored image/audio data is base64. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; text shares the return cap. connecta.skill("usage"): repair.`;
 
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and
@@ -2150,9 +2254,9 @@ const EXECUTE_INPUT = advertisedSchema(
     code: z
       .string()
       .describe(
-        "One complete zero-argument JavaScript async arrow: async () => { ... }. Use the provided connecta global to discover, call, and return the reduced answer. At most 65,536 UTF-8 bytes.",
+        "Source text of one zero-argument JavaScript async arrow: async () => { ...; return answer; }. Pass a string, even from a JavaScript host. Use the connecta global. At most 65,536 UTF-8 bytes.",
       ),
-    diagnostics: z.boolean().optional().describe("Add request-local, payload-free timing and result-size summaries."),
+    diagnostics: z.boolean().optional().describe("Add timing and result-size summaries."),
   }),
 );
 

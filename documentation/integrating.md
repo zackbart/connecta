@@ -202,7 +202,7 @@ only in deployment code through the existing `classification` map:
 
 ```ts
 classification: {
-  crm: { list_tickets: "read", update_ticket: "write", internal_export: "hidden" },
+  crm: { list_tickets: "read", save_view: "read-repeatable", update_ticket: "write", internal_export: "hidden" },
 },
 ```
 
@@ -210,8 +210,30 @@ classification: {
 and describe and refuses guessed-name calls, including programs. An absent
 runtime tool leaves its override dormant with an operator warning once per catalog change; the override
 applies if that exact name returns. Unknown static tool names fail construction.
-No argument can change these rules. A write-to-read override changes exposure
-and approval. Replay and failure decisions treat a call as a write when either its
+No argument can change these rules. `"read"` depends on what the tool's source
+states:
+
+- **The source explicitly declares a write** (`readOnlyHint: false`,
+  `destructiveHint: true`, or contradictory hints): the tool stays a write and is
+  never served read-annotated, because a host may resend a read-annotated call
+  after a connection failure. `call_tool` refuses it with the next step, naming
+  `call_destructive_tool`. It runs on `call_destructive_tool` and `execute_code`, and
+  read-only endpoints and connectors omit and refuse it. An operator warning names the override once per catalog change.
+- **The source is silent** (no `readOnlyHint` and no `destructiveHint: true`): the
+  override is the only evidence, so the tool serves as a read with read
+  annotations. Setting it asserts that the call is safe to repeat, because the host
+  may resend it and Connecta cannot tell a resend from a new call.
+
+`"read-repeatable"` is the opt-in for a tool whose source declares a write but which
+you have checked: `crm.save_view` above adds one immutable record. It serves as a read
+on every route, with read annotations, on read-only endpoints, through `call_tool`,
+in programs and under its plain native name. You accept that a host may resend it after
+a connection failure, so the vendor can receive the call twice; only use it where a
+repeat is harmless. Connecta itself still sends it at most once, as the next paragraph
+describes. Prefer `"read"`: if a vendor later declares a write, `"read"` fails safe and
+`"read-repeatable"` does not.
+
+Replay and failure decisions treat a call as a write when either its
 effective class or its source class is write. The source class is the verified
 server annotations;
 deployment overrides never change it. A write gets one wire attempt across
@@ -229,8 +251,8 @@ Remote catalogs evolve. Discovery, direct calls, and programs enforce the
 current annotations and `ConnectaConfig.classification` overrides. A leftover
 `classify` option throws at construction and names that map. Provider reviews,
 schema pins, `optional`, and `unlisted: "hide"` are removed. Missing or
-contradictory hints make the source class write, even when an override makes
-the effective class read. Review behavior before setting a read override;
+contradictory hints make the source class write. Under `"read"`, contradictory hints also keep
+the effective class write and missing hints do not. `"read-repeatable"` serves either as a read. Review behavior before setting a read override;
 classification does not replace downstream scopes or caller grants.
 
 ## A hand-written HTTP capability

@@ -543,23 +543,30 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
   };
 
   /**
-   * The owned credential transport, with the configured token-request
-   * headers laid over the SDK's own. With discovery and registration answered
-   * from configuration the token endpoint is the only URL the SDK fetches here;
-   * the check keeps the headers on it even if that ever changes.
+   * The token request as sent, with the configured token-request headers laid
+   * over the SDK's own, and every credential it carries registered. With
+   * discovery and registration answered from configuration the token endpoint is
+   * the only URL the SDK fetches here; the check keeps the headers on it even if
+   * that ever changes.
    */
+  const registeredTokenRequest = (secrets: SentSecrets, input: string | URL, init: RequestInit = {}): RequestInit => {
+    const url = new URL(input);
+    const request: RequestInit = { ...init, redirect: "manual" };
+    if (settings.tokenRequestHeaders.length && `${url.origin}${url.pathname}` === settings.identity) {
+      const headers = new Headers(init.headers);
+      for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
+      for (const [name, value] of settings.tokenRequestHeaders)
+        if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) secrets.header(value);
+      request.headers = headers;
+    }
+    trackRemoteClientRequest(secrets, input, request);
+    return request;
+  };
+
+  /** The owned credential transport. */
   const tokenEndpointFetch = authMethod((secrets: SentSecrets, input: string | URL, init: RequestInit = {}) => {
     return authFlow<Response>(function* () {
-      const url = new URL(input);
-      const request: RequestInit = { ...init, redirect: "manual" };
-      if (settings.tokenRequestHeaders.length && `${url.origin}${url.pathname}` === settings.identity) {
-        const headers = new Headers(init.headers);
-        for (const [name, value] of settings.tokenRequestHeaders) headers.set(name, value);
-        for (const [name, value] of settings.tokenRequestHeaders)
-          if (!PUBLIC_TOKEN_REQUEST_HEADERS.get(name.toLowerCase())?.has(value)) secrets.header(value);
-        request.headers = headers;
-      }
-      trackRemoteClientRequest(secrets, input, request);
+      const request = registeredTokenRequest(secrets, input, init);
       // The coordinator or code-exchange wrapper authorizes this send. Refresh
       // claim submission may outlive the caller; this transport uses no
       // request-owned capability and changes no closed resource-call ledger.
@@ -569,7 +576,6 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         provider: id,
         method: request.method ?? "GET",
       };
-      secrets.request(input, request);
       const response = (yield authCall(sendCredentialPost, [
         input,
         request,
@@ -600,6 +606,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
     ) => {
       return authFlow<AuthResult>(function* () {
         const secrets = sentSecretsFor(ctx);
+        const owner = viewSignal(ctx, requestOwned || exchange !== undefined);
         const coordinated = coordinatorFor(ctx).coordinatedFetch(
           provider,
           authMethod((input: string | URL, init: RequestInit | undefined) => {
@@ -639,11 +646,12 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
               return (yield authCall(tokenEndpointFetch, [secrets, input, init])) as Response;
             });
           }),
-          viewSignal(ctx, requestOwned || exchange !== undefined),
+          owner,
           ctx.defer,
           undefined,
-          () => {
+          (input, init) => {
             guardedTransport(true);
+            if (!owner.aborted) registeredTokenRequest(secrets, input, init);
           },
         );
         return (yield authCall(auth, [

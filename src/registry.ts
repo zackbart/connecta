@@ -78,7 +78,12 @@ import {
   stashLedgerKeys,
 } from "./storage/keys.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
-import { carryToolClassification, classifyTool } from "./tool-safety.js";
+import {
+  carryToolClassification,
+  classifyTool,
+  sourceDeclaresWrite,
+  type ClassificationOverride,
+} from "./tool-safety.js";
 import type {
   CatalogAccessObservation,
   Connector,
@@ -162,7 +167,7 @@ function frozenFacts(tools: ToolDef[]): ToolDef[] {
 export interface RegistryOptions {
   publicUrl?: string | undefined;
   oauthClientName?: string | undefined;
-  classification?: Readonly<Record<string, Readonly<Record<string, "read" | "write" | "hidden">>>> | undefined;
+  classification?: Readonly<Record<string, Readonly<Record<string, ClassificationOverride>>>> | undefined;
   storage: KVStorage;
   /** Internal deployment root, preserved when a personal registry partitions storage. */
   rootStorage?: KVStorage;
@@ -301,8 +306,22 @@ export interface RegistryView {
     classification: "read" | "write",
     signal?: AbortSignal,
   ): Promise<boolean>;
-  /** Reserve deployment-wide capacity before writing a paging envelope's chunks. */
-  stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
+  /**
+   * Reserve deployment-wide capacity before writing a paging envelope's chunks.
+   * `holdFirst` charges the whole envelope but leaves chunk 0, which makes the
+   * result readable, for the caller to write once the result is sealed.
+   */
+  stashResult(
+    id: string,
+    chunks: readonly string[],
+    ttlSeconds: number,
+    options?: { readonly holdFirst?: boolean },
+  ): Promise<boolean>;
+  /**
+   * Give back a stashed result nobody can name any more. Best effort: a failure
+   * leaves it charged until its expiry.
+   */
+  releaseResult(id: string, chunkCount: number): Promise<void>;
   /**
    * Local declared-vs-stored credential mismatch, with no downstream I/O. With
    * `requestScope`, the read joins that request's read memo.
@@ -369,6 +388,9 @@ const STASH_COMPLETION_TIMEOUT_MS = 15_000;
 /** Reservation, chunk writes and completion share one finite outer budget. */
 const STASH_TIMEOUT_MS = STASH_WRITE_TIMEOUT_MS + STASH_COMPLETION_TIMEOUT_MS;
 
+/** Chunks one release deletes at a time; a stash holds at most 32. */
+const STASH_RELEASE_CONCURRENCY = 16;
+
 /** Stop waiting without starting background storage work after the deadline. */
 function completeStash(effect: Effect.Effect<unknown, unknown, Storage>): Effect.Effect<void, unknown, Storage> {
   return effect.pipe(
@@ -381,6 +403,11 @@ function completeStash(effect: Effect.Effect<unknown, unknown, Storage>): Effect
 
 /** One live stash charge: reservation id, bytes, and expiry (epoch ms). */
 type StashCharge = readonly [reservation: string, bytes: number, expiresAt: number];
+
+/** The reservation id of one result id, which is random and never reused. */
+function stashCharge(id: string): Effect.Effect<string, unknown> {
+  return Effect.tryPromise({ try: () => sha256Hex(id), catch: (error) => error });
+}
 
 /**
  * Live charges in a stored ledger. Anything malformed reads as empty: the
@@ -495,7 +522,7 @@ export class Registry implements RegistryView {
   private readonly observedOutputSchemas: ObservedOutputSchemas;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
-  private readonly classification: Readonly<Record<string, Readonly<Record<string, "read" | "write" | "hidden">>>>;
+  private readonly classification: Readonly<Record<string, Readonly<Record<string, ClassificationOverride>>>>;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
   private readonly oauthPartition = {};
@@ -570,8 +597,10 @@ export class Registry implements RegistryView {
     Object.freeze(this.classification);
     for (const [id, overrides] of Object.entries(this.classification)) {
       for (const [name, verdict] of Object.entries(overrides)) {
-        if (!name || (verdict !== "read" && verdict !== "write" && verdict !== "hidden")) {
-          throw new Error(`ConnectaConfig.classification.${id}.${name}: expected "read", "write", or "hidden"`);
+        if (!name || !["read", "read-repeatable", "write", "hidden"].includes(verdict)) {
+          throw new Error(
+            `ConnectaConfig.classification.${id}.${name}: expected "read", "read-repeatable", "write", or "hidden"`,
+          );
         }
       }
       const connector = this.connectors.get(id);
@@ -941,10 +970,17 @@ export class Registry implements RegistryView {
     id: string,
     chunks: readonly string[],
     ttlSeconds: number,
-    partition: string = scopes.results,
+    options: { readonly partition?: string; readonly holdFirst?: boolean } = {},
   ): Promise<boolean> {
     return runOnPartition(
-      registryEdgeProgram(Registry.prototype, this, "stashResult", id, chunks, ttlSeconds, partition),
+      registryEdgeProgram(Registry.prototype, this, "stashResult", id, chunks, ttlSeconds, options),
+      this.opts,
+    );
+  }
+
+  releaseResult(id: string, chunkCount: number, partition: string = scopes.results): Promise<void> {
+    return runOnPartition(
+      registryEdgeProgram(Registry.prototype, this, "releaseResult", id, chunkCount, partition),
       this.opts,
     );
   }
@@ -1179,15 +1215,16 @@ export class Registry implements RegistryView {
 
   private publishTool(id: string, tool: ToolDef): ToolDef {
     const override = this.classification[id]?.[tool.name];
+    const classification = classifyTool(tool, override === "hidden" ? undefined : override);
     return carryToolClassification(tool, {
       ...structuredClone(tool),
-      classification: classifyTool(tool, override === "hidden" ? undefined : override),
+      classification,
       ...(override !== undefined
         ? {
             annotations: {
               ...structuredClone(tool.annotations),
-              readOnlyHint: override === "read",
-              destructiveHint: override === "write",
+              readOnlyHint: override !== "hidden" && classification === "read",
+              destructiveHint: override !== "hidden" && classification === "write",
             },
           }
         : {}),
@@ -1205,7 +1242,7 @@ export class Registry implements RegistryView {
   private validateClassification(
     id: string,
     tools: readonly ToolDef[],
-    overrides?: Readonly<Record<string, "read" | "write" | "hidden">>,
+    overrides?: Readonly<Record<string, ClassificationOverride>>,
     partition?: object,
   ): void {
     if (!overrides) return;
@@ -1214,10 +1251,11 @@ export class Registry implements RegistryView {
       if (this.overrideWarningCatalogs.get(partition) === catalog) return;
       this.overrideWarningCatalogs.set(partition, catalog);
     }
-    const known = new Set(tools.map((tool) => tool.name));
-    for (const name of Object.keys(overrides ?? {})) {
-      if (known.has(name)) continue;
-      if (this.connectors.get(id)?.staticTools) {
+    const known = new Map(tools.map((tool) => [tool.name, tool]));
+    const staticCatalog = this.connectors.get(id)?.staticTools !== undefined;
+    for (const [name, override] of Object.entries(overrides ?? {})) {
+      const tool = known.get(name);
+      if (!tool && staticCatalog) {
         throw new Error(`ConnectaConfig.classification: connector "${id}" has no tool "${name}"`);
       }
       // Only deployment-authored names, never downstream text. JSON quoting
@@ -1226,6 +1264,16 @@ export class Registry implements RegistryView {
         /[\u2028\u2029]/g,
         (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
       );
+      if (tool) {
+        // A static catalog cannot change, so the deployment's construction reports it once.
+        const reports = staticCatalog ? partition === undefined && this.opts.constructionChecks !== false : true;
+        if (override === "read" && reports && sourceDeclaresWrite(tool)) {
+          this.opts.logger.warn(
+            `classification override ${quoted} to "read" is not applied because the connector declares this tool a write; it stays a write. "read-repeatable" serves it as a read and accepts that hosts may repeat it`,
+          );
+        }
+        continue;
+      }
       this.opts.logger.warn(
         `classification override ${quoted} is dormant because the runtime catalog lists no such tool`,
       );
@@ -1305,16 +1353,18 @@ export class Registry implements RegistryView {
 
   static {
     provideRegistryPrograms(Registry.prototype, {
-      stashResult: (self, id, chunks, ttlSeconds, partition = scopes.results) =>
+      stashResult: (self, id, chunks, ttlSeconds, options = {}) =>
         Effect.gen({ self }, function* () {
+          const partition = options.partition ?? scopes.results;
           const maxBytes = this.opts.results?.maxStashBytes ?? CONFIG_DEFAULTS.results.maxStashBytes;
           const maxEntries = this.opts.results?.maxStashEntries ?? CONFIG_DEFAULTS.results.maxStashEntries;
           // The paging envelope is ASCII, so its string length is its stored byte count.
           const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
           if (bytes > maxBytes || maxEntries === 0) return false;
           const keys = chunks.map((_, index) => partition + resultKeys.chunk(id, index));
-          // IDs belong to reservations, not reusable result IDs or subjects.
-          const charge = crypto.randomUUID();
+          // A digest finds this reservation again on release without putting
+          // the result's ID in the deployment-wide ledger.
+          const charge = yield* stashCharge(id);
           const ttlMs = ttlSeconds * 1000;
           if (!Number.isSafeInteger(ttlMs) || ttlMs <= 0) return false;
           const booking = yield* swapStashLedger((live, now) => {
@@ -1369,7 +1419,8 @@ export class Registry implements RegistryView {
           const remaining = Math.max(0, writeDeadline - (yield* Clock.currentTimeMillis));
           const written = yield* Effect.gen(function* () {
             const multi = getNativeStorage(self.opts.storage)?.setMany;
-            for (let index = keys.length - 1; index >= 0;) {
+            const lowest = options.holdFirst ? 1 : 0;
+            for (let index = keys.length - 1; index >= lowest;) {
               const first = multi && index > 0 ? Math.max(1, index - 63) : index;
               const before = yield* Clock.currentTimeMillis;
               if (before >= writeDeadline || before >= chunkExpiry) return false;
@@ -1406,6 +1457,24 @@ export class Registry implements RegistryView {
           Effect.timeoutOrElse({ duration: Duration.millis(STASH_TIMEOUT_MS), orElse: () => Effect.succeed(false) }),
           Effect.provideService(Storage, self.opts.storage),
         ),
+      releaseResult: (self, id, chunkCount, partition = scopes.results) =>
+        completeStash(
+          Effect.gen(function* () {
+            const charge = yield* stashCharge(id);
+            // Bytes first: a failed delete keeps its charge, so the ledger never
+            // undercounts what storage holds.
+            yield* Effect.forEach(
+              Array.from({ length: chunkCount }, (_, index) => partition + resultKeys.chunk(id, index)),
+              (key) => storageDelete(key),
+              { concurrency: STASH_RELEASE_CONCURRENCY, discard: true },
+            );
+            yield* swapStashLedger((live) =>
+              live.some((entry) => entry[0] === charge)
+                ? { entries: live.filter((entry) => entry[0] !== charge), result: undefined }
+                : { result: undefined },
+            );
+          }),
+        ).pipe(Effect.ignore, Effect.provideService(Storage, self.opts.storage)),
       recheckResultAccess: () => Effect.succeed(true),
       storeOAuthHandoff: (self, connectorId, state, principalKey) =>
         Effect.gen(function* () {
@@ -1658,11 +1727,22 @@ class ScopedRegistryView implements RegistryView {
     return registry.admitCall(...args);
   }
 
-  stashResult(id: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
-    return this.root.stashResult(
+  stashResult(
+    id: string,
+    chunks: readonly string[],
+    ttlSeconds: number,
+    options: { readonly holdFirst?: boolean } = {},
+  ): Promise<boolean> {
+    return this.root.stashResult(id, chunks, ttlSeconds, {
+      ...options,
+      partition: this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
+    });
+  }
+
+  releaseResult(id: string, chunkCount: number): Promise<void> {
+    return this.root.releaseResult(
       id,
-      chunks,
-      ttlSeconds,
+      chunkCount,
       this.scope.subjectKey ? scopes.subject(this.scope.subjectKey) : scopes.results,
     );
   }
@@ -1731,15 +1811,19 @@ class ScopedRegistryView implements RegistryView {
   }
   static {
     provideRegistryPrograms(ScopedRegistryView.prototype, {
-      stashResult: (self, id, chunks, ttlSeconds) =>
+      releaseResult: (self, id, chunkCount) =>
         registryProgram(
           self.root,
-          "stashResult",
+          "releaseResult",
           id,
-          chunks,
-          ttlSeconds,
+          chunkCount,
           self.scope.subjectKey ? scopes.subject(self.scope.subjectKey) : scopes.results,
         ),
+      stashResult: (self, id, chunks, ttlSeconds, options = {}) =>
+        registryProgram(self.root, "stashResult", id, chunks, ttlSeconds, {
+          ...options,
+          partition: self.scope.subjectKey ? scopes.subject(self.scope.subjectKey) : scopes.results,
+        }),
       recheckResultAccess: (self, dependencies, classification, signal) =>
         Effect.tryPromise({
           try: () => self.scope.currentResultAccess?.(dependencies, classification, signal) ?? Promise.resolve(true),

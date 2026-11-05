@@ -1,17 +1,17 @@
-// Node-only: uses real Eve's reaction runner, checkpointed memos and replay guard.
+// Node-only: uses real Eve's definition kernel, checkpointed memos and replay guard.
 import { randomUUID } from "node:crypto";
 import { afterEach, expect, it, vi } from "vitest";
 import type { DynamicSentinel } from "eve/connections";
 import { ContextContainer } from "../node_modules/eve/dist/src/context/container.js";
 import { SessionIdKey } from "../node_modules/eve/dist/src/context/keys.js";
+import { renderSystem } from "../node_modules/eve/dist/src/definitions/definition.js";
+import { dynamicConnectionVersions } from "../node_modules/eve/dist/src/definitions/connections.js";
+import { DefinitionFailedError } from "../node_modules/eve/dist/src/definitions/kernel.js";
+import { slotsOf } from "../node_modules/eve/dist/src/definitions/state.js";
+import { evaluateValues, stepDraft } from "../node_modules/eve/dist/src/definitions/step.js";
 import { dynamicEvaluate } from "../node_modules/eve/dist/src/dynamic/definition.js";
 import { stepProjection } from "../node_modules/eve/dist/src/harness/session-machine/current.js";
 import { changedSinceOffered } from "../node_modules/eve/dist/src/harness/approval-outcome.js";
-import { dynamicConnectionVersions } from "../node_modules/eve/dist/src/reactions/kinds/connection.js";
-import { dynamicSkillManifest } from "../node_modules/eve/dist/src/reactions/kinds/skill.js";
-import { dynamicInstructionMessages } from "../node_modules/eve/dist/src/reactions/kinds/instructions.js";
-import { evaluateValues, ReactionFailedError } from "../node_modules/eve/dist/src/reactions/runner.js";
-import { slotsOf } from "../node_modules/eve/dist/src/reactions/state.js";
 import { createConnectionInstanceId } from "../node_modules/eve/dist/src/runtime/connections/instance-identity.js";
 import { BundleKey, type CompiledBundle } from "../node_modules/eve/dist/src/runtime/sessions/runtime-context-keys.js";
 import type { ResolvedConnectionDefinition } from "../node_modules/eve/dist/src/runtime/types.js";
@@ -25,7 +25,7 @@ import {
 
 afterEach(() => vi.useRealTimers());
 
-// Only the authored module rows are fixtures. Eve itself builds the reactions,
+// Only the authored module rows are fixtures. Eve itself builds the definitions,
 // session frames, memo scopes, installed slots and parked-call versions.
 function eveSession(definitions: {
   connection?: DynamicSentinel;
@@ -34,29 +34,35 @@ function eveSession(definitions: {
 }) {
   const ctx = new ContextContainer();
   ctx.set(SessionIdKey, randomUUID());
-  const resolver = (kind: string, definition: DynamicSentinel) => ({
-    slug: "connecta",
-    sourceId: kind,
-    sourceKind: "module",
-    logicalPath: `agent/${kind}/connecta.ts`,
-    evaluate: dynamicEvaluate(definition),
-  });
+  const row = (kind: string, folder: string, definition: DynamicSentinel | undefined) =>
+    definition
+      ? [
+          {
+            kind,
+            slug: "connecta",
+            sourceId: folder,
+            sourceKind: "module",
+            logicalPath: `agent/${folder}/connecta.ts`,
+            evaluate: dynamicEvaluate(definition),
+          },
+        ]
+      : [];
   ctx.set(BundleKey, {
     resolvedAgent: {
-      hooks: [],
-      memories: [],
-      dynamicToolResolvers: [],
-      dynamicSkillResolvers: definitions.skill ? [resolver("skills", definitions.skill)] : [],
-      dynamicConnectionResolvers: definitions.connection ? [resolver("connections", definitions.connection)] : [],
-      dynamicInstructionsResolvers: definitions.instructions
-        ? [resolver("instructions", definitions.instructions)]
-        : [],
+      definitions: [
+        ...row("skill", "skills", definitions.skill),
+        ...row("connection", "connections", definitions.connection),
+        ...row("instructions", "instructions", definitions.instructions),
+      ],
     },
     turnAgent: {},
+    graph: { nodesByNodeId: new Map() },
     toolRegistry: { toolsByName: new Map() },
     subagentRegistry: { subagentsByName: new Map(), dynamicResolvers: [] },
   } as unknown as CompiledBundle);
   const projection = stepProjection(ctx, undefined);
+  const step = { config: { tools: new Map() }, ctx, finalReplyOnly: false, session: { rootSessionId: "" } };
+  const draft = () => stepDraft(step as unknown as Parameters<typeof stepDraft>[0]);
   let currentTurn: string | undefined;
   return {
     async evaluate(turn = "turn_1", abortSignal = new AbortController().signal) {
@@ -64,16 +70,22 @@ function eveSession(definitions: {
         projection.record({
           type: "turn.started",
           data: { turnId: turn, cause: { policy: "test" }, follows: currentTurn ?? null },
-        });
+        } as unknown as Parameters<typeof projection.record>[0]);
         currentTurn = turn;
       }
       await evaluateValues(ctx, { conversation: [], abortSignal });
-      return dynamicInstructionMessages(ctx)
-        .map((message) => message.content)
+      const sections = await (await draft()).system();
+      return sections
+        .filter((section) => section.key.startsWith("instructions:"))
+        .map((section) => section.text)
         .join("\n");
     },
-    skills() {
-      return dynamicSkillManifest(ctx);
+    /** The system prompt Eve hands the model for this step. */
+    async system() {
+      return renderSystem(await (await draft()).system());
+    },
+    async skills() {
+      return Object.fromEntries((await (await draft()).tools()).skills);
     },
     connection() {
       const [connection] = (slotsOf(ctx, "connection")[0]?.live ?? []) as readonly ResolvedConnectionDefinition[];
@@ -87,6 +99,9 @@ function eveSession(definitions: {
 }
 
 const url = "https://connecta.example.com";
+// What the helper prepends when a server advertises no endpoint facts.
+const guided = (text: string) =>
+  `Connecta guidance:\nConnecta tools are deferred: call eve__tool({ name: "connecta__<tool>", input }). Names in this guidance and in nextAction omit the "connecta__" prefix.\n${text}`;
 
 it("evaluates the pool every model call and fences a parked call when its connection changes", async () => {
   let pool = "notes_alice";
@@ -150,13 +165,48 @@ it("follows a pool change within a turn without reusing another endpoint's memo"
       },
     }),
   });
-  expect(await session.evaluate()).toBe(`Connecta guidance:\n${url}/agent/notes_alice`);
+  expect(await session.evaluate()).toBe(guided(`${url}/agent/notes_alice`));
   pool = "assistant";
-  expect(await session.evaluate()).toBe(`Connecta guidance:\n${url}/agent/assistant`);
+  expect(await session.evaluate()).toBe(guided(`${url}/agent/assistant`));
   expect(session.connection().url).toBe(`${url}/agent/assistant`);
   pool = "notes_alice";
-  expect(await session.evaluate()).toBe(`Connecta guidance:\n${url}/agent/notes_alice`);
+  expect(await session.evaluate()).toBe(guided(`${url}/agent/notes_alice`));
   expect(fetched).toEqual([`${url}/agent/notes_alice`, `${url}/agent/assistant`]);
+});
+
+it("gives each selected pool its own surface and roster under one named connection", async () => {
+  let pool = "notes_alice";
+  const session = eveSession({
+    instructions: connectaInstructions({
+      url,
+      connection: "assistant_tools",
+      pool: () => pool,
+      getToken: () => "cta_agent",
+      fetch: async (endpoint) =>
+        Response.json({
+          result: {
+            instructions: "Server text.",
+            capabilities: {
+              extensions: {
+                "dev.connecta/endpoint": String(endpoint).endsWith("/notes_alice")
+                  ? { surface: "native", executeCode: false, connectors: [{ id: "notes" }] }
+                  : { surface: "meta", executeCode: true, connectors: [{ id: "crm" }] },
+              },
+            },
+          },
+        }),
+    }),
+  });
+  const alice = await session.evaluate();
+  expect(alice).toContain('name: "assistant_tools__<connector>__<tool>"');
+  expect(alice).toContain("Connectors: notes.");
+  pool = "assistant";
+  // Eve hands the model each dynamic instruction as its own system message.
+  expect((await session.system()).at(-1)).toBe(alice);
+  const shared = await session.evaluate();
+  expect(shared).toContain("assistant_tools__execute_code");
+  expect(shared).toContain("Reachable: crm.");
+  expect(shared).not.toContain("notes");
 });
 
 it("keeps TTL and the 30-second failure backoff per endpoint", async () => {
@@ -257,7 +307,7 @@ it("fails the turn for an invalid or throwing selector, even after cached guidan
     await session.evaluate();
     for (const invalid of ["../notes_alice", " ", "throw"]) {
       failure = invalid;
-      await expect(session.evaluate()).rejects.toBeInstanceOf(ReactionFailedError);
+      await expect(session.evaluate()).rejects.toBeInstanceOf(DefinitionFailedError);
     }
     // An empty selected name must not turn into a request to the base URL.
     const empty = eveSession(
@@ -354,14 +404,14 @@ it("gates guidance on every evaluation before token, pool and cached guidance ac
   expect(getToken).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
   allowed = true;
-  expect(await session.evaluate()).toBe("Connecta guidance:\nAllowed guidance");
+  expect(await session.evaluate()).toBe(guided("Allowed guidance"));
   allowed = false;
   expect(await session.evaluate()).toBe("");
   allowed = true;
   fail = true;
   expect(await session.evaluate()).toBe("");
   fail = false;
-  expect(await session.evaluate()).toBe("Connecta guidance:\nAllowed guidance");
+  expect(await session.evaluate()).toBe(guided("Allowed guidance"));
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(when).toHaveBeenCalledTimes(5);
 });
@@ -417,13 +467,13 @@ it.each(["rejection", "malformed", "timeout"] as const)(
       }),
     });
     await session.evaluate();
-    expect(session.skills()).toEqual({});
+    expect(await session.skills()).toEqual({});
     failing = false;
     await session.evaluate();
-    expect(session.skills()).toEqual({});
+    expect(await session.skills()).toEqual({});
     expect(fetcher).toHaveBeenCalledTimes(1);
     await session.evaluate("turn_2");
-    expect(JSON.stringify(session.skills())).toContain("Recovered guide");
+    expect(JSON.stringify(await session.skills())).toContain("Recovered guide");
     expect(fetcher).toHaveBeenCalledTimes(2);
   },
 );
@@ -444,13 +494,13 @@ it("retains a successful skill only within its turn memo and removes it after a 
     }),
   });
   await session.evaluate();
-  expect(JSON.stringify(session.skills())).toContain("Original guide");
+  expect(JSON.stringify(await session.skills())).toContain("Original guide");
   failing = true;
   await session.evaluate();
-  expect(JSON.stringify(session.skills())).toContain("Original guide");
+  expect(JSON.stringify(await session.skills())).toContain("Original guide");
   expect(fetcher).toHaveBeenCalledTimes(1);
   await session.evaluate("turn_2");
-  expect(session.skills()).toEqual({});
+  expect(await session.skills()).toEqual({});
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
 
@@ -483,6 +533,6 @@ it("preserves real Eve turn cancellation while fetching a skill", async () => {
   controller.abort(new DOMException("Cancelled", "AbortError"));
   await expect(evaluating).rejects.toThrow("Cancelled");
   await session.evaluate();
-  expect(JSON.stringify(session.skills())).toContain("Recovered guide");
+  expect(JSON.stringify(await session.skills())).toContain("Recovered guide");
   expect(fetches).toBe(2);
 });

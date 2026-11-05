@@ -401,7 +401,13 @@ classification: {
 },
 ```
 
-`"read"` sets the effective read class for tool routing and read-only exposure.
+`"read"` sets the effective read class for tool routing and read-only exposure
+only when the server is silent about the tool, and asserts that the call is safe
+to repeat. It has no effect on a tool the server explicitly declares a write
+(`readOnlyHint: false`, `destructiveHint: true`, or contradictory hints); that tool
+stays a write and an operator warning names the override.
+`"read-repeatable"` serves such a tool as a read anyway, for a deployment that has
+checked it and accepts that hosts may repeat the call, so the vendor can receive it twice.
 `"write"` selects the host approval path. `"hidden"` omits the tool from search
 and describe and refuses guessed-name calls, including programs. An absent
 runtime tool leaves its override dormant, with one operator warning per catalog
@@ -411,8 +417,8 @@ when live hints would expose them as reads. Never copy a retired review map
 wholesale or use it to broaden access or merely recover an old route.
 
 An override does not change replay safety. A call is write-like when either its
-effective class or its source class is write. The source class uses only the server's annotations: missing hints or
-`destructiveHint: true` count as write even when deployment policy sets read. Write-like
+effective class or its source class is write. The source class uses only the server's annotations: missing hints
+and declared writes count as write even when deployment policy serves them as reads. Write-like
 calls get one attempt across OAuth renewal, reconnect, authorization recovery
 and program re-runs. An ambiguous dispatched failure, including timeout or
 cancellation, reports an unknown outcome with no retry or wait advice. Approval,

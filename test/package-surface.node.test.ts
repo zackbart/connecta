@@ -81,7 +81,7 @@ describe("public package boundary", () => {
   it("is configured as a public package that ships built output", () => {
     expectTypeOf<RemoteMcpOptions["headers"]>().toEqualTypeOf<Record<string, string> | undefined>();
     expectTypeOf<NonNullable<ConnectaConfig["classification"]>[string][string]>().toEqualTypeOf<
-      "read" | "write" | "hidden"
+      "read" | "read-repeatable" | "write" | "hidden"
     >();
     expect(packageJson.private).not.toBe(true);
     expect(packageJson.publishConfig?.access).toBe("public");
@@ -353,6 +353,8 @@ describe("Effect behind the published surface", () => {
 // result or block the compact shape cannot take back), every GuestApi result is
 // assignable to its compact shape, and no compact field is absent from GuestApi.
 // call's object overload is GuestApi-only; the compact form shows the first.
+// result's whole read is GuestApi-only too, and a handle's hint states it. GuestApi
+// declares it first, so Parameters reads the paging form these checks compare.
 describe("advertised guest API declaration", () => {
   const file = join(ROOT, "test", "__advertised-guest-api__.ts");
   const options: ts.CompilerOptions = {
@@ -378,7 +380,7 @@ type First<F> = F extends { (...args: infer A): unknown; (...args: infer _B): un
 ${methods
   .map(
     (method) => `accepts(connecta.${method})(real.${method});
-declare const ${method}Args: First<GuestApi["${method}"]>;
+declare const ${method}Args: ${method === "result" ? `Parameters<GuestApi["result"]>` : `First<GuestApi["${method}"]>`};
 export const ${method}: Parameters<Compact["${method}"]> = ${method}Args;`,
   )
   .join("\n")}
