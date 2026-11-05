@@ -132,6 +132,19 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       return;
     }
     if (event.type === "host_exec") hostSearchCalls++;
+    if (event.type === "eve_usage") {
+      const usage = event.usage as Record<string, number>;
+      // Eve's input total already includes cached input.
+      firstTurnInputTokens ??= usage.inputTokens;
+      tokens.input += Math.max(
+        0,
+        (usage.inputTokens ?? 0) - (usage.cacheReadTokens ?? 0) - (usage.cacheWriteTokens ?? 0),
+      );
+      tokens.output += usage.outputTokens ?? 0;
+      tokens.cacheRead += usage.cacheReadTokens ?? 0;
+      tokens.cacheCreation += usage.cacheWriteTokens ?? 0;
+      return;
+    }
     if (event.type === "codex_usage") {
       const total = event.total as Record<string, number> | undefined;
       if (total) {
@@ -177,7 +190,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
         } else if (block.type === "tool_use") {
           finalAnswer = "";
           const name = String(block.name ?? "");
-          if (name === "ToolSearch") hostSearchCalls++;
+          if (name === "ToolSearch" || name === "eve__search") hostSearchCalls++;
           const input = (block.input ?? {}) as Record<string, unknown>;
           const serialized = JSON.stringify(input);
           const tool = name.startsWith(TOOL_PREFIX) ? name.slice(TOOL_PREFIX.length) : name;
