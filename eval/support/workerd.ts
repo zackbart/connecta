@@ -6,10 +6,10 @@
  */
 import { build } from "esbuild";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { experimental_readRawConfig } from "wrangler";
 import { retryBind } from "./serve.js";
@@ -233,14 +233,28 @@ export async function wranglerDev(options: {
   let inspector = 0;
   let proxyPort = 0;
   let origin = "";
-  const choosePorts = async () => {
-    port = await unclaimedPort();
+  const held = new Set<number>();
+  const draw = async () => {
+    const chosen = await unclaimedPort();
+    held.add(chosen);
+    return chosen;
+  };
+  const releasePort = async (chosen: number) => {
+    if (held.delete(chosen)) await releasePortClaim(chosen);
+  };
+  const chooseInternalPorts = async () => {
+    await Promise.all([releasePort(inspector), releasePort(proxyPort)]);
     // Concurrent workerd processes must not share the default devtools port.
     // Landlock computes its allowlist before workerd starts. Keep explicit ports
     // for inspector/proxy callbacks; retryBind retries the whole startup if a
     // competing process claims a selected port before Wrangler binds it.
-    inspector = await unclaimedPort();
-    proxyPort = await unclaimedPort();
+    inspector = await draw();
+    proxyPort = await draw();
+  };
+  const choosePorts = async () => {
+    await releasePort(port);
+    port = await draw();
+    await chooseInternalPorts();
     origin = `http://127.0.0.1:${port}`;
   };
   const snapshot = join(persist, "snapshot", "worker.mjs");
@@ -309,6 +323,7 @@ export async function wranglerDev(options: {
     if (proc) await stopProcess(proc.child);
     // wrangler's bundle scratch lands beside the config, inside this directory.
     await rm(persist, { recursive: true, force: true });
+    await Promise.all([...held].map(releasePort));
   };
   try {
     await retryBind(async () => {
@@ -335,14 +350,73 @@ export async function wranglerDev(options: {
     transcripts: () => started.map((entry) => entry.transcript()),
     restart: async () => {
       await stopProcess(live.child);
-      // A live trial has already served requests: preserve its public origin.
-      live = proc = boot();
-      started.push(live);
-      await waitForHealth(origin, live.child, live.output, bootMs);
+      // A live trial has already served requests: preserve its public origin. Its
+      // internal ports have no such constraint, so each attempt draws new ones. A
+      // port probe that momentarily holds the public port clears by the next attempt.
+      await retryBind(async (attempt) => {
+        if (attempt > 1) await new Promise((resolveWait) => setTimeout(resolveWait, attempt * 1_000));
+        await chooseInternalPorts();
+        live = proc = boot();
+        started.push(live);
+        try {
+          await waitForHealth(origin, live.child, live.output, bootMs);
+        } catch (error) {
+          await stopProcess(live.child);
+          throw new Error(`${String(error)}\n${live.output()}`);
+        }
+      });
     },
     stop: () => stopProcess(live.child),
     close,
   };
+}
+
+/**
+ * Above every port the Fetch standard blocks. The highest is 10080: a Worker drawn
+ * there is healthy, but fetch refuses it with "bad port", so /health never answers.
+ */
+export const FIRST_EVAL_PORT = 10_081;
+
+/**
+ * Evals in other checkouts draw from the same range, and a restarting Worker's
+ * public port is unbound until its new process binds it. Claims keep them from
+ * drawing it in that gap. A claim from a dead process is stale; without a usable
+ * directory the bind probe and startup retries still apply.
+ */
+const PORT_CLAIMS = join(homedir(), ".cache", "connecta-eval-ports");
+
+export async function claimPort(port: number, owner = process.pid): Promise<boolean> {
+  const path = join(PORT_CLAIMS, String(port));
+  try {
+    await mkdir(PORT_CLAIMS, { recursive: true });
+    for (let tries = 0; tries < 2; tries++) {
+      try {
+        await writeFile(path, String(owner), { flag: "wx" });
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const holder = Number(await readFile(path, "utf8").catch(() => ""));
+        if (holder && isAlive(holder)) return false;
+        await rm(path, { force: true });
+      }
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+export async function releasePortClaim(port: number): Promise<void> {
+  await rm(join(PORT_CLAIMS, String(port)), { force: true }).catch(() => {});
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 /**
@@ -359,7 +433,7 @@ async function unclaimedPort(): Promise<number> {
     // Not Linux: the IANA ephemeral range starts at 49152; stay below the Linux default too.
   }
   for (let tries = 0; tries < 50; tries++) {
-    const candidate = 10_000 + Math.floor(Math.random() * Math.max(1, floor - 10_000));
+    const candidate = FIRST_EVAL_PORT + Math.floor(Math.random() * Math.max(1, floor - FIRST_EVAL_PORT));
     const server = createServer();
     const bound = await new Promise<boolean>((resolve) => {
       server.once("error", () => resolve(false));
@@ -367,7 +441,7 @@ async function unclaimedPort(): Promise<number> {
     });
     if (bound) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
-      return candidate;
+      if (await claimPort(candidate)) return candidate;
     }
   }
   throw new Error("No unclaimed loopback port below the ephemeral range");

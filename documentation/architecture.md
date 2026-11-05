@@ -358,6 +358,13 @@ reader. `program-result.ts` owns executor-independent byte limits;
 values through provider preludes. Cursors hold only an ID and offset for the
 current run. Result bytes, expiry, authority and capacity charges stay in the
 existing storage and ledger; no executor-specific store or storage key is added.
+`result-seal.ts` keeps a run's results unreadable to other requests until they pass
+its final secret set ([`R4a`](./code-mode.md#results-and-projection)): chunk 0 waits in a
+request-owned ledger, and absence of chunk 0 is the refusal, so every exit leaves
+unpublished entries unreadable with no further write. Sealing waits for the work that can
+add to the set (`HeldResults.track` for the run's host calls, `RequestOwner.credentialReads`
+for credential reads, which outlast a caller that stopped waiting), then publishes each
+entry that passes. Stored bytes are never rewritten.
 
 ## Admission, in two places
 
@@ -1769,9 +1776,13 @@ a table.
 Remote MCP tools classify from server annotations and deployment policy.
 Only `readOnlyHint === true` with `destructiveHint !== true` establishes a
 source read; missing or contradictory hints mean write. Deployment overrides
-in `ConnectaConfig.classification` choose effective `read`, `write`, or `hidden`.
-They cannot relax source replay safety. Effective or source write makes a call
-write-like on every resend and recovery path. Source classifications travel in
+in `ConnectaConfig.classification` choose effective `read`, `write`, or `hidden`,
+except that `read` cannot change a tool the source explicitly declares a write:
+a host may resend a read-annotated call, so that tool stays a write unless the
+deployment accepts that with `read-repeatable`. They cannot
+relax source replay safety. Effective or source write makes a call
+write-like on every resend and recovery path. Source facts, including whether a
+source write was declared or only silent, travel in
 private metadata with host-owned tool clones and stay out of persisted catalogs.
 A leftover `classify` throws and names `ConnectaConfig.classification`.
 There are no hosted review maps, pins, drift comparisons or review UI fields.

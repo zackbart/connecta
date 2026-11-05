@@ -433,6 +433,173 @@ describe("native tool surface", () => {
     expect(deployed.sent).toEqual(["get_person"]);
   });
 
+  describe("a host that replays read-annotated calls after a connection failure", () => {
+    /** One call, then the replay a real host sends when the annotation it listed says read-only. */
+    async function callAndMaybeReplay(
+      app: Fetcher,
+      token: string,
+      pool: string,
+      name: string,
+      args: Record<string, unknown>,
+    ) {
+      const listed = await rpc(app, token, pool, "tools/list", {});
+      const tool = listed.result.tools.find((entry: { name: string }) => entry.name === name);
+      const send = () => rpc(app, token, pool, "tools/call", { name, arguments: args }, false);
+      const first = await send();
+      return tool.annotations.readOnlyHint === true ? await send() : first;
+    }
+
+    function overrideDeployment(
+      annotations: Record<string, unknown> | undefined,
+      verdict: "read" | "read-repeatable" = "read",
+    ) {
+      const storage = memoryStorage();
+      const physical: unknown[] = [];
+      const app = createTestConnecta({
+        connectors: [
+          {
+            id: "crm",
+            listTools: async () => [
+              { name: "set_status", inputSchema: { type: "object" }, ...(annotations ? { annotations } : {}) },
+            ],
+            callTool: async (name: string, args: unknown) => {
+              physical.push(args);
+              return { name };
+            },
+          },
+        ],
+        classification: { crm: { set_status: verdict } },
+        agents: ["assistant"],
+        pools: {
+          meta: { tools: ["crm"], members: ["agent:assistant"] },
+          native: { tools: ["crm"], members: ["agent:assistant"], surface: "native", executeCode: false },
+          "meta-reads": { tools: ["crm"], members: ["agent:assistant"], readOnly: true },
+          "native-reads": {
+            tools: ["crm"],
+            members: ["agent:assistant"],
+            readOnly: true,
+            surface: "native",
+            executeCode: false,
+          },
+        },
+        storage,
+        accessTokens: accessTokens(storage),
+        logger: silentLogger,
+      });
+      return { app, storage, physical };
+    }
+
+    it.each([
+      ["readOnlyHint: false", { readOnlyHint: false }],
+      ["destructiveHint: true", { destructiveHint: true }],
+      ["contradictory hints", { readOnlyHint: true, destructiveHint: true }],
+    ])("INV-1 INV-9: an overridden vendor write (%s) gets no duplicate physical write", async (_name, annotations) => {
+      const { app, storage, physical } = overrideDeployment(annotations);
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const listed = await rpc(app, token, "native", "tools/list", {});
+        const native = listed.result.tools.find((tool: { name: string }) => tool.name === "crm__WRITE__set_status");
+        expect(native.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+        await callAndMaybeReplay(app, token, "native", "crm__WRITE__set_status", { id: "A-1" });
+        expect(physical).toEqual([{ id: "A-1" }]);
+        // The read name the override used to serve is refused unsent, however often a host resends it.
+        const stale = await rpc(app, token, "native", "tools/call", { name: "crm__set_status", arguments: {} }, false);
+        expect(envelope(stale.result).error).toMatchObject({ code: "destructive_tool_requires_approval" });
+        expect(physical).toHaveLength(1);
+
+        // call_tool is annotated read-only, so the host may replay it; both attempts are refused unsent.
+        const refused = await callAndMaybeReplay(app, token, "meta", "call_tool", {
+          address: "crm.set_status",
+          args: { id: "A-2" },
+        });
+        const error = envelope(refused.result).error;
+        expect(error).toMatchObject({ code: "destructive_tool_requires_approval", retryable: false });
+        expect(error.message).toContain("call_destructive_tool");
+        expect(physical).toHaveLength(1);
+
+        await callAndMaybeReplay(app, token, "meta", "call_destructive_tool", {
+          address: "crm.set_status",
+          args: { id: "A-3" },
+        });
+        expect(physical).toEqual([{ id: "A-1" }, { id: "A-3" }]);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it.each([
+      ["readOnlyHint: false", { readOnlyHint: false }],
+      ["destructiveHint: true", { destructiveHint: true }],
+      ["contradictory hints", { readOnlyHint: true, destructiveHint: true }],
+    ])("INV-1: read-repeatable serves a vendor write (%s) as a read on every route", async (_name, annotations) => {
+      const { app, storage, physical } = overrideDeployment(annotations, "read-repeatable");
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        for (const pool of ["native", "native-reads"]) {
+          const listed = await rpc(app, token, pool, "tools/list", {});
+          const names = listed.result.tools.map((tool: { name: string }) => tool.name);
+          expect(names, pool).toContain("crm__set_status");
+          expect(names, pool).not.toContain("crm__WRITE__set_status");
+          const native = listed.result.tools.find((tool: { name: string }) => tool.name === "crm__set_status");
+          expect(native.annotations, pool).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+        }
+        for (const pool of ["meta", "meta-reads"]) {
+          const search = await rpc(app, token, pool, "tools/call", { name: "search_tools", arguments: {} }, false);
+          expect(JSON.stringify(search.result.structuredContent), pool).toContain("crm.set_status");
+          const sent = physical.length;
+          const direct = await rpc(
+            app,
+            token,
+            pool,
+            "tools/call",
+            { name: "call_tool", arguments: { address: "crm.set_status", args: { id: pool } } },
+            false,
+          );
+          expect(direct.result.isError, pool).toBeFalsy();
+          expect(physical, pool).toHaveLength(sent + 1);
+        }
+        const nativeCall = await rpc(
+          app,
+          token,
+          "native-reads",
+          "tools/call",
+          { name: "crm__set_status", arguments: { id: "native" } },
+          false,
+        );
+        expect(nativeCall.result.isError).toBeFalsy();
+
+        // The duplicate the deployment accepted: a host that resends a read reaches the vendor twice.
+        physical.length = 0;
+        await callAndMaybeReplay(app, token, "native", "crm__set_status", { id: "A-1" });
+        expect(physical).toEqual([{ id: "A-1" }, { id: "A-1" }]);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it("INV-1: a vendor silent about a tool leaves the override as the only evidence, so it serves as a read", async () => {
+      const { app, storage, physical } = overrideDeployment(undefined);
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const listed = await rpc(app, token, "native", "tools/list", {});
+        const native = listed.result.tools.find((tool: { name: string }) => tool.name === "crm__set_status");
+        expect(native.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+        const direct = await rpc(
+          app,
+          token,
+          "meta",
+          "tools/call",
+          { name: "call_tool", arguments: { address: "crm.set_status", args: { id: "A-1" } } },
+          false,
+        );
+        expect(direct.result.isError).toBeUndefined();
+        expect(physical).toEqual([{ id: "A-1" }]);
+      } finally {
+        await app.close();
+      }
+    });
+  });
+
   it("INV-2: runs reads and writes through the existing call paths and their result shapes", async () => {
     const { connecta, token, sent, events } = await admitted();
     for (const modern of [true, false]) {

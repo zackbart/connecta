@@ -69,6 +69,8 @@ function setup(
   options: {
     oauth?: boolean;
     overrideRead?: boolean;
+    /** create_item keeps its declared write and the deployment accepts repeats. */
+    repeatable?: boolean;
     sameOriginOAuth?: boolean;
     public?: boolean;
     missingReadHints?: boolean;
@@ -88,7 +90,11 @@ function setup(
   const downstream = httpDownstream((server) => {
     server.registerTool(
       "create_item",
-      { inputSchema: z.object({ id: z.number(), note: z.string().optional() }), annotations: { readOnlyHint: false } },
+      // A read override applies only where the server is silent about the tool.
+      {
+        inputSchema: z.object({ id: z.number(), note: z.string().optional() }),
+        ...(options.overrideRead && !options.repeatable ? {} : { annotations: { readOnlyHint: false } }),
+      },
       async ({ id }) => {
         applied.push(`create_item ${id}`);
         return { content: [{ type: "text", text: JSON.stringify({ created: id }) }] };
@@ -260,7 +266,10 @@ function setup(
     ...(options.overrideRead
       ? {
           classification: {
-            svc: { create_item: "read", ...(options.missingReadHints ? { list_items: "read" as const } : {}) },
+            svc: {
+              create_item: options.repeatable ? "read-repeatable" : "read",
+              ...(options.missingReadHints ? { list_items: "read" as const } : {}),
+            },
           },
         }
       : {}),
@@ -406,6 +415,23 @@ async function authRecoveryRow(surface: "program" | "call_tool") {
     await app.close();
   }
 }
+
+it.each([
+  ["reset", false],
+  [503, false],
+  [401, true],
+] as const)(
+  "INV-1 INV-9: read-repeatable still sends a declared write once when answered %s",
+  async (answer, oauth) => {
+    const flow = setup({ overrideRead: true, repeatable: true, oauth });
+    if (oauth) await flow.seedOAuth();
+    flow.answers.set("create_item", answer);
+    const failed = await flow.outcome("create_item", { id: 1 });
+    expect(failed.error).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+    expect(flow.sent("create_item")).toHaveLength(1);
+    vi.unstubAllGlobals();
+  },
+);
 
 it.each(["auto", "legacy"] as const)(
   "requires OAuth on the catalog path when tokens disappear before a replacement provider binds (%s)",

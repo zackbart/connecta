@@ -6,7 +6,9 @@
  * any ranking change and before any query's results were seen. Each query's
  * half is the FNV-1a hash of its text, except the four audit reproductions,
  * which are pinned to `tune` because their failures were already known. Tuning
- * inspected `tune` per query; `heldOut` was scored in aggregate only, after ranking froze.
+ * inspected `tune` per query. `heldOut` was never inspected per query, but its
+ * aggregate scores were read six times while comparing ranking rules, so it is
+ * not an untouched test set and its scores can flatter the final rules.
  *
  * `expect` lists every address that would genuinely answer the query. A hatch
  * belongs there only when no named tool performs the operation.

@@ -55,6 +55,8 @@ export interface ExecutionPayload {
    * this flag, never on error text a guest can fabricate.
    */
   timedOut?: boolean;
+  /** Set by the child when freeing the run's runtime failed: the outcome stands, the child doesn't. */
+  retire?: boolean;
 }
 
 export function hostCallLabel(payload: { namespace: string; functionName: string; args: unknown[] }): string {

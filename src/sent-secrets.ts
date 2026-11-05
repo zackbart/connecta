@@ -1148,6 +1148,9 @@ function windows(layer: Layer, reach: number): number[] {
 }
 
 export class SentSecrets {
+  /** Rises whenever this set could match more. Text checked at one revision has not been
+   * checked against a later one. */
+  revision = 0;
   /** Normalized form to its strongest kind. */
   private readonly forms = new Map<string, number>();
   /** A form's leading units that encode only public auth framing; absent is none. */
@@ -1189,6 +1192,7 @@ export class SentSecrets {
     this.widestForm = Math.max(this.widestForm, form.length);
     this.smallForms ||= kind < PRIVATE;
     this.unicodeForms ||= /[\u0080-\uffff]/.test(form);
+    this.revision++;
     this.views = {};
     this.memo = new Map();
     for (const recipient of this.recipients) recipient.store(form, kind, frame);
@@ -1197,6 +1201,7 @@ export class SentSecrets {
   private unregistered(length: number): void {
     if (length >= this.unmatched) return;
     this.unmatched = length;
+    this.revision++;
     this.views = {};
     this.memo = new Map();
     for (const recipient of this.recipients) recipient.unregistered(length);

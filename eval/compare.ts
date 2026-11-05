@@ -75,7 +75,7 @@ const trialSchema = z
     task: knownString,
     taskDefinitionsHash: z.string().regex(/^[a-f0-9]{64}$/),
     model: knownString,
-    runner: z.enum(["codex", "claude"]),
+    runner: z.enum(["codex", "claude", "eve"]),
     target: z.enum(["node", "worker"]).optional(),
     surface: z.enum(["six", "five", "code", "native", "native-no-code"]),
     grading: z.literal("outcome"),
@@ -89,9 +89,11 @@ const trialSchema = z
       .optional(),
     codex: z.unknown().optional(),
     claude: z.unknown().optional(),
+    eve: z.unknown().optional(),
     saved: z.unknown().optional(),
     regrade: z.unknown().optional(),
-    checks: z.array(z.object({ id: knownString, pass: z.boolean() }).passthrough()),
+    // A check id names a check, so "unknown-no-replay" is not an unknown runner field.
+    checks: z.array(z.object({ id: z.string().trim().min(1), pass: z.boolean() }).passthrough()),
     metrics: z.unknown(),
     approvals: z.unknown(),
     transcript: z.array(z.unknown()),
@@ -103,7 +105,7 @@ const trialSchema = z
   .strict();
 
 /** The only exclusions are unexecuted, explicitly recorded task N/As: Claude rich output, or an arm's capability mismatch. */
-function isNA(trial: TrialResult, runner: "codex" | "claude"): boolean {
+function isNA(trial: TrialResult, runner: "codex" | "claude" | "eve"): boolean {
   const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
   const skip = task && taskForSurface(task, trial.surface ?? "six").runnerSkips?.[runner];
   return (
@@ -213,7 +215,8 @@ function measuredProvenance(label: string, surface: Surface, file: AgentResultFi
     typeof value === "string" && value.trim() !== "" && !/unknown|unavailable/i.test(value);
   if (file.config.surface !== surface) reasons.push(`${label}: explicit ${surface} arm label is required`);
   if (file.config.grading !== "outcome") reasons.push(`${label}: measured grading must be outcome`);
-  if (file.config.runner !== "codex" && file.config.runner !== "claude") reasons.push(`${label}: runner is required`);
+  if (file.config.runner !== "codex" && file.config.runner !== "claude" && file.config.runner !== "eve")
+    reasons.push(`${label}: runner is required`);
   if (file.regrade) reasons.push(`${label}: offline regrade is not a fresh measured batch`);
   if (!file.protocol || file.protocol.version !== 1) reasons.push(`${label}: measured protocol version 1 is required`);
   if (!known(file.protocol?.pairId)) reasons.push(`${label}: fresh paired batch ID is required`);
@@ -228,7 +231,12 @@ function measuredProvenance(label: string, surface: Surface, file: AgentResultFi
     if (file.meta?.git?.[field] !== false) reasons.push(`${label}: ${field} must be recorded false`);
   for (const field of ["packageVersion", "node", "platform"] as const)
     if (!known(file.meta?.[field])) reasons.push(`${label}: runtime ${field} is required`);
-  const cli = file.config.runner === "claude" ? file.claudeVersion : file.codexVersion;
+  const cli =
+    file.config.runner === "eve"
+      ? file.eveVersion
+      : file.config.runner === "claude"
+        ? file.claudeVersion
+        : file.codexVersion;
   if (!known(cli)) reasons.push(`${label}: CLI version is required`);
   if (
     !Number.isInteger(file.config.concurrency) ||
@@ -252,9 +260,13 @@ function measuredProvenance(label: string, surface: Surface, file: AgentResultFi
     const task = ACTIVE_TASKS.find((t) => t.id === trial.task);
     if (trial.timeoutMs !== (task?.limits?.timeoutMs ?? file.config.timeoutMs))
       reasons.push(`${row} deadline contradicts task/batch`);
-    if ((trial.codex && file.config.runner !== "codex") || (trial.claude && file.config.runner !== "claude"))
+    if (
+      (trial.codex && file.config.runner !== "codex") ||
+      (trial.claude && file.config.runner !== "claude") ||
+      (trial.eve && file.config.runner !== "eve")
+    )
       reasons.push(`${row} runner metadata contradicts config`);
-    const runner = file.config.runner === "claude" ? "claude" : "codex";
+    const runner = file.config.runner ?? "codex";
     if (isNA(trial, runner)) continue;
     const observed = observation(trial, runner);
     const metadata = (runner === "claude" ? claudeObservationSchema : observationSchema).safeParse(observed);

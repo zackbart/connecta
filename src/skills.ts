@@ -79,6 +79,61 @@ export function nativeInstructions(executeCode: boolean, readOnly = false): stri
   return `Call known tools directly; ${executeCode ? `combine several in ${routes.program} using each tool's Program address.` : "find others with your host's search."} ${policy(readOnly)} ${RECOVERY} Tools missing: ask the operator to repair, then reconnect.`;
 }
 
+/** The `capabilities.extensions` key carrying {@link endpointExtension}. */
+export const ENDPOINT_EXTENSION = "dev.connecta/endpoint";
+
+const inventoryWords = (text: string) =>
+  text
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+
+/** Text that only respells what its entry already shows ("Google Calendar" for google_calendar) adds nothing. */
+export function addsInformation(shown: string, text: string): boolean {
+  const words = inventoryWords(text);
+  const shownWords = inventoryWords(shown);
+  return words.join("") !== shownWords.join("") && words.some((word) => !shownWords.includes(word));
+}
+
+/** Clips on a whole token, so text with no token that fits leaves nothing to show. */
+export const inventoryNote = (text: string, maxBytes: number) => {
+  const clipped = boundedEchoText(text, maxBytes);
+  return clipped === "…" ? undefined : clipped;
+};
+
+/** A connector's bounded title for inventories, or undefined when it adds nothing to the id or cannot fit. */
+export function connectorInventoryTitle(connector: Connector): string | undefined {
+  const title = connector.title?.replace(/\s+/g, " ").trim();
+  return title && addsInformation(connector.id, title) ? inventoryNote(title, 45) : undefined;
+}
+
+/**
+ * Facts about the endpoint this request reached, for a client composing its own
+ * host-specific guidance. Built only from the admitted scope and configuration:
+ * `connectors` is the caller's registry view, the roster `execute_code` and
+ * `authorize_connector` already describe, and nothing here loads a catalog.
+ */
+export function endpointExtension(
+  connectors: readonly Connector[],
+  native: boolean,
+  executeCode: boolean,
+  readOnly: boolean,
+) {
+  return {
+    surface: native ? "native" : "meta",
+    executeCode,
+    readOnly,
+    connectors: connectors.map((connector) => {
+      const title = connectorInventoryTitle(connector);
+      return {
+        id: connector.id,
+        ...(title ? { title } : {}),
+        ...(connectorGuideRequired(connector) ? { readFirst: connectorSkillName(connector.id) } : {}),
+      };
+    }),
+  };
+}
+
 /** True when at least one of `connectors` carries a usage guide. */
 export function hasConnectorGuides(connectors: readonly Connector[]): boolean {
   return connectors.some((connector) => connectorGuide(connector) !== undefined);
