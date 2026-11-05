@@ -1,6 +1,9 @@
 {
   "notes": [
     "2026-11-05: The read-only program route adds its registration, description, instructions, discovery marker and refusal, and carries the read-repeatable acceptance to that refusal. The official Node 22.23.4 binary measures this PR at 435,673 B and 819,206 B, against main's caps of 434,800 B and 818,500 B. The caps move to 435,803 B and 819,336 B, leaving 130 B each, and stay provisional: final caps come from the combined candidate.",
+    "2026-11-05: Previews of direct reads over the cap, merged with main at c90ec0fc. Official Node 22.23.4 measures the root at 437,992 B and examples/worker at 820,937 B, up 1,753 B and 1,256 B on the 436,239 B and 819,681 B measured before #1341 landed. The caps move to 438,300 B and 821,250 B.",
+    "2026-11-05: Connector purposes in the inventory, merged with main at eb6d80e0. Official Node 22.23.4 measures the root at 436,239 B and examples/worker at 819,681 B, up 188 B and 132 B on main's 436,051 B and 819,549 B. The caps move to 436,550 B and 819,950 B.",
+    "2026-11-05: Whole result reads and capped read reclaim, from the prelude's whole read, stash release and the oversized-return action. Official Node 22.23.4 measures the root at 436,051 B and examples/worker at 819,549 B, up 1,367 B and 1,069 B on main at 580a8c21's 434,684 B and 818,480 B. The caps move to 436,150 B and 819,650 B.",
     "2026-11-04: The Eve connection guide adds endpoint facts to the core, and merging it with #1343 is projected to pass the examples/worker cap of 818,330 B. That cap moves to 818,500 B; final caps are set from the combined release candidate.",
     "2026-11-04: Endpoint facts for the Eve helper, from the discovery extension and shared inventory title. Official Node 22.23.4 measures the root at 434,488 B on main at ec3a61f6, up 110 B on that main's 434,378 B and 8 B past its 434,480 B cap. The root cap moves to 434,600 B; examples/worker stays within its cap at 818,280 B.",
     "2026-11-04: Merging main at ec3a61f6 (#1348) into the source-declared write rule puts the root past 434,480 B on CI. The root cap moves to 434,800 B; final caps are set from the combined release candidate.",
@@ -9,6 +12,7 @@
     "2026-11-04: Combined branch: program failure reporting, token-safe clips and identifier parameters merged with #1326. The official Node 22.23.4 binary measures the root at 426,232 B and examples/worker at 811,101 B, up 1,139 B and 1,515 B from #1326's 425,093 B and 809,586 B. The caps move to 426,400 B and 811,300 B.",
     "2026-11-04: Merging #1319 onto this PR. CI at b7b16a5a measured 424,826 B and 809,238 B without #1319, which CI measured at +958 B and +1,028 B alone, estimating 425,784 B and 810,266 B. The caps move to 426,100 B and 810,600 B. These are estimates, to check against this PR's build (package) table.",
     "2026-11-04: Reporting a tool's own words on every surface, bounding and re-redacting a program's unknown writes, and the outbound credential view. CI at b7b16a5a, on main with #1330, measures the root at 424,826 B and examples/worker at 809,238 B. The root cap moves 423,700 to 425,000 B and the examples/worker cap 808,000 to 809,500 B; baselineGzip and every other cap are unchanged.",
+    "2026-11-04: Previews of direct reads over the inline cap. CI's table for main at 3625cda5 reads 431,362 B and 815,358 B, the root already 362 B over its 431,000 B cap, and official Node 22.23.4, which matched CI's table for an earlier head of this PR exactly, measures this PR at 433,188 B and 816,923 B: up 1,826 B and 1,565 B. New agent-facing behavior, not drift. The caps move to 433,350 B and 817,100 B, leaving 162 B and 177 B.",
     "2026-11-04: #1342 and #1344 each passed CI against the earlier root cap, and together measure 431,362 B on CI. The root cap moves from 431,000 B to 431,500 B to restore main; final caps are set from the combined release candidate.",
     "2026-11-04: Merging main at a6530531 (#1326, run-deadline read caps, up 483 B and 598 B on main) into the stale-listing PR measures the root at 429,254 B and examples/worker at 813,453 B on official Node 22.23.4, past 429,050 B and 813,200 B. Retiring catalogs on a custom refusal adds 15 B and 28 B of that. The caps move to 429,550 B and 813,750 B, and stay provisional.",
     "2026-11-04: Merging main (#1319, #1330, #1315) into the stale-listing PR and binding refusal fences to their attempt measures the root at 428,758 B and examples/worker at 812,928 B on official Node 22.23.4, past 426,250 B and 810,400 B. The caps move to 429,050 B and 813,200 B, and are provisional: a later step sets final caps from the combined branch.",
@@ -79,7 +83,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 435803
+      "maxGzip": 438300
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -162,7 +166,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 819336
+      "maxGzip": 821250
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

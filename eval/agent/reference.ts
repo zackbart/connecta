@@ -100,6 +100,7 @@ export async function playReference<T>(
     if (options.mode === "reference") {
       await task.reference({
         world,
+        surface,
         answer: (text) => {
           finalAnswer = text;
           transcript.push({ kind: "assistant", turn, text });

@@ -7,7 +7,7 @@ import { PLANNED_TASKS } from "./planned.js";
 import type { ActiveTask, PlannedTask } from "./types.js";
 import { withCorrectness, EXISTING_CORRECTNESS } from "./correctness.js";
 import { REST_TASKS } from "./rest.js";
-import { AUTH_AUTO_DECLINE_TASK, P5_TASKS, SLOW_READ_TASK } from "./p5.js";
+import { AUTH_AUTO_DECLINE_TASK, P5_TASKS, PREVIEW_PROGRAM_REFUSED_TASK, SLOW_READ_TASK } from "./p5.js";
 import { CCB_TASKS } from "./ccb.js";
 import { PLANNING_CENTER_TASKS } from "./planning-center.js";
 import { OVERFLOW_TASKS } from "./overflow.js";
@@ -18,6 +18,7 @@ import { GITHUB_TASKS } from "./github.js";
 import { CLOUDFLARE_TASKS } from "./cloudflare.js";
 import { STRIPE_TASKS } from "./stripe.js";
 import { READ_ROUTE_INJECTION_TASK } from "./read-route.js";
+import { DISCOVERY_TASKS } from "./discovery.js";
 
 /** Retained tasks from the historical 19-task #765 paired experiment. */
 export const COMPARISON_TASKS: ActiveTask[] = [
@@ -30,6 +31,7 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   QUICKBOOKS_WRITE_TASK,
   ...COMPARISON_TASKS,
   SLOW_READ_TASK,
+  PREVIEW_PROGRAM_REFUSED_TASK,
   AUTH_AUTO_DECLINE_TASK,
   ...REST_TASKS,
   ...TITHELY_TASKS,
@@ -43,5 +45,6 @@ export const ACTIVE_TASKS: ActiveTask[] = [
   ...GOOGLE_TASKS,
   ...GITHUB_TASKS,
   READ_ROUTE_INJECTION_TASK,
+  ...DISCOVERY_TASKS,
 ];
 export const PLANNED: PlannedTask[] = PLANNED_TASKS;

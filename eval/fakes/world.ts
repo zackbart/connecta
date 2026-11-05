@@ -18,6 +18,7 @@ import type { ProgramObservation } from "../deploy/observed-executor.js";
 import { FakeOAuth } from "./oauth.js";
 import { InjectedConnectors, NO_INJECTION, type Injection } from "./injection.js";
 import { attributeServed, delayServed } from "../support/serve.js";
+import { DiscoveryCatalog, discoveryState, type DiscoveryWorldOptions } from "./discovery.js";
 import { assetTools, revenuecatTools, supabaseTools, PREREQUISITE_GUIDES } from "./prerequisites.js";
 import { FakeService, Ledger } from "./service.js";
 import {
@@ -101,6 +102,8 @@ export interface WorldOptions extends Partial<Record<ProviderFakeName, boolean>>
   assets?: boolean;
   /** A tracker issue whose comment asks an agent to send a secret out through `relay.fetch_url`. */
   readRouteInjection?: boolean;
+  /** The large shared catalog of the hard-discovery tasks, replacing the base services. */
+  discovery?: DiscoveryWorldOptions;
   oauth?: boolean;
   /** Whether the billing API key is already saved when the trial starts. */
   billingCredential?: "preset" | "missing";
@@ -136,6 +139,8 @@ export class World {
   readonly pco = planningCenterState();
   readonly overflow = overflowState();
   readonly tithely = tithelyState();
+  readonly discovery = discoveryState();
+  private readonly discoveryCatalog?: DiscoveryCatalog;
   readonly now = Date.now();
   readonly ledger = new Ledger();
   readonly tracker: TrackerState;
@@ -194,6 +199,7 @@ export class World {
       this.restServices = [new FakePlanningCenter("pco", this.ledger, this.pco, options.planningCenter.fault)];
     if (options.overflow)
       this.restServices = [new FakeOverflow("overflow", this.ledger, this.overflow, options.overflow.fault)];
+    if (options.discovery) this.discoveryCatalog = new DiscoveryCatalog(this.discovery, this.ledger, options.discovery);
     this.tracker = trackerState(this.now);
     if (options.readRouteInjection) {
       const at = new Date(this.now).toISOString();
@@ -243,14 +249,20 @@ export class World {
 
   readonly traffic: ReturnType<typeof attributeServed>[] = [];
 
+  private get discoveryUrls(): string[] {
+    return this.discoveryCatalog?.services.map((service) => service.url) ?? [];
+  }
+
   async start(): Promise<void> {
     for (const { fake } of this.providerFakes()) await fake.start();
     if (this.options.quickbooks) await this.quickbooks.start();
     if (this.options.google) await this.google.start();
     await Promise.all([...this.services.values(), ...this.restServices].map((service) => service.start()));
+    await this.discoveryCatalog?.start();
     await this.injected.start();
     for (const url of [
       ...[...this.services.values(), ...this.restServices].map((service) => service.url),
+      ...this.discoveryUrls,
       ...this.providerFakes().map(({ fake }) => fake.url),
       ...(this.options.quickbooks ? [this.quickbooks.url] : []),
     ])
@@ -258,6 +270,7 @@ export class World {
     if (this.injection.latencyMs) {
       const served = [
         ...[...this.services.values(), ...this.restServices].map((service) => service.url),
+        ...this.discoveryUrls,
         ...this.providerFakes().map(({ fake }) => fake.url),
         ...(this.options.quickbooks ? [this.quickbooks.url] : []),
       ];
@@ -271,6 +284,7 @@ export class World {
     for (const traffic of this.traffic) traffic.release();
     for (const release of this.releaseLatency.splice(0)) release();
     await this.injected.stop();
+    await this.discoveryCatalog?.stop();
     for (const { fake } of this.providerFakes()) await fake.stop();
     if (this.options.quickbooks) await this.quickbooks.stop();
     if (this.options.google) await this.google.stop();
@@ -286,6 +300,7 @@ export class World {
   }
 
   private taskSpecs(): ConnectorSpec[] {
+    if (this.discoveryCatalog) return this.discoveryCatalog.specs();
     const provided = this.providerFakes().flatMap(({ name, definition, fake }) =>
       definition.specs(fake).map((spec) => ({ ...spec, provider: name })),
     );

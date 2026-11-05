@@ -4,7 +4,7 @@ Connect an Eve agent to a Connecta agent pool and load its endpoint instructions
 once per turn. The helper runs in the Eve app; the Connecta server
 runs separately. No `@zackbart/connecta` dependency is installed by this package.
 
-Requires **Node 24+** and **Eve 1.0.0-rc.1**. Development and consumer
+Requires **Node 24+** and **Eve 1.0.0-rc.4**. Development and consumer
 checks use that exact release candidate. The peer stays pinned during the RC
 period; later candidates and stable 1.0 need a compatibility check. Helper
 releases share Connecta's version and tag; choose the helper version matching
@@ -13,7 +13,7 @@ your server release.
 ## Install and add two files
 
 ```sh
-npm install @zackbart/connecta-eve eve@1.0.0-rc.1
+npm install @zackbart/connecta-eve eve@1.0.0-rc.4
 ```
 
 The server must declare your agent, admit it to the named pool and issue its
@@ -138,16 +138,40 @@ use consistent trusted policy data as with a dynamic pool selector. This policy
 controls what the app offers; Connecta still enforces endpoint authorization.
 No Eve dynamic-value unwrapping is required.
 
-## Upgrading to Eve 1.0 RC
+## Upgrading to Eve 1.0.0-rc.4
 
-Update the app to `eve@1.0.0-rc.1` and reinstall to refresh its lockfile.
-The helper's connection, dynamic pool, instructions and approval APIs use Eve's
-stable entry points and require no authoring changes for this RC. Eve's
+Update the app to `eve@1.0.0-rc.4`, reinstall to refresh its lockfile, then
+rebuild and test it before deploying. The helper's connection, dynamic pool,
+instructions and approval APIs use Eve's stable entry points and require no
+authoring changes for this RC. Eve's
 [1.0 stability policy](https://eve.dev/docs/reference/typescript-api#stability-policy)
 does not cover `experimental` fields or internal modules.
 
-From 0.90, review the intervening
-[release notes](https://github.com/vercel/eve/blob/eve%401.0.0-rc.1/packages/eve/CHANGELOG.md):
+From rc.1, review Eve's
+[rc.2](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.2),
+[rc.3](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.3) and
+[rc.4](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.4) release notes.
+These change app-owned code and deployments the helper does not manage:
+
+- **Rollback.** Session checkpoints move to version 19 (rc.3). A deployment from
+  before rc.3 refuses to take over a session rc.3 or later wrote, so that session
+  stays on the deployment that wrote it. New runs also use Workflow spec 9; set
+  `WORKFLOW_SPEC_VERSION=8` to keep creating spec 8 runs.
+- **File tools.** Every agent gets a default `edit_file` tool (rc.4) that changes
+  sandbox files without `write_file`. If you disable, wrap or gate `write_file`,
+  do the same for `edit_file`. Connecta's own tools are unaffected.
+- **Builds.** Eve moves to a Nitro 3 release candidate and declares Rolldown
+  itself (rc.3). Importing `nitro/storage`, `nitro/kv` or `nitro/database` from
+  agent code now fails the build, as does an asset import that leaves the authored
+  package.
+- **Code extension.** `code__grep`, `code__worker` and `code__apply_patch` are gone
+  (rc.3, rc.4). Follow Eve's notes if your app mounts `eve/extensions/code`.
+- **Dynamic tools.** A dynamic tool no longer replaces a static tool of the same
+  name (rc.3). Dynamic connections, including this helper's, still override a
+  static connection of the same name.
+
+From 0.90, also review the
+[rc.1 release notes](https://github.com/vercel/eve/blob/eve%401.0.0-rc.1/packages/eve/CHANGELOG.md):
 `session.clear()` now cancels running turns and tasks, and object-form connection
 approvals are now preserved at runtime. RC.1 also requires `@vercel/connect`
 `^2.7.0` when that optional integration is installed; older Connect releases
@@ -190,6 +214,10 @@ any tool whose `readOnlyHint` is not `true`, including writable `execute_code`.
 `gateConnectaWrites` exports that policy for composition. An explicit Eve
 `approval`, either a policy or an approval configuration, takes precedence over
 `gateWrites`.
+
+An agent-wide `approval` in Eve's `agent.ts` runs beside the connection's policy
+and the stricter result wins. It can add a gate to Connecta tools, including under
+the default `never()`, and cannot remove one that `gateWrites` set.
 
 The gate uses the host's cached annotations. If a read becomes a write before
 dispatch, Connecta applies its current classification; a writable pool can
@@ -275,7 +303,7 @@ custom audience, even when Vercel signed them.
 
 In a source checkout with dependencies installed and both packages built, run
 `pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
-on Node 24. This boots real Eve 1.0.0-rc.1 with a packed, installed helper against
+on Node 24. This boots real Eve 1.0.0-rc.4 with a packed, installed helper against
 seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
 meta, native, and native-plus-code surfaces. Native listings include three
 Connecta tools beyond the downstream count. A 1,001-tool native catalog must
@@ -285,8 +313,11 @@ The probe uses Eve's public language-model interface with a deterministic local
 transport, without model credentials or paid calls. It measures construction,
 cold and warm discovery, schema and result bytes, call counts, concurrent-call
 isolation, bounded-result paging, and process memory. Fresh child processes
-isolate each matrix cell; Eve startup is separate from turn latency. Reports
-retain actual Eve events and transport inputs. Token usage and model task
+isolate each matrix cell; Eve startup is separate from turn latency. Each turn
+also checks what the helper's guide claims about Eve: guidance arrives as its own
+system message on every model call, `eve__search` on a meta pool reaches only
+routing tools, native writes are named `connecta__<connector>__WRITE__<tool>`, and
+every step lists tools again. Reports retain actual Eve events and transport inputs. Token usage and model task
 quality remain unmeasured; these results establish local runtime contracts,
 not live Vercel workload admission or production model performance.
 
@@ -312,7 +343,7 @@ export default connectaSkill({
 });
 ```
 
-This uses the pinned Eve 1.0.0-rc.1 public `defineSkill` and `defineDynamic`
+This uses the pinned Eve 1.0.0-rc.4 public `defineSkill` and `defineDynamic`
 APIs. Eve's deferred discovery searches the description; loading adds only
 instructions. It never installs tools. Use the same caller predicate and pool
 selector as the connection. A false or throwing predicate skips selection,

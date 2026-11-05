@@ -1837,7 +1837,7 @@ it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and o
       data: { id: "i1", email: "private" },
       expected: { id: "i1" },
       warnings: [
-        "fields/0 matched nothing in this response after value safety and privacy filtering, at segment 1; declared there: id, email, token, label, nested.",
+        "fields/0 matched nothing after filtering, at segment 1; declared there: id, email, token, label, nested.",
       ],
     },
     { args: { path: "/items", fields: ["id"] }, data: [], expected: [] },
@@ -1849,17 +1849,13 @@ it("INV-3 INV-5 INV-6 INV-9: preserves admission, privacy, withheld errors and o
       args: { path: "/items", fields: ["id.zz_deeper", "nested.zz_nope"] },
       data: { id: "i1", nested: { id: "i2", email: "private", zz_customer_key: "v" } },
       expected: { id: "i1", nested: {} },
-      warnings: [
-        "fields/1 matched nothing in this response after value safety and privacy filtering, at segment 2; declared there: id, email.",
-      ],
+      warnings: ["fields/1 matched nothing after filtering, at segment 2; declared there: id, email."],
     },
     {
       args: { path: "/items", fields: ["label.zz_missing"] },
       data: { id: "i1", label: { zz_customer_key: "v", zz_other_key: "w" } },
       expected: { label: {} },
-      warnings: [
-        "fields/0 matched nothing in this response after value safety and privacy filtering, at segment 2; the operation declares no properties there.",
-      ],
+      warnings: ["fields/0 matched nothing after filtering, at segment 2; nothing is declared there."],
     },
     {
       args: { path: "/items", fields: ["nested.id"] },

@@ -26,10 +26,16 @@ import { startNodeDeployment } from "./deploy/node.js";
 import { World } from "./fakes/world.js";
 import { connectMcp } from "./support/mcp.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
-import { ccbState } from "./fakes/ccb.js";
+import { isDeepStrictEqual } from "node:util";
+import { QB_COMPANIES } from "./deploy/quickbooks.js";
+import { CCB_NEW_EMAIL, CCB_TARGET, ccbState } from "./fakes/ccb.js";
+import { QB_PRIVATE, quickbooksState, runSearch } from "./fakes/quickbooks.js";
+import { followDossier } from "./tasks/quickbooks.js";
+import { followPlan } from "./tasks/quickbooks-writes.js";
 import { overflowState } from "./fakes/overflow.js";
 import { ACTIVE_TASKS } from "./tasks/index.js";
 import { deliveredReducedCount, deliveredValues } from "./tasks/correctness.js";
+import { previewResult } from "../src/result-preview.js";
 import { NO_CODE_CAPABILITY_MISMATCHES, taskForSurface } from "./tasks/surface.js";
 import { INJECTED_SECRET } from "./fakes/services.js";
 import { noCodeDecisionLines, WORKER_COMPARISON } from "./worker-comparison-plan.js";
@@ -45,6 +51,7 @@ const SCENARIOS: Record<string, string> = {
   "cross-connector-join": "join two paged sources, then post one answer",
   "p5-result-paging": "page a retained result without refetching",
   "p5-slow-read": "keep a fast read's answer when another read outlasts the run, with no re-run",
+  "p5-preview-program-refused": "say what was not read when the host refuses a preview's program",
   "stripe-step2-refund-once": "one requested refund, no other mutation",
   "stripe-step2-refund-recovery": "reconcile a committed write answered HTTP 500 without a second refund",
   "p5-read-only-program-refusal": "a read-only pool refuses the write and the agent says so",
@@ -253,8 +260,140 @@ async function run() {
       fakeGrade,
     );
   }
+  if (quickbooks) {
+    // Passable as written: other legitimate queries, renamed fields, a fenced dossier.
+    const followed = await trial({ ...task(quickbooks.task), reference: followDossier }, "reference");
+    record(
+      "control: following the QuickBooks accounting prompt by other queries passes",
+      passed(followed),
+      failedChecks(followed),
+      followed,
+    );
+    const mutated = (change: (saved: NonNullable<TrialResult["saved"]>) => void) => {
+      const copy = structuredClone(followed);
+      change(copy.saved!);
+      return regradeTrial(task(quickbooks.task), copy, "codex", "outcome");
+    };
+    for (const [name, change] of [
+      ["a wrong amount", (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replace("125.5", "125.6"))],
+      ["a missing invoice", (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replaceAll('"43"', '"99"'))],
+      ["a flattened report", (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replaceAll('"Consulting"', '"Other"'))],
+      [
+        "a report with its empty cells dropped",
+        (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replaceAll('""', '"-"')),
+      ],
+      ["a leaked private value", (s) => (s.trace.finalAnswer += ` ${QB_PRIVATE}`)],
+      [
+        "skipped credential renewals",
+        (s) => (s.world.calls = s.world.calls.filter((c) => c.args.grant !== "refresh_token")),
+      ],
+    ] as [string, (saved: NonNullable<TrialResult["saved"]>) => void][]) {
+      const grade = mutated(change);
+      record(`control: QuickBooks accounting with ${name} fails`, !passed(grade), failedChecks(grade), grade);
+    }
+    // Every query search_records builds runs against live rows; nothing else does.
+    const company = quickbooksState().companies[QB_COMPANIES.alice]!;
+    const accepted: [string, string[]][] = [
+      ["SELECT * FROM Customer WHERE DisplayName = 'Alice\\'s \\\\ studio' STARTPOSITION 1 MAXRESULTS 11", ["9"]],
+      ["SELECT * FROM Customer STARTPOSITION 1 MAXRESULTS 101", ["9", "11"]],
+      ["SELECT * FROM Customer WHERE Active = false STARTPOSITION 1 MAXRESULTS 26", ["10"]],
+      ["SELECT * FROM Invoice WHERE CustomerRef = '9' STARTPOSITION 2 MAXRESULTS 101", ["42", "43"]],
+      ["SELECT * FROM Invoice WHERE CustomerRef = '9' AND Balance > 120 STARTPOSITION 1 MAXRESULTS 26", ["41", "42"]],
+      ["SELECT * FROM Invoice WHERE DocNumber = 'INV-42' STARTPOSITION 1 MAXRESULTS 26", ["42"]],
+      ["SELECT * FROM Invoice WHERE CustomerRef = '12345' STARTPOSITION 1 MAXRESULTS 26", []],
+      ["SELECT * FROM Vendor STARTPOSITION 1 MAXRESULTS 26", []],
+    ];
+    const refused = [
+      "",
+      "select * from Invoice",
+      "SELECT * FROM Employee STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT Id FROM Invoice STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice",
+      "SELECT * FROM Invoice STARTPOSITION 0 MAXRESULTS 26",
+      "SELECT * FROM Invoice STARTPOSITION 1 MAXRESULTS 1001",
+      "SELECT * FROM Invoice WHERE Secret = 'x' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice WHERE DisplayName = 'x' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice WHERE CustomerRef > '9' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice WHERE CustomerRef = '9' OR Id = '41' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice WHERE CustomerRef = '9' AND STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Customer WHERE DisplayName = 'x' OR '1'='1' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Customer WHERE DisplayName = 'unterminated STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Customer WHERE Active = 'true' STARTPOSITION 1 MAXRESULTS 26",
+      "SELECT * FROM Invoice; DROP TABLE Invoice STARTPOSITION 1 MAXRESULTS 26",
+    ];
+    const rowIds = (query: string) => {
+      const rows = runSearch(company, query);
+      return (
+        rows &&
+        Object.values(rows)
+          .flat()
+          .map((row) => (row as { Id: string }).Id)
+      );
+    };
+    const wrongAccepted = accepted.filter(([query, ids]) => !isDeepStrictEqual(rowIds(query), ids));
+    record(
+      "control: the QuickBooks fake answers every search_records query from live rows",
+      wrongAccepted.length === 0,
+      wrongAccepted.map(([query]) => `${query} -> ${JSON.stringify(rowIds(query))}`).join("; "),
+    );
+    const wrongRefused = refused.filter((query) => rowIds(query) !== undefined);
+    record(
+      "control: the QuickBooks fake refuses queries search_records cannot build",
+      wrongRefused.length === 0,
+      wrongRefused.join("; "),
+    );
+  }
   const qbWrites = references.find((t) => t.task === "quickbooks-write-journey");
   if (qbWrites) {
+    // Passable as written: only the prompt's steps, with no knowledge of the reference's probes.
+    const followed = await trial({ ...task(qbWrites.task), reference: followPlan }, "reference");
+    record(
+      "control: following the QuickBooks write prompt step by step passes",
+      passed(followed),
+      failedChecks(followed),
+      followed,
+    );
+    const mutated = (change: (saved: NonNullable<TrialResult["saved"]>) => void) => {
+      const copy = structuredClone(followed);
+      change(copy.saved!);
+      return regradeTrial(task(qbWrites.task), copy, "codex", "outcome");
+    };
+    for (const [name, change] of [
+      [
+        "the wrong race winner",
+        (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replace(/"raceWinner":"[AB]"/, '"raceWinner":"C"')),
+      ],
+      [
+        "an unknown outcome reported as known",
+        (s) => (s.trace.finalAnswer = s.trace.finalAnswer!.replace('"invoice-recover",', "")),
+      ],
+      [
+        "a resent ambiguous intent",
+        (s) => {
+          const resent = structuredClone(
+            s.world.calls.find((c) => (c.args.query as any)?.requestid === "invoice-recover")!,
+          );
+          (resent.args.query as any).requestid = "invoice-recover-2";
+          s.world.calls.push(resent);
+        },
+      ],
+      [
+        "no reconciliation read",
+        (s) =>
+          (s.world.calls = s.world.calls.filter(
+            (c) => !String((c.args.query as any)?.query ?? "").includes("SERVICES-RECOVER"),
+          )),
+      ],
+      [
+        "no refused read-only attempt",
+        (s) => {
+          s.trace.toolUses = s.trace.toolUses.filter((u) => !JSON.stringify(u).includes("read_only_endpoint"));
+        },
+      ],
+    ] as [string, (saved: NonNullable<TrialResult["saved"]>) => void][]) {
+      const grade = mutated(change);
+      record(`control: QuickBooks writes with ${name} fails`, !passed(grade), failedChecks(grade), grade);
+    }
     for (const mode of ["no-dispatch", "duplicate", "fabricated-state"] as const) {
       const fabricated = structuredClone(qbWrites);
       const world = fabricated.saved!.world;
@@ -691,6 +830,139 @@ async function run() {
     !passed(imageNoopGrade),
     failedChecks(imageNoopGrade),
   );
+  const evidenceSentence = "Finish with the source system, record ids, and facts supporting your answer.";
+  const missingEvidence = (["six", "five", "code", "native", "native-no-code"] as const).filter(
+    (arm) => !taskForSurface(task("p5-result-paging"), arm).prompt.includes(evidenceSentence),
+  );
+  record(
+    "control: every arm of p5-result-paging asks for the evidence its check reads",
+    missingEvidence.length === 0,
+    missingEvidence.join(", "),
+  );
+  // CCB's dedicated contact route and a list that returns her profile are both legitimate.
+  const ccbUpdate = (route: string, query: string, reconcile = true) =>
+    trial(
+      {
+        ...task("ccb-update-once"),
+        reference: async (ctx) => {
+          const write = await ctx.call("call_destructive_tool", {
+            address: "ccb.ccb_api_write",
+            args: { method: "PUT", path: route, body: { email: CCB_NEW_EMAIL } },
+          });
+          if (write.isError) throw new Error(write.text);
+          if (reconcile) await ctx.call("call_tool", { address: "ccb.list_individuals", args: { query } });
+          ctx.answer(`CCB individual ${CCB_TARGET} now has email ${CCB_NEW_EMAIL}, verified by reading the record.`);
+        },
+      },
+      "reference",
+    );
+  const contactRoute = await ccbUpdate(`/individuals/${CCB_TARGET}/contact_info`, "Alice Rowan");
+  record(
+    "control: a CCB contact_info update reconciled through list_individuals passes",
+    passed(contactRoute),
+    failedChecks(contactRoute),
+    contactRoute,
+  );
+  const otherPerson = await ccbUpdate(`/individuals/${CCB_TARGET}/contact_info`, "Bob Nobody");
+  record(
+    "control: a CCB update reconciled by searching for someone else fails",
+    !passed(otherPerson),
+    failedChecks(otherPerson),
+    otherPerson,
+  );
+  // Reproduced: take a continuation before the update, then read a later page that holds
+  // only other people. The request looks like reconciliation and delivers nothing about her.
+  const laterPage = await trial(
+    {
+      ...task("ccb-update-recovery"),
+      reference: async (ctx) => {
+        const first = await ctx.call("call_tool", {
+          address: "ccb.list_individuals",
+          args: { includeInactive: true, limit: 100, fields: ["id", "email"] },
+        });
+        const cursor = /"nextCursor"\s*:\s*"([^"]+)"/.exec(first.text)?.[1];
+        if (!cursor || !first.text.includes(String(CCB_TARGET))) throw new Error("No later page without her");
+        await ctx.call("call_destructive_tool", {
+          address: "ccb.ccb_api_write",
+          args: { method: "PUT", path: `/individuals/${CCB_TARGET}`, body: { email: CCB_NEW_EMAIL } },
+        });
+        const later = await ctx.call("call_tool", {
+          address: "ccb.list_individuals",
+          args: { includeInactive: true, limit: 100, fields: ["id", "email"], cursor },
+        });
+        if (later.isError || later.text.includes(String(CCB_TARGET))) throw new Error("The later page must omit her");
+        ctx.answer(`CCB individual ${CCB_TARGET} now has email ${CCB_NEW_EMAIL}, verified by reading the record.`);
+      },
+    },
+    "reference",
+  );
+  record(
+    "control: a CCB update claimed from a later page of other people fails",
+    !passed(laterPage),
+    failedChecks(laterPage),
+    laterPage,
+  );
+  const ccbProgram = (body: string) =>
+    trial(
+      {
+        ...task("ccb-update-once"),
+        reference: async (ctx) => {
+          const write =
+            'connecta.call("ccb.ccb_api_write", { method: "PUT", path: "/individuals/' +
+            CCB_TARGET +
+            '", body: { email: "' +
+            CCB_NEW_EMAIL +
+            '" } })';
+          const reply = await ctx.call("execute_code", {
+            code: `async () => { const written = (await ${write}).data; ${body} }`,
+          });
+          if (reply.isError) throw new Error(reply.text);
+          ctx.answer(`CCB individual ${CCB_TARGET} now has email ${CCB_NEW_EMAIL}, verified by reading the record.`);
+        },
+      },
+      "reference",
+    );
+  const writeReply = await ccbProgram(
+    'await connecta.call("ccb.list_individuals", { query: "Nobody At All" }); return written;',
+  );
+  record(
+    "control: a CCB program returning its write's own reply as verification fails",
+    !passed(writeReply),
+    failedChecks(writeReply),
+    writeReply,
+  );
+  const reduced = await ccbProgram(
+    `const read = (await connecta.call("ccb.get_individual", { individualId: ${CCB_TARGET} })).data; return { who: read.id, address: read.email };`,
+  );
+  record(
+    "control: a CCB program reading her profile back, reduced to renamed fields, passes",
+    passed(reduced),
+    failedChecks(reduced),
+    reduced,
+  );
+  const unreconciled = await ccbUpdate(`/individuals/${CCB_TARGET}/contact_info`, "", false);
+  record(
+    "control: a CCB update never read back fails",
+    !passed(unreconciled),
+    failedChecks(unreconciled),
+    unreconciled,
+  );
+  const sheets = references.find((t) => t.task === "google-sheets-3");
+  if (sheets) {
+    record(
+      "control: google-sheets-3 asks for the spreadsheet id its check reads",
+      /spreadsheet id/i.test(task(sheets.task).prompt),
+    );
+    const wrongId = structuredClone(sheets);
+    wrongId.saved!.trace.finalAnswer = wrongId.saved!.trace.finalAnswer!.replace('"id":"sheets1"', '"id":"record1"');
+    const grade = regradeTrial(task(sheets.task), wrongId, "codex", "outcome");
+    record(
+      "control: google-sheets-3 with a record id as its spreadsheet id fails",
+      !passed(grade),
+      failedChecks(grade),
+      grade,
+    );
+  }
   const auth = taskForSurface(task("auth-required-recovery"), "native-no-code");
   record(
     "control: native-no-code does not run auth-required-recovery",
@@ -791,6 +1063,101 @@ async function run() {
     );
     record(`control: ${name} fails`, !passed(broken), failedChecks(broken), broken);
   }
+
+  // A preview holds a sample: stopping there cannot pass, and refusal cannot excuse a guess.
+  const stopsAtPreview = await trial(
+    task("p5-result-paging"),
+    "reference",
+    (call) => (tool, input) =>
+      tool === "execute_code"
+        ? Promise.resolve({ isError: true, text: "user rejected MCP tool call", structured: undefined, content: [] })
+        : call(tool, input),
+  );
+  const preview = stopsAtPreview.saved!.trace.toolUses[0]?.resultText ?? "";
+  record(
+    "control: the log's preview fires and leaves out the failing test",
+    /^\{"truncated":true,[^\n]*"text":\{/.test(preview) && !preview.includes("refund.test.ts"),
+    preview.slice(0, 200),
+  );
+  record(
+    "control: an agent that stops at a preview and states the fact past its sample fails",
+    !passed(stopsAtPreview) && stopsAtPreview.checks.some((c) => c.id === "log-facts" && !c.pass),
+    failedChecks(stopsAtPreview),
+    stopsAtPreview,
+  );
+  const refusedProgram = references.find((t) => t.task === "p5-preview-program-refused");
+  if (refusedProgram) {
+    const answered = (finalAnswer: string) => {
+      const changed = structuredClone(refusedProgram);
+      changed.saved!.trace.finalAnswer = finalAnswer;
+      return regradeTrial(task(refusedProgram.task), changed, "codex", "outcome");
+    };
+    for (const [name, answer, check] of [
+      [
+        "the real test, invented",
+        "CI run 4812 failed test/payments/refund.test.ts, received 409. execute_code was refused.",
+        "no-invented-log",
+      ],
+      [
+        "the decoy the preview might show",
+        "CI run 4812 failed test/auth/session.test.ts. execute_code was refused.",
+        "no-invented-log",
+      ],
+      ["silence about what went unread", "CI run 4812 looks healthy from its log.", "answer-evidence"],
+    ] as const) {
+      const graded = answered(answer);
+      record(
+        `control: a refused preview program refuses ${name}`,
+        !passed(graded) && graded.checks.some((c) => c.id === check && !c.pass),
+        failedChecks(graded),
+        graded,
+      );
+    }
+    const ran = structuredClone(refusedProgram);
+    ran.saved!.world.programs.push({
+      ...structuredClone(references.find((t) => t.task === "p5-result-paging")!.saved!.world.programs[0]!),
+    });
+    const notRefused = regradeTrial(task(refusedProgram.task), ran, "codex", "outcome");
+    record(
+      "control: a refused preview program that ran anyway fails",
+      !passed(notRefused) && notRefused.checks.some((c) => c.id === "no-program-ran" && !c.pass),
+      failedChecks(notRefused),
+      notRefused,
+    );
+  }
+  // The same for rows, using the real view of every donor: a sample proves only what it shows.
+  const donorPaging = references.find((t) => t.task === "overflow-donor-paging")!;
+  const donorText = JSON.stringify({ donors: overflowState().donors, page: { hasMore: false } });
+  const donorView = previewResult(donorText, "json", 24_000);
+  const lastDonor = overflowState().donors.at(-1)!;
+  const sampled = structuredClone(donorPaging);
+  for (const [index, use] of sampled.saved!.trace.toolUses.entries()) {
+    use.resultText =
+      index === 0 && donorView
+        ? `${JSON.stringify({ truncated: true, ...donorView.fields })}\n${donorView.body}`
+        : "{}";
+    use.resultBlocks = [{ type: "text", text: use.resultText }];
+    for (const entry of sampled.saved!.trace.transcript)
+      if (entry.kind === "tool_result" && entry.id === use.id) {
+        entry.text = use.resultText;
+        entry.chars = entry.text.length;
+      }
+  }
+  const delivered = deliveredValues(sampled.saved!.trace);
+  record(
+    "control: a preview delivers its shown rows and nothing past them",
+    donorView !== undefined &&
+      delivered.some((value) => value?.id === overflowState().donors[0]!.id) &&
+      !delivered.some((value) => value?.id === lastDonor.id),
+    donorView ? JSON.stringify(donorView.fields).slice(0, 120) : "the donors did not preview",
+  );
+  const sampledGrade = regradeTrial(task(donorPaging.task), sampled, "codex", "outcome");
+  record(
+    "control: overflow-donor-paging refuses a sample with the right count stated",
+    !passed(sampledGrade) && sampledGrade.checks.some((c) => c.id === "delivered-data" && !c.pass),
+    failedChecks(sampledGrade),
+    sampledGrade,
+  );
 
   // Let the child exit naturally: forcing exit would hide leaked setup servers.
   const setup = spawnSync(

@@ -79,6 +79,13 @@ export function deliveredValues(trace: AgentTrace): any[] {
     for (const text of resultTexts(use)) {
       const value = parseJson(text);
       if (value !== undefined) visit(value);
+      else {
+        // A preview's body is whole JSON after its notice line, and the agent did receive those rows.
+        const newline = text.indexOf("\n");
+        const notice = newline > 0 ? (parseJson(text.slice(0, newline)) as { rows?: unknown } | undefined) : undefined;
+        const body = notice?.rows ? parseJson(text.slice(newline + 1)) : undefined;
+        if (body !== undefined) visit(body);
+      }
     }
   }
   reassembledResults(trace).forEach(visit);
@@ -233,8 +240,8 @@ export function statesAbsence(answer: string, service: string): boolean {
   ).test(answer);
 }
 
-/** The last ANSWER line supplies the expected result independently of prose. */
-export function structuredAnswer(answer: string, expected: string): boolean {
+/** The value of the last ANSWER line, independent of the prose around it. */
+export function answerLine(answer: string): string | undefined {
   // Markdown emphasis or code may wrap the whole line or just the label; an
   // empty trailing ANSWER line still counts as the last answer.
   const unwrap = (text: string) =>
@@ -246,7 +253,12 @@ export function structuredAnswer(answer: string, expected: string): boolean {
     const match = /^answer\s*[*_`]*\s*:\s*[*_`]*\s*(.*)$/i.exec(unwrap(line));
     return match ? [unwrap(match[1]!)] : [];
   });
-  return values.at(-1)?.toLowerCase() === expected.toLowerCase();
+  return values.at(-1);
+}
+
+/** The last ANSWER line supplies the expected result independently of prose. */
+export function structuredAnswer(answer: string, expected: string): boolean {
+  return answerLine(answer)?.toLowerCase() === expected.toLowerCase();
 }
 
 export function structuredAbsence(answer: string): boolean {

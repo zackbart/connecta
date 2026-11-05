@@ -409,9 +409,11 @@ path the current response lacks is never refused, and the selection omits it.
 `fields` entry matched nothing anywhere in a nonempty response. Each warning
 names the entry position, the segment where matching stopped and the
 properties the operation's contract declares there, for example
-`fields/1 matched nothing in this response after value safety and privacy
-filtering, at segment 2; declared there: id, name.` Where the contract
-declares none, such as inside an open map, it says so. A warning never lists
+`fields/1 matched nothing after filtering, at segment 2; declared there: id,
+name.` Filtering means value safety and privacy filtering. The list stops at
+160 characters with a count of the rest, and a later miss stopping at the same
+place says `same as fields/1`. Where the contract declares none, such as inside
+an open map, it says so. A warning never lists
 the response's own keys, which in an open map such as `metadata` are data, and
 never repeats the submitted path. A path that matched in any listed item, a
 path that runs past a scalar (selection keeps the scalar), and any path of an

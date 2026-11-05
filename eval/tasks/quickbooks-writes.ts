@@ -5,8 +5,8 @@ import { QB_PRIVATE, quickbooksState } from "../fakes/quickbooks.js";
 import { connectMcp } from "../support/mcp.js";
 import { check } from "./baseline.js";
 import { deliveredValues } from "./correctness.js";
-import { consent, readBob } from "./quickbooks.js";
-import type { ActiveTask } from "./types.js";
+import { consent, jsonAnswer, readBob } from "./quickbooks.js";
+import type { ActiveTask, ReferenceContext } from "./types.js";
 
 const invoiceArgs = (requestId: string, docNumber = "SERVICES-OK") => ({
   requestId,
@@ -21,9 +21,136 @@ const invoiceArgs = (requestId: string, docNumber = "SERVICES-OK") => ({
     { itemId: "7", amount: "0.10" },
   ],
 });
+const customerProjection = (row: Record<string, any>) =>
+  Object.fromEntries(
+    Object.entries(row)
+      .filter(([key]) => key !== "PrimaryEmailAddr")
+      .concat([["Name", "[redacted]"]]),
+  );
 const assert = (value: unknown, message: string) => {
   if (!value) throw new Error(message);
 };
+
+/** What each failing intent does at the vendor. Writes name them, so any caller meets the same failures. */
+const FAILURES = {
+  "invoice-version-race": "stale",
+  "invoice-update-lost": "500",
+  "customer-401": "401",
+  "customer-transport": "transport",
+  "customer-malformed": "malformed",
+  "invoice-recover": "500",
+  "invoice-contradictory": "contradictory",
+  "invoice-invalid-rate": "invalid-rate",
+} as const;
+const UNKNOWN_OUTCOMES = [
+  "invoice-update-lost",
+  "customer-401",
+  "customer-transport",
+  "customer-malformed",
+  "invoice-recover",
+  "invoice-contradictory",
+  "invoice-invalid-rate",
+];
+const LABELS = ["SERVICES-OK", "SERVICES-RECOVER", "SERVICES-CONTRADICT", "SERVICES-RATE", "SERVICES-BUDGET"];
+const PLAN = `QuickBooks is not connected yet, so wait until told the operator has connected it. Then, through connector qb_alice unless a step says otherwise, carry out these writes in order. Each names its exact requestId: use each once and never send it again.
+1. create_customer customer-create: DisplayName Workshop, CompanyName Workshop LLC.
+2. Read that customer's SyncToken, then race two update_customer calls concurrently in one program, both using the SyncToken you read: customer-race-A sets DisplayName Workshop A, customer-race-B sets Workshop B. Exactly one will win.
+3. create_invoice invoice-create: customerId 9, currency USD, exchangeRate 1, txnDate 2026-10-27, dueDate 2026-11-27, docNumber SERVICES-OK, lines of item 7 for amounts 19.99 then 0.10, in that order. It stays unsent.
+4. Read that invoice's SyncToken and call update_unsent_invoice invoice-version-race with docNumber SERVICES-EDIT. It may conflict. If so, read the SyncToken again and repeat the change as invoice-update. Then read it again and set docNumber back to SERVICES-OK as invoice-update-lost.
+5. create_customer customer-401 (DisplayName Unauthorized), customer-transport (Transport) and customer-malformed (Malformed).
+6. create_invoice, with the same details as step 3 and these docNumbers: invoice-recover SERVICES-RECOVER, invoice-contradictory SERVICES-CONTRADICT, invoice-invalid-rate SERVICES-RATE.
+7. Through qb_budget_1, which has too small a request budget, try create_invoice invoice-budget-refused with docNumber SERVICES-BUDGET. It should refuse. Then through qb_budget_4 create_invoice invoice-budget with the same docNumber. Make no other call through those two connectors.
+If a write's outcome is unknown, reconcile it through actual reads: search customers by exact DisplayName, or invoices by exact DocNumber. Never resend an ambiguous intent.
+Finish with one line: ANSWER: followed by JSON with source "QuickBooks", customer { Id, SyncToken, DisplayName } as finally read, raceWinner "A" or "B", invoices [{ Id, SyncToken, DocNumber, TotalAmt }] for every invoice you created as finally read, and unknownOutcomes listing each requestId whose response left its outcome unknown.`;
+
+/** The final line the plan asks for, from what the vendor actually holds. */
+function planAnswer(world: ReferenceContext["world"]) {
+  const company = world.quickbooks.state.companies[QB_COMPANIES.alice]!;
+  const customer = company.Customer.find((row) => row.Id === "51")!;
+  return `ANSWER: ${JSON.stringify({
+    source: "QuickBooks",
+    customer: { Id: customer.Id, SyncToken: customer.SyncToken, DisplayName: customer.DisplayName },
+    raceWinner: String(customer.DisplayName).slice(-1),
+    invoices: company.Invoice.filter((row) => LABELS.includes(row.DocNumber)).map((row) => ({
+      Id: row.Id,
+      SyncToken: row.SyncToken,
+      DocNumber: row.DocNumber,
+      TotalAmt: row.TotalAmt,
+    })),
+    unknownOutcomes: UNKNOWN_OUTCOMES,
+  })}`;
+}
+
+/**
+ * Only what the prompt asks, by the routes an agent would choose: the proof that
+ * following the plan passes, with none of the reference's hostile probes.
+ */
+export async function followPlan(ctx: ReferenceContext) {
+  await ctx.nextTurn();
+  const write = (tool: string, args: Record<string, unknown>, connector = "qb_alice") =>
+    ctx.call("call_destructive_tool", { address: `${connector}.${tool}`, args });
+  const read = async (tool: string, args: Record<string, unknown>) => {
+    const reply = await ctx.call("call_tool", { address: `qb_alice.${tool}`, args });
+    assert(!reply.isError, reply.text);
+    const parsed = JSON.parse(reply.text);
+    return parsed.data ?? parsed;
+  };
+  const search = (entity: string, field: string, value: string) =>
+    read("search_records", { entity, filters: [{ field, operator: "eq", value }], limit: 10 });
+  const created = await write("create_customer", {
+    requestId: "customer-create",
+    DisplayName: "Workshop",
+    CompanyName: "Workshop LLC",
+  });
+  assert(!created.isError, created.text);
+  const before = (await search("customers", "DisplayName", "Workshop")).items[0];
+  const race = await ctx.call("execute_code", {
+    code: `async () => await Promise.allSettled(["A", "B"].map(suffix => connecta.call("qb_alice.update_customer", { requestId: "customer-race-" + suffix, Id: ${JSON.stringify(before.Id)}, SyncToken: ${JSON.stringify(before.SyncToken)}, DisplayName: "Workshop " + suffix })))`,
+  });
+  assert(!race.isError, race.text);
+  await read("get_record", { entity: "customers", id: before.Id });
+  const invoice = JSON.parse((await write("create_invoice", invoiceArgs("invoice-create"))).text);
+  const id = (invoice.data ?? invoice).Id;
+  const version = async () => (await read("get_record", { entity: "invoices", id })).SyncToken;
+  const update = async (requestId: string, docNumber: string) =>
+    write("update_unsent_invoice", { requestId, Id: id, SyncToken: await version(), docNumber });
+  await update("invoice-version-race", "SERVICES-EDIT");
+  await update("invoice-update", "SERVICES-EDIT");
+  await update("invoice-update-lost", "SERVICES-OK");
+  await version();
+  for (const [requestId, DisplayName] of [
+    ["customer-401", "Unauthorized"],
+    ["customer-transport", "Transport"],
+    ["customer-malformed", "Malformed"],
+  ] as const) {
+    await write("create_customer", { requestId, DisplayName });
+    await search("customers", "DisplayName", DisplayName);
+  }
+  for (const [requestId, label] of [
+    ["invoice-recover", "SERVICES-RECOVER"],
+    ["invoice-contradictory", "SERVICES-CONTRADICT"],
+    ["invoice-invalid-rate", "SERVICES-RATE"],
+  ] as const) {
+    await write("create_invoice", invoiceArgs(requestId, label));
+    await search("invoices", "DocNumber", label);
+  }
+  const refusedBudget = await write(
+    "create_invoice",
+    invoiceArgs("invoice-budget-refused", "SERVICES-BUDGET"),
+    "qb_budget_1",
+  );
+  assert(refusedBudget.isError, "A one-call budget admitted an invoice");
+  const budget = await write("create_invoice", invoiceArgs("invoice-budget", "SERVICES-BUDGET"), "qb_budget_4");
+  assert(!budget.isError, budget.text);
+  await search("invoices", "DocNumber", "SERVICES-BUDGET");
+  ctx.answer("Reconciled through reads; waiting on the operator.");
+  await ctx.nextTurn();
+  const refused = await write("create_customer", { requestId: "endpoint-refused", DisplayName: "Forbidden" });
+  assert(refused.isError && /read_only_endpoint/.test(refused.text), `Endpoint policy: ${refused.text}`);
+  ctx.answer(
+    `The read-only endpoint refused the write. Workshop and all five invoices reconciled.\n${planAnswer(ctx.world)}`,
+  );
+}
 
 export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
   status: "active",
@@ -33,12 +160,12 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
   measures: "Committed names, caller-observed CAS conflict, unsent invoices, no replay and read reconciliation",
   world: { quickbooks: true },
   deployment: { quickbooksWrites: true },
-  prompt:
-    "Create Workshop / Workshop LLC, race two sparse naming updates with its observed SyncToken, then create unsent USD service invoices. Reconcile failed write responses through actual reads. Never resend an ambiguous intent.",
+  prompt: PLAN,
   followUps: [
     {
-      prompt: "The operator connected both companies.",
+      prompt: "The operator connected both companies. Carry out the plan now.",
       before: async ({ world, deployment }) => {
+        world.quickbooks.state.failures = { ...FAILURES };
         await consent(deployment.origin, "alice");
         await consent(deployment.origin, "bob");
         await readBob(deployment);
@@ -72,7 +199,8 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       },
     },
     {
-      prompt: "The operator made the endpoint read-only.",
+      prompt:
+        "The operator made the endpoint read-only. Try create_customer once more through qb_alice, with requestId endpoint-refused and DisplayName Forbidden, to confirm the refusal. Then repeat your final ANSWER line.",
       before: async ({ deployment }) => {
         assert(deployment.restart, "Requires application reconstruction");
         await deployment.restart!(true);
@@ -201,7 +329,6 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       for (const key of Object.keys(stored)) delete stored[key];
       Object.assign(stored, saved);
     }
-    ctx.world.quickbooks.state.failures["invoice-version-race"] = "stale";
     const raceAt = ctx.world.ledger.calls.length;
     const conflict = await write("update_unsent_invoice", { ...updateArgs, requestId: "invoice-version-race" });
     assert(conflict.isError && /conflict/.test(conflict.text), "Post-preflight invoice version race did not conflict");
@@ -224,7 +351,6 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       "Stale preflight dispatched POST",
     );
     const latest = data(await read("get_record", { entity: "invoices", id: observed.Id }));
-    ctx.world.quickbooks.state.failures["invoice-update-lost"] = "500";
     const lost = await write("update_unsent_invoice", {
       ...updateArgs,
       SyncToken: latest.SyncToken,
@@ -242,15 +368,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       stored.EmailStatus === "NotSet" && stored.AllowOnlineACHPayment === false && stored.sent === false,
       "Update changed delivery/payment settings",
     );
-    // Four bounded failures; committed failures are reconciled, never resent.
-    ctx.world.quickbooks.state.failures = {
-      "customer-401": "401",
-      "customer-transport": "transport",
-      "customer-malformed": "malformed",
-      "invoice-recover": "500",
-      "invoice-contradictory": "contradictory",
-      "invoice-invalid-rate": "invalid-rate",
-    };
+    // Bounded failures; committed failures are reconciled, never resent.
     answer.failures = [];
     for (const [requestId, DisplayName] of [
       ["customer-401", "Unauthorized"],
@@ -326,22 +444,68 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       assert(reply.isError && /read_only_endpoint/.test(reply.text), `Endpoint policy: ${reply.text}`);
     }
     assert(ctx.world.ledger.calls.length === refusedAt, "Read-only endpoint called Intuit");
-    ctx.answer(JSON.stringify(answer));
+    // Provider behaviour an agent has no reason to probe; the outcome gate holds it here.
+    const customer = company.Customer.find((row) => row.Id === "51")!;
+    const projected = customerProjection(customer);
+    const raced = answer.race as { suffix: string; value?: Record<string, any>; error?: unknown }[];
+    const [winners, losers] = [raced.filter((r) => r.value), raced.filter((r) => r.error)];
+    assert(
+      winners.length === 1 &&
+        losers.length === 1 &&
+        winners[0]!.value!.SyncToken === "1" &&
+        customer.DisplayName === `Workshop ${winners[0]!.suffix}` &&
+        /conflict|SyncToken is stale/.test(JSON.stringify(losers[0])),
+      "The customer race did not report one winner and one conflict",
+    );
+    assert(
+      same(answer.customer, projected) &&
+        same(answer.customerBefore, {
+          Id: "51",
+          SyncToken: "0",
+          Active: true,
+          CurrencyRef: { value: "USD" },
+          DisplayName: "Workshop",
+          CompanyName: "Workshop LLC",
+          Name: "[redacted]",
+        }),
+      "Customer reads lost a public field or its version",
+    );
+    assert(
+      same(answer.customerHatch?.Customer, projected) &&
+        same(answer.customerFields, { Id: "51", SyncToken: "1", Name: "[redacted]" }) &&
+        same(answer.customerSearch?.items, [projected]) &&
+        answer.invoiceHatch?.Invoice?.TxnTaxDetail?.TotalTax === 1.66 &&
+        same(answer.invoiceFields?.Invoice, { Id: "62", SyncToken: "0", Name: "[redacted]", TotalAmt: 21.75 }),
+      "A hatch or field projection lost a public fact or kept a private one",
+    );
+    assert(
+      answer.failures.length === 6 &&
+        [...answer.failures, answer.updateFailure].every(
+          (failure: unknown) =>
+            /unknown/.test(JSON.stringify(failure)) && /"retryable":false/.test(JSON.stringify(failure)),
+        ),
+      "A committed or lost write failure was not a nonretryable unknown",
+    );
+    assert(
+      answer.invoice.SyncToken === "3" &&
+        answer.recovered.items.length === 1 &&
+        answer.recovered.items[0].Id === "62" &&
+        answer.recovered.items[0].TotalAmt === 21.75 &&
+        answer.budgetInvoice.Id === "65" &&
+        answer.budgetInvoice.TotalAmt === 21.75,
+      "Reconciled invoice reads disagree with committed state",
+    );
+    ctx.answer(planAnswer(ctx.world));
   },
   grade({ world, trace }) {
-    let answer: Record<string, any> = {};
-    try {
-      answer = JSON.parse(trace.finalAnswer ?? "");
-    } catch {
-      /* No answer fails below. */
-    }
+    const answer = jsonAnswer(trace.finalAnswer ?? "") ?? {};
     const company = world.quickbooks.state.companies[QB_COMPANIES.alice]!;
     const bob = world.quickbooks.state.companies[QB_COMPANIES.bob]!;
     const seed = quickbooksState().companies;
     const calls = world.ledger.calls.filter((c) => c.service === "quickbooks");
     const writes = calls.filter((c) => c.kind === "write");
     const customer = company.Customer.find((r) => r.Id === "51");
-    const labels = ["SERVICES-OK", "SERVICES-RECOVER", "SERVICES-CONTRADICT", "SERVICES-RATE", "SERVICES-BUDGET"];
+    const labels = LABELS;
     const invoices = company.Invoice.filter((r) => labels.includes(r.DocNumber));
     const ids = [
       "customer-create",
@@ -367,14 +531,40 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
       "invoice-budget",
     ];
     const sent = (id: string) => writes.find((c) => (c.args.query as Record<string, string>).requestid === id);
-    const winners = (answer.race ?? []).filter((r: any) => r.value);
-    const losers = (answer.race ?? []).filter((r: any) => r.error);
-    const projection = (row: Record<string, any> | undefined) =>
-      row &&
-      Object.fromEntries(
-        Object.entries(row)
-          .filter(([key]) => !["PrimaryEmailAddr"].includes(key))
-          .concat([["Name", "[redacted]"]]),
+    const raced = ["A", "B"].map((suffix) => sent(`customer-race-${suffix}`));
+    const winner = raced.find((call) => call?.args.status === 200);
+    const delivers = (row: Record<string, any> | undefined) =>
+      delivered.some(
+        (value) =>
+          row &&
+          value?.Id === row.Id &&
+          value.SyncToken === row.SyncToken &&
+          value.DocNumber === row.DocNumber &&
+          value.TotalAmt === row.TotalAmt,
+      );
+    const searched = (entity: string, field: string, value: string) =>
+      calls.some((c) => {
+        const query = String((c.args.query as any)?.query ?? "");
+        return (
+          c.args.method === "GET" &&
+          query.startsWith(`SELECT * FROM ${entity}`) &&
+          (!query.includes(" WHERE ") || query.includes(`${field} = '${value}'`))
+        );
+      });
+    const refusedEndpoint =
+      trace.toolUses.some(
+        (use) =>
+          use.isError &&
+          /read_only_endpoint/.test(use.resultText ?? "") &&
+          (use.input.args as Record<string, unknown> | undefined)?.requestId === "endpoint-refused",
+      ) ||
+      world.programs.some((program) =>
+        program.calls.some(
+          (call) =>
+            call.name === "connecta.call" &&
+            /read_only_endpoint/.test(call.errorCode ?? "") &&
+            (call.args[1] as Record<string, unknown> | undefined)?.requestId === "endpoint-refused",
+        ),
       );
     const traceText = JSON.stringify(trace);
     const delivered = deliveredValues(trace);
@@ -401,20 +591,18 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
         "Final answer identifies QuickBooks and the committed customer and invoices",
         answer.source === "QuickBooks" &&
           customer !== undefined &&
-          same(answer.customer, projection(customer)) &&
+          answer.customer?.Id === customer.Id &&
+          answer.customer?.SyncToken === customer.SyncToken &&
+          answer.customer?.DisplayName === customer.DisplayName &&
+          customer.DisplayName === `Workshop ${answer.raceWinner}` &&
           invoices.length === 5 &&
           invoices.every((invoice) =>
-            [
-              answer.invoice,
-              answer.recovered?.items?.[0],
-              ...(answer.contradictions ?? []).flatMap((row: any) => row.items ?? []),
-              answer.budgetInvoice,
-            ].some(
-              (row) =>
+            (answer.invoices ?? []).some(
+              (row: any) =>
                 row?.Id === invoice.Id &&
                 row.SyncToken === invoice.SyncToken &&
                 row.DocNumber === invoice.DocNumber &&
-                row.TotalAmt === invoice.TotalAmt,
+                Number(row.TotalAmt) === invoice.TotalAmt,
             ),
           ),
       ),
@@ -426,19 +614,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
             (row) => row?.Id === customer.Id && row.SyncToken === "1" && row.DisplayName === customer.DisplayName,
           ) &&
           invoices.length === 5 &&
-          invoices.every((invoice) =>
-            delivered.some(
-              (row) =>
-                row?.Id === invoice.Id &&
-                row.SyncToken === invoice.SyncToken &&
-                row.DocNumber === invoice.DocNumber &&
-                row.CustomerRef?.value === invoice.CustomerRef.value &&
-                row.CurrencyRef?.value === invoice.CurrencyRef.value &&
-                row.TxnDate === invoice.TxnDate &&
-                row.DueDate === invoice.DueDate &&
-                row.TotalAmt === invoice.TotalAmt,
-            ),
-          ),
+          invoices.every(delivers),
       ),
       check(
         "physical-intents",
@@ -477,16 +653,6 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
           customer?.SyncToken === "1" &&
           ["Workshop A", "Workshop B"].includes(customer.DisplayName) &&
           customer.CompanyName === "Workshop LLC" &&
-          same(answer.customer, projection(customer)) &&
-          same(answer.customerBefore, {
-            Id: "51",
-            SyncToken: "0",
-            Active: true,
-            CurrencyRef: { value: "USD" },
-            DisplayName: "Workshop",
-            CompanyName: "Workshop LLC",
-            Name: "[redacted]",
-          }) &&
           same(sent("customer-create")?.args.body, { DisplayName: "Workshop", CompanyName: "Workshop LLC" }) &&
           ["A", "B"].every((suffix) =>
             same(sent(`customer-race-${suffix}`)?.args.body, {
@@ -497,11 +663,8 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
             }),
           ) &&
           writes.filter((c) => c.args.status === 400 && String(c.args.path).endsWith("/customer")).length === 1 &&
-          winners.length === 1 &&
-          losers.length === 1 &&
-          winners[0].value.SyncToken === "1" &&
-          customer.DisplayName === `Workshop ${winners[0].suffix}` &&
-          /conflict|SyncToken is stale/.test(JSON.stringify(losers[0])),
+          raced.filter((call) => call?.args.status === 200).length === 1 &&
+          customer.DisplayName === (winner?.args.body as Record<string, unknown> | undefined)?.DisplayName,
       ),
       check(
         "invoice-state",
@@ -529,16 +692,8 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
               ],
             })),
           ) &&
-          answer.invoice?.TotalAmt === 21.75 &&
-          answer.recovered?.items?.length === 1 &&
-          answer.recovered.items[0].Id === "62" &&
-          answer.recovered.items[0].TotalAmt === 21.75 &&
-          calls.some(
-            (c) =>
-              c.args.method === "GET" &&
-              (c.args.query as any).query ===
-                "SELECT * FROM Invoice WHERE DocNumber = 'SERVICES-RECOVER' STARTPOSITION 1 MAXRESULTS 26",
-          ),
+          delivers(company.Invoice.find((row) => row.Id === "62")) &&
+          searched("Invoice", "DocNumber", "SERVICES-RECOVER"),
       ),
       check(
         "invoice-update",
@@ -558,10 +713,8 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
           sent("invoice-version-race")?.args.status === 400 &&
           sent("invoice-version-race")?.args.committed === false &&
           sent("invoice-update-lost")?.args.committed === true &&
-          /unknown/.test(JSON.stringify(answer.updateFailure)) &&
-          /"retryable":false/.test(JSON.stringify(answer.updateFailure)) &&
-          answer.invoice?.SyncToken === "3" &&
-          answer.invoice?.DocNumber === "SERVICES-OK" &&
+          company.Invoice.find((row) => row.Id === "61")?.SyncToken === "3" &&
+          company.Invoice.find((row) => row.Id === "61")?.DocNumber === "SERVICES-OK" &&
           company.Invoice.find((row) => row.Id === "61")?.EmailStatus === "NotSet",
       ),
       check(
@@ -609,10 +762,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
             "invoice-contradictory",
             "invoice-invalid-rate",
           ].every((id) => sent(id)?.args.committed === true) &&
-          answer.failures?.length === 6 &&
-          answer.failures.every(
-            (r: any) => /unknown/.test(JSON.stringify(r)) && /"retryable":false/.test(JSON.stringify(r)),
-          ) &&
+          UNKNOWN_OUTCOMES.every((id) => (answer.unknownOutcomes ?? []).includes(id)) &&
           [
             ["customer-401", "Unauthorized"],
             ["customer-transport", "Transport"],
@@ -621,11 +771,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
           ["Transport", "Malformed"].every(
             (name) =>
               company.Customer.filter((r) => r.DisplayName === name).length === 1 &&
-              calls.some(
-                (c) =>
-                  (c.args.query as any).query ===
-                  `SELECT * FROM Customer WHERE DisplayName = '${name}' STARTPOSITION 1 MAXRESULTS 26`,
-              ),
+              searched("Customer", "DisplayName", name!),
           ),
       ),
       check(
@@ -651,49 +797,37 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
           refusedCalls.some(
             (call) => call.address === "qb_budget_1.create_invoice" && /rate_limited/.test(call.error),
           ) &&
-          answer.budgetInvoice?.Id === "65" &&
-          answer.budgetInvoice?.TotalAmt === 21.75,
+          company.Invoice.find((row) => row.Id === "65")?.DocNumber === "SERVICES-BUDGET" &&
+          company.Invoice.find((row) => row.Id === "65")?.TotalAmt === 21.75,
       ),
       check(
         "contradictions",
         "Committed contradictory 200 replies are unknown; reads recover the original intent without another invoice",
-        answer.contradictions?.length === 2 &&
-          answer.contradictions.every(
-            (r: any, index: number) =>
-              r.items?.length === 1 &&
-              r.items[0].Id === String(63 + index) &&
-              r.items[0].CustomerRef.value === "9" &&
-              r.items[0].CurrencyRef.value === "USD" &&
-              r.items[0].DocNumber === labels[index + 2] &&
-              r.items[0].ExchangeRate === 1 &&
-              r.items[0].TotalAmt === 21.75,
-          ),
+        ["63", "64"].every((id, index) => {
+          const row = company.Invoice.find((candidate) => candidate.Id === id);
+          return (
+            row?.CustomerRef.value === "9" &&
+            row.CurrencyRef.value === "USD" &&
+            row.DocNumber === labels[index + 2] &&
+            row.ExchangeRate === 1 &&
+            row.TotalAmt === 21.75 &&
+            delivers(row) &&
+            searched("Invoice", "DocNumber", labels[index + 2]!)
+          );
+        }),
       ),
       check(
         "refusal",
-        "Read-only, arbitrary writes, malformed and preflight inputs cannot POST",
-        refusedCalls.length >= 20 &&
-          [
-            "qb_readonly_0.create_customer",
-            "qb_readonly_1.create_customer",
-            "qb_readonly_0.update_unsent_invoice",
-            "qb_readonly_1.update_unsent_invoice",
-            "qb_alice.quickbooks_api_write",
-            "qb_alice.update_invoice",
-          ].every((address) => refusedCalls.some((call) => call.address === address)) &&
-          refusedCalls.filter((call) => /read_only_endpoint/.test(call.error)).length >= 5 &&
-          calls.filter((c) => c.args.method === "GET" && String(c.args.path).endsWith("/item/7")).length === 5,
+        "The read-only endpoint refused the agent's write attempt, and every invoice passed its preflight",
+        // The operator's own probe of the read-only pool is in the programs too, so name the agent's.
+        refusedEndpoint &&
+          !writes.some((c) => (c.args.query as Record<string, string>).requestid === "endpoint-refused") &&
+          calls.filter((c) => c.args.method === "GET" && String(c.args.path).endsWith("/item/7")).length >= 5,
       ),
       check(
         "privacy",
-        "Private vendor values/errors and credentials withheld on all paths; versions public",
-        !traceText.includes(QB_PRIVATE) &&
-          !/qb-(?:access|refresh)-|eval-qb-client-secret/.test(traceText) &&
-          same(answer.customerHatch?.Customer, projection(customer)) &&
-          same(answer.customerFields, { Id: "51", SyncToken: "1", Name: "[redacted]" }) &&
-          same(answer.customerSearch?.items, [projection(customer)]) &&
-          answer.invoiceHatch?.Invoice?.TxnTaxDetail?.TotalTax === 1.66 &&
-          same(answer.invoiceFields?.Invoice, { Id: "62", SyncToken: "0", Name: "[redacted]", TotalAmt: 21.75 }),
+        "Private vendor values/errors and credentials withheld on all paths",
+        !traceText.includes(QB_PRIVATE) && !/qb-(?:access|refresh)-|eval-qb-client-secret/.test(traceText),
       ),
       check(
         "company-isolation",

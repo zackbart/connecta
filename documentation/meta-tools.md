@@ -211,17 +211,24 @@ The deployment-derived `execute_code` description carries a connector
 inventory before any catalog search — registry order and each canonical id,
 with no second name minted for programs. An entry adds the configured title
 only when it says more than the id: a title whose words the id already spells,
-such as `Google Calendar` for `google_calendar`, is dropped. Titles normalize
-whitespace and cap at 48 UTF-8 bytes. A connector whose guide is required
+such as `Google Calendar` for `google_calendar`, is dropped. It then adds the
+connector's configured description as a one-line purpose, unless that too only
+respells the id and title. Titles and purposes normalize whitespace; titles cap
+at 48 UTF-8 bytes and purposes at 60, clipping on a whole token; text with no token
+that fits is omitted. A connector whose guide is required
 carries a `*`, and one legend follows when an entry shown has the mark. Optional
 guides are not named here; search and describe name them. For example:
-`Connectors: crm* (Customer CRM), tickets. *Read connecta.skill("connector:<id>") before its first call.`
+`Connectors: crm* (Customer CRM; Current accounts and contracts), tickets. *Read connecta.skill("connector:<id>") before its first call.`
+
+Write each description so its first 60 bytes tell the connector apart from its
+neighbours. Purposes stay in this inventory, never in the instructions, which
+some hosts repeat on every tool.
 
 The complete line, legend included, caps at 1,024 UTF-8 bytes, which names every
 connector of a typical deployment. Past the cap, detail degrades before names do:
-titles are dropped first. Only when bare ids still exceed it do whole entries
-give way, in registry order, to an exact `+N more` count. The inventory reads
-only the configured registry: no
+purposes are dropped first, from the end of registry order, then titles. Only
+when bare ids still exceed it do whole entries give way, in registry order, to an
+exact `+N more` count. The inventory reads only the configured registry: no
 catalog load, no credential probe, no live status, no capability, and no
 replacement for canonical discovery or addressing. Search pages carry the same
 bounded title once per connector in `connectors[<id>].title`, so choosing an
@@ -728,11 +735,92 @@ sooner but cannot extend the call deadline. Result processing happens after that
 deadline ends, because a completed downstream call must not turn into a
 retryable timeout while Connecta prepares its response.
 
+### Previews of reads over the cap
+
+A result at or under its cap always returns whole. A successful direct read over
+its cap (the connector's `maxResultBytes`, else `calls.maxResultBytes`, else 24,000
+bytes), on a surface that lists a program tool, may show a sample instead of its
+first bytes: the structure and whole rows, or the head and tail of its text, with a
+retained copy of the result and a ready-to-edit program. Such a read is already cut
+and already stashed, so a preview adds no storage cost, and valid JSON with a notice
+saying what it holds replaces raw JSON sliced mid-value. The rule is generic and
+needs nothing from a provider. It reads the result after redaction and value safety,
+for API values and for a lone MCP text block.
+
+**Rows.** A preview fires when all of these hold:
+
+- its largest list holds at least 3 records or arrays, sits within 3 keys of the
+  root, and holds at least half the bytes;
+- everything outside that list fits in 1,024 bytes;
+- at least the first row can be shown whole, within 3,000 bytes, and at least one
+  row is left out;
+- every number in the result keeps its exact value through `JSON.parse`.
+
+```text
+{"truncated":true,"resultId":"…","totalBytes":48210,"rows":{"path":"items","count":200,"shown":18,"keys":["id","email","status"]},"hint":"Sample only: rows 1-18 of 200 at items follow, in the result's own shape, with every value outside the list; the other 182 are not shown. All of it is retained for 15 minutes: run nextAction in execute_code, editing its last line to filter, join or count the rows, instead of reading pages by hand. If execute_code is refused or unavailable, the rest can't be read here: narrow this read with its own filter, limit or fields arguments, or say what was not read.","nextOffset":0,"nextAction":{"tool":"execute_code","arguments":{"code":"async () => { let text = \"\", offset = 0, page; do { page = await connecta.result(\"…\", { offset }); text += page.text; offset = page.nextOffset; } while (page.hasMore); const rows = JSON.parse(text).items; return { count: rows.length, rows: rows.slice(0, 5) }; }"}}}
+{"items":[{"id":"t_1","email":"alice@example.com","status":"open"},…],"has_more":true,"next_cursor":"c2"}
+```
+
+The body after the first newline is valid JSON in the result's own shape: whole
+rows from the start of the list up to 1,500 bytes, and every value outside it.
+`rows.path` names the list as JavaScript would, so a key a dotted path cannot
+spell reads `["a.b"].items`, and a root array reads `(root)`. `rows.keys` samples
+up to 40 keys of at most 64 characters from the first 50 rows; `rows.count` and
+`totalBytes` describe the whole result.
+
+**Text.** Text that is not JSON, or an API connector's text value, returns its line
+count in `text.lines`, then its first 1,200 and last 800 bytes around a marker saying
+how many bytes were left out, with `text.shownBytes` beside it. Cuts fall on
+character boundaries. Its program reads the retained text and returns the lines
+matching a pattern the agent can edit.
+
+**Everything else keeps the route below:** results no program can reach whole within
+`execute.maxHostCalls`, JSON objects with no such list, scalars, lists of scalars,
+lists deeper than 3 keys or shorter than 3 rows, a first row over 3,000 bytes, text
+with unpaired surrogates, several blocks, non-text blocks and value mode. So does any
+number parsing would change: complete tokens are compared by exact value, including
+fractions and exponents, so `9.007199254740993e15`, `1e999` and `-0` decline the view
+wherever they appear, and `1e3` and `12.50` do not. Digits inside a string never count.
+The offered program parses the same text, so a number past the sample declines too.
+
+**A call that may have written never previews.** That covers every effective write
+and a source write a deployment overrode to read: its result is its only copy, and
+repeating it to look again is forbidden. It keeps its first bytes, and its notice says
+the write already ran and offers no repeat.
+
+A preview is presentation only. A program's value and the handle's pages are
+byte-for-byte what they would have been: the retained text is the same redacted
+text the read would have paged, and `format` keeps its meaning. A view drops no
+continuation field, total, warning, status or `format`, shows no empty list in place
+of a full one, keeps array positions, and shows `false` and `0` as they are.
+`totalBytes` is the original size. Clients that parse a direct read should not assume
+the body after a `truncated` notice is a prefix: `nextOffset` is 0 and the body is a
+separate view. The per-connector and deployment `maxResultBytes` still bound what is
+shown: a preview that does not fit the call's cap takes the route below, and a raised
+cap returns more results whole. A preview counts as `result_too_large` friction, as
+any result past its cap does. If the stash fails, the read keeps its first bytes and
+its paging-unavailable notice, and the operator warning fires as usual.
+
+**Recovery depends on the program tool.** `connecta.result` exists only inside
+programs, and a host may prompt for or refuse `execute_code`, which is annotated as a
+write on a writable endpoint. A refused program means the rows or text the preview left
+out can't be read from this result, which is also true of the first-bytes route. So the
+hint states the fallback: narrow the read with its own arguments, or say what was not
+read. A view shows less of the result than first bytes would, 1,500 bytes of rows
+against 24,000, so narrowing matters more on such a host.
+
+Previews need a program tool, not only a paging tool. Page-first reading failed when an
+agent read a 185 KB log in pages and missed the failing range, and a preview shows too
+little to read by hand, so a native pool with `executeCode: false` keeps its first
+bytes and its `read_result` notice. One value in `src/routes/mcp.ts` registers the
+program tool for a request and names it in `nextAction` and the hint, so the text never
+offers a tool the surface does not list.
+
 ### Truncated direct-call results
 
 A `call_tool` or `call_destructive_tool` result over its cap — the connector's
-`maxResultBytes`, else `calls.maxResultBytes`, else 24,000 bytes — comes back
-as one text block. Its first line is the truncation notice, one line of compact
+`maxResultBytes`, else `calls.maxResultBytes`, else 24,000 bytes — that does not
+get a [preview](#previews-of-reads-over-the-cap) comes back as one text block. Its first line is the truncation notice, one line of compact
 JSON; everything after the first newline is the preview. `structuredContent`
 is absent, so the notice cannot hide the preview in clients that prefer it:
 
@@ -819,10 +907,12 @@ no paging route.
 
 Meta endpoints page inside a program. Native pools without code list `read_result` for the same bound handles. Program calls also
 return handles for oversized values; see [program result limits](./code-mode.md#cancellation-and-limits).
-A read's handle says to loop `connecta.result(handle, { offset })` until `!hasMore`
-only when every page at the connector's cap, plus two host calls spare, fits the
-calls its program has left. A handle's value is usually over 1 MiB, so at the
-default 20 calls and 24,000-byte cap it doesn't: its hint then gives the pages
+A handle within the program's [read ceiling](./code-mode.md#connectaresult-and-connectaskill)
+says to read it whole with `connecta.result(handle, { all: true })`, for one host call.
+Past the ceiling, a read's handle says to loop `connecta.result(handle, { offset })`
+until `!hasMore` only when every page at the connector's cap, plus two host calls
+spare, fits the calls its program has left. At the default 20 calls and 24,000-byte
+cap it doesn't: its hint then gives the pages
 to read in this program and in each new one, and says to return the reduction so
 far with `nextOffset` and continue from both, by `resultId`, inside the 15-minute
 retention. A loop past the budget ends in `budget_exceeded` with nothing returned.
@@ -2054,6 +2144,8 @@ owns the supplied usage instructions, each endpoint's instructions
 (`endpointInstructions`), and connector guides. The native surface's names,
 listing, and call translation live in
 [native-tools.ts](https://github.com/zackbart/connecta/blob/main/src/native-tools.ts).
+[result-preview.ts](https://github.com/zackbart/connecta/blob/main/src/result-preview.ts)
+owns the rule behind previews of reads over the cap, as pure functions of redacted text.
 
 [Schema tests](https://github.com/zackbart/connecta/blob/main/test/meta-tool-schemas.test.ts),
 [search tests](https://github.com/zackbart/connecta/blob/main/test/meta-tools-search.test.ts),

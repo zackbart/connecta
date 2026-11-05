@@ -9,10 +9,13 @@ checkouts have independent locks. Install the `flock` CLI with Homebrew
 (`brew install flock`) where unavailable. The OS releases locks when holders exit,
 including SIGKILL; never delete the persistent `.flock` file (that would split the
 lock). No stale owner directory or PID recovery is needed. Node and fake listeners bind port 0. Child deployments
-that need a public URL before startup retry bind collisions at most three times,
-only during initial startup. Wrangler's inspector and internal proxy use explicit
-ports so Landlock can allow callbacks before workerd starts; a startup collision
-retries the entire process group with fresh ports. Reader and writer fairness is
+that need a public URL before startup retry bind collisions at most three times.
+Wrangler's inspector and internal proxy use explicit ports so Landlock can allow
+callbacks before workerd starts; a startup collision retries the entire process
+group with fresh ports. A restart keeps its public port, because the origin has
+already been served, so it redraws only the internal ports and waits between
+attempts. Claims in `~/.cache/connecta-eval-ports` keep other evals on the machine
+from drawing a port during that gap, and a claim from a dead process is ignored. Reader and writer fairness is
 not guaranteed: sustained readers can delay a build up to the 1,800 s lock
 acquisition timeout.
 
@@ -42,7 +45,12 @@ write recovery, Overflow donor paging, Gmail attachment-preserving draft refusal
 Forms revision-conflict recovery, Docs indexes, Sheets rows across ranges and
 Slides deck/comment save outcomes. `p5-slow-read` runs one fast read beside one
 that outlasts the run, on a six-second run deadline: the answer must hold the
-fast data with no second fast read. The provider/HTTP cleanup also promotes
+fast data with no second fast read. `p5-preview-program-refused` reads a log over
+the cap on a host that refuses `execute_code`: the answer must say what was not
+read and name no test. Controls also require failure for an agent that stops at a
+preview and states the fact past its sample, for a refused program answered with
+the real test, the preview's decoy or silence, and for a rows sample with the right
+count stated. The provider/HTTP cleanup also promotes
 existing Tithe.ly cancellation recovery, a single GitHub draft release, a GitHub
 CI read that reports one repository's permission gap while finishing another,
 Cloudflare DNS and Vercel environment recovery, shared-drive permission
@@ -122,13 +130,20 @@ company/owner isolation, and coordinates consecutive vendor-hour renewals with
 identical refresh bytes,
 then rotates and persists new bytes across application reconstruction.
 Disconnecting Alice must revoke the fake Intuit grant and invalidate its old
-access token while Bob keeps working. Accounting evidence
-includes exact lookahead pages, customer joins, nested report rows and empty
-cells, plus named/hatch/fields secrecy while retaining public SyncToken.
+access token while Bob keeps working. The fake answers every query `search_records`
+can build from its live rows, with filters, paging and hidden inactive master
+records, and refuses anything else as Intuit refuses an unknown column. The grader
+reads physical reads, delivered facts and the facts in a JSON dossier, however the
+agent named them. The reference also asserts exact lookahead pages and named, hatch
+and fields secrecy that retains the public SyncToken. A second no-model route follows
+the prompt with other queries and a reduced dossier, and must pass.
 Hostile paths, raw SQL and unreviewed writes must send no vendor request.
 The separate `quickbooks-write-journey` opts into the three named writes while
 preserving the original read-only task. Both QuickBooks smoke targets also run
-this compact journey. A stateful vendor commits customer names, arbitrates two
+this compact journey. Its prompt gives the exact intents and their requestIds,
+which also select each vendor failure, so an agent meets the same failures as the
+reference. A no-model route following only those steps must pass; the probes an
+agent has no reason to send stay asserted in the reference. A stateful vendor commits customer names, arbitrates two
 concurrent sparse updates against a caller-read SyncToken (one winner, one
 5010 conflict), and computes invoice tax and rounding from fixture settings.
 The grader checks exact requestid/body/company, committed state, preserved
@@ -191,7 +206,7 @@ pnpm run eval:agent --runner codex --models gpt-6-luna --tasks p5-known-read-rou
 pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
 ```
 
-Eve requires Node 24+ and the installed `eve@1.0.0-rc.1` dependency in
+Eve requires Node 24+ and the installed `eve@1.0.0-rc.4` dependency in
 `packages/connecta-eve/`. `eval:agent --runner eve` and `eval:selftest --eve-only`
 rebuild the helper first, so a batch cannot test a stale one; with `--no-build`, or
 when calling the runner directly, a missing helper build or install fails with the
@@ -1394,3 +1409,79 @@ runner reads its raw custom-call events: the scripted run reports
 `commandExecution` items still fail the isolation guard. The eight initial paid probes were interrupted by development
 reloads and are diagnostics, not a valid arm comparison; no paid retries were
 run.
+
+### Hard discovery tasks
+
+The twelve `discovery-*` tasks make finding the tool the hard part. They ask for
+a goal in the user's words against one shared catalog,
+[fakes/discovery.ts](fakes/discovery.ts): 110 tools across fifteen connectors,
+with fixed dates and no clock. `--catalog-tools <n>` adds its private-ledger
+padding beside that catalog. Each task's lookalikes live in the shared catalog,
+so they reach the ledger and act as distractors for every other task.
+
+| Task                             | Type                     | What decides the grade                                                |
+| -------------------------------- | ------------------------ | --------------------------------------------------------------------- |
+| `discovery-nohint-overdue`       | No hints                 | Receivables read; the longest-overdue customer and amount             |
+| `discovery-nohint-seats`         | No hints                 | Licence utilization read; available count after pending invites       |
+| `discovery-lookalike-crm`        | Lookalike by description | Current CRM's contract read; its renewal date, not the retired one    |
+| `discovery-lookalike-invoices`   | Lookalike by name        | Any call to the export write fails; the invoice numbers and total     |
+| `discovery-write-rollback`       | Write after discovery    | Any staging call fails; one production rollback; resulting state      |
+| `discovery-guidance-description` | Guidance deep in a tool  | Ownership transfer precedes deactivation; nothing deleted             |
+| `discovery-guidance-guide`       | Guidance in a guide      | Screening precedes release; only the October batch released           |
+| `discovery-absent-read`          | Honest absence           | Search on search arms; `ANSWER: unavailable`; no near-miss figure     |
+| `discovery-absent-write`         | Honest absence           | Search on search arms; zero writes; `ANSWER: unavailable`             |
+| `discovery-failing-partial`      | Failing connector (401)  | Directory read; manager named; `timeoff` failure reported, not denied |
+| `discovery-failing-hung`         | Failing connector (hung) | Search on search arms; `expense_desk` failure reported, not denied    |
+| `discovery-join-unnamed`         | Unnamed multi-connector  | Current accounts and tickets read; the right customer and ticket      |
+
+Prompts name no connector or tool, are identical on every arm, and end with the
+same line offering `ANSWER: unavailable`, so that option cannot reveal which
+tasks have no answer. Their wording was fixed before any model ran. Do not tune it
+toward an arm's results. The two failing connectors are task-level fakes, so
+these tasks need no `--hung-connector` or `--unauthorized-connector`, and every
+other task avoids the hung connector's search delay.
+
+Grades read the ledger, fake state and final answer, never the route or the field
+names of reduced program output. In `discovery-lookalike-invoices` and
+`discovery-write-rollback`, any call to the wrong twin fails, including an
+exploratory read, because those twins are a write or the wrong environment.
+Elsewhere an exploratory read is allowed when the answer stays correct: an absence
+task may read a near miss, then report that it does not answer the question.
+`discovery-lookalike-crm` may read the retired CRM too, if the contract is read
+from the current one and the answer gives its date. Such a read stays visible as a
+failed advisory `no-lookalike-call`.
+
+```sh
+pnpm run build
+pnpm run eval:selftest --discovery-only
+pnpm run eval:selftest --discovery-only --targets node --arms six,native --tasks discovery-lookalike-crm
+```
+
+`--discovery-only` uses no model. On each target and arm, with 60 padded tools, it
+requires the reference and a program that reduces every read to a meaningless
+field to pass. It requires a no-op, a fabricated answer, a duplicate write and a
+plausible wrong route played against real fakes to fail. It also runs accepted and
+rejected final-answer wording. The `code` arm is Node-only, and program reduction
+does not apply to `native-no-code` or `code`. These tasks are not enrolled in
+`eval:outcomes`.
+
+**Limits to keep in mind when reading results:**
+
+- On native arms a fabricated answer to `discovery-absent-read`,
+  `discovery-absent-write` or `discovery-failing-hung` passes by construction.
+  The served inventory is their only discovery, and no call can prove it was read.
+  The controls assert this exception explicitly. Search arms require a real search.
+- A native pool omits a failed connector's tools, with no per-connector signal in
+  the tool list. `native` can still see `catalogErrors` through `connecta.search`.
+  `native-no-code` has no route to that signal, so an honest agent there can
+  only report that no such tool is listed, which fails `no-denial`. The
+  scripted references name the connector anyway, because they script the ideal
+  answer rather than what the arm reveals. Read those failures as a measured
+  property of the arm's failure reporting, not as evidence about search.
+- A hung connector stalls a native `tools/list` for the 30 s probe timeout, while
+  an unscoped search waits about 5 s. Trial timing on `discovery-failing-hung`
+  includes that cost.
+- A final-answer regex recognizes common wording. `reports-limitation` requires a
+  clause naming the connector with a failure term, and `no-denial` refuses claims
+  that the capability does not exist. Check failed transcripts before treating a
+  miss as agent behavior, and add any real wording to the answer controls.
