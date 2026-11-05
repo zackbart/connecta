@@ -389,7 +389,8 @@ because the Worker imports the package by name from `dist/`.
   and every trial serves those bytes, so a source edit cannot split a batch. Its
   identity, `config.servedGraph.hash`, hashes the exact bytes bundled under paths from
   the checkout root, so identical sources match across worktrees. A batch recorded
-  clean refuses to start if its graph differs from that commit. With `--pair-id`, the
+  clean refuses to start if its graph differs from that commit, including a generated
+  input that doesn't match its generator's `--check`. With `--pair-id`, the
   first arm records its graph in `~/.cache/connecta-eval-pairs`, and a later arm with a
   different graph refuses before any trial, so use a new pair id for a rerun. Each
   trial verifies and records what it served. A mismatch stops the batch and fails it,

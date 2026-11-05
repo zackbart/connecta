@@ -9,6 +9,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { link, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, relative, sep } from "node:path";
@@ -59,10 +60,28 @@ function matchesCommit(root: string, inputs: Map<string, Uint8Array>): boolean {
     if (actual !== blob) return false;
   }
   if (!unknown.length) return true;
-  // Installed packages and generated files aren't in the commit; a stray source is dirty.
+  // Installed packages aren't in the commit, and the lockfile pins them in the harness
+  // hash. Generated files must match their generators; anything else is a stray source.
   const ignored = gitOutput(root, ["check-ignore", "--stdin"], `${unknown.join("\n")}\n`);
   const covered = new Set((ignored ?? "").split("\n").filter(Boolean));
-  return unknown.every((path) => covered.has(path));
+  return unknown.every(
+    (path) => covered.has(path) && (isInstalled(path) || generatedMatches(root, path, inputs.get(path)!)),
+  );
+}
+
+const isInstalled = (path: string) => path.startsWith("node_modules/");
+/** Ignored files the commit defines only through a generator. */
+const GENERATORS: Record<string, string[]> = {
+  "src/operator-ui/generated.ts": ["scripts/build-operator-ui.mjs", "--check"],
+};
+
+/** What was bundled is on disk, and the commit's own generator would write those bytes. */
+function generatedMatches(root: string, path: string, bundled: Uint8Array): boolean {
+  const generator = GENERATORS[path];
+  if (!generator) return false;
+  const onDisk = readFileSync(join(root, path));
+  if (!onDisk.equals(bundled)) return false;
+  return spawnSync(process.execPath, generator, { cwd: root, stdio: "ignore" }).status === 0;
 }
 
 export async function freezeWorkerGraph(

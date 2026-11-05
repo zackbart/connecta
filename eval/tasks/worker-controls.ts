@@ -1099,23 +1099,60 @@ export async function workerGraphControls() {
       () => refuseMislabelledGraph(graph, { commit: "000000000000", dirty: false }),
       "A batch labelled another commit than its graph",
     );
-    // Ignored inputs aren't in any commit and aren't dirt, but an untracked source is.
+    // An ignored input isn't in the commit, so it needs its own proof. A generated file
+    // must match its generator, using the real path and script name; installed packages
+    // are pinned by the lockfile; any other ignored or untracked source is dirty.
     const stray = await checkout("stray", 1);
+    const generated = join(stray.root, "src", "operator-ui", "generated.ts");
+    await mkdir(join(stray.root, "src", "operator-ui"), { recursive: true });
+    await mkdir(join(stray.root, "scripts"), { recursive: true });
+    await mkdir(join(stray.root, "node_modules", "pinned"), { recursive: true });
     await writeFile(
-      stray.entry,
-      `import { revision } from "./dep.ts";\nimport extra from "./generated.ts";\nexport default { fetch: () => new Response(String(revision + extra)) };\n`,
+      join(stray.root, "scripts", "build-operator-ui.mjs"),
+      `import { readFileSync } from "node:fs";\nprocess.exit(readFileSync("src/operator-ui/generated.ts", "utf8") === "export default 1;\\n" ? 0 : 1);\n`,
     );
-    await writeFile(join(stray.root, "generated.ts"), "export default 1;\n");
+    await writeFile(join(stray.root, "node_modules", "pinned", "index.js"), "export default 0;\n");
+    await writeFile(generated, "export default 1;\n");
+    await writeFile(join(stray.root, "other-generated.ts"), "export default 0;\n");
+    await writeFile(
+      join(stray.root, ".gitignore"),
+      "node_modules/\nsrc/operator-ui/generated.ts\nother-generated.ts\n",
+    );
+    const entryUsing = (...imports: string[]) =>
+      `${imports.map((path, index) => `import extra${index} from ${JSON.stringify(path)};`).join("\n")}\nimport { revision } from "./dep.ts";\nexport default { fetch: () => new Response(String(revision + ${imports.map((_, index) => `extra${index}`).join(" + ")})) };\n`;
+    await writeFile(stray.entry, entryUsing("./src/operator-ui/generated.ts", "./node_modules/pinned/index.js"));
     git(stray.root, "add", "-A");
     git(stray.root, "commit", "-qm", "use generated");
-    if (!(await freezeWorkerGraph(stray.entry, stray.root)).matchesHead)
-      throw new Error("An ignored generated input read as dirty");
+    const generatedGraph = await freezeWorkerGraph(stray.entry, stray.root);
+    if (!generatedGraph.matchesHead) throw new Error("A generated input matching its generator read as dirty");
+    await writeFile(generated, "export default 2;\n");
+    const stale = await freezeWorkerGraph(stray.entry, stray.root);
+    if (stale.hash === generatedGraph.hash) throw new Error("A stale generated input kept its graph's identity");
+    if (stale.matchesHead) throw new Error("A stale generated input read as the commit");
+    const staleHead = git(stray.root, "rev-parse", "--short=12", "HEAD");
+    refused(
+      () => refuseMislabelledGraph(stale, { commit: staleHead, dirty: false }),
+      "A clean label covered stale generated code",
+    );
+    await writeFile(generated, "export default 1;\n");
+    await writeFile(stray.entry, entryUsing("./src/operator-ui/generated.ts", "./other-generated.ts"));
+    git(stray.root, "add", "-A");
+    git(stray.root, "commit", "-qm", "use an ignored file no generator covers");
+    if ((await freezeWorkerGraph(stray.entry, stray.root)).matchesHead)
+      throw new Error("An ignored input with no generator read as the commit");
     await writeFile(stray.dep, `export { default as revision } from "./untracked.ts";\n`);
     await writeFile(join(stray.root, "untracked.ts"), "export default 3;\n");
-    git(stray.root, "add", "dep.ts");
+    await writeFile(stray.entry, entryUsing("./src/operator-ui/generated.ts"));
+    git(stray.root, "add", "dep.ts", "worker.ts");
     git(stray.root, "commit", "-qm", "use untracked");
     if ((await freezeWorkerGraph(stray.entry, stray.root)).matchesHead)
       throw new Error("An untracked source read as the commit");
+    // The real generator keeps the interface this relies on.
+    const realGenerator = spawnSync(process.execPath, [join(ROOT, "scripts", "build-operator-ui.mjs"), "--check"], {
+      cwd: ROOT,
+      stdio: "inherit",
+    });
+    if (realGenerator.status !== 0) throw new Error("The operator UI generator's --check mode failed");
     console.log("ok   a clean label refuses any Worker graph that differs from its commit");
 
     // Arms from separate worktrees agree on sources, wherever each checkout lives.
