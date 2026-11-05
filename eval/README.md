@@ -191,7 +191,7 @@ pnpm run eval:agent --runner codex --models gpt-6-luna --tasks p5-known-read-rou
 pnpm run eval:agent --runner claude --models claude-sonnet-5-5 --tasks p5-known-read-routing --repeats 1
 ```
 
-Eve requires Node 24+ and the installed `eve@1.0.0-rc.1` dependency in
+Eve requires Node 24+ and the installed `eve@1.0.0-rc.4` dependency in
 `packages/connecta-eve/`. `eval:agent --runner eve` and `eval:selftest --eve-only`
 rebuild the helper first, so a batch cannot test a stale one; with `--no-build`, or
 when calling the runner directly, a missing helper build or install fails with the
