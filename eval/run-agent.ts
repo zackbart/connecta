@@ -45,6 +45,7 @@ import { renderReport } from "./report/html.js";
 import { summarize, type AgentResultFile, type ResultFile } from "./report/summary.js";
 import { batchEfficiency, efficiencyLines } from "./report/efficiency.js";
 import { flags, ROOT, runMeta, runProtocol, stamp } from "./support/meta.js";
+import { claimPairGraph, freezeWorkerGraph, refuseMislabelledGraph } from "./support/worker-graph.js";
 import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
 
 const args = flags(process.argv.slice(2));
@@ -163,6 +164,16 @@ if (target === "worker" && !args.has("no-build")) {
   const built = spawnSync("pnpm", ["run", "build"], { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"] });
   if (built.status !== 0) throw new Error("pnpm run build failed");
 }
+// Freeze after the build, then label the batch from what it will actually serve.
+const graph = target === "worker" ? await freezeWorkerGraph() : undefined;
+if (graph) {
+  file.meta = runMeta();
+  file.protocol = runProtocol(args.get("pair-id"));
+  refuseMislabelledGraph(graph, file.meta.git);
+  file.config.servedGraph = { hash: graph.hash, inputs: graph.inputs, matchesHead: graph.matchesHead };
+  if (args.has("pair-id")) await claimPairGraph(args.get("pair-id")!, graph.hash);
+  console.error(`[eval] Worker graph ${graph.hash}: ${graph.inputs} inputs, frozen for every trial`);
+}
 for (const r of refused) console.error(`[eval] REFUSED on worker: ${r.id}: ${r.reason}`);
 await mkdir(dirname(out), { recursive: true });
 const save = async () => {
@@ -185,6 +196,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const)
 let saving = Promise.resolve();
 const { trials, stopped } = await runBatch(tasks, models, repeats, {
   runner,
+  ...(graph ? { graph } : {}),
   ...(eveFlags.length ? { eve } : {}),
   target,
   injection,

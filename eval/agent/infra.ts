@@ -38,6 +38,13 @@ export function infraError(events: StreamEvent[], exitCode: number | null, loade
 }
 
 /**
+ * Not a result: the reload revoked the host's token and dropped observed programs.
+ * Agent trials serve a frozen snapshot, so a source edit in this checkout cannot do it.
+ */
+export const WORKER_RELOADED =
+  "Worker reloaded during the trial: its process restarted or its served snapshot changed, which rotated the host's token";
+
+/**
  * A rejected or unreachable connection at trial end means the host lost its
  * deployment mid-conversation, so the transcript does not measure the agent.
  * A slow answer proves nothing and is not treated as a loss.
@@ -64,8 +71,17 @@ export async function connectionLost(mcpUrl: string, token: string): Promise<str
   }
 }
 
+/** A reload explains a rejected token, so it wins over the loss the rejection looks like. */
+export function trialInfraFailure(
+  reloaded: boolean | undefined,
+  lost: string | undefined,
+  infra: string | undefined,
+): string | undefined {
+  return reloaded ? WORKER_RELOADED : (lost ?? infra);
+}
+
 export function stopsBatch(error: string | undefined): boolean {
-  return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified/i.test(
+  return /rate or usage limit|rate limited|authentication failure|backend failure|outside the fake MCP config|inventory could not be verified|served graph/i.test(
     error ?? "",
   );
 }

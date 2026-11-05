@@ -58,12 +58,15 @@ import { inflateSync } from "node:zlib";
 import {
   portCollisionControls,
   comparatorTargetControls,
+  comparatorServedControls,
   egressGuardControls,
   injectionControls,
   gatewayControls,
   gatewayRedirectControls,
   gatewayRoutingControls,
   workerdProcessControls,
+  workerGraphControls,
+  workerReloadControls,
 } from "./tasks/worker-controls.js";
 import {
   attributionControls,
@@ -113,6 +116,8 @@ if (process.argv.includes("--worker-references-only")) {
 
 if (process.argv.includes("--workerd-isolation-only")) {
   await workerdProcessControls();
+  await workerReloadControls();
+  await workerGraphControls();
   console.log("ok   native workerd TCP port hardening and lifecycle");
   process.exit(0);
 }
@@ -126,12 +131,15 @@ await gatewayControls();
 await gatewayRedirectControls();
 console.log("ok   worker vendor gateway: trial credential, loopback refusal, redirect credential stripping and modes");
 await workerdProcessControls();
+await workerReloadControls();
+await workerGraphControls();
 console.log("ok   workerd lifecycle: launcher crash leaves no group member; wrangler runs guarded");
 await egressGuardControls();
 console.log("ok   wrangler egress guard: no Node TCP/TLS/HTTP/DNS/UDP path reaches a non-loopback sink");
 await gatewayRoutingControls();
 console.log("ok   worker vendor requests all arrive through the authenticated gateway; secrets stay out of logs");
 await comparatorTargetControls();
+await comparatorServedControls();
 console.log("ok   cross-target comparison: measured provenance and per-trial target consistency");
 await injectionControls();
 console.log("ok   injection: latency delivery, pool membership, hung-server cleanup, D1 batching, mismatch refusal");

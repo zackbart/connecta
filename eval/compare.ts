@@ -77,6 +77,7 @@ const trialSchema = z
     model: knownString,
     runner: z.enum(["codex", "claude", "eve"]),
     target: z.enum(["node", "worker"]).optional(),
+    servedGraph: z.string().min(1).optional(),
     surface: z.enum(["six", "five", "code", "native", "native-no-code"]),
     grading: z.literal("outcome"),
     repeat: z.number().int().positive(),
@@ -247,6 +248,14 @@ function measuredProvenance(label: string, surface: Surface, file: AgentResultFi
     reasons.push(`${label}: valid concurrency and deadline are required`);
   if (file.config.target !== undefined && file.config.target !== "node" && file.config.target !== "worker")
     reasons.push(`${label}: target must be node or worker`);
+  if (targetOf(file) === "worker") {
+    const graph = file.config.servedGraph;
+    if (!graph?.hash) reasons.push(`${label}: its served Worker graph is required`);
+    else if (graph.matchesHead !== true) reasons.push(`${label}: its served Worker graph must match its commit`);
+    for (const trial of file.trials)
+      if (trial.status !== "skipped" && trial.servedGraph !== graph?.hash)
+        reasons.push(`${label}: trial ${key(trial)} served graph ${trial.servedGraph ?? "unrecorded"}`);
+  }
   for (const trial of file.trials) {
     const row = `${label}: trial ${key(trial)}`;
     const schema = trialSchema.safeParse(trial);
@@ -307,7 +316,8 @@ function settingMismatches(a: AgentResultFile, b: AgentResultFile, except: strin
     const read = setting?.value ?? ((f: AgentResultFile) => (f.config as Record<string, unknown>)[key]);
     if (differ(read(a), read(b))) out.push(setting?.label ?? key);
   }
-  const cli = (f: AgentResultFile) => (f.config.runner === "claude" ? f.claudeVersion : f.codexVersion);
+  const cli = (f: AgentResultFile) =>
+    f.config.runner === "eve" ? f.eveVersion : f.config.runner === "claude" ? f.claudeVersion : f.codexVersion;
   if (differ(cli(a), cli(b))) out.push("CLI version");
   for (const field of ["pairId", "taskDefinitionsHash", "harnessHash"] as const)
     if (differ(a.protocol?.[field], b.protocol?.[field])) out.push(field);
@@ -319,8 +329,7 @@ function settingMismatches(a: AgentResultFile, b: AgentResultFile, except: strin
   for (const trial of a.trials) {
     const paired = right.get(key(trial));
     if (!paired) continue;
-    const served = (f: AgentResultFile, t: TrialResult) =>
-      (f.config.runner === "claude" ? t.claude : t.codex)?.servedModel;
+    const served = (f: AgentResultFile, t: TrialResult) => observation(t, f.config.runner ?? "codex")?.servedModel;
     if (differ(served(a, trial), served(b, paired))) out.push(`served model for ${key(trial)}`);
   }
   return out;
@@ -415,7 +424,7 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     const pairs = [...six.values()].filter((t) => t.model === model).map((t) => [t, code.get(key(t))!] as const);
     if (pairs.some(([x, y]) => (x.status === "skipped") !== (y.status === "skipped")))
       throw new Error(`N/A mismatch for ${model}`);
-    const runner = a.config.runner === "claude" ? "claude" : "codex";
+    const runner = a.config.runner ?? "codex";
     const eligible = pairs.filter(([t]) => !isNA(t, runner));
     const left = eligible.map(([t]) => t),
       right = eligible.map(([, t]) => t);
@@ -519,11 +528,12 @@ export function crossTarget(node: AgentResultFile, worker: AgentResultFile): str
   if (targetOf(node) !== "node") reasons.push("--a must be a node result");
   if (targetOf(worker) !== "worker") reasons.push("--b must be a worker result");
   // Every shared batch setting must match; only the target itself differs.
-  for (const label of settingMismatches(node, worker, ["target"])) reasons.push(`Targets must use the same ${label}`);
+  for (const label of settingMismatches(node, worker, ["target", "servedGraph"]))
+    reasons.push(`Targets must use the same ${label}`);
   if (node.config.grading !== "outcome") reasons.push("measured grading must be outcome");
   if (reasons.length)
     throw new Error(`Cross-target diagnostic refused:\n${[...new Set(reasons)].map((r) => `- ${r}`).join("\n")}`);
-  const runner = node.config.runner === "claude" ? "claude" : "codex";
+  const runner = node.config.runner ?? "codex";
   const left = validate(node, surface),
     right = validate(worker, surface);
   const lines = [

@@ -69,6 +69,7 @@ export default mockModel({ modelId: ${JSON.stringify(model)}, respond: ({ toolRe
   const trial = trials[0] as TrialResult;
   assert.equal(trial.status, "pass", `${label}: ${JSON.stringify({ error: trial.error, checks: trial.checks })}`);
   assert.equal(trial.metrics.hostSearchCalls, 1, label);
+  assert.equal(Boolean(trial.servedGraph), target === "worker", label);
   assert.ok((trial.metrics.firstTurnInputTokens ?? 0) > 0, label);
   assert.equal(trial.metrics.otherTools.eve__search, 1, label);
   // The mistaken name reaches the trace as one host-level tool error.
