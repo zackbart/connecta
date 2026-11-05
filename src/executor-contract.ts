@@ -66,6 +66,7 @@ export function customExecutor(executor: Executor, options: CustomExecutorOption
   const wrapper = {
     ...(name ? { name } : {}),
     ...(executor.deadlineMs !== undefined ? { deadlineMs: executor.deadlineMs } : {}),
+    ...(executor.maxReadBytes !== undefined ? { maxReadBytes: executor.maxReadBytes } : {}),
     execute: executor.execute.bind(executor),
     ...(executor.close ? { close: executor.close.bind(executor) } : {}),
     ...(isAdmittingExecutor(executor)
