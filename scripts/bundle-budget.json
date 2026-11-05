@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-05: The read-only program route on main at 79a839b3, with whole reads, connector purposes and previews landed, the release candidate's final caps. It names the read route in previews and carries the connector inventory on it. Official Node 22.23.4 measures the root at 438,867 B and examples/worker at 821,608 B, up 875 B and 671 B on the 437,992 B and 820,937 B measured for previews. The caps move to 439,150 B and 821,900 B.",
     "2026-11-05: The read-only program route adds its registration, description, instructions, discovery marker and refusal, and carries the read-repeatable acceptance to that refusal. The official Node 22.23.4 binary measures this PR at 435,673 B and 819,206 B, against main's caps of 434,800 B and 818,500 B. The caps move to 435,803 B and 819,336 B, leaving 130 B each, and stay provisional: final caps come from the combined candidate.",
     "2026-11-05: Previews of direct reads over the cap, merged with main at c90ec0fc. Official Node 22.23.4 measures the root at 437,992 B and examples/worker at 820,937 B, up 1,753 B and 1,256 B on the 436,239 B and 819,681 B measured before #1341 landed. The caps move to 438,300 B and 821,250 B.",
     "2026-11-05: Connector purposes in the inventory, merged with main at eb6d80e0. Official Node 22.23.4 measures the root at 436,239 B and examples/worker at 819,681 B, up 188 B and 132 B on main's 436,051 B and 819,549 B. The caps move to 436,550 B and 819,950 B.",
@@ -83,7 +84,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 438300
+      "maxGzip": 439150
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -166,7 +167,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 821250
+      "maxGzip": 821900
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
