@@ -5,7 +5,7 @@
  * `eval/deploy/node.ts` serves it with `listen()`. Only the platform slots
  * differ: storage, executor, vault key and, on Workers, Access.
  */
-import { codeConfig } from "./code-surface.js";
+import { codeConfig, readArmConfig } from "./code-surface.js";
 import type { Surface } from "../agent/surface.js";
 import { quickbooksConnectors, quickbooksAuth, quickbooksPools } from "./quickbooks.js";
 import { PROVIDER_DEPLOYS } from "./providers.generated.js";
@@ -130,6 +130,7 @@ export function evalConfig(
       ]),
     );
   }
+  if (composition.surface === "read") return readArmConfig(config);
   return codeConfig(config, composition.surface ?? "six");
 }
 

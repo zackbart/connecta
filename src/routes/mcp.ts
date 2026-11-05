@@ -1,5 +1,5 @@
 import { startTimingTrace } from "../timing-trace.js";
-import { routeNames } from "../agent-routes.js";
+import { META_ROUTES, routeNames } from "../agent-routes.js";
 import { upwardStep } from "../upward.js";
 import { bindDiscoveryEndpoint } from "../discovery-health.js";
 import { authCall, authInvoke, authFlow, authMethod } from "../auth/native.js";
@@ -411,6 +411,7 @@ function serveMcp(
   readOnly = false,
   pool?: string,
   principalActor?: ActivityActor,
+  agentEndpoint = false,
 ): Effect.Effect<Response, unknown, Scope.Scope> {
   const sentSecrets = sentSecretsForRequest(requestScope);
   // Every McpServer the request builds is fresh and closes with its scope.
@@ -419,10 +420,16 @@ function serveMcp(
   const servers: McpServer[] = [];
   // A native pool lists its downstream tools directly (pools.<name>.surface).
   const native = pool !== undefined ? opts.pools.get(pool)?.native : undefined;
+  // Agent endpoints keep six tools until Eve is tested against the seventh. The
+  // eval arms that render other route names measure their own fixed surfaces.
+  const readRoute =
+    opts.config.execute.readRoute && !native && !readOnly && !agentEndpoint && opts.routes === META_ROUTES;
   const createServer = authMethod((hint?: NativeRequestHint) =>
     authFlow<McpServer>(function* () {
       // A native pool's text uses the native contract's wording.
       const routes = native ? routeNames(native.executeCode ? "native-code" : "native") : opts.routes;
+      // Direct-call and handoff text names the program route read follow-ups should take.
+      const directRoutes = readRoute ? routeNames("read-route") : routes;
       const authElicitation = new AuthElicitation({
         vault: opts.config.vault,
         publicUrl: opts.config.publicUrl,
@@ -450,7 +457,7 @@ function serveMcp(
         unavailable: oauthConnectUnavailable(opts),
         credentialUi: Boolean(opts.config.ui && opts.config.vault),
         credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
-        routes,
+        routes: directRoutes,
         requestSignal,
         requestScope,
         defer: runtimeContext?.waitUntil?.bind(runtimeContext),
@@ -484,6 +491,7 @@ function serveMcp(
           native,
           effectiveReadOnly,
           connectors.map((connector) => connector.id),
+          readRoute,
         ),
         inputRequired: { legacyShim: false },
         requestState: { verify: (state, context) => authElicitation.verify(state, context) },
@@ -519,12 +527,12 @@ function serveMcp(
       const diagnostics = native
         ? { ...native, catalogErrors: [] as string[], staleCatalogs: [] as string[] }
         : undefined;
-      // One answer for the program tool this request lists and its results may offer.
-      const programTool = !native || native.executeCode ? "execute_code" : undefined;
+      // The program tool this request lists and its reads may offer: the read route, where listed.
+      const programTool = !native || native.executeCode ? directRoutes.program : undefined;
       const nativeRoute = registerMetaTools(server, registry, {
         native: diagnostics,
         programTool,
-        routes,
+        routes: directRoutes,
         authElicitation,
         client,
         baseUrl,
@@ -564,6 +572,7 @@ function serveMcp(
           readOnly,
           native: native !== undefined,
           routes,
+          readRoute,
         });
       }
       if (native && nativeRoute && hint) {
@@ -1194,6 +1203,7 @@ export function createMcpRoute(opts: ServerOptions): {
                     namespace: authz.identity.principal.namespace,
                   }
                 : undefined,
+              agentEndpoint,
             ),
           );
         });

@@ -440,7 +440,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
       );
     }
     loadedTools = Object.keys(servers[0].tools).map((tool) => `mcp__connecta__${tool}`);
-    assertSurface(loadedTools, options.surface);
+    assertSurface(loadedTools, options.surface, options.mcpUrl);
     push({
       type: "system",
       subtype: "init",

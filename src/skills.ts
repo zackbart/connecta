@@ -1,4 +1,5 @@
 import { META_ROUTES, routeNames } from "./agent-routes.js";
+import { READ_PROGRAM_SOURCE } from "./tool-safety.js";
 import { bytesToHex, utf8Length } from "./bytes.js";
 import { duringViewEffect } from "./runtime/call.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
@@ -66,10 +67,14 @@ export function endpointInstructions(
   native: { executeCode: boolean } | undefined,
   readOnly: boolean,
   connectorIds: readonly string[],
+  readRoute = false,
 ): string {
+  const gateway = `Gateway to connected services: ${connectorList(connectorIds)}. One known read: ${META_ROUTES.read}. ${readOnly ? "" : `One known write: ${META_ROUTES.write}. `}`;
   const instructions = native
     ? nativeInstructions(native.executeCode, readOnly)
-    : `Gateway to connected services: ${connectorList(connectorIds)}. One known read: ${META_ROUTES.read}. ${readOnly ? "" : `One known write: ${META_ROUTES.write}. `}Everything else: one ${META_ROUTES.program} program that searches, calls and returns the answer. ${policy(readOnly)} ${RECOVERY}`;
+    : readRoute
+      ? `${gateway}Other read work: one ${READ_PROGRAM_SOURCE} program that searches, calls and returns the answer, with no write approval. ${readOnly ? "" : `Programs that write: ${META_ROUTES.program}. ${META_ROUTES.search} finds a write's address. `}${policy(readOnly)} ${RECOVERY}`
+      : `${gateway}Everything else: one ${META_ROUTES.program} program that searches, calls and returns the answer. ${policy(readOnly)} ${RECOVERY}`;
   return description === undefined ? instructions : `${description} ${instructions}`;
 }
 

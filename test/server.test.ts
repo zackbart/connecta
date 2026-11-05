@@ -125,7 +125,7 @@ describe("server /mcp end-to-end", () => {
       await client.connect(transport);
       const result = await client.listTools();
 
-      expect(result.tools).toHaveLength(6);
+      expect(result.tools).toHaveLength(7);
       expect(client.getProtocolEra()).toBe("modern");
       expect(methods).toContain("server/discover");
       expect(methods).not.toContain("initialize");
@@ -175,7 +175,7 @@ describe("server /mcp end-to-end", () => {
     expect(call).not.toHaveBeenCalled();
   });
 
-  it("serves a modern-era (2026-07-28) client the same six-tool surface", async () => {
+  it("serves a modern-era (2026-07-28) client the same tool surface", async () => {
     // Every other test in this suite sends bare JSON-RPC, which the entry
     // classifies as legacy traffic — so this is the one automated proof that
     // the modern createMcpHandler leg of serveMcp works at all. PR B owns the
@@ -204,6 +204,7 @@ describe("server /mcp end-to-end", () => {
         "call_destructive_tool",
         "call_tool",
         "execute_code",
+        "execute_read_code",
         "search_tools",
         "skills",
       ]);
@@ -832,6 +833,218 @@ describe("clerk metadata routes (no network)", () => {
   });
 });
 
+describe("execute_read_code registration", () => {
+  const list = async (connecta: { fetch(request: Request): Promise<Response> }, path = "") => {
+    const { result } = await readJsonRpc(
+      await connecta.fetch(new Request(`${BASE}/mcp${path}`, mcpRpc("tools/list", {}, { token: TOKEN }))),
+    );
+    return result.tools as Array<{ name: string; annotations: Record<string, unknown> }>;
+  };
+  const names = (tools: Array<{ name: string }>) => tools.map((tool) => tool.name);
+
+  it("INV-2: a writable /mcp lists it read-annotated, and execute_code stays a write", async () => {
+    const tools = await list(makeDeployment({ readOnly: false }));
+    expect(tools).toHaveLength(7);
+    expect(tools.find((tool) => tool.name === "execute_read_code")?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(tools.find((tool) => tool.name === "execute_code")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  });
+
+  it("stays off read-only endpoints, where execute_code is already read-only, and on execute.readRoute: false", async () => {
+    const readOnly = await list(makeDeployment({ readOnly: true }));
+    expect(readOnly).toHaveLength(6);
+    expect(names(readOnly)).not.toContain("execute_read_code");
+    const off = await list(makeDeployment({ readOnly: false, execute: { readRoute: false } }));
+    expect(off).toHaveLength(6);
+    expect(names(off)).not.toContain("execute_read_code");
+    expect(() => makeDeployment({ execute: { readRoute: "no" as never } })).toThrow(
+      "ConnectaConfig.execute.readRoute must be true or false",
+    );
+    expect(makeDeployment({ execute: { readRoute: false } }).describeConfig().limits.execute.readRoute).toEqual({
+      value: false,
+      source: "config",
+    });
+  });
+
+  it("routes read-only work to it in instructions and sibling descriptions, only where it is listed", async () => {
+    const describedBy = async (connecta: { fetch(request: Request): Promise<Response> }) => {
+      const init = await readJsonRpc(
+        await mcpRpc(
+          connecta as never,
+          "initialize",
+          { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "probe", version: "0" } },
+          { token: TOKEN },
+        ),
+      );
+      const tools = (await list(connecta)) as unknown as Array<{ name: string; description: string }>;
+      return { instructions: init.result.instructions as string, tools };
+    };
+    const listed = await describedBy(makeDeployment({ readOnly: false }));
+    expect(listed.instructions).toContain("Other read work: one execute_read_code program");
+    expect(listed.instructions).toContain("search_tools finds a write's address");
+    for (const name of ["call_tool", "search_tools", "execute_code"])
+      expect(listed.tools.find((tool) => tool.name === name)?.description, name).toContain("execute_read_code");
+
+    const off = await describedBy(makeDeployment({ readOnly: false, execute: { readRoute: false } }));
+    expect(off.instructions).not.toContain("execute_read_code");
+    for (const tool of off.tools) expect(tool.description, tool.name).not.toContain("execute_read_code");
+  });
+
+  it("names it on a writable endpoint whose connectors are all read-only, with no write route to mention", async () => {
+    const readOnlyConnector = api("docs", {
+      readOnly: true,
+      tools: [
+        {
+          name: "read",
+          description: "Read",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object" },
+          handler: () => "text",
+        },
+      ],
+    });
+    const connecta = makeDeployment({ readOnly: false, connectors: [readOnlyConnector] });
+    const init = await readJsonRpc(
+      await mcpRpc(
+        connecta,
+        "initialize",
+        { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "probe", version: "0" } },
+        { token: TOKEN },
+      ),
+    );
+    expect(init.result.instructions).toContain("Other read work: one execute_read_code program");
+    expect(init.result.instructions).toContain("can't perform writes");
+    expect(init.result.instructions).not.toContain("Programs that write");
+    expect(names(await list(connecta))).toContain("execute_read_code");
+  });
+
+  it("pages a writing program's oversized return through it, without resending the write", async () => {
+    let writes = 0;
+    const connecta = makeDeployment({
+      readOnly: false,
+      connectors: [
+        api("docs", {
+          tools: [
+            {
+              name: "save",
+              description: "Save",
+              annotations: { readOnlyHint: false },
+              inputSchema: { type: "object" },
+              handler: () => {
+                writes++;
+                return { saved: true };
+              },
+            },
+          ],
+        }),
+      ],
+      executor: scriptedExecutor(async (fns) => {
+        if (fns.call && !resultId) {
+          await fns.call("docs.save", {});
+          return "x".repeat(30_000);
+        }
+        return fns.result!(resultId, { maxBytes: 100 });
+      }),
+    });
+    let resultId = "";
+    const run = async (name: string) =>
+      (
+        await readJsonRpc(
+          await mcpRpc(connecta, "tools/call", { name, arguments: { code: "async () => run" } }, { token: TOKEN }),
+        )
+      ).result;
+    const written = await run("execute_code");
+    const notice = written.structuredContent.result;
+    expect(notice.nextAction.tool).toBe("execute_read_code");
+    resultId = notice.resultId;
+    expect((await run("execute_read_code")).isError).toBeFalsy();
+    expect(writes).toBe(1);
+  });
+
+  it("offers it, not the prompted route, for paging a truncated direct read", async () => {
+    const connecta = makeDeployment({
+      readOnly: false,
+      calls: { maxResultBytes: 100 },
+      connectors: [
+        api("docs", {
+          tools: [
+            {
+              name: "read",
+              description: "Read",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object" },
+              handler: () => "x".repeat(1_000),
+            },
+          ],
+        }),
+      ],
+    });
+    const { result } = await readJsonRpc(
+      await mcpRpc(
+        connecta,
+        "tools/call",
+        { name: "call_tool", arguments: { address: "docs.read" } },
+        { token: TOKEN },
+      ),
+    );
+    expect(JSON.parse(result.content[0].text.split("\n")[0]).nextAction).toMatchObject({ tool: "execute_read_code" });
+  });
+
+  it("offers it for a read's preview only where it is listed", async () => {
+    const items = Array.from({ length: 1_000 }, (_, id) => ({ id: `row_${id}`, pad: "x".repeat(40) }));
+    const docs = api("docs", {
+      tools: [
+        {
+          name: "read",
+          description: "Read",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object" },
+          handler: () => ({ items }),
+        },
+      ],
+    });
+    for (const [options, tool] of [
+      [{ readOnly: false }, "execute_read_code"],
+      [{ readOnly: false, execute: { readRoute: false } }, "execute_code"],
+      [{ readOnly: true }, "execute_code"],
+    ] as const) {
+      const { result } = await readJsonRpc(
+        await mcpRpc(
+          makeDeployment({ ...options, connectors: [docs] }),
+          "tools/call",
+          { name: "call_tool", arguments: { address: "docs.read" } },
+          { token: TOKEN },
+        ),
+      );
+      const notice = JSON.parse(result.content[0].text.split("\n")[0]);
+      expect(notice.rows).toMatchObject({ path: "items", count: 1_000 });
+      expect(notice.nextAction.tool).toBe(tool);
+      expect(notice.hint).toContain(`run nextAction in ${tool}`);
+    }
+  });
+
+  it("carries the inventory execute_code does, so a host that loads only this tool sees purposes", async () => {
+    const tools = (await list(
+      makeDeployment({
+        readOnly: false,
+        connectors: [api("crm", { title: "Customer CRM", description: "Current accounts and contracts", tools: [] })],
+      }),
+    )) as unknown as Array<{ name: string; description: string }>;
+    const inventory = (name: string) =>
+      tools
+        .find((tool) => tool.name === name)!
+        .description.split("\n")
+        .find((line) => line.startsWith("Connectors: "));
+    expect(inventory("execute_read_code")).toBe("Connectors: crm (Customer CRM; Current accounts and contracts).");
+    expect(inventory("execute_read_code")).toBe(inventory("execute_code"));
+  });
+});
+
 describe("execute_code registration (code mode)", () => {
   it("advertises the host-call limits the sandbox enforces", async () => {
     async function executeDescription(execute?: {
@@ -876,7 +1089,7 @@ describe("execute_code registration (code mode)", () => {
       );
     }
     const description = await executeDescription();
-    expect(description).toContain("Writable endpoint: programs may read and write; the host approves.");
+    expect(description).toContain("Writable endpoint: programs may write; the host approves.");
     expect(description).not.toContain("resume_execution");
   });
 

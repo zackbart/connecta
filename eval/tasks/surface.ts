@@ -22,7 +22,7 @@ const NO_CODE_NOT_RUN = "auth-required-recovery";
 const EVIDENCE_SENTENCE = "Finish with the source system, record ids, and facts supporting your answer.";
 
 export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
-  if (surface === "six") return task;
+  if (surface === "six" || surface === "read") return task;
   if (surface === "five")
     return {
       ...task,

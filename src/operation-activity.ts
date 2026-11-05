@@ -14,6 +14,7 @@ export function operationActivity<A, E, R>(
   name: ActivityOperation["name"],
   work: Effect.Effect<A, E, R>,
   counts?: () => NonNullable<ActivityOperation["hostCalls"]>,
+  source?: "execute_read_code",
 ): Effect.Effect<A, E, R> {
   if (!context?.recordOperation) return work;
   return Effect.suspend(() => {
@@ -69,6 +70,7 @@ export function operationActivity<A, E, R>(
                 personal,
                 ...(counts ? { hostCalls: counts() } : {}),
               },
+              ...(source ? { source } : {}),
               durationMs: performance.now() - started,
               resultBytes,
               outcome: !failed

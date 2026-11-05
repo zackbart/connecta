@@ -1216,19 +1216,23 @@ export class Registry implements RegistryView {
   private publishTool(id: string, tool: ToolDef): ToolDef {
     const override = this.classification[id]?.[tool.name];
     const classification = classifyTool(tool, override === "hidden" ? undefined : override);
-    return carryToolClassification(tool, {
-      ...structuredClone(tool),
-      classification,
-      ...(override !== undefined
-        ? {
-            annotations: {
-              ...structuredClone(tool.annotations),
-              readOnlyHint: override !== "hidden" && classification === "read",
-              destructiveHint: override !== "hidden" && classification === "write",
-            },
-          }
-        : {}),
-    });
+    return carryToolClassification(
+      tool,
+      {
+        ...structuredClone(tool),
+        classification,
+        ...(override !== undefined
+          ? {
+              annotations: {
+                ...structuredClone(tool.annotations),
+                readOnlyHint: override !== "hidden" && classification === "read",
+                destructiveHint: override !== "hidden" && classification === "write",
+              },
+            }
+          : {}),
+      },
+      override === "read-repeatable" || undefined,
+    );
   }
 
   /** Construction-only view for the secret-free static config description. */

@@ -665,9 +665,13 @@ export class AuthElicitation {
               !Number.isInteger(state.round) ||
               (state.round as number) < 1 ||
               (state.round as number) > MAX_ROUNDS ||
-              !["call_tool", "call_destructive_tool", "execute_code", "authorize_connector"].includes(
-                String(state.tool),
-              ) ||
+              ![
+                "call_tool",
+                "call_destructive_tool",
+                "execute_code",
+                "execute_read_code",
+                "authorize_connector",
+              ].includes(String(state.tool)) ||
               typeof state.wireTool !== "string" ||
               typeof state.digest !== "string" ||
               !/^[a-f0-9]{64}$/.test(state.digest) ||

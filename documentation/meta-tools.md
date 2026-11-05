@@ -18,30 +18,32 @@ Start with [Operating an endpoint](./operating.md) for a workflow, or
 [the agent index](./README.md) for setup and repository tasks. This reference
 owns the top-level MCP contract; it does not require reading the core internals.
 
-| Task                                               | Sections                                                                                                                                    |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Choose a tool or construct its arguments           | [Six-tool table](#the-six-tools), [call routing](#routing-between-the-call-surfaces), [downstream input](#downstream-input-on-direct-calls) |
-| Find an operation and its schema                   | [Discovery context](#discovery-context), [TypeScript signatures](#typescript-signatures), [lexical discovery](#lexical-discovery)           |
-| Load provider instructions or native skills        | [Connector guides](#connector-guides-and-skills), [native extension](#native-skills-extension)                                              |
-| Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)               |
-| Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)      |
-| List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface), [Eve agents](#eve-agents)                                                                      |
-| Read an endpoint's surface and connector roster    | [Endpoint facts](#endpoint-facts)                                                                                                           |
-| Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                             |
+| Task                                               | Sections                                                                                                                                      |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| Choose a tool or construct its arguments           | [Meta-tool table](#the-meta-tools), [call routing](#routing-between-the-call-surfaces), [downstream input](#downstream-input-on-direct-calls) |
+| Find an operation and its schema                   | [Discovery context](#discovery-context), [TypeScript signatures](#typescript-signatures), [lexical discovery](#lexical-discovery)             |
+| Load provider instructions or native skills        | [Connector guides](#connector-guides-and-skills), [native extension](#native-skills-extension)                                                |
+| Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)                 |
+| Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)        |
+| List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface), [Eve agents](#eve-agents)                                                                        |
+| Read an endpoint's surface and connector roster    | [Endpoint facts](#endpoint-facts)                                                                                                             |
+| Change the contract                                | [Source and tests](#source-and-tests), [guest API](./code-mode.md#verification)                                                               |
 
 ## Tool presentation
 
-The default surface is the six meta-tools below. From 0.35.0, pools can use
+The default surface is the meta-tools below. From 0.35.0, pools can use
 [native tool presentation](#native-tool-surface) for clients with their own
 tool search. Both presentations use the same invocation enforcement; native
 pools keep code available by default.
 
-## The six tools
+## The meta-tools
 
-Every deployment requires an executor. A meta endpoint's `tools/list` is
-exactly six. This is the default; a pool may instead use the
-[native tool surface](#native-tool-surface). No other configuration adds a
-seventh or removes one, so a client's cached meta-tool list never depends on
+Every deployment requires an executor. A meta endpoint's `tools/list` is exactly
+these six, plus `execute_read_code` on a writable `/mcp` or `/mcp/<pool>` unless
+`execute.readRoute` is `false` ([read programs](#read-programs)). A read-only
+endpoint and `/agent/<pool>` list six. This is the default; a pool may instead use the
+[native tool surface](#native-tool-surface). No other configuration changes the
+list, so a client's cached meta-tool list never depends on
 the storage behind the deployment. `execute_code`
 is annotated `readOnlyHint: true, destructiveHint: false` on a read-only
 endpoint, and `readOnlyHint: false, destructiveHint: true` on a writable one.
@@ -70,6 +72,7 @@ mode returns native `content`. Default-mode successes declare
 | Tool                    | Arguments                                                                                                                           | Returns                                                                                                                                                                                                                                                |
 | ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `execute_code`          | `code`, `diagnostics?`                                                                                                              | `{ result?, error?, hostCalls }`, plus `logs`, `emitted`, and `emittedDiscarded` when present and diagnostics when asked                                                                                                                               |
+| `execute_read_code`     | the same                                                                                                                            | the same; [read programs](#read-programs) lists where it appears and what it refuses                                                                                                                                                                   |
 | `search_tools`          | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json" \| "typescript"` | `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remain, `absence` when the query names a service with no configured connector, and `queryAnalysis` on a partial, failed, unsearchable, or absent-service search |
 | `call_tool`             | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?`                                                   | the downstream result, bounded as [result representation](#result-representation) describes                                                                                                                                                            |
 | `call_destructive_tool` | the same, plus `reason?`                                                                                                            | the same                                                                                                                                                                                                                                               |
@@ -104,10 +107,65 @@ endpoint, the `call_tool`, `call_destructive_tool`, and `search_tools`
 descriptions say so too; `call_destructive_tool` still runs reads there. `call_destructive_tool.reason` is dropped before
 anything runs.
 
+## Read programs
+
+`execute_read_code` runs a program with the same guest API, sandbox and budgets as
+`execute_code`, annotated `readOnlyHint: true, destructiveHint: false`, so a host
+that gates on annotations does not prompt for a read-only program. On a writable
+endpoint `execute_code` stays annotated as a write.
+
+| Endpoint                                | Lists `execute_read_code`                     |
+| --------------------------------------- | --------------------------------------------- |
+| Writable `/mcp`, writable `/mcp/<pool>` | Yes, unless `execute.readRoute: false`        |
+| Read-only endpoint                      | No: `execute_code` is already read-only there |
+| `/agent/<pool>`                         | No, for now                                   |
+| Native pool                             | No                                            |
+
+**Refusal.** Every call whose effective or source class is write is refused below
+the sandbox, before validation and dispatch, with `retryable: false` and a message
+naming `call_destructive_tool` and `execute_code`. Its code is
+`destructive_tool_requires_approval`, or `read_only_endpoint` for a read-only
+connector, which has no write route. A program can read and then attempt a write; it
+gets that refusal with zero writes sent, and catching it or using
+`Promise.allSettled` changes nothing. A plain `"read"` override does not bring a source
+write here: a tool it serves as a read over a silent source is refused, though `call_tool`
+runs it. `"read-repeatable"` is the exception, because the deployment accepted that a host
+may repeat the call, and a host can resend a whole read program: such a tool runs here
+unmarked, and a resent program can reach the vendor twice.
+
+**Discovery lists writes, marked.** `connecta.search` and `connecta.describe` return
+them with `callable: false`, and no other entry carries the field. Writes are not
+omitted because omission reads as absence, and a program that reduces a page keeps
+the marker on the entry it selects where it would drop a page-level note.
+`search_tools` remains the unprompted way to find a write's address outside a program.
+
+**Handles.** `connecta.result` works with the existing stash bindings: a `resultId`
+from a direct read or a read program pages, or reads whole with `{ all: true }`, from a
+read program on the same endpoint.
+Follow-up text from `call_tool`, `search_tools` and both program routes names this route
+on endpoints that list it, including paging a writing program's oversized return, so
+paging costs no write approval and cannot resend the write.
+
+**Off switch.** `execute: { readRoute: false }` in deployment code stops listing it
+on every writable endpoint. It is the deployment's choice alone, and suits a deployment
+that wants a person to see every program, given the limit below.
+
+**Known limit: a read program can still send data out through a read.** A read program runs
+without a prompt on hosts that auto-approve reads. Sandboxes deny egress, but a read
+tool that takes a URL or a query can carry data out in its arguments, so data a program
+reads can instruct an agent to do that. Connecta enforces by classification and cannot
+see intent. `call_tool` has the same exposure one call at a time; a program adds
+loops and joins. Keep such tools out of the pool, or set them to `"write"` or `"hidden"`
+in `classification`, or turn this route off. The `read-route-injection` eval task
+measures whether agents follow such an instruction.
+
+Activity records calls and programs on this route with source `execute_read_code`.
+
 ## Routing between the call surfaces
 
 The route is chosen before discovery, and read-only work has exactly two:
-`call_tool` for one known address, `execute_code` for everything wider — an
+`call_tool` for one known address, a program for everything wider —
+`execute_read_code` where it is listed, otherwise `execute_code` — an
 unknown address, a result that will be reduced, a call whose arguments depend on
 an earlier result, or several operations. A program keeps discovery, calls, and
 reduction together when the schemas and result shapes suffice, and gives each
@@ -150,8 +208,8 @@ Live connector probing is not a fourth: the operator pages and `/health` own it.
 
 ## Discovery context
 
-The deployment-derived `execute_code` description carries a connector
-inventory before any catalog search — registry order and each canonical id,
+The deployment-derived `execute_code` and `execute_read_code` descriptions carry
+one connector inventory before any catalog search — registry order and each canonical id,
 with no second name minted for programs. An entry adds the configured title
 only when it says more than the id: a title whose words the id already spells,
 such as `Google Calendar` for `google_calendar`, is dropped. It then adds the
@@ -710,6 +768,10 @@ rows from the start of the list up to 1,500 bytes, and every value outside it.
 spell reads `["a.b"].items`, and a root array reads `(root)`. `rows.keys` samples
 up to 40 keys of at most 64 characters from the first 50 rows; `rows.count` and
 `totalBytes` describe the whole result.
+
+On an endpoint that lists `execute_read_code`, the hint and `nextAction` name it instead
+of `execute_code`. A preview only ever follows a read, and its program reads only the
+retained result, so it runs on either route.
 
 **Text.** Text that is not JSON, or an API connector's text value, returns its line
 count in `text.lines`, then its first 1,200 and last 800 bytes around a marker saying

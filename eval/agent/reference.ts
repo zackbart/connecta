@@ -89,6 +89,7 @@ export async function playReference<T>(
     assertSurface(
       (await session.listTools()).map((t) => t.name),
       surface,
+      deployment.mcpUrl,
     );
     const live = session;
     const toolUses: ToolUse[] = [];

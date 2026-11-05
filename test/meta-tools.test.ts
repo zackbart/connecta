@@ -111,6 +111,18 @@ Prefer \`notes.search\` over listing databases.
     for (const executeCode of [false, true]) {
       expect(endpointInstructions(undefined, { executeCode }, false, ["crm"])).not.toContain("crm");
     }
+    const routed = endpointInstructions(undefined, undefined, false, ["crm"], true);
+    expect(routed).toContain("Other read work: one execute_read_code program");
+    expect(routed).toContain("call_destructive_tool");
+    expect(routed).toContain("search_tools finds a write's address");
+    expect(routed).not.toContain("Everything else");
+    expect(endpointInstructions("A pool.", undefined, false, ["crm"], true)).toContain(routed);
+    for (const instructions of [
+      endpointInstructions(undefined, undefined, false, ["crm"]),
+      endpointInstructions(undefined, undefined, true, ["crm"]),
+      endpointInstructions(undefined, { executeCode: true }, false, ["crm"]),
+    ])
+      expect(instructions).not.toContain("execute_read_code");
   });
 
   it("lists the built-in usage guide plus one entry per guided connector", async () => {

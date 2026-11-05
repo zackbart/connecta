@@ -158,6 +158,7 @@ export async function runClaude(options: ClaudeOptions): Promise<CodexRun> {
               ...options.deniedTools.map((t) => `mcp__connecta__${t}`).filter((t) => !loadedTools.includes(t)),
             ],
             options.surface,
+            options.mcpUrl,
           );
           if ([event.plugins, event.skills].some((value) => Array.isArray(value) && value.length)) {
             // Report only source/name fields, never plugin settings or credentials.

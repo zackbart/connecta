@@ -352,7 +352,7 @@ export function errorsBeforeFirstDownstreamSuccess(
   // observation of its code; a retry of identical code must not credit the earlier failure.
   let nextProgram = 0;
   const reached = (use: ToolUse): boolean => {
-    if (use.tool !== "execute_code")
+    if (use.tool !== "execute_code" && use.tool !== "execute_read_code")
       return (
         use.isError === false &&
         (Boolean(use.native) || use.tool === "call_tool" || use.tool === "call_destructive_tool")

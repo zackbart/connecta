@@ -95,7 +95,72 @@ function isUsage(name: unknown): boolean {
 }
 
 export function forSurface(connecta: Connecta, surface: Surface): Connecta {
+  if (surface === "read") return withReadArm(connecta);
   return surface === "code" || surface === "five" ? withCodeSurface(connecta, surface) : connecta;
+}
+
+const READ_ARM_PERSON = "eval-person";
+const READ_ARM_POOL_SUFFIX = "-person";
+
+/** The read arm's person. Hosts hold a machine token; only this adapter's rewrite reaches `/mcp/<pool>`. */
+const readArmAuth = {
+  kind: "clerk" as const,
+  interactiveOperator: true,
+  activityActorNamespace: "https://eval-directory.test",
+  uiAuth: { kind: "clerk" as const, publishableKey: "pk_test_fake", frontendApiUrl: "https://eval-directory.test" },
+  recognizesCredential: (request: Request) => request.headers.get("authorization") === `Bearer ${READ_ARM_PERSON}`,
+  authorize: (request: Request) =>
+    request.headers.get("authorization") === `Bearer ${READ_ARM_PERSON}`
+      ? { ok: true as const, userId: READ_ARM_PERSON }
+      : { ok: false as const, response: new Response("Unauthorized", { status: 401 }) },
+};
+
+/** A sibling of each pool for the arm's person, so the agent's own pool still checks the host's token. */
+export function readArmConfig<T extends ConnectaConfig>(config: T): T {
+  const pools = {
+    ...config.pools,
+    ...Object.fromEntries(
+      Object.entries(config.pools ?? {}).map(([id, pool]) => [
+        `${id}${READ_ARM_POOL_SUFFIX}`,
+        { ...pool, members: [READ_ARM_PERSON] },
+      ]),
+    ),
+  };
+  return { ...config, auth: readArmAuth, maintainers: [READ_ARM_PERSON], pools } as T;
+}
+
+/**
+ * Agent endpoints hold the seventh tool back, so the arm serves its host through
+ * the human endpoint with the real tool list, instructions and enforcement. The
+ * host's machine token is first checked against its real agent endpoint.
+ */
+function withReadArm(connecta: Connecta): Connecta {
+  return {
+    ...connecta,
+    async fetch(request, env, ctx) {
+      const url = new URL(request.url);
+      if (!url.pathname.startsWith("/agent/")) return connecta.fetch(request, env, ctx);
+      const admitted = await connecta.fetch(
+        new Request(url, {
+          method: "POST",
+          headers: {
+            authorization: request.headers.get("authorization") ?? "",
+            "content-type": "application/json",
+            accept: "application/json, text/event-stream",
+          },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 0, method: "ping" }),
+        }),
+        env,
+        ctx,
+      );
+      if (admitted.status === 401 || admitted.status === 403 || admitted.status === 404) return admitted;
+      await admitted.body?.cancel();
+      url.pathname = `${url.pathname.replace(/^\/agent\//, "/mcp/")}${READ_ARM_POOL_SUFFIX}`;
+      const headers = new Headers(request.headers);
+      headers.set("authorization", `Bearer ${READ_ARM_PERSON}`);
+      return connecta.fetch(new Request(url, new Request(request, { headers })), env, ctx);
+    },
+  };
 }
 
 /** Preserve authentication, transport and execution; change only eval replies. */

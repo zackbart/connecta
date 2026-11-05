@@ -31,6 +31,7 @@ export const CONFIG_DEFAULTS = {
     watchdogMs: 55_000,
     maxWrites: 10,
     maxResultChars: 24_000,
+    readRoute: true,
   },
   admission: {
     requests: {

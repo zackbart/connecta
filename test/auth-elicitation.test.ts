@@ -846,6 +846,19 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(flow.call).toHaveBeenCalledOnce();
   });
 
+  it("INV-4: a read program's auth continuation resumes under its own wire name", async () => {
+    const flow = setup();
+    const code = "return await connecta.call('service.read', {});";
+    const first = await flow.rpc("execute_read_code", { code });
+    expect(first.result.resultType).toBe("input_required");
+    const state: string = first.result.requestState;
+    flow.connect();
+    const resumed = await flow.rpc("execute_read_code", { code }, { state, action: "accept" });
+    expect(resumed.result.structuredContent?.error?.code).not.toBe("invalid_request_state");
+    const other = await flow.rpc("execute_code", { code }, { state, action: "accept" });
+    expect(other.error?.data?.reason ?? other.result?.structuredContent?.error?.code).toBe("invalid_request_state");
+  });
+
   it("INV-4: rejects changed arguments, address, tool, and code before retry dispatch", async () => {
     const flow = setup();
     const state: string = (await flow.rpc()).result.requestState;

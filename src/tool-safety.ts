@@ -47,14 +47,34 @@ export function classifyTool(
   return sourceClassification(definition);
 }
 
-export function carryToolClassification(source: ToolDef, served: ToolDef): ToolDef {
+// Tools a deployment set to `"read-repeatable"`, private like the source facts.
+const repeatAccepted = new WeakSet<ToolDef>();
+
+export function carryToolClassification(
+  source: ToolDef,
+  served: ToolDef,
+  acceptRepeat = repeatAccepted.has(source),
+): ToolDef {
   sourceFacts.set(served, factsFor(source));
+  if (acceptRepeat) repeatAccepted.add(served);
   return served;
 }
 
 /** Replay and outcome policy only; admission and presentation use the served class. */
 export function isWriteLike(tool: ToolDef): boolean {
   return tool.classification !== "read" || sourceClassification(tool) === "write";
+}
+
+/** The surface that runs a read-only program: it never dispatches a write-like call. */
+export const READ_PROGRAM_SOURCE = "execute_read_code" as const;
+
+/**
+ * What a read program refuses: anything write-like, unless the deployment accepted
+ * repeats. A plain `"read"` over a source write stays out, because only
+ * `"read-repeatable"` says a host's resend of the program is acceptable.
+ */
+export function readProgramRefuses(tool: ToolDef): boolean {
+  return isWriteLike(tool) && !repeatAccepted.has(tool);
 }
 
 export function cloneTool(tool: ToolDef): ToolDef {
@@ -64,7 +84,8 @@ export function cloneTool(tool: ToolDef): ToolDef {
 /**
  * The only permission decision for a connector call. Approval is client-owned.
  * A read-only endpoint refuses every write on every surface; a writable one
- * sends writes through call_destructive_tool and programs, never call_tool.
+ * sends writes through call_destructive_tool and writing programs, never call_tool
+ * or a read program.
  */
 export function writeRefusal(
   classification: ToolDef["classification"],

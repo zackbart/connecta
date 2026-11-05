@@ -70,6 +70,7 @@ const SOURCES: ReadonlySet<string> = new Set([
   "call_destructive_tool",
   "batch_call",
   "execute_code",
+  "execute_read_code",
   "resume_execution",
 ]);
 

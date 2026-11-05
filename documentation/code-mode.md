@@ -34,7 +34,7 @@ new behavior.
 ## Deploy-time capability
 
 The `executor` passed to `createConnecta()` is required. The
-[six-tool surface](./meta-tools.md#the-six-tools) is defined in the meta-tool
+[meta-tool surface](./meta-tools.md#the-meta-tools) is defined in the meta-tool
 reference. Construction fails when the
 executor is missing, and the removed deployment-level `surface` option is rejected rather than
 ignored ([#273](https://github.com/zackbart/connecta/issues/273)), as are the
@@ -176,7 +176,9 @@ wrap a bare body when driven directly; that is outside the portable contract.
 exposes is outside the portable contract and must not be used. QuickJS grants
 none of it. A loader-only Dynamic Worker denies external egress and filesystem
 access and keeps its environment maps empty, but exposes the globals and runtime
-builtins in `X5`.
+builtins in `X5`. Denied egress does not stop a read tool's own arguments from
+carrying data. [`execute_read_code`](./meta-tools.md#read-programs) runs under this
+same contract and refuses calls that can write.
 
 **P3.** Values cross the host bridge as JSON: arguments must be
 JSON-serializable and results arrive as plain JSON. A value outside JSON — a
@@ -1481,7 +1483,7 @@ omit write tools from `search_tools`, `connecta.search`, and
 `connecta.describe`, and refuse every write call through `call_tool`,
 `call_destructive_tool`, and programs with `read_only_endpoint` before
 validation or dispatch. Guides and skills are documentation and may still name
-those tools. Meta endpoints list the same six tools in both modes.
+those tools. Both modes keep `execute_code` and every other meta tool; [`execute_read_code`](./meta-tools.md#read-programs) is listed only on writable human endpoints.
 [Native pools](./meta-tools.md#native-tool-surface) list individual downstream
 tools and omit writes when read-only. They retain `execute_code` by default;
 `executeCode: false` replaces it with `read_result`. Approval belongs to the client.
@@ -1669,7 +1671,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `X3`, `X6`             | `test/quickjs-executor.node.test.ts` (cancels a running child, never-settling await), `test/execute.test.ts` (a wedged executor stops being awaited)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `X7`                   | `P3`'s tests; the Workers superset is deliberately unused                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 
-The surface itself is checked by `test/server.test.ts` (the exact six-tool list)
+The surface itself is checked by `test/server.test.ts` (the exact tool list)
 and `test/program-writes.test.ts` (deployment policy and classification construction refusals).
 
 ### Adding a guest function

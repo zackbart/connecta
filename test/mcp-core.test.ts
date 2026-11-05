@@ -4,6 +4,7 @@ import { api } from "../src/connectors/api.js";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { bindMcpClient, type McpClientContext } from "../src/mcp-client-context.js";
 import { META_TOOL_NAMES } from "../src/meta-tool-names.js";
+import { READ_PROGRAM_SOURCE } from "../src/tool-safety.js";
 import { checkClientActivity, modernRequest as modern } from "./fixtures/client-identity.js";
 import { calcApi, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { createTestConnecta, required, silentLogger } from "./helpers.js";
@@ -286,7 +287,9 @@ describe("2026-07-28 core", () => {
     const c = createTestConnecta({ connectors: [], logger: silentLogger });
     try {
       const body = await readJsonRpc(await c.fetch(modern("tools/list")));
-      expect(body.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual([...META_TOOL_NAMES].sort());
+      expect(body.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual(
+        [...META_TOOL_NAMES, READ_PROGRAM_SOURCE].sort(),
+      );
       for (const name of ["call_tool", "call_destructive_tool"]) {
         const tool = body.result.tools.find((entry: { name: string }) => entry.name === name);
         expect(tool.inputSchema.properties.address["x-mcp-header"]).toBe("Address");

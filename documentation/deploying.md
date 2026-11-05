@@ -270,7 +270,7 @@ token and run doctor against a pool that lists the agent:
 CONNECTA_TOKEN='<stored-cta-token>' npx connecta doctor --url http://localhost:8787 --pool local-machine
 ```
 
-Doctor checks health, the required executor, and the current six-tool set. A
+Doctor checks health, the required executor, and the current meta-tool set, running a harmless program on each listed program route. A
 `cta_` token is checked at `/agent/<pool>` and needs `--pool`.
 For a Worker protected by Access, `/health` still needs edge admission even
 though `/agent/*` bypasses Access. Use an Access service token admitted by the

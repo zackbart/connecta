@@ -2,9 +2,10 @@ import type { RouteSurface } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 
 /**
- * `meta`: the six meta-tools. `code`: in-program wording, selected only by the
- * eval code arm. `native` and `native-code`: native pools without and with
- * `execute_code`.
+ * `meta`: the six meta-tools. `read-route`: those plus `execute_read_code`, which
+ * then takes read follow-ups, so they cost no write approval. `code`: in-program
+ * wording, selected only by the eval code arm. `native` and `native-code`: native
+ * pools without and with `execute_code`.
  */
 
 const NAMES: Readonly<Record<RouteSurface, AgentRouteNames>> = {
@@ -13,6 +14,14 @@ const NAMES: Readonly<Record<RouteSurface, AgentRouteNames>> = {
     read: "call_tool",
     write: "call_destructive_tool",
     program: "execute_code",
+    authorize: "authorize_connector",
+    skills: "skills",
+  }),
+  "read-route": Object.freeze({
+    search: "search_tools",
+    read: "call_tool",
+    write: "call_destructive_tool",
+    program: "execute_read_code",
     authorize: "authorize_connector",
     skills: "skills",
   }),
@@ -42,7 +51,7 @@ const NAMES: Readonly<Record<RouteSurface, AgentRouteNames>> = {
   }),
 };
 
-/** The six-tool surface's names: the default wherever no other surface applies. */
+/** The meta surface's names: the default wherever no other surface applies. */
 export const META_ROUTES: AgentRouteNames = NAMES.meta;
 
 export function routeNames(surface: RouteSurface): AgentRouteNames {

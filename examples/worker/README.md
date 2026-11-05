@@ -10,7 +10,7 @@ runnable Worker steps.
 A deployable Worker that aggregates a downstream remote MCP and an in-code HTTP
 API connector, guarded by Cloudflare Access. It uses three Cloudflare resources
 and nothing else: one D1 database (`CONNECTA_DB`) for every piece of state, the
-Worker Loader binding (`LOADER`) behind the six-tool surface, which requires
+Worker Loader binding (`LOADER`) behind the meta-tool surface, which requires
 the Workers Paid plan, and two secrets: `DOWNSTREAM_TOKEN` (the example remote
 MCP connector's token) and `CREDENTIAL_ENCRYPTION_KEY` (the credential vault).
 
@@ -493,7 +493,7 @@ from `@zackbart/connecta/d1`. See [Activity history](#activity-history-optional)
 Omit the module and store wiring to record no history and show no Activity tab. Diagnostics remain independent; `logger: "silent"` suppresses
 them explicitly.
 
-Verify MCP health and the exact six tools with the following. Doctor reads
+Verify MCP health and the exact tool list with the following. Doctor reads
 `/health` through Access with the service credentials, then checks `/agent/ci`
 with the `cta_` token alone:
 
@@ -526,7 +526,7 @@ LOADER: Cloudflare.WorkerLoader(),
 `@zackbart/connecta/worker`. The adapter constructs the upstream
 `DynamicWorkerExecutor` with only the loader and a deadline, and disposes each
 run's loader and RPC handles when its lease ends, even if the guest has not
-settled. It serves the six-tool surface. Its admission pool is per isolate:
+settled. It serves the meta-tool surface. Its admission pool is per isolate:
 two runs, eight queued for up to 60 seconds, then a retryable
 `executor_overloaded`. Pass `admission` to `workerExecutor()` to change it; see
 [code mode](../../documentation/code-mode.md#deploy-time-capability). Do not

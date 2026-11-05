@@ -175,6 +175,68 @@ async function nativeControls() {
 await nativeControls();
 await staleReadNameControl();
 
+/** The real read route: reads run, a write is refused with 0 sent, handles cross routes. */
+async function readRouteControls(target: "node" | "worker") {
+  const task = ACTIVE_TASKS.find((task) => task.id === "p5-known-read-routing")!;
+  const world = new World(task.world);
+  await world.start();
+  let deployment;
+  let mcp;
+  try {
+    deployment = await startDeployment(target, world, task, "read");
+    mcp = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+    const tools = await mcp.listTools();
+    assertSurface(
+      tools.map((tool) => tool.name),
+      "read",
+    );
+    assert.equal(tools.find((tool) => tool.name === "execute_read_code")?.readOnly, true);
+    assert.equal(tools.find((tool) => tool.name === "execute_code")?.readOnly, false);
+
+    const program = await mcp.call("execute_read_code", {
+      code: `async () => {
+        const read = await connecta.call("ci.get_run", { runId: 4812 });
+        const [write] = await Promise.allSettled([connecta.call("chat.post_message", { channel: "eng", text: "no" })]);
+        let code;
+        try { await connecta.call("tracker.close_issue", { id: "WEB-105" }); } catch (error) { code = error.code; }
+        const found = await connecta.search({ connector: "tracker", query: "close issue" });
+        return {
+          read: read.data.status,
+          write: write.status,
+          code,
+          marked: found.tools.find((tool) => tool.address === "tracker.close_issue")?.callable,
+        };
+      }`,
+    });
+    assert.equal(program.isError, false, program.text);
+    const answer = JSON.parse(program.text).result;
+    assert.equal(answer.write, "rejected");
+    assert.equal(answer.code, "destructive_tool_requires_approval");
+    assert.equal(answer.marked, false);
+    assert.equal(world.ledger.calls.filter((call) => call.kind === "write").length, 0);
+
+    const log = await mcp.call("call_tool", { address: "ci.get_run_log", args: { runId: 4812 } });
+    const notice = JSON.parse(log.text.split("\n")[0]!);
+    assert.equal(notice.nextAction.tool, "execute_read_code");
+    const page = await mcp.call("execute_read_code", notice.nextAction.arguments);
+    assert.equal(page.isError, false, page.text);
+
+    const landed = await mcp.call("execute_code", {
+      code: `async () => (await connecta.call("chat.post_message", { channel: "eng", text: "once" })).data`,
+    });
+    assert.equal(landed.isError, false, landed.text);
+    assert.equal(world.ledger.calls.filter((call) => call.kind === "write").length, 1);
+    console.log(
+      `ok read route (${target}): real tool list, read then refused write with 0 sent, handle crossed routes`,
+    );
+  } finally {
+    await mcp?.close();
+    await deployment?.close();
+    await world.stop();
+  }
+}
+for (const target of ["node", "worker"] as const) await readRouteControls(target);
+
 // A real retained result: rows reach the agent only after every read_result page.
 {
   const base = ACTIVE_TASKS.find((task) => task.id === "overflow-donor-paging")!;

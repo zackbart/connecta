@@ -922,6 +922,7 @@ export function activityOutcomeBadge(outcome: string): { label: string; tone: To
 const SOURCE_LABELS: Readonly<Record<string, string>> = {
   native: "Native tool call",
   execute_code: "In a program",
+  execute_read_code: "In a read-only program",
   call_tool: "Direct call",
   call_destructive_tool: "Direct call, approved by the host",
   // History only: resume_execution left with program pauses (#672).

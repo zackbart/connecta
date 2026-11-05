@@ -103,9 +103,10 @@ const GOLDEN: Record<string, unknown> = {
     required: ["code"],
   },
 };
+GOLDEN.execute_read_code = GOLDEN.execute_code;
 
 describe("meta-tool input schemas", () => {
-  it("renders all six exactly as the golden records", async () => {
+  it("renders all seven exactly as the golden records", async () => {
     const body = await readJsonRpc(
       await mcpRpc(makeDeployment({ executor: stubExecutor }), "tools/list", {}, { token: TOKEN }),
     );
@@ -136,8 +137,9 @@ describe("meta-tool output schemas", () => {
         },
         authorize_connector: { connector: "calc" },
         execute_code: { code: "async () => null" },
+        execute_read_code: { code: "async () => null" },
       };
-      expect(list.result.tools).toHaveLength(6);
+      expect(list.result.tools).toHaveLength(7);
       for (const tool of list.result.tools) {
         const directCall = tool.name === "call_tool" || tool.name === "call_destructive_tool";
         // Guidance is text-only, so skills cannot promise a structured result.
@@ -162,7 +164,7 @@ describe("meta-tool output schemas", () => {
       const advertised = list.result.tools.flatMap((tool: { outputSchema?: object }) =>
         tool.outputSchema ? [JSON.stringify(tool.outputSchema)] : [],
       );
-      expect(advertised).toHaveLength(3);
+      expect(advertised).toHaveLength(4);
       for (const schema of advertised) {
         expect(schema).not.toContain("additionalProperties");
         expect(schema).not.toContain("$ref");
@@ -212,6 +214,10 @@ describe("meta-tool output schemas", () => {
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
   total: 8_800,
+  // A writable endpoint's execute_read_code: description, shared input and output schemas.
+  readRouteTotal: 1_500,
+  readRouteInstructions: 550,
+  readRouteInstructionsPeak: 1_130,
   // The pinned fixture's instructions, then the most a pool can serve: a
   // 500-unit description plus a connector list at its 120-byte cap.
   instructions: 460,
@@ -225,9 +231,11 @@ const BUDGETS = {
     authorize_connector: 510,
     // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial.
     execute_code: 2_890,
+    // Carries the same inventory: a host may load only this tool for read work.
+    execute_read_code: 730,
   },
   // Open summaries: the full contracts stay on the server, in meta-output.ts.
-  outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170 },
+  outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170, execute_read_code: 170 },
   usage: 5_500,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
@@ -352,9 +360,19 @@ describe("always-loaded agent surface budgets", () => {
           sizes[`${tool.name}.description`] = tool.description.length;
           if (tool.outputSchema) sizes[`${tool.name}.outputSchema`] = JSON.stringify(tool.outputSchema).length;
         }
-        expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructions);
-        expect(total, JSON.stringify(sizes)).toBeLessThanOrEqual(BUDGETS.total);
-        expect(tools.map((tool) => tool.name).sort()).toEqual(Object.keys(BUDGETS.description).sort());
+        const readRoute = tools.find((tool) => tool.name === "execute_read_code");
+        expect(instructions.length).toBeLessThanOrEqual(
+          readRoute ? BUDGETS.readRouteInstructions : BUDGETS.instructions,
+        );
+        expect(total, JSON.stringify(sizes)).toBeLessThanOrEqual(
+          BUDGETS.total + (readRoute ? BUDGETS.readRouteTotal : 0),
+        );
+        if (readRoute) expect(JSON.stringify(readRoute).length).toBeLessThanOrEqual(BUDGETS.readRouteTotal);
+        expect(tools.map((tool) => tool.name).sort()).toEqual(
+          Object.keys(BUDGETS.description)
+            .filter((name) => !readOnly || name !== "execute_read_code")
+            .sort(),
+        );
         for (const tool of tools) {
           const name = tool.name as keyof typeof BUDGETS.description;
           expect(tool.description.length, name).toBeLessThanOrEqual(BUDGETS.description[name]);
@@ -459,6 +477,10 @@ it("front-loads configured scope and guidance within the instructions budget", a
         expect(instructions.startsWith(`${description} `)).toBe(true);
         expect(instructions.length).toBeLessThanOrEqual(BUDGETS.instructionsPeak);
         expect(endpointInstructions(description, native, readOnly, connectorIds)).toBe(instructions);
+        if (!native && !readOnly)
+          expect(endpointInstructions(description, native, readOnly, connectorIds, true).length).toBeLessThanOrEqual(
+            BUDGETS.readRouteInstructionsPeak,
+          );
       }
     }
   }
