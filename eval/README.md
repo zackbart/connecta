@@ -9,10 +9,13 @@ checkouts have independent locks. Install the `flock` CLI with Homebrew
 (`brew install flock`) where unavailable. The OS releases locks when holders exit,
 including SIGKILL; never delete the persistent `.flock` file (that would split the
 lock). No stale owner directory or PID recovery is needed. Node and fake listeners bind port 0. Child deployments
-that need a public URL before startup retry bind collisions at most three times,
-only during initial startup. Wrangler's inspector and internal proxy use explicit
-ports so Landlock can allow callbacks before workerd starts; a startup collision
-retries the entire process group with fresh ports. Reader and writer fairness is
+that need a public URL before startup retry bind collisions at most three times.
+Wrangler's inspector and internal proxy use explicit ports so Landlock can allow
+callbacks before workerd starts; a startup collision retries the entire process
+group with fresh ports. A restart keeps its public port, because the origin has
+already been served, so it redraws only the internal ports and waits between
+attempts. Claims in `~/.cache/connecta-eval-ports` keep other evals on the machine
+from drawing a port during that gap, and a claim from a dead process is ignored. Reader and writer fairness is
 not guaranteed: sustained readers can delay a build up to the 1,800 s lock
 acquisition timeout.
 
