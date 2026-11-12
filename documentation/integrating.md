@@ -208,7 +208,8 @@ classification: {
 
 `"write"` requires the host's approval path. `"hidden"` omits a tool from search
 and describe and refuses guessed-name calls, including programs. An absent
-runtime tool leaves its override dormant with an operator warning once per catalog change; the override
+runtime tool leaves its override dormant with an operator warning once each time a catalog read changes
+the connector's override warnings in that runtime, across callers and principals; the override
 applies if that exact name returns. Unknown static tool names fail construction.
 No argument can change these rules. `"read"` depends on what the tool's source
 states:
@@ -218,7 +219,8 @@ states:
   never served read-annotated, because a host may resend a read-annotated call
   after a connection failure. `call_tool` refuses it with the next step, naming
   `call_destructive_tool`. It runs on `call_destructive_tool` and `execute_code`, and
-  read-only endpoints and connectors omit and refuse it. An operator warning names the override once per catalog change.
+  read-only endpoints and connectors omit and refuse it. An operator warning names the override once per change in
+  that runtime, across callers and principals.
 - **The source is silent** (no `readOnlyHint` and no `destructiveHint: true`): the
   override is the only evidence, so the tool serves as a read with read
   annotations. Setting it asserts that the call is safe to repeat, because the host
