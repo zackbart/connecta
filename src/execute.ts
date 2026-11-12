@@ -2333,7 +2333,7 @@ Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or
 \`\`\`ts
 ${GUEST_API_DECLARATION}
 \`\`\`
-search/describe return { tools }.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows a TypeScript signature by default; describe, JSON Schema. Over 1 MiB, call returns a paged handle; follow its hint. Except ${UNCOUNTED_GUEST_FUNCTIONS}, functions spend a host call; exceeding the limit returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction.
+search/describe return { tools }.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows TypeScript signatures; describe, JSON Schema. Over 1 MiB, call returns a paged handle; follow its hint. Except ${UNCOUNTED_GUEST_FUNCTIONS}, functions spend a host call; exceeding the limit returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction.
 
 ${readOnly ? "" : "Never repeat writes for output. "}emit(result) needs native content; author text or base64 image/audio blocks. Return data; page/reduce handles. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; text shares the return cap. connecta.skill("usage"): repair.`;
 
