@@ -1548,7 +1548,10 @@ that child, so a run the watchdog abandons (`L3`) ends too.
 Upstream `execute()` takes no signal; its guest timeout may never settle after
 the parent response ends. `workerExecutor()` owns each lease's RPC and loader
 handles: release disposes them, detaches host functions, and settles the adapter's
-promise independently of upstream evaluation. Guest computation may continue
+promise independently of upstream evaluation. The `evaluate()` RPC result, and any
+stubs the guest returned, is disposed exactly once when it settles: before the
+entrypoint and Loader in a finished run, and also when it arrives after release
+or cancellation. The host result keeps the same data. Guest computation may continue
 briefly until platform teardown, but no late return, callback, `finally`, call,
 or emit changes the finished host result. Disposal releases request resources;
 it does not guarantee a synchronous guest-CPU kill.

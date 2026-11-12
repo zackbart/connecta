@@ -128,6 +128,21 @@ describe.skipIf(!inWorkerd)("Worker native resource ownership", () => {
     await h.executor.close?.();
   });
 
+  it("INV-7: a run disposes its RPC result once, before the entrypoint and Loader, despite a failed disposer", async () => {
+    const h = await harness();
+    const pending = runEdge(executorProgram(h.executor, "async () => 1", []));
+    await vi.waitFor(() => expect(h.evaluations()).toBe(1));
+    const disposed = vi.fn(() => {
+      h.events.push("result disposed");
+      throw new Error("broken result disposer");
+    });
+    h.resolve(Object.defineProperty({ result: { rows: [1, 2] }, logs: ["read"] }, Symbol.dispose, { value: disposed }));
+    expect(await pending).toEqual({ result: { rows: [1, 2] }, logs: ["read"] });
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(h.events).toEqual(["load", "result disposed", "entry disposed", "worker disposed"]);
+    await h.executor.close?.();
+  });
+
   it("INV-7: a released Worker detaches never-settling host calls and refuses late dispatch", async () => {
     const h = await harness();
     const called = vi.fn(() => new Promise<never>(() => {}));
@@ -171,6 +186,14 @@ describe.skipIf(!inWorkerd)("Worker native resource ownership", () => {
     expect(await outcome).toBe(reason);
     expect(h.events).toEqual(["load", "entry disposed", "worker disposed"]);
     expect(h.executor.admissionSnapshot?.()).toMatchObject({ active: 0 });
+    // Native evaluation outlives the cancelled run; its late result, and any
+    // stubs it carries, is still disposed exactly once.
+    const disposed = vi.fn(() => h.events.push("late result disposed"));
+    h.resolve(Object.defineProperty({ result: { f: "stub" } }, Symbol.dispose, { value: disposed }));
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(h.events).toEqual(["load", "entry disposed", "worker disposed", "late result disposed"]);
     await h.executor.close?.();
   });
 

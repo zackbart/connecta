@@ -256,6 +256,13 @@ Through the Access API, the relevant part of the application is:
 }
 ```
 
+Cloudflare can omit `ctx.access` from the first request on a fresh isolate.
+That request then gets a retryable 503 unless `cloudflareAccessAuth` is given
+`assertion: { teamDomain, audience }`, which makes connecta verify the
+assertion Access forwarded instead. Set it to the team domain and
+`ConnectaAccess`'s AUD tag as described in
+[Verify the assertion when Access context is missing](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#verify-the-assertion-when-access-context-is-missing).
+
 Cloudflare's [Worker Access guide](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 explains the Worker destination; its [Managed OAuth guide](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
 owns client registration, redirect allowlists, and token lifetimes.

@@ -182,7 +182,8 @@ export function remoteMcpCall(rt: RemoteMcpRuntime): Pick<RemoteMcpShared, "call
             ? err
             : err instanceof UnauthorizedError
               ? carryFailureFacts(err, rt.authRequiredError(ctx))
-              : downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx));
+              : (dispatch.tooLarge ??
+                downstreamCallError(err, undefined, undefined, undefined, requestSentSecrets(ctx)));
           if (!write) throw failure;
           const renewal = dispatch.request?.entry.renewed
             ? undefined
@@ -197,26 +198,28 @@ export function remoteMcpCall(rt: RemoteMcpRuntime): Pick<RemoteMcpShared, "call
             );
             return entry ? vendorRefusal(verdict, entry) : verdict;
           };
-          const verdict = dispatch.unauthorized
-            ? unsent(dispatch.request?.entry)
-            : dispatch.redirected || dispatch.resendRefused
-              ? new ConnectorCallError(
-                  "connector_call_failed",
-                  `Connector "${id}"'s MCP server ` +
-                    (dispatch.redirected
-                      ? "answered this write with a redirect, and the write was not sent again, "
-                      : "was sent this write, and a second send of it was stopped, ") +
-                    "so whether it took effect is unknown: check the target before repeating it.",
-                  { retryable: false, writeOutcome: "unknown" },
-                )
-              : dispatch.ambiguous && failure instanceof ConnectorCallError
+          const verdict = dispatch.tooLarge
+            ? failure
+            : dispatch.unauthorized
+              ? unsent(dispatch.request?.entry)
+              : dispatch.redirected || dispatch.resendRefused
                 ? new ConnectorCallError(
-                    failure.code,
-                    `${failure.message} Connector "${id}"'s MCP server answered this write with an HTTP error ` +
-                      "and no MCP error, so whether it took effect is unknown: check the target before repeating it.",
+                    "connector_call_failed",
+                    `Connector "${id}"'s MCP server ` +
+                      (dispatch.redirected
+                        ? "answered this write with a redirect, and the write was not sent again, "
+                        : "was sent this write, and a second send of it was stopped, ") +
+                      "so whether it took effect is unknown: check the target before repeating it.",
                     { retryable: false, writeOutcome: "unknown" },
                   )
-                : failure;
+                : dispatch.ambiguous && failure instanceof ConnectorCallError
+                  ? new ConnectorCallError(
+                      failure.code,
+                      `${failure.message} Connector "${id}"'s MCP server answered this write with an HTTP error ` +
+                        "and no MCP error, so whether it took effect is unknown: check the target before repeating it.",
+                      { retryable: false, writeOutcome: "unknown" },
+                    )
+                  : failure;
           const vendor = { title: `connector "${id}"` };
           const status = failureRecord({}, err).httpStatus;
           const settled = providerCallFailure(ctx, vendor, verdict, {

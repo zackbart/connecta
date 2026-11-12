@@ -6,6 +6,7 @@ import { META_ROUTES } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { toolError } from "./tool-error.js";
 import { upwardStep } from "./upward.js";
+import { utf8Length } from "./bytes.js";
 import type { InputRequiredResult } from "@modelcontextprotocol/server";
 import type { InvocationOutcome } from "./invocation.js";
 import type { CatalogSearchPage, CatalogSearchResult } from "./catalog-service.js";
@@ -641,7 +642,8 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
       const passed = held?.secrets.revision ?? 0;
       const data = secrets.redact(value);
       const wire = JSON.stringify({ data, format });
-      if (enc.encode(wire).length <= wireBytes) return { data, format };
+      // Count, never encode: an oversized result would be copied whole just to measure it.
+      if (utf8Length(wire, wireBytes) <= wireBytes) return { data, format };
       const serialized = format === "text" ? { text: String(data), binary: false } : serializedWithBinary(data);
       const text = secrets.text(serialized.text);
       const bytes = enc.encode(text);

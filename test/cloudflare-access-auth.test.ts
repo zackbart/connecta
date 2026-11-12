@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { authenticationSnapshot } from "../src/auth-admission.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { InboundAuthRuntimeContext } from "../src/types.js";
@@ -174,6 +175,30 @@ describe("cloudflareAccessAuth", () => {
     }
   });
 
+  it("INV-7: disposes each RPC identity result once, admitted or refused, despite a failed disposer", async () => {
+    // workerd adds a non-enumerable disposer to every object a JS RPC call returns.
+    for (const [identity, ok] of [
+      [{ user_uuid: "user-123" }, true],
+      [{ user_uuid: "human", service_token_status: true }, false],
+    ] as const) {
+      for (const fails of [false, true]) {
+        const dispose = vi.fn(() => {
+          if (fails) throw new Error("broken identity disposer");
+        });
+        const result = await cloudflareAccessAuth().authorize(request, BASE, {
+          access: {
+            aud: "access-app",
+            getIdentity: async () => Object.defineProperty({ ...identity }, Symbol.dispose, { value: dispose }),
+          },
+        });
+        expect(result.ok).toBe(ok);
+        if (result.ok) expect(result).toMatchObject({ userId: "user-123" });
+        else expect(result.response.status).toBe(403);
+        expect(dispose).toHaveBeenCalledOnce();
+      }
+    }
+  });
+
   it.each(["valid", "expired"])(
     "INV-4: refuses %s caller JWTs without edge-validated context on Node and Workers",
     async (verdict) => {
@@ -292,9 +317,10 @@ describe("cloudflareAccessAuth", () => {
     }
   });
 
-  it("INV-4 INV-7: returns at the native Access deadline and never admits its late result", async () => {
+  it("INV-4 INV-7: returns at the native Access deadline, never admits its late result, and disposes it", async () => {
     vi.useFakeTimers();
     try {
+      const dispose = vi.fn();
       let resolve!: (identity: Record<string, unknown>) => void;
       const pending = cloudflareAccessAuth().authorize(request, BASE, {
         access: {
@@ -312,7 +338,8 @@ describe("cloudflareAccessAuth", () => {
         expect(result.response.status).toBe(503);
         expect(result.response.headers.get("Cache-Control")).toBe("no-store");
       }
-      resolve({ user_uuid: "late-human" });
+      resolve(Object.defineProperty({ user_uuid: "late-human" }, Symbol.dispose, { value: dispose }));
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
     } finally {
       vi.useRealTimers();
     }
@@ -482,5 +509,423 @@ describe("Access identity lookup recovery", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("Access assertion verification without context", () => {
+  const TEAM = "https://team.cloudflareaccess.com";
+  const CERTS = `${TEAM}/cdn-cgi/access/certs`;
+  const AUD = "a".repeat(64);
+  const assertion = { teamDomain: "team.cloudflareaccess.com", audience: AUD };
+  let current: CryptoKeyPair;
+  let next: CryptoKeyPair;
+  let publicCurrent: JsonWebKey;
+  let publicNext: JsonWebKey;
+  const now = () => Math.floor(Date.now() / 1000);
+  const b64 = (value: Uint8Array) =>
+    btoa(String.fromCharCode(...value))
+      .replace(/=/g, "")
+      .replace(/\+/g, "-")
+      .replace(/\//g, "_");
+  const json = (value: unknown) => b64(new TextEncoder().encode(JSON.stringify(value)));
+
+  beforeAll(async () => {
+    const generate = () =>
+      crypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["sign", "verify"],
+      ) as Promise<CryptoKeyPair>;
+    current = await generate();
+    next = await generate();
+    publicCurrent = (await crypto.subtle.exportKey("jwk", current.publicKey)) as JsonWebKey;
+    publicNext = (await crypto.subtle.exportKey("jwk", next.publicKey)) as JsonWebKey;
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  // The application token Access forwards to the origin; its `sub` is the user id.
+  async function token(
+    changes: Record<string, unknown> = {},
+    header: Record<string, unknown> = {},
+    key = current.privateKey,
+  ) {
+    const claims = {
+      aud: [AUD],
+      email: "alice@example.com",
+      exp: now() + 3600,
+      iat: now(),
+      nbf: now(),
+      iss: TEAM,
+      type: "app",
+      identity_nonce: "nonce",
+      sub: "operator-1",
+      country: "US",
+      ...changes,
+    };
+    const input = `${json({ alg: "RS256", kid: "current", typ: "JWT", ...header })}.${json(claims)}`;
+    const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(input));
+    return `${input}.${b64(new Uint8Array(signature))}`;
+  }
+
+  function certs(keys: () => JsonWebKey[] = () => [{ ...publicCurrent, kid: "current", alg: "RS256", use: "sig" }]) {
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+      expect(new Request(url, init).url).toBe(CERTS);
+      expect(init?.redirect).toBe("manual");
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
+      return Response.json({ keys: keys(), public_cert: { kid: "current", cert: "PEM" } });
+    });
+  }
+
+  const asserted = (value: string, path = "/mcp") =>
+    new Request(`${BASE}${path}`, { headers: { "Cf-Access-Jwt-Assertion": value } });
+
+  async function refused(result: Awaited<ReturnType<ReturnType<typeof cloudflareAccessAuth>["authorize"]>>) {
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.response.status).toBe(503);
+    expect(result.response.headers.get("Retry-After")).toBe("1");
+    expect(result.response.headers.get("Cache-Control")).toBe("no-store");
+    expect(result.response.headers.has("WWW-Authenticate")).toBe(false);
+    await expect(result.response.json()).resolves.toEqual({
+      error: "Cloudflare Access identity unavailable",
+      problem: "access_context_unavailable",
+    });
+  }
+
+  it("INV-4: admits a verified assertion with the principal trusted context yields, and only without context", async () => {
+    const fetcher = certs();
+    const auth = cloudflareAccessAuth({ assertion });
+    const value = await token();
+    const expected = { ok: true, userId: "operator-1", subjectId: "operator-1" };
+    await expect(auth.authorize(asserted(value), BASE)).resolves.toEqual(expected);
+    await expect(auth.authorize(asserted(value), BASE, { waitUntil() {} } as never)).resolves.toEqual(expected);
+    await expect(
+      auth.authorize(asserted(value), BASE, runtime({ user_uuid: "operator-1", email: "alice@example.com" })),
+    ).resolves.toEqual(expected);
+    // Present context is trusted as before: the assertion is never consulted.
+    await expect(auth.authorize(asserted("not-a-jwt"), BASE, runtime({ user_uuid: "operator-1" }))).resolves.toEqual(
+      expected,
+    );
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await expect(
+      auth.authorize(asserted(await token({ sub: undefined, email: "alice@example.com" })), BASE),
+    ).resolves.toMatchObject({ ok: true, userId: "alice@example.com" });
+  });
+
+  it.each([
+    ["the wrong audience", { aud: ["other-application"] }, {}],
+    ["a string audience for another application", { aud: "other-application" }, {}],
+    ["the wrong issuer", { iss: "https://other.cloudflareaccess.com" }, {}],
+    ["a look-alike issuer", { iss: `${TEAM}.attacker.test` }, {}],
+    ["an org session token", { type: "org" }, {}],
+    ["an expired token", { exp: now() - 31, iat: now() - 3600 }, {}],
+    ["a token not valid yet", { nbf: now() + 120 }, {}],
+    ["a token without iat", { iat: undefined }, {}],
+    ["an HS256 header", {}, { alg: "HS256" }],
+    ["an unsigned header", {}, { alg: "none" }],
+    ["a missing kid", {}, { kid: undefined }],
+    ["a critical extension", {}, { crit: ["exp"] }],
+  ])("INV-4: refuses %s retryably without identity or a key fetch", async (_label, claims, header) => {
+    const fetcher = certs();
+    const auth = cloudflareAccessAuth({ assertion });
+    await refused(await auth.authorize(asserted(await token(claims, header)), BASE));
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("INV-4: refuses bad signatures, unknown keys and malformed assertions without identity", async () => {
+    const fetcher = certs();
+    const auth = cloudflareAccessAuth({ assertion });
+    const valid = await token();
+    const [head, body] = valid.split(".");
+    for (const value of [
+      await token({}, {}, next.privateKey),
+      `${head}.${json({ ...JSON.parse(atob(body!.replace(/-/g, "+").replace(/_/g, "/"))), sub: "operator-2" })}.${valid.split(".")[2]}`,
+      `${head}.${body}.not*base64`,
+      `${head}.${body}.`,
+      `${head}.${body}`,
+      "",
+      "forged",
+      `${valid}, ${valid}`,
+    ]) {
+      await refused(await auth.authorize(asserted(value), BASE));
+    }
+    await refused(await auth.authorize(asserted(await token({}, { kid: "unknown" })), BASE));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-4: refuses verified service-token assertions as it refuses their trusted identities", async () => {
+    certs();
+    const auth = cloudflareAccessAuth({ assertion });
+    for (const claims of [
+      { sub: "", email: undefined, common_name: "client-id.access" },
+      { sub: "", email: undefined },
+      { common_name: "client-id.access" },
+    ]) {
+      const result = await auth.authorize(asserted(await token(claims)), BASE);
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(403);
+        await expect(result.response.json()).resolves.toEqual({ error: "Cloudflare Access human identity required" });
+      }
+    }
+    const nobody = await auth.authorize(asserted(await token({ sub: undefined, email: undefined })), BASE);
+    expect(nobody.ok).toBe(false);
+    if (!nobody.ok) expect(nobody.response.status).toBe(403);
+  });
+
+  it("INV-4: keeps the missing-header 401 and explicit-header precedence without fetching keys", async () => {
+    const fetcher = certs();
+    const auth = cloudflareAccessAuth({ assertion });
+    const missing = await auth.authorize(new Request(`${BASE}/mcp`), BASE);
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.response.status).toBe(401);
+    const value = await token();
+    const explicit = await auth.authorize(
+      new Request(`${BASE}/mcp`, { headers: { Authorization: `Bearer ${value}`, "Cf-Access-Jwt-Assertion": value } }),
+      BASE,
+    );
+    expect(explicit.ok).toBe(false);
+    if (!explicit.ok) expect(explicit.response.status).toBe(401);
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it("INV-4 INV-7: fails closed with a retryable 503 when the key set cannot be read, then recovers", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const value = await token({ exp: now() + 7200 });
+    const auth = cloudflareAccessAuth({ assertion });
+    const outages: Array<() => Promise<Response>> = [
+      async () => new Response("unavailable", { status: 503 }),
+      async () => {
+        throw new TypeError("network failure");
+      },
+      async () => new Response("{not json", { status: 200 }),
+      async () => new Response(null, { status: 302, headers: { Location: "https://attacker.test/certs" } }),
+      async () => Response.json({ keys: [{ ...publicCurrent, kid: "current", d: "private" }] }),
+      async () => Response.json({ keys: [] }),
+    ];
+    for (const outage of outages) {
+      const fetcher = vi.spyOn(globalThis, "fetch").mockImplementationOnce(outage);
+      await refused(await auth.authorize(asserted(value), BASE));
+      // A failed read blocks key fetches for thirty seconds rather than retrying per request.
+      await refused(await auth.authorize(asserted(value), BASE));
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      fetcher.mockRestore();
+      vi.setSystemTime(Date.now() + 30_001);
+    }
+    const fetcher = certs();
+    await expect(auth.authorize(asserted(value), BASE)).resolves.toMatchObject({ ok: true, userId: "operator-1" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("INV-7: ends a hanging key fetch at its own deadline and backs off before fetching again", async () => {
+    const value = await token({ exp: now() + 7200 });
+    vi.useFakeTimers();
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+        }),
+    );
+    const auth = cloudflareAccessAuth({ assertion });
+    const pending = auth.authorize(asserted(value), BASE);
+    await vi.advanceTimersByTimeAsync(4_001);
+    await refused(await pending);
+    expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(true);
+    // A deadline is a failed read: no request starts another for thirty seconds.
+    for (let i = 0; i < 5; i++) await refused(await auth.authorize(asserted(value), BASE));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    fetcher.mockImplementation(async () => Response.json({ keys: [{ ...publicCurrent, kid: "current" }] }));
+    await expect(auth.authorize(asserted(value), BASE)).resolves.toMatchObject({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-7: repeated disconnects start at most two key fetches, charged to their starters until they fill the cache", async () => {
+    const deployment = makeDeployment({
+      auth: cloudflareAccessAuth({ assertion }),
+      maintainers: ["operator-1"],
+      logger: "silent",
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      await gate;
+      init?.signal?.throwIfAborted();
+      return Response.json({ keys: [{ ...publicCurrent, kid: "current" }] });
+    });
+    const kept: Promise<unknown>[] = [];
+    const context = { waitUntil: (pending: Promise<unknown>) => void kept.push(pending) };
+    const baseline = authenticationSnapshot().active;
+    try {
+      const value = await token();
+      for (let i = 0; i < 20; i++) {
+        const controller = new AbortController();
+        const request = new Request(`${BASE}/ui/connectors/calc`, {
+          headers: { "Cf-Access-Jwt-Assertion": value },
+          signal: controller.signal,
+        });
+        const pending = deployment.fetch(request, undefined, context);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        controller.abort();
+        await pending.then(
+          (response) => response.body?.cancel(),
+          () => {},
+        );
+      }
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      // Each fetch outlives the caller that left, still charged and kept runnable.
+      for (const call of fetcher.mock.calls) expect(call[1]?.signal?.aborted).toBe(false);
+      expect(authenticationSnapshot().active).toBe(baseline + 2);
+      release();
+      await Promise.all(kept);
+      expect(authenticationSnapshot().active).toBe(baseline);
+      const admitted = await deployment.fetch(
+        new Request(`${BASE}/ui/connectors/calc`, { headers: { "Cf-Access-Jwt-Assertion": value } }),
+        undefined,
+        { waitUntil() {} },
+      );
+      expect(admitted.status).toBe(200);
+      await admitted.body?.cancel();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      await deployment.close();
+    }
+  });
+
+  it("INV-4 INV-7: follows key rotation with one bounded refresh and keeps the previous key", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    let keys = [{ ...publicCurrent, kid: "current" }];
+    const fetcher = certs(() => keys);
+    const auth = cloudflareAccessAuth({ assertion });
+    const before = await token({ exp: now() + 7200 });
+    await expect(auth.authorize(asserted(before), BASE)).resolves.toMatchObject({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+
+    // Access publishes the new key beside the previous one.
+    keys = [
+      { ...publicNext, kid: "next" },
+      { ...publicCurrent, kid: "current" },
+    ];
+    const rotated = await token({ exp: now() + 7200 }, { kid: "next" }, next.privateKey);
+    await expect(auth.authorize(asserted(rotated), BASE)).resolves.toMatchObject({ ok: true });
+    await expect(auth.authorize(asserted(before), BASE)).resolves.toMatchObject({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    // Unknown kids refresh at most once every thirty seconds.
+    const unknown = await token({ exp: now() + 7200 }, { kid: "unknown" });
+    await refused(await auth.authorize(asserted(unknown), BASE));
+    await refused(await auth.authorize(asserted(unknown), BASE));
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    vi.setSystemTime(Date.now() + 30_001);
+    await refused(await auth.authorize(asserted(unknown), BASE));
+    expect(fetcher).toHaveBeenCalledTimes(3);
+
+    // Cached keys expire after five minutes; a retired key then stops verifying.
+    keys = [{ ...publicNext, kid: "next" }];
+    vi.setSystemTime(Date.now() + 300_001);
+    await refused(await auth.authorize(asserted(before), BASE));
+    await expect(auth.authorize(asserted(rotated), BASE)).resolves.toMatchObject({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
+  it("admits a fresh isolate's first request and logs classified assertion failures through the route", async () => {
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const deployment = makeDeployment({
+      auth: cloudflareAccessAuth({ assertion }),
+      maintainers: ["operator-1"],
+      logger,
+    });
+    const listTools = vi.spyOn(deployment.registry.getConnector("calc")!, "listTools");
+    const fetcher = certs();
+    try {
+      const value = await token();
+      for (const path of ["/ui/connectors/calc", "/mcp"]) {
+        const request = path === "/mcp" ? mcpRpc("tools/list", {}) : new Request(`${BASE}${path}`);
+        request.headers.set("Cf-Access-Jwt-Assertion", value);
+        const response = await deployment.fetch(request, undefined, { waitUntil() {} });
+        expect(response.status).toBe(200);
+        await response.body?.cancel();
+      }
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      expect(logger.warn).not.toHaveBeenCalled();
+
+      listTools.mockClear();
+      const forged = await token({ aud: ["other-application"] });
+      const refusedResponse = await deployment.fetch(
+        new Request(`${BASE}/ui/connectors/calc`, { headers: { "Cf-Access-Jwt-Assertion": forged } }),
+        undefined,
+        { waitUntil() {} },
+      );
+      expect(refusedResponse.status).toBe(503);
+      expect(listTools).not.toHaveBeenCalled();
+      expect(logger.warn.mock.calls).toEqual([
+        [
+          "[connecta] Cloudflare Access verification unavailable",
+          { reason: "access_assertion_invalid", accessContext: false, authorizationHeader: "absent" },
+        ],
+      ]);
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(forged);
+
+      logger.warn.mockClear();
+      const outage = cloudflareAccessAuth({ assertion });
+      const unreadable = makeDeployment({ auth: outage, maintainers: ["operator-1"], logger });
+      fetcher.mockImplementation(async () => new Response("unavailable", { status: 500 }));
+      try {
+        const response = await unreadable.fetch(
+          new Request(`${BASE}/ui/connectors/calc`, { headers: { "Cf-Access-Jwt-Assertion": value } }),
+          undefined,
+          { waitUntil() {} },
+        );
+        expect(response.status).toBe(503);
+        expect(logger.warn.mock.calls).toEqual([
+          [
+            "[connecta] Cloudflare Access verification unavailable",
+            { reason: "access_keys_unavailable", accessContext: false, authorizationHeader: "absent" },
+          ],
+        ]);
+      } finally {
+        await unreadable.close();
+      }
+    } finally {
+      listTools.mockRestore();
+      await deployment.close();
+    }
+  });
+
+  it("INV-11: rejects partial or malformed assertion settings without echoing them", () => {
+    const secretish = "https://attacker.example";
+    for (const options of [
+      { assertion: { teamDomain: "team.cloudflareaccess.com" } },
+      { assertion: { audience: AUD } },
+      { assertion: { teamDomain: secretish, audience: AUD } },
+      { assertion: { teamDomain: "team.cloudflareaccess.com.attacker.example", audience: AUD } },
+      { assertion: { teamDomain: "https://team.cloudflareaccess.com/path", audience: AUD } },
+      { assertion: { teamDomain: "http://team.cloudflareaccess.com", audience: AUD } },
+      { assertion: { teamDomain: "team.cloudflareaccess.com", audience: "" } },
+      { assertion: { teamDomain: "team.cloudflareaccess.com", audience: `${AUD} ` } },
+      { assertion: { teamDomain: "team.cloudflareaccess.com", audience: AUD, issuer: secretish } },
+      { assertion: "team.cloudflareaccess.com" },
+      { teamDomain: "team.cloudflareaccess.com", audience: AUD },
+    ]) {
+      expect(() => cloudflareAccessAuth(options as never)).toThrow(TypeError);
+      try {
+        cloudflareAccessAuth(options as never);
+      } catch (error) {
+        expect(String(error)).not.toContain("attacker");
+      }
+    }
+    for (const teamDomain of [
+      "team.cloudflareaccess.com",
+      "https://team.cloudflareaccess.com",
+      "https://Team.cloudflareaccess.com/",
+    ])
+      expect(() => cloudflareAccessAuth({ assertion: { teamDomain, audience: AUD } })).not.toThrow();
+    expect(() => cloudflareAccessAuth({})).not.toThrow();
   });
 });

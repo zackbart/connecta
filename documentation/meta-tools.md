@@ -652,13 +652,18 @@ Newly stashed JSON and downstream content envelopes use compact serialization,
 and a lone text block stashes as its own text, so `connecta.result` offsets and
 totals describe exactly that text.
 
-| Bound                              | Value                              |
-| ---------------------------------- | ---------------------------------- |
-| Stashed result TTL                 | 15 minutes                         |
-| `results.maxStashBytes`            | 8 MiB per shared storage ledger    |
-| `results.maxStashEntries`          | 64 per shared storage ledger       |
-| Top-level discovery result ceiling | 256,000 UTF-8 bytes                |
-| Downstream MCP `isError` text      | 512 UTF-8 bytes plus an `…` marker |
+| Bound                              | Value                               |
+| ---------------------------------- | ----------------------------------- |
+| Stashed result TTL                 | 15 minutes                          |
+| `results.maxStashBytes`            | 8 MiB per shared storage ledger     |
+| `results.maxStashEntries`          | 64 per shared storage ledger        |
+| Downstream MCP tool answer         | larger of `maxStashBytes` and 8 MiB |
+| Top-level discovery result ceiling | 256,000 UTF-8 bytes                 |
+| Downstream MCP `isError` text      | 512 UTF-8 bytes plus an `…` marker  |
+
+A remote MCP tool answer past its bound is not read further and fails the call
+before result processing, as [remote MCP servers](./integrating.md#another-remote-mcp-server)
+describes; it is never stashed or previewed.
 
 The discovery ceiling counts text, `structuredContent`, and JSON escaping
 together, because measuring one copy would advertise half the bytes the adapter

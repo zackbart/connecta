@@ -97,6 +97,8 @@ export type AuthDenialReason =
   | "access_context_unavailable"
   | "access_audience_invalid"
   | "access_identity_unavailable"
+  | "access_assertion_invalid"
+  | "access_keys_unavailable"
   | "access_authorization_header_rejected"
   | "authorization_header_invalid"
   | "token_type_mismatch"
@@ -129,6 +131,8 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "access_context_unavailable",
   "access_audience_invalid",
   "access_identity_unavailable",
+  "access_assertion_invalid",
+  "access_keys_unavailable",
   "access_authorization_header_rejected",
   "authorization_header_invalid",
   "token_type_mismatch",
@@ -524,6 +528,7 @@ export type FailureEvent =
   | "credential test threw"
   | "credential verification record failed"
   | "session termination refused or failed; the downstream session may remain until its provider timeout"
+  | "downstream standing stream passed its byte bound and is closed for this connection"
   | "activity record failed"
   | "catalog drift record failed"
   | "activity read failed"

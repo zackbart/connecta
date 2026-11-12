@@ -16,6 +16,7 @@ import { recordRecovery } from "../call-recovery.js";
 import { fromSignal, runEdge } from "./run.js";
 import { RequestScope, requestOwner as requestOf, requestReads } from "./request-scope.js";
 import type { RequestReads } from "./request-reads.js";
+import { CONFIG_DEFAULTS } from "../config-defaults.js";
 
 /** Who admitted the operation; absent for a probe or a callback no request admitted. */
 export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>()("connecta/call/Caller") {}
@@ -23,6 +24,16 @@ export class Caller extends Context.Service<Caller, ConnectorCaller | undefined>
 /** The deployment's root store, used only for its durable continuation-signing key. */
 export const ContinuationStorage = Context.Reference<KVStorage | undefined>("connecta/call/ContinuationStorage", {
   defaultValue: () => undefined,
+});
+
+/**
+ * The most bytes one downstream MCP `tools/call` response body may carry: the
+ * larger of the deployment's `results.maxStashBytes` and its 8 MiB default.
+ * A result past the result store can never be read whole, so its transport
+ * stops reading there instead of buffering the rest.
+ */
+export const DownstreamResponseBytes = Context.Reference<number>("connecta/call/DownstreamResponseBytes", {
+  defaultValue: () => CONFIG_DEFAULTS.results.maxStashBytes,
 });
 
 /** Admitted connection and credential owner or per-call identity; never derived from tool arguments. */
