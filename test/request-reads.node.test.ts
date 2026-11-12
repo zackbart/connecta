@@ -537,6 +537,35 @@ describe("request read memo", () => {
     expect(loads).toEqual(["k", "k", "k"]);
   });
 
+  it("takes a memoized value once, never loads, and yields nothing a write or a partition hides", async () => {
+    const { loads, read, storage } = counting(memoryStorage());
+    const alice = view(storage, "principal:alice:");
+    const bob = view(storage, "principal:bob:");
+    await alice.set("chunk", "alice");
+    await bob.set("chunk", "bob");
+    const reads = new RequestReads();
+    // Nothing read yet: a take answers nothing and reads no storage.
+    expect(reads.take(alice, "chunk")).toBeUndefined();
+    await read(reads, alice, "chunk");
+    // Bob's partition never answers from Alice's entry.
+    expect(reads.take(bob, "chunk")).toBeUndefined();
+    // Another view of the same partition takes it once, then the memo holds nothing.
+    expect(reads.take(view(storage, "principal:alice:"), "chunk")).toBe("alice");
+    expect(reads.take(alice, "chunk")).toBeUndefined();
+    await read(reads, alice, "chunk");
+    await alice.set("chunk", "rewritten");
+    expect(reads.take(alice, "chunk")).toBeUndefined();
+    await read(reads, alice, "chunk");
+    reads.close();
+    expect(reads.take(alice, "chunk")).toBeUndefined();
+    expect(loads).toEqual(["chunk", "chunk", "chunk"]);
+    // A store whose writes are unobserved is never answered.
+    const plain: KVStorage = { ...memoryStorage() };
+    const other = new RequestReads();
+    await read(other, plain, "chunk");
+    expect(other.take(plain, "chunk")).toBeUndefined();
+  });
+
   it.each(["effect", "promise"] as const)(
     "never lets an older read overwrite a newer fresh read (%s path)",
     async (path) => {
@@ -812,6 +841,11 @@ describe("request budgets", () => {
   afterAll(async () => {
     await executor.close?.();
   });
+  // A warm locating read carries the hinted chunks. The connection's binding
+  // grant reads follow it, then acceptance's identity read and generation
+  // fence. A fault injected after the binding reads lands where the separate
+  // chunk read used to, between the catalog data and its acceptance.
+  const bindingGrantReads = (oauthModern: boolean) => (oauthModern ? 3 : 1);
 
   async function production(
     options: {
@@ -1033,12 +1067,13 @@ describe("request budgets", () => {
       const log = [...requests, ...d1.count.log].join("\n");
       if (["legacy call, warm", "modern call, warm", "OAuth call, warm"].includes(label)) {
         const catalog = d1.count.log.filter((line) => line.includes("response-cache:"));
-        expect(catalog, catalog.join("\n")).toHaveLength(3);
+        expect(catalog, catalog.join("\n")).toHaveLength(2);
         expect(catalog[0]).toContain("negotiation:");
         expect(catalog[0]).toContain(":generation");
-        expect(catalog[1]).toContain(":chunk:");
+        // The isolate's revision hint puts the chunks in the locating read.
+        expect(catalog[0]).toContain(":chunk:");
         // This SELECT must follow the chunks, separate from the locating batch.
-        expect(catalog[2]).toMatch(/^all \["response-cache:.*:generation"\]$/);
+        expect(catalog[1]).toMatch(/^all \["response-cache:.*:generation"\]$/);
       }
       const budget = BUDGETS[label];
       expect(measured.downstream, `${label}: downstream\n${log}`).toBeLessThanOrEqual(budget.downstream);
@@ -1127,9 +1162,9 @@ describe("request budgets", () => {
     const app = d.build();
     await d.call(app, "modern.echo");
     for (const [name, args, expected] of [
-      ["call_tool", { address: "modern.echo", args: { text: "hi" } }, 4],
-      ["execute_code", { code: 'async () => connecta.call("modern.echo", {text: "hi"})' }, 4],
-      ["search_tools", { query: "echo" }, 5],
+      ["call_tool", { address: "modern.echo", args: { text: "hi" } }, 3],
+      ["execute_code", { code: 'async () => connecta.call("modern.echo", {text: "hi"})' }, 3],
+      ["search_tools", { query: "echo" }, 4],
     ] as const) {
       await d.settle();
       d.d1.reset();
@@ -1182,13 +1217,13 @@ describe("request budgets", () => {
       const app = d.build();
       await d.call(app, `${kind}.echo`);
       const warm = await d.measure(`${kind} call, warm`, () => d.call(app, `${kind}.echo`));
-      expect([warm.roundTrips, warm.statements]).toEqual([4, 5]);
+      expect([warm.roundTrips, warm.statements]).toEqual([3, 4]);
       const program = await d.measure(`${kind} call, warm`, () =>
         d.tool(app, "execute_code", {
           code: `async () => connecta.call("${kind}.echo", { text: "hi" })`,
         }),
       );
-      expect([program.roundTrips, program.statements]).toEqual([4, 5]);
+      expect([program.roundTrips, program.statements]).toEqual([3, 4]);
       await d.measure(`${kind} call, cold isolate`, () => d.call(d.build(), `${kind}.echo`));
     },
   );
@@ -1200,13 +1235,13 @@ describe("request budgets", () => {
     // The first connect sealed the seeded plaintext grant.
     expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
     const warm = await d.measure("OAuth call, warm", () => d.call(app, "oauth.echo"));
-    expect([warm.roundTrips, warm.statements]).toEqual([16, 17]);
+    expect([warm.roundTrips, warm.statements]).toEqual([15, 16]);
     const program = await d.measure("OAuth call, warm", () =>
       d.tool(app, "execute_code", {
         code: 'async () => connecta.call("oauth.echo", { text: "hi" })',
       }),
     );
-    expect([program.roundTrips, program.statements]).toEqual([16, 17]);
+    expect([program.roundTrips, program.statements]).toEqual([15, 16]);
     expect(warm.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(12);
     expect(program.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(12);
     await d.measure("OAuth call, cold isolate", () => d.call(d.build(), "oauth.echo"));
@@ -1244,7 +1279,7 @@ describe("request budgets", () => {
       );
       expect(measured.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(9);
       expect(measured.downstream).toBe(1);
-      expect([measured.roundTrips, measured.statements]).toEqual([13, 14]);
+      expect([measured.roundTrips, measured.statements]).toEqual([12, 13]);
     }
   });
 
@@ -1302,10 +1337,11 @@ describe("request budgets", () => {
           const chunk = params.some((key) => typeof key === "string" && key.includes(":chunk:"));
           if (chunk) pastChunks = true;
           if (pastChunks && params.includes(d.grantKey)) grantReads++;
-          // The second grant read after chunks checks disconnect; the separate
-          // invocation tokens() read follows it, even when the epoch is unchanged.
+          // The second grant read after the binding reads checks disconnect; the
+          // separate invocation tokens() read follows it, even when the epoch is unchanged.
           // Publish after its SELECT captured the old value; dispatch must read again.
-          if (boundary === "chunks" ? !chunk : grantReads !== 2) return;
+          const binding = bindingGrantReads(oauthModern);
+          if (!pastChunks || (boundary === "chunks" ? grantReads !== binding : grantReads !== binding + 2)) return;
           d.afterRead(undefined);
           changed = true;
           // A separate provider and SQL storage instance publishes between reads,
@@ -1402,7 +1438,7 @@ describe("request budgets", () => {
       if (params.some((key) => typeof key === "string" && key.includes(":chunk:"))) pastChunks = true;
       // Invalidate after the disconnect SELECT captured valid tokens, where
       // the combined invocation snapshot used to admit this call.
-      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== 2) return;
+      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== bindingGrantReads(oauthModern) + 2) return;
       d.afterRead(undefined);
       changed = true;
       const other = d.otherProvider();
@@ -1459,7 +1495,7 @@ describe("request budgets", () => {
     let changed = false;
     d.afterRead(async (params) => {
       if (params.some((key) => typeof key === "string" && key.includes(":chunk:"))) pastChunks = true;
-      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== 2) return;
+      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== bindingGrantReads(oauthModern) + 2) return;
       d.afterRead(undefined);
       changed = true;
       const tokens = {
@@ -1562,24 +1598,24 @@ describe("request budgets", () => {
 // call took 21 round trips and a refresh 51 statements without the vault or
 // activity sink.
 const BUDGETS = {
-  "legacy call, warm": { downstream: 5, roundTrips: 4, statements: 5 },
+  "legacy call, warm": { downstream: 5, roundTrips: 3, statements: 4 },
   "legacy call, cold isolate": { downstream: 5, roundTrips: 10, statements: 13 },
-  "modern call, warm": { downstream: 1, roundTrips: 4, statements: 5 },
+  "modern call, warm": { downstream: 1, roundTrips: 3, statements: 4 },
   "modern call, cold isolate": { downstream: 1, roundTrips: 11, statements: 14 },
-  "OAuth call, warm": { downstream: 5, roundTrips: 16, statements: 17 },
+  "OAuth call, warm": { downstream: 5, roundTrips: 15, statements: 16 },
   "OAuth call, cold isolate": { downstream: 5, roundTrips: 24, statements: 27 },
-  "OAuth call, 401 refresh": { downstream: 9, roundTrips: 42, statements: 52 },
-  "OAuth call, proactive refresh": { downstream: 6, roundTrips: 38, statements: 47 },
+  "OAuth call, 401 refresh": { downstream: 9, roundTrips: 41, statements: 51 },
+  "OAuth call, proactive refresh": { downstream: 6, roundTrips: 37, statements: 46 },
   "api credential call, warm": { downstream: 1, roundTrips: 4, statements: 5 },
   "api credential call, cold isolate": { downstream: 1, roundTrips: 7, statements: 10 },
-  "unscoped search, warm": { downstream: 0, roundTrips: 22, statements: 22 },
-  "execute_code, 5 calls": { downstream: 9, roundTrips: 11, statements: 16 },
+  "unscoped search, warm": { downstream: 0, roundTrips: 19, statements: 19 },
+  "execute_code, 5 calls": { downstream: 9, roundTrips: 10, statements: 15 },
   // A live detail records its stored status observation (#1173 item 2.3):
   // one write, batched with the expiry sweep, and, for a static api()
   // catalog whose listing reads no generation, the generation read.
   "UI detail, rest": { downstream: 0, roundTrips: 6, statements: 7 },
-  "UI detail, keyed": { downstream: 4, roundTrips: 12, statements: 13 },
-  "UI detail, oauth": { downstream: 4, roundTrips: 21, statements: 22 },
+  "UI detail, keyed": { downstream: 4, roundTrips: 11, statements: 12 },
+  "UI detail, oauth": { downstream: 4, roundTrips: 20, statements: 21 },
   "UI stored detail, rest": { downstream: 0, roundTrips: 5, statements: 5 },
   "UI stored detail, keyed": { downstream: 0, roundTrips: 5, statements: 5 },
   "UI stored detail, oauth": { downstream: 0, roundTrips: 3, statements: 3 },

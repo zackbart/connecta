@@ -638,6 +638,20 @@ read. Its key binds the stored entry, current private owner/deployment partition
 redaction and TTL intake still run every time. Eviction affects performance
 only; SQL remains authoritative.
 
+A warm isolate also remembers, for at most 256 catalog slots, the revision and
+chunk count of the last catalog it verified or published there. The slot key
+binds the store instance, connector, configuration hash and the slot's
+partition digest (owner partition and credential identity), so one principal's
+hint never addresses another's entry, and a hint holds no catalog data. When a
+slot has one, its locating read also selects that revision's first eight chunks
+under the generation it reads, and a warm call reads manifest and chunks in one
+statement. Chunks are used only when the manifest names the hinted revision and
+every chunk of the read is present; otherwise they are read as before. Chunk
+keys carry the revision, so a catalog another isolate republished is read as
+its own revision, never through a stale hint. Fingerprint verification and the
+fresh generation and credential fence still decide acceptance. A new isolate,
+or another storage instance, starts with no hints.
+
 Stored catalog and negotiation keys use deployment-keyed partitions. A remote
 connector's whole cache configuration and negotiation input enter a stored key
 only through HMAC-SHA-256 (`src/storage-digest.ts`) under a key that never
@@ -664,8 +678,9 @@ listing.
 
 Warm remote resolution batches the negotiation verdict and locating generation
 when their physical keys share an observed SQL store. Private and public
-manifest probes share a `getMany` statement; their normal precedence and public
-scope check still apply. These batches contain only reads. Catalog addresses
+manifest probes, and any hinted chunks, share that statement or a `getMany`
+statement; their normal precedence and public scope check still apply. These
+batches contain only reads. Catalog addresses
 use the listing's pinned OAuth identity and locating generation; they authorize
 nothing. After chunk verification, acceptance re-reads the OAuth identity and
 generation separately and refuses a changed epoch or token digest. The invocation
@@ -2253,6 +2268,8 @@ published storage interfaces.
 position exactly as one `get` per key would; the SQL drivers share it, a
 replaced `get` answers each key itself, and other stores fall back to one `get`
 at a time. Catalog reads fetch up to eight chunks per round trip with it.
+`catalogSnapshot` locates at most four keys and eleven generation-derived
+suffixes: a refusal fence, two manifests and one read's worth of chunks.
 
 `openSqlite` retains file modes, WAL, busy timeout,
 and database ownership. `test/sql-effect-contract.ts` retains affected-row,
@@ -2447,6 +2464,10 @@ Memoized:
 - the negotiation verdict, which only orders handshake versions;
 - catalog generation reads that only locate an entry, accepted or refused by a
   fresh fence;
+- catalog chunks the locating read selected by a revision hint, each taken
+  once and then dropped from the memo. A chunk key names its revision, whose
+  content never changes, and the manifest, fingerprint and fresh fence decide
+  whether it is served;
 - the credential reads behind connector status, drift and the operator UI card,
   which only label a view. Only the built-in vault with its original `getAll`
   and `metadata` shares a read; a custom vault, a subclass, or an instance
@@ -2476,25 +2497,26 @@ grant, Cloudflare Access with `accessTokens()`, a D1 activity sink settled
 through `waitUntil`, the operator UI and QuickJS standing in for Dynamic Worker
 startup. "Cold isolate" is a new deployment instance over the populated
 database. The ceilings, measured value plus about 10% D1 headroom and exact
-downstream counts, live in its `BUDGETS` table. Measured on main in October 2026:
+downstream counts, live in its `BUDGETS` table. Measured in November 2026, with
+warm requests reading chunks through the isolate's revision hint:
 
 | Request                                  | Downstream | D1 round trips | SQL statements |
 | ---------------------------------------- | ---------: | -------------: | -------------: |
-| Legacy remote MCP call, warm             |          5 |              6 |              7 |
-| Legacy remote MCP call, cold isolate     |          5 |              9 |             12 |
-| Modern remote MCP call, warm             |          1 |              7 |              8 |
-| Modern remote MCP call, cold isolate     |          1 |             10 |             13 |
-| OAuth remote MCP call, warm              |          5 |             19 |             20 |
-| OAuth remote MCP call, cold isolate      |          5 |             22 |             25 |
-| OAuth call after a 401, with refresh     |          9 |             39 |             48 |
-| OAuth call with proactive refresh        |          6 |             35 |             43 |
+| Legacy remote MCP call, warm             |          5 |              3 |              4 |
+| Legacy remote MCP call, cold isolate     |          5 |              7 |             10 |
+| Modern remote MCP call, warm             |          1 |              3 |              4 |
+| Modern remote MCP call, cold isolate     |          1 |              7 |             10 |
+| OAuth remote MCP call, warm              |          5 |             15 |             16 |
+| OAuth remote MCP call, cold isolate      |          5 |             19 |             22 |
+| OAuth call after a 401, with refresh     |          9 |             35 |             44 |
+| OAuth call with proactive refresh        |          6 |             31 |             39 |
 | `api()` credential call, warm            |          1 |              3 |              4 |
 | `api()` credential call, cold isolate    |          1 |              6 |              9 |
-| Unscoped search, warm (3 remote, 1 api)  |          0 |             20 |             20 |
-| `execute_code`, 5 calls to one connector |          9 |             10 |             15 |
-| UI connector detail, `api()` credential  |          0 |              2 |              2 |
-| UI connector detail, credential remote   |          4 |              9 |              9 |
-| UI connector detail, OAuth remote        |          4 |             18 |             18 |
+| Unscoped search, warm (3 remote, 1 api)  |          0 |             10 |             10 |
+| `execute_code`, 5 calls to one connector |          9 |              7 |             12 |
+| UI connector detail, `api()` credential  |          0 |              5 |              6 |
+| UI connector detail, credential remote   |          4 |             10 |             11 |
+| UI connector detail, OAuth remote        |          4 |             17 |             18 |
 
 Header-auth calls to the legacy (session) server handshake per request:
 `initialize`, `notifications/initialized`, the SSE `GET`, the call and the

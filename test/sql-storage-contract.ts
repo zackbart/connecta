@@ -14,6 +14,7 @@ import { compareAndSetContract } from "./storage-contract.js";
 import * as sqlStores from "../src/storage/sql.js";
 import { getNativeStorage } from "../src/runtime/native-storage.js";
 import { runEdge } from "../src/runtime/run.js";
+import { MAX_CATALOG_LOCATOR_SUFFIXES } from "../src/catalog-limits.js";
 
 /** Failure injection shared by Node SQLite, proxied D1, and native Workers D1. */
 export function sqlBatchRollbackContract(open: () => Promise<Pick<SqlFixture, "storage" | "exec" | "rows">>): void {
@@ -334,11 +335,36 @@ export function sqlGetManyContract(open: () => Promise<Pick<SqlFixture, "storage
     expect(after.get(generationKey)).toBe("second");
     expect(after.has(entry("first", "public"))).toBe(false);
     expect(after.get(entry("second", "public"))).toBeNull();
+    const tooMany = Array.from({ length: MAX_CATALOG_LOCATOR_SUFFIXES + 1 }, (_, i) => `p${i}`);
     await expect(
-      runEdge(
-        getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, ["a", "b", "c", "d"]),
-      ),
+      runEdge(getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, tooMany)),
     ).rejects.toThrow(RangeError);
+  });
+
+  it("locates a revision's chunks under the stored generation only", async () => {
+    const db = await open();
+    const storage = db.storage();
+    const generationKey = responseCacheKeys.generation("crm");
+    const prefix = responseCacheKeys.locatorPrefix("crm", "config");
+    const namespace = (generation: string) => responseCacheKeys.namespace("crm", "config", generation);
+    const chunk = (generation: string, index: number) =>
+      responseCacheKeys.chunk(responseCacheKeys.entry(namespace(generation), "private"), "rev-1", index);
+    await storage.set(generationKey, "first");
+    await storage.set(chunk("first", 0), "chunk 0");
+    await storage.set(chunk("other", 1), "another generation's chunk");
+    const suffixes = [0, 1].map((index) => responseCacheKeys.chunkSuffix("private", "rev-1", index));
+    // A located chunk suffix addresses exactly the key a chunk write uses.
+    expect(responseCacheKeys.entry(namespace("first"), suffixes[0]!)).toBe(chunk("first", 0));
+    const located = await runEdge(
+      getNativeStorage(storage)!.catalogSnapshot!([generationKey], generationKey, prefix, [
+        "private",
+        ...suffixes,
+        ...Array.from({ length: MAX_CATALOG_LOCATOR_SUFFIXES - 3 }, (_, i) => `absent${i}`),
+      ]),
+    );
+    expect(located.get(chunk("first", 0))).toBe("chunk 0");
+    expect(located.get(chunk("first", 1))).toBeNull();
+    expect(located.has(chunk("other", 1))).toBe(false);
   });
 
   it("excludes expired generations and manifests from locating snapshots", async () => {

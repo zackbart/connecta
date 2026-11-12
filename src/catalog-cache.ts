@@ -36,7 +36,12 @@ import { ownerReads, RequestScope } from "./runtime/request-scope.js";
 import { serviceFor, setViewService, viewServices } from "./runtime/call.js";
 import { ConnectorCallError } from "./errors.js";
 import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
-import { MAX_CATALOG_CHUNK_BYTES, MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
+import {
+  CATALOG_CHUNKS_PER_READ as CHUNKS_PER_READ,
+  MAX_CATALOG_CHUNK_BYTES,
+  MAX_CATALOG_TOOLS,
+  MAX_SERIALIZED_CATALOG_BYTES,
+} from "./catalog-limits.js";
 import { redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { secretDigest } from "./storage-digest.js";
@@ -464,8 +469,6 @@ const catalogFenceFingerprint = (
     // A shared credential gets one answer whoever asks, so one fence covers all its callers.
     JSON.stringify(["fence", sharing === "shared" ? authPartition : partition, credentialIdentity ?? null]),
   ]);
-/** Catalog chunks one storage read fetches together. */
-const CHUNKS_PER_READ = 8;
 export function attachCatalogCache(ctx: ConnectorContext, value: CatalogCacheSettings): void {
   setViewService(ctx, CatalogPolicy, value);
 }
@@ -717,6 +720,52 @@ function rememberValidated(key: string, value: CatalogResult, bytes: number): vo
   validatedBytes += bytes;
 }
 
+const storeIdentityOf = (storage: KVStorage): string => {
+  let identity = catalogStores.get(storage);
+  if (!identity) catalogStores.set(storage, (identity = crypto.randomUUID()));
+  return identity;
+};
+
+// The last verified revision of each catalog slot this isolate read or
+// published, so a later request's locating read can also select that
+// revision's chunks. A hint holds no catalog data and authorizes nothing:
+// chunks are used only when the manifest read with them names the same
+// revision, every one is present and their joined fingerprint matches, and
+// the fresh post-chunk fence still decides. Chunk keys carry the revision, so
+// another isolate's republication is read as a different revision and its
+// chunks are read as before. The key binds the store, connector, configuration
+// and the slot's partition digest (owner partition and credential identity),
+// so one principal's hint never addresses another's entry. FIFO-bounded.
+interface ChunkHint {
+  revision: string;
+  chunkCount: number;
+}
+const chunkHints = new Map<string, ChunkHint>();
+const CHUNK_HINTS = 256;
+const chunkHintKey = (storage: KVStorage, connectorId: string, configHash: string, digest: string) =>
+  JSON.stringify([storeIdentityOf(storage), connectorId, configHash, digest]);
+function rememberChunkHint(key: string, hint: ChunkHint | undefined): void {
+  chunkHints.delete(key);
+  if (!hint) return;
+  if (chunkHints.size >= CHUNK_HINTS) chunkHints.delete(chunkHints.keys().next().value!);
+  chunkHints.set(key, hint);
+}
+/** Locator suffixes of hinted chunks for slots in probe order, at most one read's worth. */
+function hintedChunkSuffixes(
+  storage: KVStorage,
+  connectorId: string,
+  configHash: string,
+  digests: readonly string[],
+): string[] {
+  const suffixes: string[] = [];
+  for (const digest of digests) {
+    const hint = chunkHints.get(chunkHintKey(storage, connectorId, configHash, digest));
+    for (let index = 0; hint && index < hint.chunkCount && suffixes.length < CHUNKS_PER_READ; index++)
+      suffixes.push(responseCacheKeys.chunkSuffix(digest, hint.revision, index));
+  }
+  return suffixes;
+}
+
 interface Listing {
   ctx: ConnectorContext;
   generation: { value?: string | undefined };
@@ -794,16 +843,20 @@ export const prefetchCatalog = authMethod(
         configHash: string;
       }>(catalogLocation, [ctx, config, authPartition]);
       const slots = sharing === "shared" ? [partition, sharedPartition] : [partition];
-      const suffixes: string[] = [
-        (yield catalogFenceFingerprint(sharing, partition, authPartition, credentialIdentity)).fingerprint,
-      ];
+      const digests: string[] = [];
       for (const slot of slots)
-        suffixes.push(
+        digests.push(
           (yield authCall<{ fingerprint: string }>(fingerprintSerializedCatalog, [
             JSON.stringify(["tools/list", slot, credentialIdentity ?? null]),
           ])).fingerprint,
         );
       const storage = serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage;
+      // Hinted chunks join the manifests they belong to in the same snapshot.
+      const suffixes: string[] = [
+        (yield catalogFenceFingerprint(sharing, partition, authPartition, credentialIdentity)).fingerprint,
+        ...digests,
+        ...hintedChunkSuffixes(storage, connectorId, configHash, digests),
+      ];
       yield ownerReads(Context.get(viewServices(ctx), RequestScope)).prefetch(
         [
           { storage: ctx.storage, key: negotiationKey },
@@ -911,8 +964,14 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         configHash: string;
       }>(catalogLocation, [ctx, config, authPartition]);
       const storage = policy?.storage ?? ctx.storage;
-      let storeIdentity = catalogStores.get(storage);
-      if (!storeIdentity) catalogStores.set(storage, (storeIdentity = crypto.randomUUID()));
+      const storeIdentity = storeIdentityOf(storage);
+      /** The hint slot of an entry this connection addressed under `generation`. */
+      const hintKey = (root: string, generation: string) => {
+        const namespace = responseCacheKeys.namespace(connectorId, configHash, generation);
+        return root.startsWith(namespace)
+          ? chunkHintKey(storage, connectorId, configHash, root.slice(namespace.length))
+          : undefined;
+      };
       const scope = cacheScope(ctx, connectorId, owner);
       let unavailable = false;
       const connectionGeneration: Listing["generation"] = {};
@@ -1213,21 +1272,23 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             const listing = operation.listing;
             if (listing && !listing.manifests?.has(root)) {
               const slots = sharing === "shared" ? [partition, sharedPartition] : [partition];
-              const roots: string[] = [];
-              for (const slot of slots) {
-                const { fingerprint } = (yield authCall(fingerprintSerializedCatalog, [
-                  JSON.stringify([key.method, slot, operation.credentialIdentity ?? null]),
-                ])) as { fingerprint: string };
-                roots.push(
-                  responseCacheKeys.entry(
-                    responseCacheKeys.namespace(connectorId, configHash, operation.generation.value!),
-                    fingerprint,
-                  ),
+              const namespace = responseCacheKeys.namespace(connectorId, configHash, operation.generation.value!);
+              const digests: string[] = [];
+              for (const slot of slots)
+                digests.push(
+                  (
+                    (yield authCall(fingerprintSerializedCatalog, [
+                      JSON.stringify([key.method, slot, operation.credentialIdentity ?? null]),
+                    ])) as { fingerprint: string }
+                  ).fingerprint,
                 );
-              }
+              const roots = digests.map((digest) => responseCacheKeys.entry(namespace, digest));
               const fence = (yield authCall(fenceKey, [operation, operation.generation.value!])) as string;
+              const chunks = hintedChunkSuffixes(storage, connectorId, configHash, digests).map((suffix) =>
+                responseCacheKeys.entry(namespace, suffix),
+              );
               yield reads.prefetch(
-                [...roots, fence].map((key) => ({ storage, key })),
+                [...roots, fence, ...chunks].map((key) => ({ storage, key })),
                 (storage, keys) => authStorageMany(storage, keys),
               );
               (yield authCall(readListingFence, [operation])) as void;
@@ -1252,6 +1313,10 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                     cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
                   ])) as string | null),
             );
+            if (!m) {
+              const hint = hintKey(root, operation.generation.value!);
+              if (hint) rememberChunkHint(hint, undefined);
+            }
             if (
               stopped() ||
               !m ||
@@ -1268,10 +1333,13 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               const keys = Array.from({ length: Math.min(CHUNKS_PER_READ, m.chunkCount - first) }, (_, i) =>
                 responseCacheKeys.chunk(root, m.revision, first + i),
               );
-              const read = (yield authCall(io, [cacheMethod(() => authStorageMany(storage, keys))])) as (
-                | string
-                | null
-              )[];
+              // Chunks the locating read selected by this isolate's hint. Their
+              // keys carry the revision this manifest names, so they are its
+              // chunks; anything absent is read again rather than trusted.
+              const located = keys.map((key) => reads.take(storage, key));
+              const read = located.every((chunk) => typeof chunk === "string")
+                ? located
+                : ((yield authCall(io, [cacheMethod(() => authStorageMany(storage, keys))])) as (string | null)[]);
               for (const chunk of read) {
                 if (stopped() || chunk === null || new TextEncoder().encode(chunk).byteLength > MAX_CATALOG_CHUNK_BYTES)
                   return undefined;
@@ -1291,6 +1359,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               stopped()
             )
               return undefined;
+            const hint = hintKey(root, operation.generation.value!);
+            if (hint) rememberChunkHint(hint, { revision: m.revision, chunkCount: m.chunkCount });
             const method = key.method as CatalogMethod;
             // root binds connector/config/generation/scope/credential; partition
             // also binds the current owner/deployment even for public entries.
@@ -1442,6 +1512,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                 if (stopped()) return 0;
                 if (published) {
                   lastStamp = stamp;
+                  const hint = hintKey(root, operation.generation.value!);
+                  if (hint) rememberChunkHint(hint, { revision, chunkCount });
                   // Tool chunks outlive their manifest by the stale limit, so a
                   // superseded revision is removed now rather than retained for
                   // a day. A reader holding it misses and lists again; a failed
