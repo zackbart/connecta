@@ -1,4 +1,4 @@
-// Downstream MCP response bodies, bounded as they stream: nothing past a bound
+// Downstream response bodies, bounded as they stream: nothing past a bound
 // is read, so no answer is ever buffered whole before it is measured.
 
 /** An HTTP error or 202 body is only ever quoted or discarded: keep this much. */
@@ -10,7 +10,7 @@ const decoder = new TextDecoder();
 export interface BodyBound {
   limit: number;
   /** The JSON-RPC request an event stream answers, when known. */
-  rpcId: string | number | undefined;
+  rpcId?: string | number | undefined;
   exceeded: () => Error;
   /** Each SSE event id the stream carries, for a resumption to find its call. */
   onEventId?: ((id: string) => void) | undefined;
@@ -28,16 +28,26 @@ export interface BodyBound {
  * an answer, never from a broken body.
  */
 export function boundedMcpBody(response: Response, bound: BodyBound): Response {
-  const source = response.body;
-  if (!source) return response;
   const parsed = response.ok && response.status !== 202 && response.status !== 204;
   const sse =
     parsed && response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
+  return boundBody(response, bound, parsed, sse);
+}
+
+/** Strict whole-body bound for every HTTP status and media type. */
+export function boundedBody(response: Response, bound: BodyBound): Response {
+  return boundBody(response, bound, true, false);
+}
+
+function boundBody(response: Response, bound: BodyBound, parsed: boolean, sse: boolean): Response {
+  const source = response.body;
+  if (!source) return response;
   if (parsed && !sse && Number(response.headers.get("content-length")) > bound.limit) {
     void source.cancel().catch(() => {});
     throw bound.exceeded();
   }
   const reader = source.getReader();
+  void reader.closed.catch(() => {});
   // Every way out releases the source, so nothing holds its lock afterwards.
   const release = () => {
     try {
@@ -72,7 +82,7 @@ export function boundedMcpBody(response: Response, bound: BodyBound): Response {
       if (!sse) {
         total += value.byteLength;
         if (total <= bound.limit) return controller.enqueue(value);
-        await stop();
+        void stop();
         return controller.error(bound.exceeded());
       }
       for (let index = 0; index < value.length; index++) {

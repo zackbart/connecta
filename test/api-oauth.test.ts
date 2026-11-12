@@ -643,6 +643,56 @@ describe("api() oauth agent recovery", () => {
   });
 });
 
+describe.each(["exchange", "refresh"] as const)("api() OAuth oversized %s response (#1373)", (step) => {
+  it.each(["declared", "streamed"])("cancels a %s body and preserves the typed failure", async (mode) => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb();
+    const storage = memoryStorage();
+    const registry = makeRegistry([connector], { storage });
+    const ctx = () => registry.contextFor("ccb", BASE);
+    if (step === "refresh") {
+      await authorize(connector, ctx, provider);
+      provider.expireAccess();
+    }
+    const cancel = vi.fn();
+    let pulls = 0;
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      if (String(input) !== TOKEN) return provider.fetchStub(input, init);
+      return new Response(
+        new ReadableStream(
+          {
+            pull(controller) {
+              pulls++;
+              controller.enqueue(new Uint8Array(8192).fill(32));
+            },
+            cancel,
+          },
+          { highWaterMark: 0 },
+        ),
+        { headers: mode === "declared" ? { "content-length": "65537" } : {} },
+      );
+    });
+    let pending: Promise<unknown>;
+    if (step === "exchange") {
+      const begun = await connector.startAuth!(ctx());
+      const state = new URL(begun.authorizationUrl!).searchParams.get("state")!;
+      const code = provider.consent(begun.authorizationUrl!);
+      const callback = ctx();
+      expect(await connector.verifyState!(state, callback)).toBe(true);
+      pending = connector.finishAuth!(code, callback, new URLSearchParams({ code, state }));
+    } else pending = connector.callTool("whoami", {}, ctx());
+    const result = await failure(pending);
+    expect(result.error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect((result.error as Error).message).toContain(
+      `Connector "ccb" OAuth token ${step} response exceeded 65536 bytes`,
+    );
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(pulls).toBe(mode === "declared" ? 0 : 9);
+    expect((await storedGrant(storage, scopes.connector("ccb")))?.body?.tokens).toBeUndefined();
+  });
+});
+
 describe("api() oauth callback exchange", () => {
   it("INV-4 INV-5: direct PKCE-less completion verifies state then company before issuer or exchange", async () => {
     const provider = fakeProvider();

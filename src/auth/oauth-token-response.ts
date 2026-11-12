@@ -1,4 +1,5 @@
 import type { OAuthTokens } from "@modelcontextprotocol/client";
+import { readOAuthResponse } from "./oauth-response.js";
 import { runEdge } from "../runtime/run.js";
 import { authCall, authFlow, authInvoke, authProgram, registerAuth } from "./native.js";
 
@@ -50,61 +51,6 @@ function sdkAcceptsOAuthTokens(value: unknown): boolean {
   }
   return true;
 }
-
-const MAX_REFRESH_RESPONSE_BYTES = 65_536;
-
-class OversizedRefreshResponse extends Error {
-  constructor() {
-    super(`OAuth refresh response exceeded ${MAX_REFRESH_RESPONSE_BYTES} bytes.`);
-  }
-}
-
-function readRefreshResponse(response: Response, signal?: AbortSignal, clone = true): Promise<unknown> {
-  return runEdge(authProgram<unknown>(readRefreshResponseNative, [response, signal, clone]));
-}
-const readRefreshResponseNative = /* @__PURE__ */ registerAuth(
-  readRefreshResponse,
-  function (response: Response, signal?: AbortSignal, clone: boolean = true) {
-    return authFlow<unknown>(function* () {
-      if (Number(response.headers.get("content-length")) > MAX_REFRESH_RESPONSE_BYTES) {
-        void response.body?.cancel().catch(() => {});
-        throw new OversizedRefreshResponse();
-      }
-      const reader = (clone ? response.clone() : response).body?.getReader();
-      if (!reader) return undefined;
-      void reader.closed.catch(() => {});
-      const cancel = () => {
-        void reader.cancel().catch(() => {});
-        void response.body?.cancel().catch(() => {});
-      };
-      signal?.addEventListener("abort", cancel, { once: true });
-      if (signal?.aborted) cancel();
-      const decoder = new TextDecoder();
-      let size = 0;
-      let text = "";
-      try {
-        while (true) {
-          const { done, value } = (yield authInvoke(reader, "read", [])) as ReadableStreamReadResult<any>;
-          if (done) break;
-          size += value.byteLength;
-          if (size > MAX_REFRESH_RESPONSE_BYTES) {
-            // A cloned body's cancellation can await its sibling. Cancel both,
-            // without making the refusal wait for the provider to finish sending.
-            void reader.cancel().catch(() => {});
-            void response.body?.cancel().catch(() => {});
-            throw new OversizedRefreshResponse();
-          }
-          text += decoder.decode(value, { stream: true });
-        }
-        return JSON.parse(text + decoder.decode());
-      } finally {
-        if (signal?.aborted) cancel();
-        signal?.removeEventListener("abort", cancel);
-        reader.releaseLock();
-      }
-    });
-  },
-);
 
 /** A dispatched fingerprint has only a committed outcome or a re-consent verdict. */
 export type RefreshFailure =
@@ -171,22 +117,24 @@ function sdkTokenFailure(original: Response, code: string, status = original.sta
  */
 export function sdkSafeTokenResponse(
   response: Response,
+  connectorId: string,
   accept?: (tokens: OAuthTokens) => Promise<void>,
 ): Promise<Response> {
-  return runEdge(authProgram<Response>(sdkSafeTokenResponseNative, [response, accept]));
+  return runEdge(authProgram<Response>(sdkSafeTokenResponseNative, [response, connectorId, accept]));
 }
 const sdkSafeTokenResponseNative = /* @__PURE__ */ registerAuth(
   sdkSafeTokenResponse,
-  function (response: Response, accept?: (tokens: OAuthTokens) => Promise<void>) {
+  function (response: Response, connectorId: string, accept?: (tokens: OAuthTokens) => Promise<void>) {
     return authFlow<Response>(function* () {
+      response = (yield authCall(readOAuthResponse, [response, connectorId, "token exchange"])) as Response;
       if (response.status >= 300 && response.status < 400) {
         return sdkTokenFailure(response, "invalid_request", 400);
       }
       let parsed: unknown;
       try {
-        parsed = (yield authCall(readRefreshResponse, [response])) as unknown;
+        parsed = (yield authInvoke(response.clone(), "json", [])) as unknown;
       } catch {
-        // Not JSON, or too large to be a token response: only the status is left.
+        // Not JSON: only the status is left.
         return sdkTokenFailure(response, "server_error");
       }
       if (response.ok && sdkAcceptsOAuthTokens(parsed)) {
@@ -222,13 +170,18 @@ export type RefreshResponseOutcome =
  * Provider hooks preserve the re-consent verdict for passive calls. Rebuilding
  * the response keeps provider text out of SDK output.
  */
-export function refreshResponseOutcome(response: Response, signal?: AbortSignal): Promise<RefreshResponseOutcome> {
-  return runEdge(authProgram<RefreshResponseOutcome>(refreshResponseOutcomeNative, [response, signal]));
+export function refreshResponseOutcome(
+  response: Response,
+  connectorId: string,
+  signal?: AbortSignal,
+): Promise<RefreshResponseOutcome> {
+  return runEdge(authProgram<RefreshResponseOutcome>(refreshResponseOutcomeNative, [response, connectorId, signal]));
 }
 const refreshResponseOutcomeNative = /* @__PURE__ */ registerAuth(
   refreshResponseOutcome,
-  function (response: Response, signal?: AbortSignal) {
+  function (response: Response, connectorId: string, signal?: AbortSignal) {
     return authFlow<RefreshResponseOutcome>(function* () {
+      response = (yield authCall(readOAuthResponse, [response, connectorId, "token refresh", signal])) as Response;
       if (response.status >= 300 && response.status < 400) {
         return {
           failure: new Error("OAuth token endpoint redirected; authorization required."),
@@ -239,7 +192,7 @@ const refreshResponseOutcomeNative = /* @__PURE__ */ registerAuth(
       if (!response.ok) {
         let code: string | undefined;
         try {
-          const body = (yield authCall(readRefreshResponse, [response, signal, false])) as unknown;
+          const body = (yield authInvoke(response, "json", [])) as unknown;
           if (body && typeof body === "object" && ("access_token" in body || "refresh_token" in body)) {
             // A provider issuing tokens while reporting failure may have rotated.
             throw new Error("OAuth refresh failure response may contain a rotation.");
@@ -263,7 +216,7 @@ const refreshResponseOutcomeNative = /* @__PURE__ */ registerAuth(
       }
       // A successful HTTP status may have consumed the token even when its
       // body cannot be read or parsed. The coordinator refuses the fingerprint.
-      const parsed = (yield authCall(readRefreshResponse, [response, signal, false])) as unknown;
+      const parsed = (yield authInvoke(response, "json", [])) as unknown;
       if (sdkAcceptsOAuthTokens(parsed)) {
         // An `issuer` names the server a grant is bound to, and only the client
         // stamps it — never the server answering, as the SDK's own parse agrees.

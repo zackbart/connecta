@@ -8,7 +8,7 @@ import { attachCallClassification } from "../src/call-classification.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { CredentialVault } from "../src/credentials.js";
-import { classifyCallError } from "../src/errors.js";
+import { ConnectorCallError, classifyCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { attachOAuthSealer, vaultOAuthSealer } from "../src/oauth-sealing.js";
 import { providerCallContext, providerRequests } from "../src/provider-call.js";
@@ -209,6 +209,206 @@ async function withServer(run: (server: ReturnType<typeof authorizationServer>) 
     vi.unstubAllGlobals();
   }
 }
+
+describe("downstream OAuth response bounds (#1373)", () => {
+  const cases = [
+    { step: "protected resource", url: resourceMetadataUrl, label: "metadata discovery", limit: 65_536 },
+    {
+      step: "authorization server",
+      url: `${issuer}/.well-known/oauth-authorization-server`,
+      label: "metadata discovery",
+      limit: 65_536,
+    },
+    { step: "registration", url: `${issuer}/register`, label: "client registration", limit: 65_536 },
+    { step: "registration at MCP URL", url: mcpUrl, label: "client registration", limit: 65_536 },
+    { step: "exchange", url: `${issuer}/token`, label: "token exchange", limit: 65_536 },
+  ];
+  describe.each(cases)("$step", ({ step, url, label, limit }) => {
+    it.each([200, 400].flatMap((status) => ["declared", "streamed", "understated"].map((mode) => ({ status, mode }))))(
+      "cancels an oversized $mode HTTP $status body without leaking it",
+      async ({ mode, status }) => {
+        const server = authorizationServer();
+        let armed = step !== "exchange";
+        let pulls = 0;
+        let requests = 0;
+        const cancel = vi.fn(() => new Promise<void>(() => {}));
+        const output = consoleOutput();
+        vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+          const rpc =
+            typeof init?.body === "string" && init.body.trimStart().startsWith("{")
+              ? (JSON.parse(init.body) as { jsonrpc?: string })
+              : undefined;
+          if (
+            armed &&
+            new URL(input).href === url &&
+            rpc?.jsonrpc !== "2.0" &&
+            (step !== "registration at MCP URL" || init?.method === "POST")
+          ) {
+            requests++;
+            return new Response(
+              new ReadableStream(
+                {
+                  pull(controller) {
+                    pulls++;
+                    controller.enqueue(new TextEncoder().encode("private-oauth-body".repeat(256)));
+                  },
+                  cancel,
+                },
+                { highWaterMark: 0 },
+              ),
+              {
+                status,
+                headers: {
+                  // Media type must not bypass a byte bound.
+                  "content-type": "text/event-stream",
+                  ...(mode === "declared"
+                    ? { "content-length": String(limit + 1) }
+                    : mode === "understated"
+                      ? { "content-length": "1" }
+                      : {}),
+                },
+              },
+            );
+          }
+          const response = await server.fetchStub(input, init);
+          if (
+            step === "registration at MCP URL" &&
+            new URL(input).pathname === "/.well-known/oauth-authorization-server"
+          )
+            return Response.json({ ...((await response.json()) as object), registration_endpoint: mcpUrl });
+          return response;
+        });
+        const storage = memoryStorage();
+        const c = connector();
+        const context = scope(storage);
+        onTestFinished(() => c.closeScope?.(context));
+        if (step === "exchange") {
+          const started = await c.startAuth!(context);
+          const state = stateOf(started.authorizationUrl);
+          const callback = scope(storage);
+          onTestFinished(() => c.closeScope?.(callback));
+          expect(await c.verifyState!(state, callback)).toBe(true);
+          armed = true;
+          const error = await c.finishAuth!("code", callback, new URLSearchParams({ code: "code", state })).catch(
+            (e) => e,
+          );
+          expect(error).toBeInstanceOf(ConnectorCallError);
+          expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+          expect(error.message).toContain(`Connector "svc" OAuth ${label} response exceeded ${limit} bytes`);
+        } else {
+          const result = await c.startAuth!(context);
+          expect(result.state).toBe("error");
+          expect(result.message).toContain(`Connector "svc" OAuth ${label} response exceeded ${limit} bytes`);
+          expect(result.message).not.toContain("private-oauth-body");
+          expect(server.counts.token).toBe(0);
+        }
+        expect(requests).toBe(1);
+        expect(cancel).toHaveBeenCalledOnce();
+        expect(pulls).toBe(
+          mode === "declared"
+            ? 0
+            : Math.floor(limit / new TextEncoder().encode("private-oauth-body".repeat(256)).byteLength) + 1,
+        );
+        expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
+        expect(output()).not.toContain("private-oauth-body");
+      },
+    );
+  });
+
+  it.each(["declared", "streamed"])("bounds %s resource metadata served at the MCP URL", async (mode) => {
+    const server = authorizationServer({ metadataUrl: mcpUrl });
+    const cancel = vi.fn();
+    let pulls = 0;
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      if (new URL(input).href === mcpUrl && init?.method === "POST")
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${mcpUrl}"` },
+        });
+      if (
+        new URL(input).href === mcpUrl &&
+        (init?.method ?? "GET") === "GET" &&
+        !new Headers(init?.headers).get("accept")?.includes("text/event-stream")
+      )
+        return new Response(
+          new ReadableStream(
+            {
+              pull(controller) {
+                pulls++;
+                controller.enqueue(new Uint8Array(8192).fill(32));
+              },
+              cancel,
+            },
+            { highWaterMark: 0 },
+          ),
+          { headers: mode === "declared" ? { "content-length": "65537" } : {} },
+        );
+      return server.fetchStub(input, init);
+    });
+    const storage = memoryStorage();
+    const c = connector();
+    const context = scope(storage);
+    onTestFinished(() => c.closeScope?.(context));
+    const result = await c.startAuth!(context);
+    expect(result.state).toBe("error");
+    expect(
+      result.message,
+      JSON.stringify({ pulls, cancelled: cancel.mock.calls.length, counts: server.counts, result }),
+    ).toContain('Connector "svc" OAuth metadata discovery response exceeded 65536 bytes');
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(pulls).toBe(mode === "declared" ? 0 : 9);
+  });
+
+  it("cancels a stalled custom metadata body when its request is aborted", async () => {
+    const server = authorizationServer();
+    const entered = deferred<void>();
+    const cancel = vi.fn();
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      if (new URL(input).href !== resourceMetadataUrl) return server.fetchStub(input, init);
+      return new Response(
+        new ReadableStream({
+          pull() {
+            entered.resolve();
+          },
+          cancel,
+        }),
+      );
+    });
+    const storage = memoryStorage();
+    const controller = new AbortController();
+    const c = connector();
+    const context = { ...scope(storage), signal: controller.signal };
+    onTestFinished(() => c.closeScope?.(context));
+    const start = c.startAuth!(context).catch((error) => error);
+    await entered.promise;
+    controller.abort(new DOMException("Caller left", "AbortError"));
+    await start;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(server.counts.register).toBe(0);
+    expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
+  });
+
+  it("accepts extensive legitimate scope lists in both metadata documents", async () => {
+    const server = authorizationServer();
+    const scopes = Array.from({ length: 2_000 }, (_, i) => `scope:${i}`);
+    vi.stubGlobal("fetch", async (input: string | URL, init?: RequestInit) => {
+      const response = await server.fetchStub(input, init);
+      if ([resourceMetadataUrl, `${issuer}/.well-known/oauth-authorization-server`].includes(new URL(input).href)) {
+        return Response.json({ ...((await response.json()) as object), scopes_supported: scopes });
+      }
+      return response;
+    });
+    const storage = memoryStorage();
+    const c = connector();
+    const context = scope(storage);
+    onTestFinished(() => c.closeScope?.(context));
+    const started = await c.startAuth!(context);
+    expect(started.state, started.message).toBe("auth_required");
+    expect(new URL(started.authorizationUrl!).searchParams.get("scope")).toBe(scopes.join(" "));
+    await consent(c, storage, started.authorizationUrl);
+    expect((await storedGrant(storage))?.body?.tokens?.access_token).toBe("access-1");
+  });
+});
 
 describe("remoteMcp() challenged resource metadata origin (#1115)", () => {
   const foreignMetadata = [

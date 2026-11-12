@@ -22,7 +22,7 @@ import { ConnectorCallError } from "../../errors.js";
 import { attachFailureFacts, failureRecord, labelErrorClass, logFailure } from "../../operator-record.js";
 import { learnedUrlRefusal } from "../../url-safety.js";
 import { RequestScope } from "../../runtime/request-scope.js";
-import { boundedMcpBody } from "./bounded-body.js";
+import { boundedMcpBody } from "../../bounded-body.js";
 import { Context } from "effect";
 import { downstreamWriteContinuation } from "../../downstream-input-context.js";
 import type { RequestPrincipal } from "../../request-token.js";
@@ -815,7 +815,7 @@ export function remoteMcpTransport(
           }),
         ),
       });
-      rt.boundOAuthFlows(ctx, transport, url, [signal, ctx.signal], (response) => renewalSignals.get(response));
+      rt.boundOAuthFlows(ctx, transport, [signal, ctx.signal], (response) => renewalSignals.get(response));
       earlyRenewals.set(
         transport,
         authMethod((due: string, owner: AbortSignal | undefined) => {

@@ -2847,6 +2847,17 @@ hosts refuse these POSTs before dispatch. Node's explicit `listen({ proxy })`
 option applies to them. Discovery GETs keep native fetch and its host proxy
 policy. Workers use their native fetch transport. See [Node transport setup](./deploying.md#start-on-node).
 
+Downstream OAuth response bodies are bounded before parsing or SDK cloning,
+including unsuccessful HTTP responses. Protected-resource and authorization-server
+metadata each allow 64 KiB (65,536 bytes), including large `scopes_supported`
+lists; dynamic client registration also allows 64 KiB because it can echo those
+scopes; code exchange and refresh responses each allow 64 KiB. These fixed limits count bytes, not
+characters. An excessive declared `Content-Length` is refused before reading;
+streamed bodies stop as soon as the limit is exceeded, and the source is
+cancelled. The step fails with non-retryable `connector_call_failed`, naming
+the connector and OAuth step without quoting the response. A refresh size
+failure retains the same spent-token protection as any unconfirmed answer.
+
 A refresh without a confirmed usable answer may have rotated the refresh token.
 Connecta blocks its fingerprint and requires a fresh authorization flow, without
 replaying that token or claiming the server did not receive it. Authorization

@@ -15,6 +15,7 @@ import {
   OAuthRefreshCoordinator,
   oauthStateDigest,
 } from "../src/auth/downstream-oauth.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { invalidateCatalogCache } from "../src/catalog-cache.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { identityStorageKey } from "../src/identity.js";
@@ -475,28 +476,41 @@ describe("OAuthRefreshCoordinator", () => {
     },
   );
 
-  it("bounds a successful token response's read and permanently refuses its ambiguous oversized answer", async () => {
-    const storage = await grantStore();
-    const coordinator = new OAuthRefreshCoordinator();
-    let pulled = 0;
-    const oversized: FetchLike = async () =>
-      new Response(
-        new ReadableStream({
-          pull(controller) {
-            pulled++;
-            controller.enqueue(new Uint8Array(4096).fill(32));
-            if (pulled === 100) controller.close();
-          },
-        }),
-      );
-    const owner = await flow(storage, coordinator, { passive: true });
-    await expect(refresh(coordinator, owner, oversized)).rejects.toBeInstanceOf(UnauthorizedError);
-    expect(pulled).toBeLessThan(100);
-    await expect(owner.state()).rejects.toThrow("Authorization required");
-    const server = tokenServer();
-    expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
-    expect((await refresh(coordinator, await flow(storage, coordinator), server.fetch)).status).toBe(400);
-    expect(server.redeemed).toEqual([]);
+  describe.each([200, 400])("oversized refresh HTTP %s (#1373)", (status) => {
+    it.each(["declared", "streamed"])("cancels a %s response and refuses its ambiguous fingerprint", async (mode) => {
+      const storage = await grantStore();
+      const coordinator = new OAuthRefreshCoordinator();
+      let pulled = 0;
+      const cancel = vi.fn();
+      const oversized: FetchLike = async () =>
+        new Response(
+          new ReadableStream(
+            {
+              pull(controller) {
+                pulled++;
+                // UTF-8 bytes, not JS character count.
+                controller.enqueue(new TextEncoder().encode("秘密".repeat(1024)));
+              },
+              cancel,
+            },
+            { highWaterMark: 0 },
+          ),
+          { status, headers: mode === "declared" ? { "content-length": "65537" } : {} },
+        );
+      const owner = await flow(storage, coordinator, { passive: true });
+      const error = await refresh(coordinator, owner, oversized).catch((e) => e);
+      expect(error).toBeInstanceOf(ConnectorCallError);
+      expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+      expect(error.message).toBe('Connector "svc" OAuth token refresh response exceeded 65536 bytes.');
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(pulled).toBe(mode === "declared" ? 0 : 11);
+      // The same typed failure survives the SDK's attempted consent fallback.
+      await expect(owner.state()).rejects.toBe(error);
+      const server = tokenServer();
+      expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
+      expect((await refresh(coordinator, await flow(storage, coordinator), server.fetch)).status).toBe(400);
+      expect(server.redeemed).toEqual([]);
+    });
   });
 
   it("shares exactly one rotating-token grant in each of two waves of eight scopes", async () => {

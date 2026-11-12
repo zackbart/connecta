@@ -82,7 +82,6 @@ export interface RemoteMcpShared {
   boundOAuthFlows: (
     ctx: ConnectorContext,
     transport: StreamableHTTPClientTransport,
-    endpoint: URL,
     signals: readonly (AbortSignal | undefined)[],
     renewalSignal: (response: Response) => AbortSignal | undefined,
   ) => void;

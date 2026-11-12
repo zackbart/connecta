@@ -40,39 +40,43 @@ export function codeExchangeResponse(response: Response, signal: AbortSignal): R
     signal.removeEventListener("abort", abort);
     reader.releaseLock();
   };
-  const body = new ReadableStream<Uint8Array>({
-    start(controller) {
-      abort = () => {
-        if (closed) return;
-        void reader.cancel().catch(() => {});
-        release();
-        controller.error(signal.reason);
-      };
-      signal.addEventListener("abort", abort, { once: true });
-      if (signal.aborted) abort();
-    },
-    async pull(controller) {
-      try {
-        const next = await reader.read();
-        if (closed) return;
-        if (next.done) {
+  const body = new ReadableStream<Uint8Array>(
+    {
+      start(controller) {
+        abort = () => {
+          if (closed) return;
+          void reader.cancel().catch(() => {});
           release();
-          controller.close();
-        } else controller.enqueue(next.value);
-      } catch (error) {
-        if (!closed) {
-          release();
-          controller.error(error);
+          controller.error(signal.reason);
+        };
+        signal.addEventListener("abort", abort, { once: true });
+        if (signal.aborted) abort();
+      },
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (closed) return;
+          if (next.done) {
+            release();
+            controller.close();
+          } else controller.enqueue(next.value);
+        } catch (error) {
+          if (!closed) {
+            release();
+            controller.error(error);
+          }
         }
-      }
+      },
+      cancel() {
+        if (!closed) {
+          void reader.cancel().catch(() => {});
+          release();
+        }
+      },
     },
-    cancel() {
-      if (!closed) {
-        void reader.cancel().catch(() => {});
-        release();
-      }
-    },
-  });
+    // Do not pull before the token reader can refuse a declared oversized body.
+    { highWaterMark: 0 },
+  );
   return byteReadResponse(
     new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers }),
   );

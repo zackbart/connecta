@@ -29,6 +29,7 @@ import {
   type RefreshFailure,
   type RefreshResponseOutcome,
 } from "../oauth-token-response.js";
+import { OAuthResponseTooLarge } from "../oauth-response.js";
 import { oauthStateDigest } from "./consent.js";
 import type { KvOAuthProvider } from "../downstream-oauth.js";
 import type { RefreshLease } from "./refresh-records.js";
@@ -315,15 +316,18 @@ export class OAuthRefreshCoordinator {
             : authCall(dispatch, [])) as Response;
           if (!tokenRequest) return response;
           // A code exchange's failure is the SDK's to log as well.
+          let accepted = false;
           const forSdk = (yield authCall(sdkSafeTokenResponse, [
             response,
+            provider.connectorId,
             exchange
               ? authMethod((tokens: OAuthTokens) => {
+                  accepted = true;
                   return authInvoke(provider, "recordCodeExchangeTokens", [tokens]) as Effect.Effect<void, unknown>;
                 })
               : undefined,
           ])) as Response;
-          if (exchange && forSdk !== response) provider.recordCodeExchangeRefusal(forSdk);
+          if (exchange && !accepted) provider.recordCodeExchangeRefusal(forSdk);
           return forSdk;
         }.bind(this),
       );
@@ -396,6 +400,7 @@ export class OAuthRefreshCoordinator {
                   if (signal?.aborted) throw aborted(signal);
                   if (outcome.status === "failed") {
                     provider.recordRefreshFailure(outcome.verdict);
+                    if (outcome.error instanceof OAuthResponseTooLarge) provider.responseBodyFailure = outcome.error;
                     throw outcome.error;
                   }
                   if (outcome.status === "refreshed") return provider.adoptRefresh(outcome.tokens);
@@ -563,7 +568,11 @@ export class OAuthRefreshCoordinator {
                       void response.body?.cancel().catch(() => {});
                       throw aborted(deadline);
                     }
-                    return (yield authCall(refreshResponseOutcome, [response, deadline])) as RefreshResponseOutcome;
+                    return (yield authCall(refreshResponseOutcome, [
+                      response,
+                      provider.connectorId,
+                      deadline,
+                    ])) as RefreshResponseOutcome;
                   }.bind(this),
                 );
                 outcome = (yield Effect.raceFirst(read, fromSignal(deadline))) as RefreshResponseOutcome;
@@ -602,7 +611,11 @@ export class OAuthRefreshCoordinator {
                 // A sent request without a definitive answer may have rotated the token.
                 // Persist the refusal before dropping tokens, so interrupted cleanup or a
                 // later write of the same fingerprint cannot make it redeemable again.
-                const failure = new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
+                const failure =
+                  error instanceof OAuthResponseTooLarge
+                    ? error
+                    : new UnauthorizedError("OAuth refresh outcome is unknown; authorization required.");
+                if (error instanceof OAuthResponseTooLarge) provider.responseBodyFailure = error;
                 (yield authCall(complete, [
                   authMethod(() =>
                     authFlow<void>(function* () {

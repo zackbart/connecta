@@ -1,3 +1,4 @@
+import type { OAuthResponseTooLarge } from "./oauth-response.js";
 import { META_ROUTES } from "../agent-routes.js";
 import type {
   FetchLike,
@@ -108,6 +109,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   codeExchange = false;
   /** The token endpoint's refusal of this exchange's code, for the SDK's retry. */
   exchangeRefusal: Response | undefined;
+
+  /** A size failure must survive the SDK's refresh-to-consent fallback. */
+  responseBodyFailure: OAuthResponseTooLarge | undefined;
   /** Resolution observed when the code answer completed, before the SDK saves. */
   exchangeConsent: GrantBody["refreshConsent"];
   /**
@@ -452,6 +456,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // The SDK catches a refresh cancellation and falls back to consent. Keep
     // the ended caller's own reason instead of turning it into an auth verdict.
     if (this.signal?.aborted) throw aborted(this.signal);
+    if (this.responseBodyFailure) return this.responseBodyFailure;
     const failure = this.refreshFailure;
     if (failure?.kind === "contended") return this.refreshContended();
     // Only the class reaches callers: remoteMcp replaces this error with its own

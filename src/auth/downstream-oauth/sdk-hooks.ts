@@ -194,6 +194,7 @@ export const sdkHookMethods = {
   state: function (this: KvOAuthProvider) {
     return authValue<string>(() => {
       if (!this.allowAuthorization) throw this.authorizationRefused();
+      if (this.responseBodyFailure) throw this.responseBodyFailure;
       const state = randomState();
       this.consent = { state };
       return state;

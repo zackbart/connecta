@@ -15,6 +15,7 @@ import {
 import type { FetchLike, Transport } from "@modelcontextprotocol/client";
 import { Effect } from "effect";
 import { authorizingContext, EarlyRenewals, KvOAuthProvider } from "../../auth/downstream-oauth.js";
+import { OAuthResponseTooLarge, readOAuthResponse } from "../../auth/oauth-response.js";
 import { byteReadResponse } from "../../byte-read-response.js";
 import { requestSentSecrets, sentSecretsFor } from "../../sent-secrets.js";
 import { ConnectorCallError, resendAdvice, WithheldTextError } from "../../errors.js";
@@ -45,44 +46,56 @@ export type OAuthStep = "discovery" | "client registration" | "token request";
  * only, as `details.host` carries them. One per flow, never shared.
  */
 interface OAuthTrail {
-  /** The flow's latest request, if it was not to the MCP endpoint. */
+  /** The flow's latest OAuth request. */
   last?: { step: OAuthStep; host: string; httpStatus?: number; retryAfterMs?: number } | undefined;
   /** The origin a client registration was last sent to. */
   registration?: string;
+  /** Discovery errors the SDK would otherwise swallow while falling back. */
+  bodyFailure?: OAuthResponseTooLarge;
 }
 
 /**
  * Record each OAuth request on `trail` before sending it. Pinned against
- * `@modelcontextprotocol/client` 2.3.1: every request the SDK sends anywhere
- * but the MCP endpoint is a discovery GET, a token request (a form carrying
- * `grant_type`), or the JSON POST of dynamic client registration.
+ * `@modelcontextprotocol/client` 2.3.1: each auth() request is a discovery
+ * GET, a token request (a form carrying `grant_type`), or the JSON POST of
+ * dynamic client registration. Metadata and registration may reuse the MCP URL.
  */
-function tracedOAuthFetch(trail: OAuthTrail, endpoint: URL, baseFetch: FetchLike): FetchLike {
+function tracedOAuthFetch(
+  trail: OAuthTrail,
+  baseFetch: FetchLike,
+  connectorId: string,
+  signal?: AbortSignal,
+): FetchLike {
   return authMethod((input: string | URL, init: RequestInit | undefined) =>
     authFlow<Response>(function* () {
+      if (trail.bodyFailure) throw trail.bodyFailure;
       const url = new URL(input);
-      if (url.href === endpoint.href) {
-        trail.last = undefined;
-      } else {
-        const body = init?.body;
-        const step: OAuthStep =
-          (init?.method ?? "GET").toUpperCase() === "GET"
-            ? "discovery"
-            : body instanceof URLSearchParams ||
-                (typeof body === "string" && new URLSearchParams(body).has("grant_type"))
-              ? "token request"
-              : "client registration";
-        trail.last = { step, host: url.origin };
-        if (step === "client registration") trail.registration = url.origin;
-      }
+      const body = init?.body;
+      const step: OAuthStep =
+        (init?.method ?? "GET").toUpperCase() === "GET"
+          ? "discovery"
+          : body instanceof URLSearchParams || (typeof body === "string" && new URLSearchParams(body).has("grant_type"))
+            ? "token request"
+            : "client registration";
+      trail.last = { step, host: url.origin };
+      if (step === "client registration") trail.registration = url.origin;
       const leg = trail.last;
       const response = (yield authCall(baseFetch, [input, init])) as Response;
-      if (leg) {
-        leg.httpStatus = response.status;
-        const wait = retryAfterMs(response.headers);
-        if (wait !== undefined) leg.retryAfterMs = wait;
+      leg.httpStatus = response.status;
+      const wait = retryAfterMs(response.headers);
+      if (wait !== undefined) leg.retryAfterMs = wait;
+      if (leg.step === "token request") return byteReadResponse(response);
+      try {
+        return (yield authCall(readOAuthResponse, [
+          response,
+          connectorId,
+          leg.step === "discovery" ? "metadata discovery" : "client registration",
+          signal && init?.signal ? AbortSignal.any([signal, init.signal]) : (signal ?? init?.signal ?? undefined),
+        ])) as Response;
+      } catch (error) {
+        if (error instanceof OAuthResponseTooLarge) trail.bodyFailure = error;
+        throw error;
       }
-      return byteReadResponse(response);
     }),
   );
 }
@@ -223,7 +236,6 @@ export function remoteMcpOAuth(
   const boundOAuthFlows = (
     ctx: ConnectorContext,
     transport: StreamableHTTPClientTransport,
-    endpoint: URL,
     /** The request's and connection's signals: only their reasons pass as written. */
     signals: readonly (AbortSignal | undefined)[],
     renewalSignal: (response: Response) => AbortSignal | undefined,
@@ -251,11 +263,10 @@ export function remoteMcpOAuth(
         authFlow<T>(function* () {
           const trail: OAuthTrail = {};
           try {
-            return (yield authCall(start, [
+            const result = (yield authCall(start, [
               (fetchFn: FetchLike) =>
                 tracedOAuthFetch(
                   trail,
-                  endpoint,
                   authMethod((input: string | URL, init: RequestInit | undefined) =>
                     authFlow<Response>(function* () {
                       rt.trackSentRequest(ctx, input, init);
@@ -270,8 +281,12 @@ export function remoteMcpOAuth(
                       ])) as Response;
                     }),
                   ),
+                  id,
+                  signal ?? ctx.signal,
                 ),
             ])) as Awaited<T>;
+            if (trail.bodyFailure) throw trail.bodyFailure;
+            return result;
           } catch (err) {
             throw (yield authCall(withoutAuthorizationServerText, [ctx, err, trail, [...signals, signal]])) as unknown;
           }
@@ -499,7 +514,7 @@ export function remoteMcpOAuth(
               const internals = t as unknown as {
                 _fetchWithInit?: FetchLike;
               };
-              const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
+              const traced = tracedOAuthFetch(trail, internals._fetchWithInit ?? fetch, id, signal);
               const exchange = new Proxy(t, {
                 get: (target: StreamableHTTPClientTransport, key: string | symbol) =>
                   key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
@@ -508,6 +523,7 @@ export function remoteMcpOAuth(
               });
               try {
                 (yield authInvoke(exchange, "finishAuth", [callbackParams])) as void;
+                if (trail.bodyFailure) throw trail.bodyFailure;
                 rt.closeHalf(state);
               } catch (err) {
                 throw (yield authCall(withoutAuthorizationServerText, [
