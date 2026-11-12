@@ -48,6 +48,17 @@ every agent, so adding `members` never widens an agent tier. Listing an
 agent on a personal connector fails construction instead of being ignored,
 since personal connectors never reach agents.
 
+**Unauthenticated surfaces name none.** Public `/health` leaves such
+connectors out of its count and call-admission aggregate. A self-hosted
+OAuth client metadata document is public at a path named by the connector id,
+and deriving an unguessable path would need a deployment secret core does not
+hold, so a connector with members must register its OAuth client statically
+or by a document hosted elsewhere; construction refuses the combination.
+Likewise, a shared OAuth connector whose list names no maintainer is refused
+on a deployment without the operator UI, where nobody could connect it,
+rather than adding a management-only MCP handoff that would complicate the
+one visibility rule.
+
 Alternatives: one pool per person (the status quo), and a pool-level
 per-connector member override, which would repeat the list in every pool
 that serves the connector.

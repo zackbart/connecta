@@ -2,8 +2,10 @@ import { deploymentRoutes } from "./agent-routes.js";
 import { describeConfigSources } from "./config-value-sources.js";
 import { credentialTestRule, describeCredentialTestMismatch } from "./credential-rules.js";
 import { Registry } from "./registry.js";
+import { declaresSelfHostedClient } from "./auth/downstream-client-metadata.js";
 import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
 import type { ConnectorAccess } from "./connector-access.js";
+import type { IdentityReference } from "./types.js";
 import { assertsAgents } from "./agent-identity.js";
 import { ConfigError } from "./config-schema.js";
 import {
@@ -131,6 +133,37 @@ function resolvePools(
     );
   }
   return resolved;
+}
+
+/**
+ * Connector `members` (#1377) must not leak the connector or strand its auth.
+ * A self-hosted client metadata document is public at a path named by the
+ * connector id, so a restricted connector registers its OAuth client
+ * statically or by a document hosted elsewhere. A restricted shared OAuth
+ * connector needs some maintainer able to connect it: one it lists, who sees
+ * it at plain `/mcp`, or the operator UI, which administers every connector.
+ */
+function assertConnectorMembersManageable(
+  config: ResolvedConfig,
+  connectorMembers: ReadonlyMap<string, readonly Member[]>,
+  maintainers: readonly IdentityReference[],
+): void {
+  for (const connector of config.connectors) {
+    const listed = connectorMembers.get(connector.id);
+    if (!listed) continue;
+    const path = `Connector(${JSON.stringify(connector.id)}).members`;
+    if (declaresSelfHostedClient(connector))
+      throw new ConfigError(
+        `${path} needs auth.client or auth.clientMetadataUrl; a self-hosted client document is public.`,
+      );
+    if (
+      connector.authScope !== "personal" &&
+      connector.startAuth &&
+      !config.ui &&
+      !listed.some((m) => m.kind === "human" && maintainers.some((x) => x.namespace === m.namespace && x.id === m.id))
+    )
+      throw new ConfigError(`${path} lists no maintainer and ui is unset, so no one can connect it.`);
+  }
 }
 
 /** Construction warnings for valid but usually unintended deployment choices. */
@@ -293,6 +326,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     resolved.auth.some((provider) => !assertsAgents(provider)),
     members,
   );
+  assertConnectorMembersManageable(resolved, connectorMembers, maintainers);
   const pools = resolvePools(resolved.pools, resolved.readOnly, registry, members);
   for (const person of peopleInSeveralPools(pools, maintainers)) {
     logger.warn("[connecta] Plain /mcp refuses a person in several pools", person);

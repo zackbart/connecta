@@ -135,6 +135,13 @@ const documents = new WeakMap<Connector, { scope?: string }>();
 export function declareSelfHostedClient(connector: Connector, scope?: string): void {
   documents.set(connector, scope === undefined ? {} : { scope });
 }
+/** Whether a connector (or one it inherits from) publishes a self-hosted client document. */
+export function declaresSelfHostedClient(connector: Connector): boolean {
+  for (let current: object | null = connector; current; current = Object.getPrototypeOf(current) as object | null) {
+    if (documents.has(current as Connector)) return true;
+  }
+  return false;
+}
 export function selfHostedClientDocument(
   connector: Connector,
   publicUrl: string | undefined,

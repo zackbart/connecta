@@ -8,6 +8,7 @@ import { identityStorageKey } from "../src/identity.js";
 import { createConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
 import type { ToolCallActivityEvent } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { operatorUi } from "../src/ui.js";
 import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
 import { readJsonRpc } from "./fixtures/http.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
@@ -792,6 +793,7 @@ describe("connector members narrow visibility (#1377)", () => {
     const journal = api("journal", {
       description: "Personal journal",
       members: ["bob"],
+      callAdmission: { rules: [{ maxConcurrency: 4 }] },
       usageGuide: { content: "Journal guide.", summary: "Load before reading the journal." },
       tools: [
         {
@@ -958,6 +960,10 @@ describe("connector members narrow visibility (#1377)", () => {
       (await rpc(c, "/mcp/team", "bob", "authorize_connector", { connector: "mailbox" })).result.content[0].text,
     ).authorizationUrl as string;
     expect((await c.fetch(new Request(link, { headers: { Authorization: "Bearer bob" } }))).status).toBe(302);
+    // Public health neither counts the restricted connectors nor moves when a member uses one.
+    const health = async () => (await (await c.fetch(new Request(`${BASE}/health`))).json()) as any;
+    const before = await health();
+    expect(before.connectors).toBe(3);
     // Activity is use: a maintainer the members omit reads none of it.
     expect(
       (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "journal.read", args: {} })).result.isError,
@@ -965,6 +971,7 @@ describe("connector members narrow visibility (#1377)", () => {
     expect(
       (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "notes.search", args: {} })).result.isError,
     ).toBeFalsy();
+    expect((await health()).admission.downstreamCalls).toEqual(before.admission.downstreamCalls);
     const activity = (await (await get("/ui/activity", "alice")).json()) as any;
     const connectors = activity.events.map((event: { connectorId: string }) => event.connectorId);
     expect(connectors).toContain("notes");
@@ -1081,6 +1088,36 @@ describe("member references at construction", () => {
     expect(attempt).toThrow(ConfigError);
     expect(attempt).toThrow(`Connector("diary").members`);
     expect(attempt).toThrow(message);
+  });
+
+  it("INV-11: refuses a shared OAuth connector whose members list no maintainer when no operator UI can connect it (#1377)", async () => {
+    const restricted = (members: string[], ui: boolean) =>
+      build({
+        auth: users(),
+        maintainers: ["alice"],
+        connectors: [{ ...sharedOAuth(), members }],
+        ...(ui ? { ui: operatorUi() } : {}),
+      });
+    expect(restricted(["bob"], false)).toThrow(
+      'Connector("shared").members lists no maintainer and ui is unset, so no one can connect it.',
+    );
+    await restricted(["alice", "bob"], false)().close();
+    // With the operator UI, the maintainer the list omits still connects it there.
+    const storage = memoryStorage();
+    const c = createTestConnecta({
+      connectors: [{ ...sharedOAuth(), members: ["bob"] }],
+      auth: users(),
+      maintainers: ["alice"],
+      pools: { team: { tools: ["shared"], members: ["bob"] } },
+      vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
+      storage,
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    const started = await c.fetch(request("/ui/oauth/shared", "alice", { method: "POST", headers: { Origin: BASE } }));
+    expect(started.status).toBe(200);
+    expect(await started.json()).toMatchObject({ state: "auth_required", authorizationUrl: expect.any(String) });
+    await c.close();
   });
 
   it("INV-11: refuses an agent on a personal connector's members and a bare id with no interactive provider (#1377)", () => {
