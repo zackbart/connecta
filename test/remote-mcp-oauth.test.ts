@@ -1135,6 +1135,264 @@ describe("remoteMcp() token endpoint failures and the host's console", () => {
   });
 });
 
+describe("remoteMcp() OAuth response byte bounds (#1373)", () => {
+  type Step = "resource metadata" | "server metadata" | "registration" | "code exchange";
+  type Shape = "declared" | "streamed";
+  /**
+   * A body past every bound, declared up front or only streamed, that records
+   * how much of it was read. With `valid`, it is that JSON and then endless
+   * whitespace, which a prefix of it would still parse as.
+   */
+  const oversized = (shape: Shape, options: { valid?: string; status?: number } = {}) => {
+    const read = { bytes: 0, cancelled: false };
+    const encoder = new TextEncoder();
+    let first: Uint8Array | undefined = options.valid === undefined ? undefined : encoder.encode(options.valid);
+    const filler = encoder.encode(options.valid === undefined ? `{"padding":"${"x".repeat(4096)}` : " ".repeat(4096));
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        const chunk = first ?? filler;
+        first = undefined;
+        read.bytes += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        read.cancelled = true;
+      },
+    });
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (shape === "declared") headers["content-length"] = String(10_000_000);
+    return { response: new Response(body, { status: options.status ?? 200, headers }), read };
+  };
+  // Long but legitimate scope lists: about 50 KiB each, which registration echoes.
+  const scopes = Array.from({ length: 1000 }, (_, i) => `https://scopes.example/auth/resource-${i}.readonly`);
+
+  interface Served {
+    /** Serve resource metadata and registration at the MCP endpoint's own URL. */
+    atMcpUrl?: boolean;
+    /** The step that answers HTTP 202 instead of 200. */
+    accepted?: Step;
+    /** How many scopes the authorization server's metadata lists. */
+    serverScopes?: number;
+  }
+
+  function downstream(oversize?: { step: Step; shape: Shape; valid?: boolean }, served: Served = {}) {
+    const requests: string[] = [];
+    const metadataUrl = served.atMcpUrl ? mcpUrl : resourceMetadataUrl;
+    const registrationUrl = served.atMcpUrl ? mcpUrl : `${issuer}/register`;
+    let read: { bytes: number; cancelled: boolean } | undefined;
+    const answer = async (step: Step, normal: () => Response) => {
+      const status = served.accepted === step ? 202 : 200;
+      if (oversize?.step !== step) {
+        const response = normal();
+        return new Response(await response.text(), { status, headers: response.headers });
+      }
+      const body = oversized(oversize.shape, {
+        status,
+        ...(oversize.valid ? { valid: await normal().text() } : {}),
+      });
+      read = body.read;
+      return body.response;
+    };
+    vi.stubGlobal("fetch", (async (input, init = {}) => {
+      const url = new URL(input);
+      requests.push(url.href);
+      const method = (init.method ?? "GET").toUpperCase();
+      const rpc = typeof init.body === "string" && init.body.includes('"jsonrpc"');
+      const stream = new Headers(init.headers).get("accept")?.includes("text/event-stream") === true;
+      if (url.href === metadataUrl && method === "GET" && !stream) {
+        return answer("resource metadata", () =>
+          Response.json({ resource: mcpUrl, authorization_servers: [issuer], scopes_supported: scopes }),
+        );
+      }
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return answer("server metadata", () =>
+          Response.json({
+            issuer,
+            authorization_endpoint: `${issuer}/authorize`,
+            token_endpoint: `${issuer}/token`,
+            registration_endpoint: registrationUrl,
+            response_types_supported: ["code"],
+            code_challenge_methods_supported: ["S256"],
+            token_endpoint_auth_methods_supported: ["none"],
+            scopes_supported: served.serverScopes
+              ? Array.from({ length: served.serverScopes }, (_, i) => `https://scopes.example/auth/server-${i}.read`)
+              : scopes,
+          }),
+        );
+      }
+      if (url.href === `${issuer}/.well-known/openid-configuration`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          registration_endpoint: `${issuer}/register`,
+          jwks_uri: `${issuer}/jwks`,
+          response_types_supported: ["code"],
+          subject_types_supported: ["public"],
+          id_token_signing_alg_values_supported: ["RS256"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      if (url.href === registrationUrl && method === "POST" && !rpc) {
+        return answer("registration", () =>
+          Response.json({ ...(JSON.parse(String(init.body)) as object), client_id: "registered-client" }),
+        );
+      }
+      if (url.href === `${issuer}/token`) {
+        return answer("code exchange", () =>
+          Response.json({ access_token: "access-1", token_type: "Bearer", refresh_token: "refresh-1" }),
+        );
+      }
+      if (url.href === mcpUrl) {
+        return new Response(null, {
+          status: 401,
+          headers: { "www-authenticate": `Bearer resource_metadata="${metadataUrl}"` },
+        });
+      }
+      throw new Error(`Unexpected OAuth test request: ${url.href}`);
+    }) satisfies FetchLike);
+    return { requests, read: () => required(read) };
+  }
+
+  it("authorizes against normal-sized answers with long scopes_supported lists", async () => {
+    const server = downstream();
+    const storage = memoryStorage();
+    const c = connector();
+    const started = await c.startAuth!(scope(storage), { force: true });
+    expect(started.state).toBe("auth_required");
+    // The resource's scopes, every one of them, reach the consent URL.
+    expect(new URL(required(started.authorizationUrl)).searchParams.get("scope")?.split(" ")).toEqual(scopes);
+    await consent(c, storage, started.authorizationUrl);
+    expect((await storedGrant(storage))?.body?.tokens).toMatchObject({ access_token: "access-1" });
+    expect(server.requests).toContain(`${issuer}/token`);
+  });
+
+  it("keeps an oversized error body a prefix the SDK discards, so its metadata fallback still runs", async () => {
+    const huge = oversized("streamed");
+    const server = downstream();
+    const stub = globalThis.fetch;
+    vi.stubGlobal("fetch", (async (input, init) =>
+      new URL(input).href === `${issuer}/.well-known/oauth-authorization-server`
+        ? new Response(huge.response.body, { status: 404, headers: { "content-type": "text/html" } })
+        : stub(input, init)) satisfies FetchLike);
+    const started = await connector().startAuth!(scope(memoryStorage()), { force: true });
+
+    expect(started.state).toBe("auth_required");
+    expect(huge.read.cancelled).toBe(true);
+    expect(huge.read.bytes).toBeLessThanOrEqual(65_536 + 8 * 4110);
+    expect(server.requests).toContain(`${issuer}/.well-known/openid-configuration`);
+  });
+
+  it("accepts a 202 metadata answer that fits its bound, though not a 64 KiB prefix", async () => {
+    downstream(undefined, { accepted: "server metadata", serverScopes: 2000 });
+    const started = await connector().startAuth!(scope(memoryStorage()), { force: true });
+    expect(started.state).toBe("auth_required");
+    expect(started.authorizationUrl).toBeDefined();
+  });
+
+  interface Start {
+    label: string;
+    step: Exclude<Step, "code exchange">;
+    named: string;
+    /** A request the failed step's flow must never send. */
+    unsent?: string;
+    valid?: boolean;
+    served?: Served;
+  }
+  const starts: Start[] = [
+    {
+      label: "resource metadata",
+      step: "resource metadata",
+      named: "discovery",
+      unsent: `${issuer}/.well-known/oauth-authorization-server`,
+    },
+    { label: "server metadata", step: "server metadata", named: "discovery", unsent: `${issuer}/register` },
+    { label: "registration", step: "registration", named: "client registration" },
+    {
+      label: "resource metadata served at the MCP URL",
+      step: "resource metadata",
+      named: "discovery",
+      unsent: `${issuer}/.well-known/oauth-authorization-server`,
+      served: { atMcpUrl: true },
+    },
+    {
+      label: "registration served at the MCP URL",
+      step: "registration",
+      named: "client registration",
+      served: { atMcpUrl: true },
+    },
+    {
+      label: "202 registration of valid JSON padded past its bound",
+      step: "registration",
+      named: "client registration",
+      valid: true,
+      served: { accepted: "registration" },
+    },
+    {
+      label: "202 server metadata of valid JSON padded past its bound",
+      step: "server metadata",
+      named: "discovery",
+      unsent: `${issuer}/register`,
+      valid: true,
+      served: { accepted: "server metadata" },
+    },
+  ];
+  describe.each(["declared", "streamed"] as const)("a %s oversized body", (shape) => {
+    it.each(starts)("fails the start at the $label, reading none past its bound", async (start) => {
+      const { step, named, unsent, valid } = start;
+      const server = downstream({ step, shape, ...(valid ? { valid } : {}) }, start.served);
+      const storage = memoryStorage();
+      const c = connector();
+      const context = scope(storage);
+      onTestFinished(() => c.closeScope?.(context));
+      const status = await c.startAuth!(context, { force: true });
+
+      expect(status.state).toBe("error");
+      expect(status.authorizationUrl).toBeUndefined();
+      expect(status.message).toContain(`Connector "svc" OAuth ${named} answered with more than`);
+      expect(status.message).not.toContain("padding");
+      const read = server.read();
+      expect(read.cancelled).toBe(true);
+      // A valid body's JSON (up to ~60 KiB) may be read ahead of its padding.
+      const ahead = (valid ? 65_536 : 0) + 8 * 4110;
+      expect(read.bytes).toBeLessThanOrEqual(shape === "declared" ? ahead : 131_072 + ahead);
+      // The SDK swallows a resource-metadata failure; the flow still stops there.
+      if (unsent) expect(server.requests).not.toContain(unsent);
+      expect((await storedGrant(storage))?.body?.client).toBeUndefined();
+    });
+
+    it("fails the code exchange as a typed token-request refusal and stores no tokens", async () => {
+      const storage = memoryStorage();
+      const c = connector();
+      downstream();
+      const started = await c.startAuth!(scope(storage), { force: true });
+      const server = downstream({ step: "code exchange", shape });
+      const state = stateOf(started.authorizationUrl);
+      const error = await c.finishAuth!("code", scope(storage), new URLSearchParams({ code: "code", state })).then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+
+      expect(error).toMatchObject({ name: "OAuthResponseTooLargeError" });
+      expect(classifyCallError(error)).toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+        message: expect.stringContaining(`Connector "svc" OAuth token request answered with more than 65536 bytes`),
+      });
+      expect(String(error)).not.toContain("padding");
+      expect(server.read().cancelled).toBe(true);
+      expect(server.read().bytes).toBeLessThanOrEqual(65_536 + 8 * 4110);
+      expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
+      // The claimed consent never sends its code again.
+      await expect(
+        c.finishAuth!("code", scope(storage), new URLSearchParams({ code: "code", state })),
+      ).rejects.toThrow();
+      expect(server.requests.filter((url) => url === `${issuer}/token`)).toHaveLength(1);
+    });
+  });
+});
+
 describe("remoteMcp() finishAuth", () => {
   it("refuses a callback whose state matches no pending consent, exchanging nothing", async () => {
     const storage = memoryStorage();

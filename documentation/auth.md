@@ -13,7 +13,7 @@ credential contracts; use [deployment setup](./deploying.md) for runnable steps.
 | Lay out an agent's pools                                            | [Organizing an agent's pools](#organizing-an-agents-pools)                                                                                                                                                                                                                                                    |
 | Set up human sign-in                                                | [Access on Workers](#cloudflare-access-on-workers), [Clerk tokens and sessions](#clerk-oauth-tokens-and-operator-sessions), [Clerk Organizations](#one-clerk-instance-one-organization-per-deployment), [management](#human-authentication-management)                                                        |
 | Enable credential or connection controls                            | [Management permissions](#management-permissions), [start/restart/disconnect](#starting-restarting-and-disconnecting)                                                                                                                                                                                         |
-| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refreshing before expiry](#refreshing-before-expiry), [refresh failures](#refresh-failures), [safe errors](#what-a-servers-errors-may-say)                                                                           |
+| Diagnose consent or token refresh                                   | [State at rest](#downstream-oauth-state-at-rest), [callbacks](#consents-and-callbacks), [refreshing before expiry](#refreshing-before-expiry), [refresh failures](#refresh-failures), [response bounds](#downstream-oauth-response-bounds), [safe errors](#what-a-servers-errors-may-say)                     |
 | Configure a downstream OAuth client or HTTP handler                 | [Client registration](#downstream-oauth-client-registration), [api() OAuth](#downstream-oauth-on-api), [request-local bearer tokens](#request-local-downstream-bearer-tokens), [principal forwarding](#forwarding-the-admitted-principal), [Google hosted MCP](#google-service-account-tokens-and-hosted-mcp) |
 | Review browser or downstream URL boundaries                         | [Origins](#origins), [advertised URLs](#urls-a-downstream-advertises), [one server per grant](#one-server-per-grant)                                                                                                                                                                                          |
 
@@ -1829,6 +1829,48 @@ Refresh and failed code-exchange answers are rebuilt from the OAuth `error`
 code alone with fixed text. The SDK logs descriptions below the configured
 logger; downstream descriptions and storage errors can quote tokens, client
 secrets, or codes and must not reach that output.
+
+## Downstream OAuth response bounds
+
+Every downstream OAuth answer is read through a byte bound as it streams, so
+no answer is buffered whole before it is measured. A declared
+`Content-Length` past the bound is refused before any of the body is read;
+an undeclared body is refused at the first chunk past it. Either way the
+response body is cancelled.
+
+| Step                                                                                  | Bound   |
+| ------------------------------------------------------------------------------------- | ------- |
+| Discovery: protected-resource metadata, OAuth or OpenID authorization-server metadata | 128 KiB |
+| Dynamic client registration                                                           | 128 KiB |
+| Token request: code exchange, refresh, client credentials                             | 64 KiB  |
+| Google's ID-token signing keys (JWKS), for allowed-account checks                     | 64 KiB  |
+
+Discovery documents run to a few KiB, but may list thousands of
+`scopes_supported`, and a registration answer echoes the client metadata it
+was sent, including the scope drawn from that list. A token response carries a
+few tokens. A JWKS holds at most 16 keys and follows no redirect.
+
+Each request is bounded by the OAuth step it performs, never by its URL: a
+discovery GET or registration POST sent to the MCP endpoint's own URL, which a
+downstream may advertise as its resource metadata or registration endpoint,
+gets that step's bound. The bound applies to every 2xx answer, `202` included,
+whatever its `Content-Type`; an event stream is bounded as one body. A
+discovery or registration non-2xx body is read to at most its first 64 KiB and
+then ended, so a large error page still lets the SDK fall back to its next
+metadata location. A token endpoint's answer is held to the token bound
+whatever its status.
+
+An oversized answer fails its step with `OAuthResponseTooLargeError`: a
+non-retryable `connector_call_failed` that names the connector and the step
+(`discovery`, `client registration`, or `token request`) and quotes none of the
+body. The flow sends nothing after it, even where the SDK would otherwise
+continue past an unreadable resource-metadata document, so a start returns no
+consent URL and a callback stores no tokens. A code exchange's consent is
+already claimed, so its code is never sent again; start a new consent once the
+server is fixed. An oversized refresh answer is an ambiguous dispatched
+outcome ([refresh failures](#refresh-failures)): the call ends
+`auth_required`, the grant's tokens are removed, and the refresh token's
+fingerprint stays blocked.
 
 ## What a server's errors may say
 

@@ -475,29 +475,39 @@ describe("OAuthRefreshCoordinator", () => {
     },
   );
 
-  it("bounds a successful token response's read and permanently refuses its ambiguous oversized answer", async () => {
-    const storage = await grantStore();
-    const coordinator = new OAuthRefreshCoordinator();
-    let pulled = 0;
-    const oversized: FetchLike = async () =>
-      new Response(
-        new ReadableStream({
-          pull(controller) {
-            pulled++;
-            controller.enqueue(new Uint8Array(4096).fill(32));
-            if (pulled === 100) controller.close();
-          },
-        }),
-      );
-    const owner = await flow(storage, coordinator, { passive: true });
-    await expect(refresh(coordinator, owner, oversized)).rejects.toBeInstanceOf(UnauthorizedError);
-    expect(pulled).toBeLessThan(100);
-    await expect(owner.state()).rejects.toThrow("Authorization required");
-    const server = tokenServer();
-    expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
-    expect((await refresh(coordinator, await flow(storage, coordinator), server.fetch)).status).toBe(400);
-    expect(server.redeemed).toEqual([]);
-  });
+  it.each(["streamed", "declared"] as const)(
+    "bounds a successful token response's read and permanently refuses its ambiguous %s oversized answer (#1373)",
+    async (shape) => {
+      const storage = await grantStore();
+      const coordinator = new OAuthRefreshCoordinator();
+      let pulled = 0;
+      let cancelled = false;
+      const oversized: FetchLike = async () =>
+        new Response(
+          new ReadableStream({
+            pull(controller) {
+              pulled++;
+              controller.enqueue(new Uint8Array(4096).fill(32));
+              if (pulled === 100) controller.close();
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          shape === "declared" ? { headers: { "content-length": String(100 * 4096) } } : {},
+        );
+      const owner = await flow(storage, coordinator, { passive: true });
+      await expect(refresh(coordinator, owner, oversized)).rejects.toBeInstanceOf(UnauthorizedError);
+      expect(cancelled).toBe(true);
+      // Sixteen chunks fill the bound; the seventeenth passes it, and one more may be pulled ahead.
+      expect(pulled).toBeLessThanOrEqual(shape === "declared" ? 1 : 18);
+      await expect(owner.state()).rejects.toThrow("Authorization required");
+      const server = tokenServer();
+      expect((await storedGrant(storage))?.body?.tokens).toBeUndefined();
+      expect((await refresh(coordinator, await flow(storage, coordinator), server.fetch)).status).toBe(400);
+      expect(server.redeemed).toEqual([]);
+    },
+  );
 
   it("shares exactly one rotating-token grant in each of two waves of eight scopes", async () => {
     const storage = memoryStorage();

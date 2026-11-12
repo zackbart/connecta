@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-12: Bounding downstream OAuth response bodies (#1373, #1389) routes discovery and registration through the streaming body bound with a typed error. CI at a56bdb77 measures the root at 445,650 B and examples/worker at 830,476 B, past the 445,600 B and 830,150 B caps. Owner-approved: the caps move to 446,000 B and 830,850 B, leaving 350 B and 374 B.",
     "2026-11-12: Emit refusal guidance and retained-write recovery (#1356, #1388) add refusal text and keep a transferred write's retained result id. CI at 47c3d2f0 measures the root at 445,666 B and examples/worker at 830,232 B, 66 B and 82 B past main's 445,600 B and 830,150 B caps. The caps move to 446,000 B and 830,600 B, leaving 334 B and 368 B. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-12: Google OAuth account restrictions (#1381, #1383) add the generic account-verification hook, RS256 ID-token checks, principal-resolved person rules and the kept-grant reconnect to the root. CI at d5647128, on main at c8e440b2, measures the root at 445,235 B and examples/worker at 829,795 B, up from main's caps of 443,100 B and 827,000 B. Owner-approved: the caps move to 445,600 B and 830,150 B, leaving 365 B and 355 B.",
     "2026-11-12: Releasing unused hinted catalog chunks before request close (#1382 review fix) adds request-scoped tracking. CI at 1eb13729 measures the root at 442,719 B and examples/worker at 826,632 B, 32 B past the 826,600 B cap. Owner-approved: the caps move to 443,100 B and 827,000 B, leaving 381 B and 368 B.",
@@ -174,7 +175,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 830600
+      "maxGzip": 830850
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

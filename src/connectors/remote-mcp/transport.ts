@@ -815,7 +815,7 @@ export function remoteMcpTransport(
           }),
         ),
       });
-      rt.boundOAuthFlows(ctx, transport, url, [signal, ctx.signal], (response) => renewalSignals.get(response));
+      rt.boundOAuthFlows(ctx, transport, [signal, ctx.signal], (response) => renewalSignals.get(response));
       earlyRenewals.set(
         transport,
         authMethod((due: string, owner: AbortSignal | undefined) => {

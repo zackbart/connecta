@@ -1,4 +1,6 @@
 import type { OAuthTokens } from "@modelcontextprotocol/client";
+import { ConnectorCallError } from "../errors.js";
+import { labelErrorClass } from "../operator-record.js";
 import { runEdge } from "../runtime/run.js";
 import { authCall, authFlow, authInvoke, authProgram, registerAuth } from "./native.js";
 
@@ -51,12 +53,40 @@ function sdkAcceptsOAuthTokens(value: unknown): boolean {
   return true;
 }
 
-const MAX_REFRESH_RESPONSE_BYTES = 65_536;
+/**
+ * A token response's byte bound, for a code exchange and a refresh alike. A
+ * token response carries a few tokens and their metadata, a few KiB even with
+ * a large ID token, so 64 KiB is ample and bounds what one answer can hold.
+ */
+export const MAX_TOKEN_RESPONSE_BYTES = 65_536;
 
-class OversizedRefreshResponse extends Error {
+class OversizedTokenResponse extends Error {
   constructor() {
-    super(`OAuth refresh response exceeded ${MAX_REFRESH_RESPONSE_BYTES} bytes.`);
+    super(`OAuth token response exceeded ${MAX_TOKEN_RESPONSE_BYTES} bytes.`);
   }
+}
+
+/**
+ * A downstream OAuth step's answer past its byte bound: the source is
+ * cancelled, nothing past the bound is read, and none of it is quoted. Not
+ * retryable: the server would send the same answer again.
+ */
+export class OAuthResponseTooLargeError extends ConnectorCallError {
+  constructor(connectorId: string, step: string, limit: number) {
+    super(
+      "connector_call_failed",
+      `Connector "${connectorId}" OAuth ${step} answered with more than ${limit} bytes; connecta stopped ` +
+        "reading and quotes none of it. Check the server's OAuth metadata and endpoints.",
+      { retryable: false },
+    );
+    this.name = "OAuthResponseTooLargeError";
+  }
+}
+labelErrorClass(OAuthResponseTooLargeError, "OAuthResponseTooLargeError");
+
+/** Whether `error` is a token response's bounded read refusing it. */
+export function isOversizedTokenResponse(error: unknown): boolean {
+  return error instanceof OversizedTokenResponse;
 }
 
 function readRefreshResponse(response: Response, signal?: AbortSignal, clone = true): Promise<unknown> {
@@ -66,9 +96,9 @@ const readRefreshResponseNative = /* @__PURE__ */ registerAuth(
   readRefreshResponse,
   function (response: Response, signal?: AbortSignal, clone: boolean = true) {
     return authFlow<unknown>(function* () {
-      if (Number(response.headers.get("content-length")) > MAX_REFRESH_RESPONSE_BYTES) {
+      if (Number(response.headers.get("content-length")) > MAX_TOKEN_RESPONSE_BYTES) {
         void response.body?.cancel().catch(() => {});
-        throw new OversizedRefreshResponse();
+        throw new OversizedTokenResponse();
       }
       const reader = (clone ? response.clone() : response).body?.getReader();
       if (!reader) return undefined;
@@ -87,12 +117,12 @@ const readRefreshResponseNative = /* @__PURE__ */ registerAuth(
           const { done, value } = (yield authInvoke(reader, "read", [])) as ReadableStreamReadResult<any>;
           if (done) break;
           size += value.byteLength;
-          if (size > MAX_REFRESH_RESPONSE_BYTES) {
+          if (size > MAX_TOKEN_RESPONSE_BYTES) {
             // A cloned body's cancellation can await its sibling. Cancel both,
             // without making the refusal wait for the provider to finish sending.
             void reader.cancel().catch(() => {});
             void response.body?.cancel().catch(() => {});
-            throw new OversizedRefreshResponse();
+            throw new OversizedTokenResponse();
           }
           text += decoder.decode(value, { stream: true });
         }
@@ -185,8 +215,10 @@ const sdkSafeTokenResponseNative = /* @__PURE__ */ registerAuth(
       let parsed: unknown;
       try {
         parsed = (yield authCall(readRefreshResponse, [response])) as unknown;
-      } catch {
-        // Not JSON, or too large to be a token response: only the status is left.
+      } catch (error) {
+        // Too large to be a token response: the step fails as that, typed.
+        if (error instanceof OversizedTokenResponse) throw error;
+        // Not JSON: only the status is left.
         return sdkTokenFailure(response, "server_error");
       }
       if (response.ok && sdkAcceptsOAuthTokens(parsed)) {
