@@ -410,8 +410,8 @@ stays a write and an operator warning names the override.
 checked it and accepts that hosts may repeat the call, so the vendor can receive it twice.
 `"write"` selects the host approval path. `"hidden"` omits the tool from search
 and describe and refuses guessed-name calls, including programs. An absent
-runtime tool leaves its override dormant, with one operator warning per catalog
-change; the override applies if that exact name returns. Use `"write"` or
+runtime tool leaves its override dormant, with one operator warning per change in
+that runtime; the override applies if that exact name returns. Use `"write"` or
 `"hidden"` to keep formerly reviewed writes and destructive tools non-read
 when live hints would expose them as reads. Never copy a retired review map
 wholesale or use it to broaden access or merely recover an old route.

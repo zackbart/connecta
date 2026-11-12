@@ -174,6 +174,30 @@ describe("cloudflareAccessAuth", () => {
     }
   });
 
+  it("INV-7: disposes each RPC identity result once, admitted or refused, despite a failed disposer", async () => {
+    // workerd adds a non-enumerable disposer to every object a JS RPC call returns.
+    for (const [identity, ok] of [
+      [{ user_uuid: "user-123" }, true],
+      [{ user_uuid: "human", service_token_status: true }, false],
+    ] as const) {
+      for (const fails of [false, true]) {
+        const dispose = vi.fn(() => {
+          if (fails) throw new Error("broken identity disposer");
+        });
+        const result = await cloudflareAccessAuth().authorize(request, BASE, {
+          access: {
+            aud: "access-app",
+            getIdentity: async () => Object.defineProperty({ ...identity }, Symbol.dispose, { value: dispose }),
+          },
+        });
+        expect(result.ok).toBe(ok);
+        if (result.ok) expect(result).toMatchObject({ userId: "user-123" });
+        else expect(result.response.status).toBe(403);
+        expect(dispose).toHaveBeenCalledOnce();
+      }
+    }
+  });
+
   it.each(["valid", "expired"])(
     "INV-4: refuses %s caller JWTs without edge-validated context on Node and Workers",
     async (verdict) => {
@@ -292,9 +316,10 @@ describe("cloudflareAccessAuth", () => {
     }
   });
 
-  it("INV-4 INV-7: returns at the native Access deadline and never admits its late result", async () => {
+  it("INV-4 INV-7: returns at the native Access deadline, never admits its late result, and disposes it", async () => {
     vi.useFakeTimers();
     try {
+      const dispose = vi.fn();
       let resolve!: (identity: Record<string, unknown>) => void;
       const pending = cloudflareAccessAuth().authorize(request, BASE, {
         access: {
@@ -312,7 +337,8 @@ describe("cloudflareAccessAuth", () => {
         expect(result.response.status).toBe(503);
         expect(result.response.headers.get("Cache-Control")).toBe("no-store");
       }
-      resolve({ user_uuid: "late-human" });
+      resolve(Object.defineProperty({ user_uuid: "late-human" }, Symbol.dispose, { value: dispose }));
+      await vi.waitFor(() => expect(dispose).toHaveBeenCalledOnce());
     } finally {
       vi.useRealTimers();
     }

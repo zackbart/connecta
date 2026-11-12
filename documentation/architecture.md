@@ -2061,7 +2061,8 @@ the signal sees the same reason the caller does, and `fromSignal`, which turns
 an `AbortSignal` into a failure to race against. Nothing runs Effect at module
 scope, where a Worker may not start work, and nothing logs through
 `Effect.log`: logging goes through the configured `Logger`, which is what
-honors `logger: "silent"`.
+honors `logger: "silent"`. The default console logger prefixes each line with
+`[connecta]` once, leaving lines whose call site already wrote it unchanged.
 
 There is no per-Connecta runtime. createConnecta resolves its configuration
 into plain values once (`src/config.ts`), and nothing needs a service context
@@ -2163,7 +2164,9 @@ The Worker SDK prepares source and dispatchers against an inert loader. The
 native host then acquires the actual Loader handle and RPC entrypoint with
 `Effect.acquireRelease`, awaits the native RPC Promise, and races the run with
 its lease's cancellation Deferred. A resource Scope owns entrypoint-before-
-Loader disposal on every exit, including never-settling evaluation. Release
+Loader disposal on every exit, including never-settling evaluation. Result
+disposal is attached to the native RPC Promise's fulfillment, so it runs once
+even when release or cancellation interrupted the wait. Release
 closes that Scope synchronously before returning the permit; a failed disposer
 cannot skip the next one. Forwarders lose their providers and pending waits at
 run end. Only native RPC output and the run's private host-failure map can

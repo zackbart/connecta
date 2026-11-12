@@ -2260,7 +2260,9 @@ The adapter trusts `ctx.access`, which Cloudflare attaches after validating
 the token against the Worker-level Access application's AUD. A nonempty trusted
 `ctx.access.aud` is required; a caller cannot supply this context through HTTP.
 `ctx.access.getIdentity()` supplies `user_uuid`, with `email` as fallback, in the
-stable `cloudflare-access` principal namespace. Missing identity, service
+stable `cloudflare-access` principal namespace. That lookup is a JS RPC call;
+the adapter disposes its result once it settles, including one that arrives
+after the deadline, and a failed disposer never changes the outcome. Missing identity, service
 identity, or unusable user ids refuse. Access service credentials can admit the
 request at the edge, but connecta requires a `cta_` token at `/agent/<pool>`
 for machine identity.
