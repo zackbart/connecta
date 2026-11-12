@@ -949,6 +949,16 @@ or their byte and text charges, including nested resource fields and metadata.
 Copies and guest-authored blocks keep the strict validation below. No program
 can mint a native URI.
 
+Data-only `{ format, data }` results and paged handles fail `invalid_args`:
+the message explains that native content is absent or not inline. Return a
+data value, or read a paged handle with `connecta.result` and reduce it first.
+Either refusal for a retained write result includes its result ID and a
+`connecta.result` paging call usable in a new program, including when the guest
+received inline data through automatic transfer. (The separate refusal for an
+unforwardable `contentResult` only says to page `result.contentResult`.) Do not repeat the write for
+output. Retention still follows `R4a`, including its refusal note when sealing
+cannot publish the bytes.
+
 Guest-authored `connecta.emit(block)` accepts exactly one block: `{ type: "text",
 text }` or `{ type: "image" | "audio", data /* base64 */, mimeType }`, every
 field a string, no extra fields, no `annotations`, no `_meta`, no sugar forms.

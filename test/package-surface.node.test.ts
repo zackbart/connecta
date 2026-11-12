@@ -452,6 +452,10 @@ export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ?
     const program = (block: string) => `${GUEST_API_DECLARATION}\nconnecta.emit(${block});`;
     expect(diagnostics(program('{ type: "image", data: "aGk=", mimeType: "image/png" }'))).toEqual([]);
     expect(diagnostics(program('{ type: "image", data: "aGk=" }'))).not.toEqual([]);
+    expect(diagnostics(program('{ format: "json", data: { count: 1 } }'))).not.toEqual([]);
+    expect(
+      diagnostics(program('{ format: "paged", valueFormat: "text", totalBytes: 100, truncated: true, hint: "page" }')),
+    ).not.toEqual([]);
     expect(diagnostics(program('{ type: "video", data: "aGk=", mimeType: "video/mp4" }'))).not.toEqual([]);
   }, 60_000);
 });

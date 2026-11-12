@@ -141,6 +141,9 @@ export function guestInitializer(): string {
         format: value.handle.valueFormat };
       // Nothing can name a read's bytes now, so the host may reclaim them.
       if (value.reclaim) try { await hostResult(value.transfer); } catch {}
+      // Keep a write's retained id for emit recovery without copying data back
+      // to the host or exposing an extra public field on the inline result.
+      else weakSet(nativeRefs, whole, { format: whole.format, data: null, resultId: value.handle.resultId });
       return whole;
     } catch { return value.handle; }
   }
