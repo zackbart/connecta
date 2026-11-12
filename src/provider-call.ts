@@ -61,6 +61,12 @@ export interface LogicalCall {
   dispatchBy?: number;
   /** A resource request was refused at its physical send because `dispatchBy` had passed. */
   deadlineRefused?: boolean;
+  /**
+   * The call's own request left at least once, whatever its ledger entry says:
+   * a remote MCP read's tools/call is auxiliary there, so `sent` never shows it.
+   * Credential and token requests never set it.
+   */
+  callRequestSent?: boolean;
 }
 
 export function providerCallContext(ctx: ConnectorContext, classification?: "read" | "write"): ConnectorContext {
@@ -162,8 +168,18 @@ export function assertDispatchTime(ctx: ConnectorContext | undefined, provider: 
 }
 
 /**
+ * Record that `ctx`'s call sent its own request, for a request its ledger files
+ * as auxiliary. Call it synchronously with that send.
+ */
+export function recordCallRequestSent(ctx: ConnectorContext): void {
+  const logical = recordedService(ctx, LogicalLedger);
+  if (logical) logical.callRequestSent = true;
+}
+
+/**
  * Proof that `call` ended on a dispatch-deadline refusal at its physical send
- * and sent nothing that could apply it: no resource request left. A write also
+ * and sent nothing that could apply it: neither its own request, on any earlier
+ * attempt (a replay after a 401, say), nor any other resource request. A write also
  * needs its one owning boundary to have marked the failure known-unsent
  * ({@link knownCallFailure}), so a wrapper that could send around the ledger
  * never borrows the proof.
@@ -171,6 +187,7 @@ export function assertDispatchTime(ctx: ConnectorContext | undefined, provider: 
 export function refusedUnsentAtDeadline(call: LogicalCall | undefined, error: unknown, write: boolean): boolean {
   return (
     call?.deadlineRefused === true &&
+    call.callRequestSent !== true &&
     !call.sent.some((request) => request.dispatched && !request.auxiliary) &&
     (!write || knownCallFailure(call, error))
   );

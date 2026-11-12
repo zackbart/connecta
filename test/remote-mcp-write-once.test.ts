@@ -18,7 +18,7 @@ import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { guestErrorText, guestFailureFacts, scriptedExecutor } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
-import { createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
+import { activitySink, createTestConnecta, makeRegistry, required, silentLogger } from "./helpers.js";
 
 beforeEach(() => {
   installOwnedTransport();
@@ -817,6 +817,47 @@ describe("remote MCP OAuth writes after a 401", () => {
       "Bearer FRESH_ACCESS_1",
     ]);
     expect(flow.refreshes()).toBe(1);
+  });
+
+  it("INV-9: a read sent once, answered 401, whose replay the dispatch deadline refuses after the refresh, is never recorded unsent", async () => {
+    // The refresh outlasts the call: the clock reads a minute later from the 401 on.
+    let jump = 0;
+    const real = Date.now.bind(Date);
+    vi.spyOn(Date, "now").mockImplementation(() => real() + jump);
+    const flow = setup({
+      oauth: true,
+      onUnauthorized: () => {
+        jump = 60_000;
+      },
+    });
+    await flow.seedOAuth();
+    flow.answers.set("list_items", 401);
+    const { activity, events } = activitySink();
+    const outcome = await new InvocationService(
+      flow.registry,
+      new CatalogService(flow.registry, BASE),
+      activity,
+    ).invoke(
+      "svc.list_items",
+      {},
+      {
+        source: "call_tool",
+        dispatchDeadline: {
+          at: Date.now() + 1_000,
+          refusal: (address) => ({ code: "timeout", message: `${address} was not sent.`, retryable: true }),
+        },
+      },
+    );
+    // The first send left with the stale grant; the refreshed replay never did.
+    expect(flow.refreshes()).toBe(1);
+    expect(flow.sent("list_items").map((entry) => entry.authorization)).toEqual([`Bearer ${STALE}`]);
+    // It went out once, so it is no gate refusal: dispatched, one attempt, never `cancelled`.
+    expect(outcome).toMatchObject({ ok: false, dispatched: true, attempts: 1 });
+    if (outcome.ok) throw new Error("expected the replay's refusal");
+    expect(outcome.error.message).not.toBe("svc.list_items was not sent.");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ attempts: 1 });
+    expect(events[0]!.outcome).not.toBe("cancelled");
   });
 
   it.each(["dead", "outage"] as const)(

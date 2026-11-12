@@ -35,6 +35,7 @@ import {
 import {
   assertDispatchTime,
   dispatchProviderRequest,
+  recordCallRequestSent,
   recordProviderResponse,
   knownProviderFailure,
   providerRequest,
@@ -473,6 +474,9 @@ export function remoteMcpTransport(
           if (request && entry) {
             if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
             dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+            // A read's entry is auxiliary; the call still went out, and a
+            // refused replay after it must not make it unsent.
+            recordCallRequestSent(request.ctx);
           }
         };
         trackSentRequest(ctx, input, init);
