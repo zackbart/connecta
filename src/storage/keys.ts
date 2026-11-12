@@ -261,6 +261,9 @@ export const responseCacheKeys = {
   refreshDigest: (id: string, config: string, partition: string) =>
     validateStorageKey(`response-cache:v1:${id}:refresh-digest:${config}:${partition}`),
   chunk: (entry: string, revision: string, index: number) => validateStorageKey(`${entry}:chunk:${revision}:${index}`),
+  /** A chunk's locator suffix: `entry(namespace, chunkSuffix(p, r, i))` is `chunk(entry(namespace, p), r, i)`. */
+  chunkSuffix: (partition: string, revision: string, index: number) =>
+    validateStorageKey(`${partition}:chunk:${revision}:${index}`),
 } as const satisfies Keyed;
 
 /** Seconds an OAuth callback's owner binding stays claimable. */

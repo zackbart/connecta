@@ -23,6 +23,7 @@
 // boolean, never a shared promise: a request that sees it unset runs the
 // statements itself (INV-7).
 import { KV_SCHEMA } from "./sql-schema.js";
+import { MAX_CATALOG_LOCATOR_SUFFIXES } from "../catalog-limits.js";
 import { Effect } from "effect";
 import type { NativeStorage, NativeActivityStore } from "../runtime/native-storage.js";
 import type { NativeSqlDriver } from "./sql-driver.js";
@@ -168,7 +169,7 @@ export function nativeSqlStorage(driver: NativeSqlDriver): NativeStorage {
     },
     catalogSnapshot(keys, generationKey, prefix, suffixes) {
       return Effect.gen(function* () {
-        if (keys.length < 1 || keys.length > 4 || suffixes.length > 3)
+        if (keys.length < 1 || keys.length > 4 || suffixes.length > MAX_CATALOG_LOCATOR_SUFFIXES)
           throw new RangeError("Catalog locator exceeds bounds");
         for (const key of [...keys, generationKey, prefix, ...suffixes]) validateStorageKey(key);
         yield* ensure();
