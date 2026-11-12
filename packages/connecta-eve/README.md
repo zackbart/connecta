@@ -4,7 +4,7 @@ Connect an Eve agent to a Connecta agent pool and load its endpoint instructions
 once per turn. The helper runs in the Eve app; the Connecta server
 runs separately. No `@zackbart/connecta` dependency is installed by this package.
 
-Requires **Node 24+** and **Eve 1.0.0-rc.4**. Development and consumer
+Requires **Node 24+** and **Eve 1.0.0-rc.10**. Development and consumer
 checks use that exact release candidate. The peer stays pinned during the RC
 period; later candidates and stable 1.0 need a compatibility check. Helper
 releases share Connecta's version and tag; choose the helper version matching
@@ -13,7 +13,7 @@ your server release.
 ## Install and add two files
 
 ```sh
-npm install @zackbart/connecta-eve eve@1.0.0-rc.4
+npm install @zackbart/connecta-eve eve@1.0.0-rc.10
 ```
 
 The server must declare your agent, admit it to the named pool and issue its
@@ -138,16 +138,35 @@ use consistent trusted policy data as with a dynamic pool selector. This policy
 controls what the app offers; Connecta still enforces endpoint authorization.
 No Eve dynamic-value unwrapping is required.
 
-## Upgrading to Eve 1.0.0-rc.4
+## Upgrading to Eve 1.0.0-rc.10
 
-Update the app to `eve@1.0.0-rc.4`, reinstall to refresh its lockfile, then
+Update the app to `eve@1.0.0-rc.10`, reinstall to refresh its lockfile, then
 rebuild and test it before deploying. The helper's connection, dynamic pool,
 instructions and approval APIs use Eve's stable entry points and require no
 authoring changes for this RC. Eve's
 [1.0 stability policy](https://eve.dev/docs/reference/typescript-api#stability-policy)
 does not cover `experimental` fields or internal modules.
 
-From rc.1, review Eve's
+From rc.4, review Eve's release notes for
+[rc.5](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.5) through
+[rc.10](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.10).
+These change app-owned code and deployments the helper does not manage:
+
+- **Subagent model choice.** `agentWithModel` is gone (rc.6). Replace
+  `export { agentWithModel as default } from "eve/tools/agent"` with
+  `export default agent({ models: { ... } })`, which lists the models a task may
+  run on.
+- **Workflow worlds.** New sessions claim their address atomically (rc.6). Eve
+  now requires the local world, Vercel Workflow, or `@workflow/world-postgres`
+  5.1.1 or later; run that package's `bootstrap` before deploying. Finish or end
+  sessions owned by Eve before 0.83 first.
+- **Schedules.** Agents deployed to Vercel run schedules with Vercel Schedules
+  instead of Cron Jobs (rc.10). Building a `withEve` app needs Vercel CLI
+  65.14.0 or later.
+- **Workflow tool state.** Reading or updating a `defineState()` handle inside a
+  workflow tool's `"use step"` function now throws (rc.9).
+
+From rc.1, also review Eve's
 [rc.2](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.2),
 [rc.3](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.3) and
 [rc.4](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.4) release notes.
@@ -301,7 +320,7 @@ custom audience, even when Vercel signed them.
 
 In a source checkout with dependencies installed and both packages built, run
 `pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
-on Node 24. This boots real Eve 1.0.0-rc.4 with a packed, installed helper against
+on Node 24. This boots real Eve 1.0.0-rc.10 with a packed, installed helper against
 seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
 meta, native, and native-plus-code surfaces. Native listings include three
 Connecta tools beyond the downstream count. A 1,001-tool native catalog must
@@ -341,7 +360,7 @@ export default connectaSkill({
 });
 ```
 
-This uses the pinned Eve 1.0.0-rc.4 public `defineSkill` and `defineDynamic`
+This uses the pinned Eve 1.0.0-rc.10 public `defineSkill` and `defineDynamic`
 APIs. Eve's deferred discovery searches the description; loading adds only
 instructions. It never installs tools. Use the same caller predicate and pool
 selector as the connection. A false or throwing predicate skips selection,
