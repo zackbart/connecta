@@ -4,7 +4,7 @@ import { authView } from "../../auth/native-call.js";
 import { authFlow, authCall, authInvoke, authValue, authMethod, authCatch } from "../../auth/native.js";
 import { isOAuthCredentialRequest } from "../../auth/oauth-token-response.js";
 import { deriveContext } from "../../derived-context.js";
-import { operationContext, viewServices, viewSignal } from "../../runtime/call.js";
+import { DownstreamResponseBytes, operationContext, viewServices, viewSignal } from "../../runtime/call.js";
 import { trackRemoteClientRequest } from "../../auth/downstream-client-metadata.js";
 import { Client, SdkHttpError, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import type { FetchLike, JSONRPCMessage, Transport } from "@modelcontextprotocol/client";
@@ -22,6 +22,7 @@ import { ConnectorCallError } from "../../errors.js";
 import { attachFailureFacts, failureRecord, labelErrorClass, logFailure } from "../../operator-record.js";
 import { learnedUrlRefusal } from "../../url-safety.js";
 import { RequestScope } from "../../runtime/request-scope.js";
+import { boundedToolCallResponse } from "./bounded-body.js";
 import { Context } from "effect";
 import { downstreamWriteContinuation } from "../../downstream-input-context.js";
 import type { RequestPrincipal } from "../../request-token.js";
@@ -240,6 +241,8 @@ export interface CallDispatch {
   ambiguous?: boolean;
   /** A further send of this call was stopped before it left. */
   resendRefused: boolean;
+  /** Its answer passed the response byte bound and was not read; the call fails with this. */
+  tooLarge?: DownstreamResponseTooLargeError;
   /**
    * Its entry in the call's ledger and logical call, recorded as it leaves
    * and is answered, with the context it was called under. A read is
@@ -281,6 +284,28 @@ function resendRefused(dispatch: CallDispatch): ConnectorCallError {
     writeOutcome: "unknown",
   });
 }
+
+/**
+ * A `tools/call` answer past the response byte bound, stopped at the bound.
+ * The request was sent and answered, so a write's outcome is unknown.
+ */
+export class DownstreamResponseTooLargeError extends ConnectorCallError {
+  constructor(connectorId: string, tool: string, limit: number, write: boolean) {
+    super(
+      "connector_call_failed",
+      `Connector "${connectorId}"'s MCP server answered "${tool}" with more than ${limit} bytes, ` +
+        "so connecta stopped reading the answer there. " +
+        (write
+          ? "This write was sent and answered, so whether it took effect is unknown: check the target " +
+            "before repeating it, and never repeat it to see its output."
+          : "Ask for less: narrow the call with the tool's filters, field selection, pagination or a " +
+            "smaller range, then call again."),
+      { retryable: false, ...(write ? { writeOutcome: "unknown" as const } : {}) },
+    );
+    this.name = "DownstreamResponseTooLargeError";
+  }
+}
+labelErrorClass(DownstreamResponseTooLargeError, "DownstreamResponseTooLargeError");
 
 /** Lost tracking cannot prove whether an earlier message already sent a write. */
 function missingDispatch(): ConnectorCallError {
@@ -377,6 +402,7 @@ export function remoteMcpTransport(
       return { ...init, headers };
     };
     const responseOwner = Context.get(viewServices(ctx), RequestScope);
+    const responseBytes = Context.get(viewServices(ctx), DownstreamResponseBytes);
     const initiatingSignal = ctx.signal;
     ctx = deriveContext(operationContext(ctx), signal ? { signal } : {});
     if (opts._transportFactory) return opts._transportFactory(ctx);
@@ -586,6 +612,29 @@ export function remoteMcpTransport(
             rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES,
             rpc.id,
             init?.signal,
+          ])) as Response;
+        }
+        // A tool's answer is bounded as it streams: one past the result store
+        // can never be read whole, and buffering it can exhaust the isolate.
+        if (
+          toolCall &&
+          (typeof toolCall.id === "string" || typeof toolCall.id === "number") &&
+          response.ok &&
+          response.status !== 202 &&
+          response.status !== 204
+        ) {
+          const tool =
+            skillObject(toolCall.params) && typeof toolCall.params.name === "string" ? toolCall.params.name : "";
+          return (yield authCall(boundedToolCallResponse, [
+            response,
+            responseBytes,
+            toolCall.id,
+            init?.signal,
+            () => {
+              const error = new DownstreamResponseTooLargeError(id, tool, responseBytes, flight?.write === true);
+              if (flight) flight.tooLarge = error;
+              return error;
+            },
           ])) as Response;
         }
         return response;

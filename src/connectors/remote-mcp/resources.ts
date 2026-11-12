@@ -17,6 +17,7 @@ import { carryFailureFacts } from "../../operator-record.js";
 import { resourceUriMatchesTemplates, type ResourceTemplateRefusal } from "../resource-uri.js";
 import type { ConnectorContext, ConnectorSkill, ConnectorSkillResourceContents } from "../../types.js";
 import type { RemoteMcpRuntime, RemoteMcpShared } from "./runtime.js";
+import { OwnedBlocks, blocksResponse } from "./bounded-body.js";
 import type { ConnectionState } from "./connection.js";
 import { downstreamCallError, hasSdkPayload, ownAbortReason, requiresAuthorization, withheldAs } from "./errors.js";
 
@@ -189,9 +190,7 @@ export async function boundedSkillResponse(
   };
   signal?.addEventListener("abort", abort, { once: true });
   let bytes = 0;
-  const chunks: Uint8Array[] = [];
-  let buffer: Uint8Array | undefined;
-  let buffered = 0;
+  const held = new OwnedBlocks();
   const sse = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
   // Decode an entire SSE message once. Its byte buffer has no per-chunk or
   // per-line objects, and preserves embedded resource BOMs on workerd too.
@@ -312,20 +311,7 @@ export async function boundedSkillResponse(
       bytes += chunk.value.byteLength;
       if (bytes > limit) throw exceeded();
       if (!sse) {
-        // Network chunk count and backing-buffer size are untrusted. Retain
-        // only owned fixed-size blocks, never one object per incoming byte.
-        for (let offset = 0; offset < chunk.value.byteLength;) {
-          buffer ??= new Uint8Array(65_536);
-          const size = Math.min(buffer.length - buffered, chunk.value.byteLength - offset);
-          buffer.set(chunk.value.subarray(offset, offset + size), buffered);
-          offset += size;
-          buffered += size;
-          if (buffered === buffer.length) {
-            chunks.push(buffer);
-            buffer = undefined;
-            buffered = 0;
-          }
-        }
+        held.push(chunk.value);
         continue;
       }
       const terminal = consume(chunk.value);
@@ -336,17 +322,7 @@ export async function boundedSkillResponse(
         "connector_call_failed",
         "Downstream Skills stream ended without a terminal RPC response.",
       );
-    if (buffer && buffered) chunks.push(buffer.subarray(0, buffered));
-    return new Response(
-      new ReadableStream<Uint8Array>({
-        pull(controller) {
-          const chunk = chunks.shift();
-          if (chunk) controller.enqueue(chunk);
-          else controller.close();
-        },
-      }),
-      { status: response.status, statusText: response.statusText, headers: response.headers },
-    );
+    return blocksResponse(held.take(), response);
   } catch (error) {
     await reader.cancel().catch(() => {});
     throw error;
