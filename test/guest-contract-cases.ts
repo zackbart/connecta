@@ -895,13 +895,15 @@ export async function checkDispatchGateAfterAuth(executor: Executor): Promise<vo
  * The final gate after catalog resolution crosses the time. Only a jump in the
  * clock models it on every runtime: workerd's clock stands still through synchronous
  * work, the case the timers cannot see. The write's earlier gate catches the same
- * crossing, so the read is what this gate adds.
+ * crossing, so the read is what this gate adds. A call that starts after the time
+ * is spent never resolves: the run deadline refuses it first.
  */
 export async function checkDispatchGateAfterCatalog(executor: Executor): Promise<void> {
-  const calls: string[] = [];
   const now = Date.now.bind(Date);
   const clockJump = vi.spyOn(Date, "now");
-  try {
+  const run = async (first: string) => {
+    clockJump.mockImplementation(now);
+    const calls: string[] = [];
     const stalled: Connector = {
       id: "stalled",
       kind: "api",
@@ -929,15 +931,23 @@ export async function checkDispatchGateAfterCatalog(executor: Executor): Promise
             return { retryable: error.retryable, details: error.details.details };
           }
         };
-        return { read: await failure("stalled.read"), write: await failure("stalled.write") };
+        return { first: await failure(${JSON.stringify(first)}), next: await failure("stalled.read") };
       }`,
     });
     expect(out.isError, required(out.content[0]).text).toBeFalsy();
-    expect(required(out.structuredContent).result).toMatchObject({
-      read: { retryable: true, details: { operation: "stalled.read", stage: "dispatch gate" } },
-      write: { retryable: true, details: { operation: "stalled.write", stage: "write gate" } },
-    });
     expect(calls).toEqual([]);
+    return required(out.structuredContent).result;
+  };
+  try {
+    const next = { retryable: true, details: { operation: "stalled.read", stage: "run deadline" } };
+    expect(await run("stalled.read")).toMatchObject({
+      first: { retryable: true, details: { operation: "stalled.read", stage: "dispatch gate" } },
+      next,
+    });
+    expect(await run("stalled.write")).toMatchObject({
+      first: { retryable: true, details: { operation: "stalled.write", stage: "write gate" } },
+      next,
+    });
   } finally {
     clockJump.mockRestore();
   }
@@ -4243,7 +4253,8 @@ return fs;
       expect(outcome.value.error).toMatchObject({
         code: "timeout",
         retryable: false,
-        details: { stage: "write gate" },
+        // The run's time was spent before the write could even resolve.
+        details: { stage: "run deadline" },
         writes: { succeeded: 1, failed: 0, unknown: 0 },
       });
       expect((outcome.value.error as { message: string }).message).toContain("not sent");

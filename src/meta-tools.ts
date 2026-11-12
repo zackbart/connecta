@@ -54,7 +54,7 @@ import {
   type ResultIdentity,
 } from "./registry.js";
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
-import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs } from "./timeout.js";
+import { DEFAULT_PROBE_TIMEOUT_MS, dispatchFloorMs, normalizeTimeoutMs } from "./timeout.js";
 import { isWriteLike } from "./tool-safety.js";
 import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
@@ -1208,9 +1208,11 @@ function metaToolsForRequest(
       const ceilingAt = (opts.requestStartedAt ?? now) + responseCeilingMs;
       const remainingMs = ceilingAt - now;
       const timeoutMs = Math.min(normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs, Math.max(1, remainingMs));
+      // No more than this left could not cover one round trip (L3).
+      const floorMs = Math.max(1, dispatchFloorMs(responseCeilingMs));
       const pastCeiling = (): CallErrorDetails => ({
         code: "timeout",
-        message: `This request used its ${responseCeilingMs}ms response ceiling before ${boundedEchoText(call.address, 512)} started, so it was not sent. Send it again.`,
+        message: `This request had ${Math.max(0, ceilingAt - Date.now())}ms of its ${responseCeilingMs}ms response ceiling left when ${boundedEchoText(call.address, 512)} was to start, too little to finish, so it was not sent. Send it again.`,
         retryable: true,
         details: {
           operation: boundedEchoText(call.address, 512),
@@ -1232,8 +1234,8 @@ function metaToolsForRequest(
             timeoutMs,
             // Auth or queueing spent the time, and a 1 ms deadline could still lose
             // to a dispatch. A known "not sent" beats an answer the client won't hear.
-            ...(remainingMs <= 0 ? { refusal: pastCeiling() } : {}),
-            dispatchDeadline: { at: ceilingAt, refusal: pastCeiling },
+            ...(remainingMs <= floorMs ? { refusal: pastCeiling() } : {}),
+            dispatchDeadline: { at: ceilingAt - floorMs, refusal: pastCeiling },
             ...(opts.requestSignal !== undefined ? { requestSignal: opts.requestSignal } : {}),
             unwrapResult: call.resultMode === "value",
             ...(opts.downstreamInput

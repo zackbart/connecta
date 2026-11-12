@@ -657,7 +657,7 @@ direct calls; and `input_required_invalid`, `input_required_limit`,
 | `input_required_unsupported` | a downstream asked for input; a read gets `nextAction` for the equivalent direct call, a write is an unknown outcome (`writeOutcome: "unknown"`) to reconcile before any fresh call                   | false         |
 | `rate_limited`               | the downstream reported a rate limit                                                                                                                                                                  | true          |
 | `unavailable`                | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose                     | true          |
-| `timeout`                    | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs; at `write gate` or `dispatch gate`, it was not sent (`L3`)                                              | per operation |
+| `timeout`                    | a call or sandbox deadline expired; details name operation, stage, elapsedMs, and deadlineMs; at `run deadline`, `write gate` or `dispatch gate`, it was not sent (`L3`)                              | per operation |
 | `program_error`              | guest JavaScript failed; `details.name`, `line`, and a fixed repair hint describe it                                                                                                                  | false         |
 | `cancelled`                  | the run ended while this call was in flight (`E5`)                                                                                                                                                    | false         |
 | `connector_call_failed`      | anything else the connector threw                                                                                                                                                                     | per message   |
@@ -1090,8 +1090,20 @@ before the response ceiling below; scoped `search` and `describe`
 are bounded the same way. Those clocks start before the executor's, so they end
 early rather than late. A read that reaches its cap fails with a retryable
 `timeout` the program can catch, so `Promise.allSettled` keeps every result that
-finished. Caught or not, it is the read's failure, not a sandbox timeout. A
-later read gets the one-tick deadline that is left, and fails the same way.
+finished. Caught or not, it is the read's failure, not a sandbox timeout.
+
+A call too late to finish is not sent at all. Once no more than the dispatch
+floor is left before reads stop — 100 ms, or a tenth of a run deadline shorter
+than one second, less than one vendor round trip — every later `connecta.call`,
+read or write, and every `connecta.read` is refused before it resolves, as a
+retryable `timeout` at `details.stage: "run deadline"`. Its message says the run
+is out of time, that the call was not sent, and to return what the program has
+and do the rest in a new program with fewer calls or smaller pages; its details
+add `remainingMs` and `minimumMs`. A loop over paged reads ends there: catch the
+`timeout`, stop paging, and return the pages already read with where to resume.
+The refusal spends a host call but no write budget, adds nothing to `writes`, and
+records a `cancelled` event of no attempts (`V2`), because nothing downstream
+timed out.
 The cap ends the work as well as the wait: the read's downstream signal aborts
 before the program hears `timeout`, and a listing other callers still wait on is
 cancelled once the last of them leaves. Storage operations cannot be withdrawn
@@ -1113,12 +1125,19 @@ to `writes`. Send it again in a new program. If an earlier write in the run land
 a program that lets this refusal end it is not retryable as a whole (below): send
 only what is left.
 
+The write gate and the check below apply the same dispatch floor as the run
+deadline above: each refuses a call with no more than the floor left, not just
+one past the time, so no call reaches its connector on the last tick.
+
 The same time is checked once more as the last step before a call reaches its
 connector, for reads and writes alike, because resolution, admission or auth can
 spend it after the write gate, and synchronous work can cross it before a timer
 runs. A call refused there is a retryable `timeout` at
 `details.stage: "dispatch gate"` and was not sent. A write refused there had
 already passed its gate, so it spends write budget and counts in `writes.failed`.
+Refusals at the run deadline and both gates record a `cancelled` event of no
+attempts with `errorCode: "timeout"`, never a `timeout` outcome, and log no
+call failure.
 
 Above the run deadline sits the response ceiling, `execute.watchdogMs` (55 s by
 default, above both executors' own deadlines). Connecta enforces it outside the
@@ -1304,7 +1323,10 @@ event.
 **V2.** Each event carries `connectorId`, `toolName`, `address`, `source`,
 `outcome` (`success`, `error`, `timeout`, `cancelled`), `durationMs`,
 `attempts`, and `errorCode` when the call _failed_ — plus request, actor, and
-server identity. Rows written before
+server identity. A `timeout` outcome is a deadline that expired on a call
+connecta tried. A call refused unsent because its deadline left too little time
+(`L3`) is instead `outcome: "cancelled"`, `attempts: 0`, `errorCode: "timeout"`;
+every other recorded call counts at least one attempt. Rows written before
 [#672](https://github.com/zackbart/connecta/issues/672) may also carry the
 `paused` and `approved` outcomes, `source: "resume_execution"`, and an
 `approval` scope; readers still render them, and nothing emits them. Typed codes derive an optional `friction`: `tool_not_found`,

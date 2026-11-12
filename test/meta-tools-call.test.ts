@@ -77,8 +77,22 @@ describe("a direct call with no response time left", () => {
     });
     expect(error.message).toContain("not sent");
     expect(error).not.toHaveProperty("uncertainCall");
+    // Under the 100 ms floor is too little as well: nothing could answer in time.
+    const nearly = createMetaTools(registry, BASE, {
+      responseCeilingMs: 1_000,
+      requestStartedAt: Date.now() - 950,
+      activity,
+    });
+    const late = await nearly[route]({ address, args: {} });
+    expect(late.structuredContent).toMatchObject({
+      error: { code: "timeout", retryable: true, details: { stage: "response ceiling" } },
+    });
     expect(calls).toEqual([]);
-    expect(events).toMatchObject([{ outcome: "timeout" }]);
+    // Nothing timed out downstream: cancelled events of no attempts, the reason as their code.
+    expect(events).toMatchObject([
+      { outcome: "cancelled", attempts: 0, errorCode: "timeout" },
+      { outcome: "cancelled", attempts: 0, errorCode: "timeout" },
+    ]);
   });
 
   // Synchronous work crosses the ceiling before its timer can run, so only a
@@ -137,7 +151,9 @@ describe("a direct call with no response time left", () => {
       expect(error).not.toHaveProperty("writeOutcome");
       expect(events).toMatchObject([
         {
-          outcome: "timeout",
+          outcome: "cancelled",
+          attempts: 0,
+          errorCode: "timeout",
           source: native ? "native" : route === "callTool" ? "call_tool" : "call_destructive_tool",
         },
       ]);

@@ -733,10 +733,14 @@ round-trip such strings through their escaped JSON representation.
 A per-call `timeoutMs` covers catalog resolution, admission, and connector
 execution under one deadline, cut to the response ceiling, `execute.watchdogMs`
 (55 s by default) from the request's arrival, so the client gets a typed result
-rather than its own transport timeout. A call with no time left is refused before it
-resolves, as a retryable `timeout` at `details.stage: "response ceiling"` that says it
-was not sent. A call whose time runs out during resolution, admission or auth gets the
-same refusal from a check that is the last step before its connector. See [`L3`](./code-mode.md#cancellation-and-limits). The admission queue's own timeout may expire
+rather than its own transport timeout. A call with no more than the dispatch floor
+left (100 ms, or a tenth of a ceiling shorter than one second: less than one vendor
+round trip) is refused before it resolves, as a retryable `timeout` at
+`details.stage: "response ceiling"` that says it was not sent. A call whose time runs
+down to the floor during resolution, admission or auth gets the same refusal from a
+check that is the last step before its connector. Either refusal records a
+`cancelled` activity event with `attempts: 0` and `errorCode: "timeout"`, since
+nothing downstream timed out. See [`L3`](./code-mode.md#cancellation-and-limits). The admission queue's own timeout may expire
 sooner but cannot extend the call deadline. Result processing happens after that
 deadline ends, because a completed downstream call must not turn into a
 retryable timeout while Connecta prepares its response.

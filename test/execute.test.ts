@@ -23,7 +23,7 @@ import type {
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { deferred, scriptedExecutor } from "./fixtures/misc.js";
-import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
+import { activitySink, calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -352,12 +352,57 @@ describe("execute_code run deadline", () => {
       }),
       silentLogger,
       undefined,
-      { watchdogMs: 2_000, requestStartedAt: Date.now() - 1_700 },
+      { watchdogMs: 2_000, requestStartedAt: Date.now() - 1_500 },
     );
     const out = await execute({ code: "async () => {}" });
     expect(out.isError, JSON.stringify(out.structuredContent)).toBeFalsy();
     expect(required(seen)).toMatchObject({ code: "timeout", retryable: true });
     expect(required(required(seen).details).deadlineMs).toBeLessThanOrEqual(300);
+  });
+
+  it("L3: with no more than the dispatch floor left, calls and reads are refused unsent and attempt nothing", async () => {
+    const callTool = vi.fn(() => new Promise<never>(() => {}));
+    const readResource = vi.fn(() => new Promise<never>(() => {}));
+    const { activity, events } = activitySink();
+    const startedAt = Date.now();
+    const seen: CallErrorDetails[] = [];
+    const out = await createExecuteTool(
+      makeRegistry([{ ...hanging, callTool, readResource }]),
+      "https://example.test",
+      // Reads stop 100 ms before this deadline, and the floor is 100 ms.
+      running(1_000, async (fns) => {
+        while (Date.now() < startedAt + 860);
+        seen.push((await fns.call!("slow.read", {}).catch(failure)) as CallErrorDetails);
+        seen.push((await fns.call!("slow.update", {}).catch(failure)) as CallErrorDetails);
+        seen.push((await fns.read!("slow://item").catch(failure)) as CallErrorDetails);
+        return "kept";
+      }),
+      silentLogger,
+      activity,
+    )({ code: "async () => {}" });
+    expect(out.isError, JSON.stringify(out.structuredContent)).toBeFalsy();
+    expect(out.structuredContent).toMatchObject({ result: "kept" });
+    expect(out.structuredContent).not.toHaveProperty("writes");
+    for (const [index, operation] of ["slow.read", "slow.update", "connecta.read"].entries()) {
+      const error = required(seen[index]);
+      expect(error).toMatchObject({
+        code: "timeout",
+        retryable: true,
+        details: { operation, stage: "run deadline", minimumMs: 100 },
+      });
+      expect(required(error.details).remainingMs).toBeLessThanOrEqual(100);
+      expect(error.message).toContain("was not sent");
+      expect(error.message).toContain("Return the results you already have");
+    }
+    // Nothing went downstream, so nothing timed out there: no attempt, no failure.
+    expect(callTool).not.toHaveBeenCalled();
+    expect(readResource).not.toHaveBeenCalled();
+    expect(
+      events.map(({ address, outcome, attempts, errorCode }) => ({ address, outcome, attempts, errorCode })),
+    ).toEqual([
+      { address: "slow.read", outcome: "cancelled", attempts: 0, errorCode: "timeout" },
+      { address: "slow.update", outcome: "cancelled", attempts: 0, errorCode: "timeout" },
+    ]);
   });
 
   it("L3: a run with no time left is refused before admission, and never starts", async () => {

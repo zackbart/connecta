@@ -54,10 +54,35 @@ describe("one deadline over resolve, admission, and dispatch", () => {
     vi.useRealTimers();
   });
 
-  it("refuses at the final gate, unsent, and frees its permit", async () => {
+  it("refuses at the final gate, unsent, as no attempt and no failure, and frees its permit", async () => {
     const call = vi.fn(async () => "sent");
-    const registry = limited(call);
-    const service = new InvocationService(registry, new CatalogService(registry, BASE));
+    const logged: unknown[] = [];
+    const logger = {
+      ...silentLogger,
+      warn: (...line: unknown[]) => void logged.push(line),
+      error: (...line: unknown[]) => void logged.push(line),
+    };
+    const registry = makeRegistry(
+      [
+        connectorWith({
+          id: "limited",
+          kind: "api",
+          callAdmission: { rules: [{ maxConcurrency: 1 }] },
+          tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+          call,
+        }),
+      ],
+      { logger },
+    );
+    const events: Array<{ outcome: string; attempts: number; errorCode?: string }> = [];
+    const service = new InvocationService(registry, new CatalogService(registry, BASE), {
+      recordTool: recordToolActivity,
+      sink: { record: (event) => void events.push(event) },
+      actor: { kind: "test" },
+      requestId: "r",
+      serverInfo: { name: "t", version: "0" },
+      logger: silentLogger,
+    });
     const refusal = vi.fn((address: string) => ({
       code: "timeout",
       message: `${address} was not sent.`,
@@ -78,6 +103,13 @@ describe("one deadline over resolve, admission, and dispatch", () => {
     expect(refused).toMatchObject({ error: { message: "limited.read was not sent." } });
     expect(refusal).toHaveBeenCalledWith("limited.read");
     expect(call).not.toHaveBeenCalled();
+    // Nothing reached the connector, so nothing timed out downstream: a cancelled
+    // event of no attempts, its reason kept as the code, and no failure line.
+    expect(refused.attempts).toBe(0);
+    expect(events.map(({ outcome, attempts, errorCode }) => ({ outcome, attempts, errorCode }))).toEqual([
+      { outcome: "cancelled", attempts: 0, errorCode: "timeout" },
+    ]);
+    expect(JSON.stringify(logged)).not.toContain("call failed");
     // maxConcurrency 1: a permit the refusal kept would hang this.
     await expect(service.invoke("limited.read", {}, { source: "call_tool", timeoutMs: 1_000 })).resolves.toMatchObject({
       ok: true,

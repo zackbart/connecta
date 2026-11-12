@@ -77,3 +77,16 @@ export function withAbortableTimeout<T>(
     timeoutError: new ConnectorCallError("timeout", `${label} timed out after ${ms}ms`),
   });
 }
+
+/** The most time a call may have left before its deadline and still be refused as too little. */
+const MIN_DISPATCH_BUDGET_MS = 100;
+
+/**
+ * The least time before a deadline of `deadlineMs` that a downstream call needs
+ * to be worth sending: 100 ms, or a tenth of a deadline shorter than one
+ * second. One vendor round trip takes longer than that, so a call with less left
+ * would only spend downstream work, and a write would leave an unknown outcome.
+ */
+export function dispatchFloorMs(deadlineMs: number): number {
+  return Math.min(MIN_DISPATCH_BUDGET_MS, Math.max(0, Math.floor(deadlineMs / 10)));
+}
