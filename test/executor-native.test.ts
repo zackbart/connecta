@@ -128,6 +128,21 @@ describe.skipIf(!inWorkerd)("Worker native resource ownership", () => {
     await h.executor.close?.();
   });
 
+  it("INV-7: a run disposes its RPC result once, before the entrypoint and Loader, despite a failed disposer", async () => {
+    const h = await harness();
+    const pending = runEdge(executorProgram(h.executor, "async () => 1", []));
+    await vi.waitFor(() => expect(h.evaluations()).toBe(1));
+    const disposed = vi.fn(() => {
+      h.events.push("result disposed");
+      throw new Error("broken result disposer");
+    });
+    h.resolve(Object.defineProperty({ result: { rows: [1, 2] }, logs: ["read"] }, Symbol.dispose, { value: disposed }));
+    expect(await pending).toEqual({ result: { rows: [1, 2] }, logs: ["read"] });
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(h.events).toEqual(["load", "result disposed", "entry disposed", "worker disposed"]);
+    await h.executor.close?.();
+  });
+
   it("INV-7: a released Worker detaches never-settling host calls and refuses late dispatch", async () => {
     const h = await harness();
     const called = vi.fn(() => new Promise<never>(() => {}));

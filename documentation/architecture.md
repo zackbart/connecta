@@ -2163,7 +2163,8 @@ The Worker SDK prepares source and dispatchers against an inert loader. The
 native host then acquires the actual Loader handle and RPC entrypoint with
 `Effect.acquireRelease`, awaits the native RPC Promise, and races the run with
 its lease's cancellation Deferred. A resource Scope owns entrypoint-before-
-Loader disposal on every exit, including never-settling evaluation. Release
+Loader disposal on every exit, including never-settling evaluation; a settled
+evaluation disposes its RPC result first. Release
 closes that Scope synchronously before returning the permit; a failed disposer
 cannot skip the next one. Forwarders lose their providers and pending waits at
 run end. Only native RPC output and the run's private host-failure map can

@@ -460,7 +460,7 @@ const {
                   dispose,
                 );
                 yield* open();
-                return yield* Effect.tryPromise({
+                const result = yield* Effect.tryPromise({
                   try: () =>
                     Reflect.apply(
                       Reflect.get(entrypoint, "evaluate"),
@@ -469,6 +469,11 @@ const {
                     ) as Promise<WorkerRunResult>,
                   catch: (error) => error,
                 });
+                // The RPC result owns any stubs the guest returned; disposing it
+                // keeps them from extending the Dynamic Worker's context. The
+                // plain fields read below stay intact.
+                if (typeof result === "object" && result !== null) yield* dispose(result);
+                return result;
               }).pipe(Scope.provide(resources), Effect.ensuring(Effect.sync(endUpstream)));
               const result = yield* evaluation;
               const outcome: WorkerRunResult = result;
