@@ -30,7 +30,12 @@ function unauthorized(reason: AuthDenialReason): AuthResult {
 function unavailable(
   problem: "access_context_unavailable" | "access_audience_invalid" | "identity_unavailable",
   reason: AuthDenialReason = problem === "identity_unavailable" ? "access_identity_unavailable" : problem,
-  identityLookup?: { outcome: "timeout" | "rejected"; durationMs: number; cold: boolean; inFlight: number },
+  identityLookup?: {
+    outcome: "timeout" | "rejected" | "cancelled";
+    durationMs: number;
+    cold: boolean;
+    inFlight: number;
+  },
 ): AuthResult {
   return {
     ok: false,
@@ -241,7 +246,7 @@ export function cloudflareAccessAuth(options?: CloudflareAccessOptions): Inbound
           ])) as Record<string, unknown> | undefined;
         } catch {
           return unavailable("identity_unavailable", undefined, {
-            outcome: rejected ? "rejected" : "timeout",
+            outcome: request.signal.aborted ? "cancelled" : rejected ? "rejected" : "timeout",
             durationMs: Math.max(0, Math.round(performance.now() - started)),
             cold,
             inFlight: lookups,

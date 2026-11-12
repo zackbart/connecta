@@ -1,6 +1,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { authenticationSnapshot } from "../src/auth-admission.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
+import { failureRecord } from "../src/operator-record.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { InboundAuthRuntimeContext } from "../src/types.js";
 import { makeDeployment, mcpRpc } from "./fixtures/http.js";
@@ -436,6 +437,63 @@ describe("cloudflareAccessAuth", () => {
 });
 
 describe("Access identity lookup recovery", () => {
+  it.each(["lookup", "backoff", "deadline"] as const)(
+    "INV-7: distinguishes cancellation during %s from an identity deadline",
+    async (phase) => {
+      vi.useFakeTimers();
+      try {
+        const controller = new AbortController();
+        const dispose = vi.fn();
+        let resolve!: (identity: Record<string, unknown>) => void;
+        const getIdentity = vi.fn(
+          () =>
+            new Promise<Record<string, unknown>>((done) => {
+              resolve = done;
+            }),
+        );
+        if (phase === "backoff") getIdentity.mockRejectedValueOnce(new Error("private lookup failure"));
+        const pending = cloudflareAccessAuth().authorize(
+          new Request(`${BASE}/mcp`, { signal: controller.signal }),
+          BASE,
+          { access: { aud: "app", getIdentity } },
+        );
+        await vi.advanceTimersByTimeAsync(1);
+        expect(getIdentity).toHaveBeenCalledOnce();
+        if (phase !== "deadline") controller.abort(new Error("private cancellation reason"));
+        await vi.advanceTimersByTimeAsync(phase === "deadline" ? 5000 : 0);
+        const result = await pending;
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.response.status).toBe(503);
+          expect(result.response.headers.get("Retry-After")).toBe("1");
+          expect(result.response.headers.get("Cache-Control")).toBe("no-store");
+          expect(result.response.headers.has("WWW-Authenticate")).toBe(false);
+          await expect(result.response.json()).resolves.toEqual({
+            error: "Cloudflare Access identity unavailable",
+            problem: "identity_unavailable",
+          });
+          expect(failureRecord({}, result.response)).toEqual({
+            reason: "access_identity_unavailable",
+            identityLookup: {
+              outcome: phase === "deadline" ? "timeout" : "cancelled",
+              durationMs: expect.any(Number),
+              cold: expect.any(Boolean),
+              inFlight: expect.any(Number),
+            },
+          });
+        }
+        expect(getIdentity).toHaveBeenCalledOnce();
+        if (phase !== "backoff") {
+          resolve(Object.defineProperty({ user_uuid: "late-human" }, Symbol.dispose, { value: dispose }));
+          await vi.advanceTimersByTimeAsync(0);
+          expect(dispose).toHaveBeenCalledOnce();
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("INV-4: 20 concurrent admitted contexts recover transient rejection without crossing identities", async () => {
     vi.useFakeTimers();
     try {
@@ -484,6 +542,10 @@ describe("Access identity lookup recovery", () => {
         if (!result.ok) {
           expect(result.response.status).toBe(503);
           expect(result.response.headers.get("Retry-After")).toBe("1");
+          expect(failureRecord({}, result.response)).toMatchObject({
+            reason: "access_identity_unavailable",
+            identityLookup: { outcome: "rejected" },
+          });
           expect(await result.response.text()).not.toContain("private vendor failure");
         }
       }

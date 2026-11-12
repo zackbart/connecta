@@ -243,7 +243,7 @@ export function errorLabel(failure: unknown): string | undefined {
 // Facts attached by identity
 
 interface IdentityLookupFact {
-  outcome: "timeout" | "rejected";
+  outcome: "timeout" | "rejected" | "cancelled";
   durationMs: number;
   cold: boolean;
   inFlight: number;
@@ -252,7 +252,7 @@ interface IdentityLookupFact {
 function identityLookupFact(value: IdentityLookupFact | undefined): IdentityLookupFact | undefined {
   if (
     !value ||
-    (value.outcome !== "timeout" && value.outcome !== "rejected") ||
+    (value.outcome !== "timeout" && value.outcome !== "rejected" && value.outcome !== "cancelled") ||
     count(value.durationMs, 86_400_000) === undefined ||
     typeof value.cold !== "boolean" ||
     count(value.inFlight, 1_000) === undefined
