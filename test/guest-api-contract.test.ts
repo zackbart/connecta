@@ -526,7 +526,13 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
       const executor = required(contractCase.runDeadline ? workerReadDeadlineExecutor : workerExecutor);
       const config = caseConfig(contractCase);
       const outcome = await harness.run(executor, contractCase.code, config);
-      const follow = contractCase.follows ? await harness.run(executor, contractCase.follows, config) : undefined;
+      const follow = contractCase.follows
+        ? await harness.run(
+            executor,
+            typeof contractCase.follows === "function" ? contractCase.follows(outcome) : contractCase.follows,
+            config,
+          )
+        : undefined;
       contractCase.check(outcome, harness.state, follow);
     });
   }

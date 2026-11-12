@@ -300,7 +300,13 @@ describe("guest API contract (QuickJS executor)", () => {
       const base = contractCase.runDeadline ? readDeadlineExecutor : executor;
       const config = caseConfig(contractCase);
       const outcome = await harness.run(base, contractCase.code, config);
-      const follow = contractCase.follows ? await harness.run(base, contractCase.follows, config) : undefined;
+      const follow = contractCase.follows
+        ? await harness.run(
+            base,
+            typeof contractCase.follows === "function" ? contractCase.follows(outcome) : contractCase.follows,
+            config,
+          )
+        : undefined;
       contractCase.check(outcome, harness.state, follow);
     });
   }

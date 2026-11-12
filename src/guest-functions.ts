@@ -57,7 +57,7 @@ export const GUEST_FUNCTIONS = [
   {
     name: "emit",
     budget: "emission",
-    declaration: "emit(block: Block | Native | Exclude<Result, Paged>): PromiseLike<void>;",
+    declaration: "emit(block: Block | Native | (Exclude<Result, Paged> & { content: Native[] })): PromiseLike<void>;",
   },
   /** Tells the host a program read a result field off an unawaited call. */
   {

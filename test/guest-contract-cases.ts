@@ -1234,7 +1234,7 @@ export interface ContractCase {
   name: string;
   code: string;
   /** A second program run on the same executor, for cross-run clauses. */
-  follows?: string;
+  follows?: string | ((outcome: ContractOutcome) => string);
   /** Set for the cases that need a read cap and a run deadline apart: a 2 s executor. */
   runDeadline?: true;
   /** `execute.watchdogMs`, the response ceiling, for cases that reach it. */
@@ -1644,11 +1644,14 @@ function contractConnectors(state: ContractState): Connector[] {
       id: "shapes",
       kind: "api",
       async listTools() {
-        return ["rowsOfBytes", "textOfBytes"].map((name) => readOnly(name));
+        return ["rowsOfBytes", "textOfBytes", "writeTextOfBytes"].map((name) =>
+          readOnly(name, { annotations: { readOnlyHint: name !== "writeTextOfBytes" } }),
+        );
       },
       async callTool(name, args) {
         const bytes = (args as { bytes: number }).bytes;
-        if (name === "textOfBytes") return "t".repeat(bytes);
+        count(`shapes.${name}`);
+        if (name === "textOfBytes" || name === "writeTextOfBytes") return "t".repeat(bytes);
         return { rows: Array.from({ length: Math.ceil(bytes / 100) }, (_, i) => ({ i, pad: "x".repeat(80) })) };
       },
     },
@@ -1881,6 +1884,56 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
     },
   },
+  {
+    clauses: "M1",
+    name: "emit explains data-only results and paged handles",
+    code: `async () => {
+      const data = await connecta.call("shapes.rowsOfBytes", { bytes: 100 });
+      const paged = await connecta.call("shapes.textOfBytes", { bytes: 1100000 });
+      const errors = [];
+      for (const value of [data, paged]) {
+        try { await connecta.emit(value); } catch (e) { errors.push({ code: e.code, message: e.message }); }
+      }
+      return errors;
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(false);
+      expect(outcome.result).toEqual([
+        { code: "invalid_args", message: expect.stringContaining("no native content. Return the value") },
+        {
+          code: "invalid_args",
+          message: expect.stringContaining(
+            "paged result: native content is not inline. Read it with connecta.result, reduce it first",
+          ),
+        },
+      ]);
+      expect(outcome.text).not.toContain("got undefined");
+    },
+  },
+  ...[300000, 1100000].map((bytes): ContractCase => ({
+    clauses: "M1, R4a, W1",
+    name: `emit failure preserves retained write output across runs (${bytes} bytes)`,
+    code: `async () => {
+      const value = await connecta.call("shapes.writeTextOfBytes", { bytes: ${bytes} });
+      await connecta.emit(value);
+    }`,
+    follows(outcome) {
+      const message = (outcome.value.error as { message: string }).message;
+      const match = required(/connecta.result\(("[^"\n]+"),/.exec(message) ?? undefined);
+      return `async () => {
+        const page = await connecta.result(${match[1]}, { offset: 0, maxBytes: 50 });
+        return { text: page.text, hasMore: page.hasMore };
+      }`;
+    },
+    check(outcome, state, follow) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({ code: "invalid_args", retryable: false });
+      expect(outcome.text).toContain("Do not repeat the write for output");
+      expect(follow?.isError).toBe(false);
+      expect(follow?.result).toEqual({ text: "t".repeat(50), hasMore: true });
+      expect(state.calls["shapes.writeTextOfBytes"]).toBe(1);
+    },
+  })),
   {
     clauses: "S5, M1, M2, M8",
     name: "INV-3: emit(call result) delivers original native rich blocks with metadata",
