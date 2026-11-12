@@ -289,7 +289,7 @@ function resendRefused(dispatch: CallDispatch): ConnectorCallError {
  * A `tools/call` answer past the response byte bound, stopped at the bound.
  * The request was sent and answered, so a write's outcome is unknown.
  */
-export class DownstreamResponseTooLargeError extends ConnectorCallError {
+class DownstreamResponseTooLargeError extends ConnectorCallError {
   constructor(connectorId: string, tool: string, limit: number, write: boolean) {
     super(
       "connector_call_failed",
