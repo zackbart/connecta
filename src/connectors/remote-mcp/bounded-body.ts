@@ -15,10 +15,11 @@ export interface BodyBound {
   /** Each SSE event id the stream carries, for a resumption to find its call. */
   onEventId?: ((id: string) => void) | undefined;
   /**
-   * False bounds an event stream as one body, for a reader that parses the
-   * whole answer (an OAuth step's): its Content-Type cannot widen the bound.
+   * True bounds every 2xx body whole, 202 included, whatever its Content-Type,
+   * for a reader that parses the whole answer (an OAuth step's): neither its
+   * status nor an event-stream type can turn the bound into a prefix.
    */
-  events?: boolean;
+  whole?: boolean;
 }
 
 /**
@@ -30,16 +31,16 @@ export interface BodyBound {
  * stream passes events on as they arrive and bounds each one to `limit`; past
  * it, the source is cancelled and, when `rpcId` is known, the stream ends with
  * a JSON-RPC error answering it, because the SDK settles a request only from
- * an answer, never from a broken body. With `events: false`, every successful
- * body is bounded whole, as JSON is.
+ * an answer, never from a broken body. With `whole`, every 2xx body is
+ * bounded whole, as JSON is, and only a non-2xx body ends as a prefix.
  */
 export function boundedMcpBody(response: Response, bound: BodyBound): Response {
   const source = response.body;
   if (!source) return response;
-  const parsed = response.ok && response.status !== 202 && response.status !== 204;
+  const parsed = response.ok && (bound.whole === true || (response.status !== 202 && response.status !== 204));
   const sse =
     parsed &&
-    bound.events !== false &&
+    bound.whole !== true &&
     response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
   if (parsed && !sse && Number(response.headers.get("content-length")) > bound.limit) {
     void source.cancel().catch(() => {});

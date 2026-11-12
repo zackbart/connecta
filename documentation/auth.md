@@ -1850,11 +1850,15 @@ Discovery documents run to a few KiB, but may list thousands of
 was sent, including the scope drawn from that list. A token response carries a
 few tokens. A JWKS holds at most 16 keys and follows no redirect.
 
-The bound applies to a successful answer, whatever its `Content-Type`; an
-event stream is bounded as one body. A discovery or registration HTTP error
-body is read to at most its first 64 KiB and then ended, so a large error page
-still lets the SDK fall back to its next metadata location. A token endpoint's
-answer is held to the token bound whatever its status.
+Each request is bounded by the OAuth step it performs, never by its URL: a
+discovery GET or registration POST sent to the MCP endpoint's own URL, which a
+downstream may advertise as its resource metadata or registration endpoint,
+gets that step's bound. The bound applies to every 2xx answer, `202` included,
+whatever its `Content-Type`; an event stream is bounded as one body. A
+discovery or registration non-2xx body is read to at most its first 64 KiB and
+then ended, so a large error page still lets the SDK fall back to its next
+metadata location. A token endpoint's answer is held to the token bound
+whatever its status.
 
 An oversized answer fails its step with `OAuthResponseTooLargeError`: a
 non-retryable `connector_call_failed` that names the connector and the step

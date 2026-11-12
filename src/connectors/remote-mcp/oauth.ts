@@ -62,7 +62,7 @@ const OAUTH_RESPONSE_BYTES: Readonly<Record<OAuthStep, number>> = {
  * only, as `details.host` carries them. One per flow, never shared.
  */
 interface OAuthTrail {
-  /** The flow's latest request, if it was not to the MCP endpoint. */
+  /** The flow's latest request. */
   last?: { step: OAuthStep; host: string; httpStatus?: number; retryAfterMs?: number } | undefined;
   /** The origin a client registration was last sent to. */
   registration?: string;
@@ -76,31 +76,30 @@ interface OAuthTrail {
 
 /**
  * Record each OAuth request on `trail` before sending it, and bound its answer
- * to its step's byte limit as it streams. Pinned against
- * `@modelcontextprotocol/client` 2.3.1: every request the SDK sends anywhere
- * but the MCP endpoint is a discovery GET, a token request (a form carrying
+ * to its step's byte limit as it streams.
+ *
+ * Only the SDK's `auth()` sends through this fetch, so every request is an
+ * OAuth step, classified by what it does, never by where it goes: a
+ * downstream may advertise its own MCP URL as resource metadata or a
+ * registration endpoint. Pinned against `@modelcontextprotocol/client`
+ * 2.3.1: each is a discovery GET, a token request (a form carrying
  * `grant_type`), or the JSON POST of dynamic client registration.
  */
-function tracedOAuthFetch(connectorId: string, trail: OAuthTrail, endpoint: URL, baseFetch: FetchLike): FetchLike {
+function tracedOAuthFetch(connectorId: string, trail: OAuthTrail, baseFetch: FetchLike): FetchLike {
   return authMethod((input: string | URL, init: RequestInit | undefined) =>
     authFlow<Response>(function* () {
       if (trail.exceeded) throw trail.exceeded;
       const url = new URL(input);
-      if (url.href === endpoint.href) {
-        trail.last = undefined;
-      } else {
-        const body = init?.body;
-        const step: OAuthStep =
-          (init?.method ?? "GET").toUpperCase() === "GET"
-            ? "discovery"
-            : body instanceof URLSearchParams ||
-                (typeof body === "string" && new URLSearchParams(body).has("grant_type"))
-              ? "token request"
-              : "client registration";
-        trail.last = { step, host: url.origin };
-        if (step === "client registration") trail.registration = url.origin;
-      }
-      const leg = trail.last;
+      const body = init?.body;
+      const step: OAuthStep =
+        (init?.method ?? "GET").toUpperCase() === "GET"
+          ? "discovery"
+          : body instanceof URLSearchParams || (typeof body === "string" && new URLSearchParams(body).has("grant_type"))
+            ? "token request"
+            : "client registration";
+      const leg: NonNullable<OAuthTrail["last"]> = { step, host: url.origin };
+      trail.last = leg;
+      if (step === "client registration") trail.registration = url.origin;
       let response: Response;
       try {
         response = (yield authCall(baseFetch, [input, init])) as Response;
@@ -109,19 +108,18 @@ function tracedOAuthFetch(connectorId: string, trail: OAuthTrail, endpoint: URL,
         if (error instanceof OAuthResponseTooLargeError) trail.exceeded = error;
         throw error;
       }
-      if (!leg) return byteReadResponse(response);
       leg.httpStatus = response.status;
       const wait = retryAfterMs(response.headers);
       if (wait !== undefined) leg.retryAfterMs = wait;
-      // An error body stays a prefix, for the SDK to discard or quote; a
-      // successful one is parsed whole, so past the bound its step fails.
-      const limit = OAUTH_RESPONSE_BYTES[leg.step];
+      // An error body stays a prefix, for the SDK to discard or quote; every
+      // 2xx body, 202 included, is parsed whole, so past the bound its step fails.
+      const limit = OAUTH_RESPONSE_BYTES[step];
       return byteReadResponse(
         boundedMcpBody(response, {
           limit,
           rpcId: undefined,
-          events: false,
-          exceeded: () => (trail.exceeded = new OAuthResponseTooLargeError(connectorId, leg.step, limit)),
+          whole: true,
+          exceeded: () => (trail.exceeded = new OAuthResponseTooLargeError(connectorId, step, limit)),
         }),
       );
     }),
@@ -264,7 +262,6 @@ export function remoteMcpOAuth(
   const boundOAuthFlows = (
     ctx: ConnectorContext,
     transport: StreamableHTTPClientTransport,
-    endpoint: URL,
     /** The request's and connection's signals: only their reasons pass as written. */
     signals: readonly (AbortSignal | undefined)[],
     renewalSignal: (response: Response) => AbortSignal | undefined,
@@ -297,7 +294,6 @@ export function remoteMcpOAuth(
                 tracedOAuthFetch(
                   id,
                   trail,
-                  endpoint,
                   authMethod((input: string | URL, init: RequestInit | undefined) =>
                     authFlow<Response>(function* () {
                       rt.trackSentRequest(ctx, input, init);
@@ -548,7 +544,7 @@ export function remoteMcpOAuth(
               const internals = t as unknown as {
                 _fetchWithInit?: FetchLike;
               };
-              const traced = tracedOAuthFetch(id, trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
+              const traced = tracedOAuthFetch(id, trail, internals._fetchWithInit ?? fetch);
               const exchange = new Proxy(t, {
                 get: (target: StreamableHTTPClientTransport, key: string | symbol) =>
                   key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
