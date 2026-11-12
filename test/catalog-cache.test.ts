@@ -21,6 +21,7 @@ import { claimDiscoveryProbe, type HealthSlot } from "../src/discovery-health.js
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { Registry } from "../src/registry.js";
+import { requestReads } from "../src/runtime/request-scope.js";
 import { runEdge } from "../src/runtime/run.js";
 import { sqlStorage, type SqlStatement, type SqlDriver } from "../src/storage/sql.js";
 import { sentSecretsForRequest } from "../src/sent-secrets.js";
@@ -46,10 +47,14 @@ afterEach(async () => {
 
 // One portable suite, real D1 in workerd and the same SQL KV on node:sqlite.
 async function storage(): Promise<KVStorage> {
+  return (await database())();
+}
+/** Opens a separate storage instance over one database each call, as each isolate does. */
+async function database(): Promise<() => KVStorage> {
   try {
     const module = "cloudflare:test";
     const { env } = (await import(/* @vite-ignore */ module)) as { env: { STORAGE_DB: D1Database } };
-    return d1Storage(env.STORAGE_DB);
+    return () => d1Storage(env.STORAGE_DB);
   } catch {
     const module = "node:sqlite";
     const { DatabaseSync } = (await import(/* @vite-ignore */ module)) as typeof import("node:sqlite");
@@ -74,7 +79,7 @@ async function storage(): Promise<KVStorage> {
         }
       },
     };
-    return sqlStorage(driver, "sqlite");
+    return () => sqlStorage(driver, "sqlite");
   }
 }
 async function fixture(
@@ -108,6 +113,7 @@ async function fixture(
     | "stalled"
     | "renamed" = "ok";
   let resolvedTokens = 0;
+  const stalled = new Set<() => void>();
   const requests: string[] = [];
   const server = httpDownstream((mcp) =>
     mcp.registerTool("read", { annotations: { readOnlyHint: true } }, async () => ({ content: [] })),
@@ -126,11 +132,15 @@ async function fixture(
       const token = request.headers.get("authorization")!.slice(7);
       if (mode === "transient") return new Response(null, { status: 503 });
       if (mode === "unauthorized") return new Response(null, { status: 401 });
+      // Held until its caller gives up, or until the downstream recovers: a
+      // listing already sent when the test leaves "stalled" is then answered,
+      // however early it was dispatched.
       if (mode === "stalled")
-        await new Promise((_, reject) => {
+        await new Promise<void>((resolve, reject) => {
           const signal = init?.signal;
           if (signal?.aborted) reject(signal.reason);
           signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          stalled.add(resolve);
         });
       if (mode === "error" || (mode === "partial" && body.params?.cursor))
         return new Response(`Refused ${token}`, { status: 403 });
@@ -257,6 +267,9 @@ async function fixture(
     listings: () => listings,
     mode: (value: typeof mode) => {
       mode = value;
+      if (value === "stalled") return;
+      for (const release of stalled) release();
+      stalled.clear();
     },
   };
 }
@@ -1577,6 +1590,133 @@ describe("stale catalog listing", () => {
     await f.read(root);
     expect(f.listings()).toBe(2);
     expect((await chunks()).length).toBe(published);
+  });
+
+  describe("revision hints", () => {
+    // Two isolates over one database: each has its own storage instance, so
+    // its own revision hints and request memos, and the same deployment key.
+    async function isolates() {
+      const open = await database();
+      let tool = "first";
+      let listings = 0;
+      const downstream = httpDownstream(
+        (mcp) => mcp.registerTool(tool, { annotations: { readOnlyHint: true } }, async () => ({ content: [] })),
+        {
+          url: "https://hinted.test/mcp",
+          catalogTtlMs: 60_000,
+          capture: async (request) => {
+            if (request.method === "POST" && ((await request.json()) as { method?: string }).method === "tools/list")
+              listings++;
+          },
+        },
+      );
+      const id = `hinted_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+      // workerd shares one database across this file; leave no rows behind
+      // for suites that scan every row. Runs before node:sqlite closes.
+      closers.unshift(async () => {
+        const store = open();
+        for (const key of await store.list("")) if (key.includes(id)) await store.delete(key);
+      });
+      const isolate = () => {
+        const store = open();
+        const connector = remoteMcp(id, {
+          url: "https://hinted.test/mcp",
+          fetch: downstream.fetch,
+          auth: { type: "headers" as const, headers: { Authorization: `Bearer ${TOKEN_A}` } },
+        });
+        const registry = makeRegistry([connector], {
+          storage: store,
+          credentialVault: new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(9)))),
+        });
+        // One request: a new request scope whose connector scope closes when it
+        // ends. Its read memo stays open, as until the request owner closes.
+        const search = async (requestScope: object = {}) => {
+          try {
+            const result = await new CatalogService(registry, BASE, { requestScope }).search({
+              query: "first second",
+              connector: id,
+            });
+            return result.entries.map((entry) => entry.tool.name);
+          } finally {
+            await connector.closeScope?.(registry.contextFor(id, BASE, requestScope));
+          }
+        };
+        return { store, search };
+      };
+      const chunks = async (store: KVStorage) =>
+        (await store.list("response-cache:")).filter((key) => key.includes(id) && key.includes(":chunk:"));
+      return {
+        id,
+        isolate,
+        chunks,
+        listings: () => listings,
+        setTool: (name: string) => {
+          tool = name;
+        },
+      };
+    }
+
+    it("INV-8: reads another isolate's republished revision, never the chunks this isolate's hint names", async () => {
+      const d = await isolates();
+      const time = clock();
+      const mine = d.isolate();
+      const theirs = d.isolate();
+      expect(await mine.search()).toEqual([expect.stringContaining("first")]);
+      // A warm request from the hint lists nothing.
+      expect(await mine.search()).toEqual([expect.stringContaining("first")]);
+      expect(d.listings()).toBe(1);
+      const previous = new Map<string, string>();
+      for (const key of await d.chunks(mine.store)) previous.set(key, (await mine.store.get(key))!);
+      expect(previous.size).toBeGreaterThan(0);
+      // Past the TTL, the other isolate lists a changed catalog and publishes
+      // a new revision, removing the previous revision's chunks.
+      time.now += 61_000;
+      d.setTool("second");
+      expect(await theirs.search()).toEqual([expect.stringContaining("second")]);
+      expect(d.listings()).toBe(2);
+      // Restore the superseded chunks, complete and intact: this isolate's
+      // locating read selects them by its hint, beside the new manifest.
+      for (const [key, value] of previous) await theirs.store.set(key, value, { ttlSeconds: 600 });
+      const request = {};
+      expect(await mine.search(request)).toEqual([expect.stringContaining("second")]);
+      expect(d.listings()).toBe(2);
+      // The obsolete revision's chunks are released once the manifest selects
+      // another, not held until the request closes.
+      for (const key of previous.keys()) expect(requestReads(request).take(mine.store, key)).toBeUndefined();
+    });
+
+    it("releases hinted chunks a missing manifest leaves unread before the request closes", async () => {
+      const d = await isolates();
+      const mine = d.isolate();
+      await mine.search();
+      await mine.search();
+      const chunks = await d.chunks(mine.store);
+      expect(chunks.length).toBeGreaterThan(0);
+      // Drop the manifest but keep its chunks: the locating read still selects
+      // them by the hint, and the slot's miss must let them go.
+      for (const key of (await mine.store.list("response-cache:")).filter(
+        (key) => key.includes(d.id) && !key.includes(":chunk:") && !key.endsWith(":generation"),
+      ))
+        await d.isolate().store.delete(key);
+      const request = {};
+      expect(await mine.search(request)).toEqual([expect.stringContaining("first")]);
+      expect(d.listings()).toBe(2);
+      for (const key of chunks) expect(requestReads(request).take(mine.store, key)).toBeUndefined();
+    });
+
+    it("INV-8: a hinted revision with a missing chunk is never served, and lists again", async () => {
+      const d = await isolates();
+      const mine = d.isolate();
+      await mine.search();
+      await mine.search();
+      expect(d.listings()).toBe(1);
+      for (const key of await d.chunks(mine.store)) await d.isolate().store.delete(key);
+      expect(await mine.search()).toEqual([expect.stringContaining("first")]);
+      expect(d.listings()).toBe(2);
+      // The relisted catalog serves warm again.
+      expect(await mine.search()).toEqual([expect.stringContaining("first")]);
+      expect(d.listings()).toBe(2);
+    });
   });
 
   it("INV-7 INV-8: refreshes past the probe deadline under defer, in a scope of its own", async () => {
