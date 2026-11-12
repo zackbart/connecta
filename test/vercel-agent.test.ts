@@ -324,7 +324,7 @@ describe("Vercel workload verification", () => {
     },
   );
 
-  it("INV-7: cancels an oversized JWKS body and an interrupted body read", async () => {
+  it("INV-7: cancels an oversized JWKS body, and a stalled one at the fetch's own deadline, not the caller's", async () => {
     const value = await token();
     const cancelled = vi.fn();
     const fetcher = mockKeys();
@@ -339,25 +339,36 @@ describe("Vercel workload verification", () => {
       ),
     );
     expect((await auth().authorize(request(value), BASE)).ok).toBe(false);
-    expect(cancelled).toHaveBeenCalled();
-    const controller = new AbortController();
-    fetcher.mockImplementationOnce(async (_url, init) => {
-      expect(init?.signal?.aborted).toBe(false);
-      return new Response(
-        new ReadableStream({
-          start() {
-            controller.abort();
-          },
-          cancel: cancelled,
-        }),
-      );
-    });
-    const req = new Request(request(value), { signal: controller.signal });
-    expect((await auth().authorize(req, BASE)).ok).toBe(false);
-    expect(cancelled).toHaveBeenCalledTimes(2);
+    expect(cancelled).toHaveBeenCalledTimes(1);
+    vi.useFakeTimers();
+    try {
+      const controller = new AbortController();
+      let ownSignal: AbortSignal | undefined;
+      fetcher.mockImplementationOnce(async (_url, init) => {
+        ownSignal = init?.signal ?? undefined;
+        return new Response(
+          new ReadableStream({
+            start() {
+              controller.abort();
+            },
+            cancel: cancelled,
+          }),
+        );
+      });
+      const req = new Request(request(value), { signal: controller.signal });
+      // The caller that left is answered at once; the fetch keeps its own deadline.
+      expect((await auth().authorize(req, BASE)).ok).toBe(false);
+      expect(ownSignal?.aborted).toBe(false);
+      expect(cancelled).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(4_001);
+      expect(ownSignal?.aborted).toBe(true);
+      expect(cancelled).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("INV-7: cancels a pending stream read without poisoning the next request's key cache", async () => {
+  it("INV-7: a caller leaving mid-read neither cancels nor discards the fetch, whose keys serve the next request", async () => {
     const provider = auth();
     const value = await token();
     const controller = new AbortController();
@@ -366,13 +377,26 @@ describe("Vercel workload verification", () => {
     const readStarted = new Promise<void>((resolve) => {
       reading = resolve;
     });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let closed!: () => void;
+    const delivered = new Promise<void>((resolve) => {
+      closed = resolve;
+    });
+    const body = new TextEncoder().encode(JSON.stringify({ keys: [{ ...publicFirst, kid: "first" }] }));
     const fetcher = mockKeys();
     fetcher.mockResolvedValueOnce(
       new Response(
         new ReadableStream(
           {
-            pull() {
+            async pull(stream) {
               reading();
+              await gate;
+              stream.enqueue(body);
+              stream.close();
+              closed();
             },
             cancel: cancelled,
           },
@@ -384,9 +408,12 @@ describe("Vercel workload verification", () => {
     await readStarted;
     controller.abort();
     expect((await pending).ok).toBe(false);
-    expect(cancelled).toHaveBeenCalled();
+    release();
+    await delivered;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cancelled).not.toHaveBeenCalled();
     expect((await provider.authorize(request(value), BASE)).ok).toBe(true);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });
 
