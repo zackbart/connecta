@@ -2978,10 +2978,13 @@ exchange, refresh, registration, revocation, metadata, or MCP requests.
 
 When the authorization endpoint's origin is Google's issuer,
 `https://accounts.google.com`, every consent URL also carries
-`access_type=offline` and `prompt=consent`. Without them Google returns no
-refresh token, and the grant stops working when its first access token
-expires, about an hour after consent. This applies to `remoteMcp()` and `api()`
-alike, with pre-registered or discovered clients.
+`access_type=offline` and `prompt=consent`. `access_type=offline` is what makes
+Google return a refresh token on first authorization; without it the grant
+stops working when its first access token expires, about an hour after
+consent. `prompt=consent` makes Google issue a refresh token again when a user
+who already granted access reconnects or consents again, which it otherwise
+omits. This applies to `remoteMcp()` and `api()` alike, with pre-registered or
+discovered clients.
 
 Operator values win. Each default is added only when `authorizationParams`
 sets no parameter of that name, in any case, and the authorization endpoint URL
@@ -3411,8 +3414,8 @@ The pre-registered client path supports Google's exact issuer and
 advertises that method, PKCE S256, and `https://oauth2.googleapis.com/token`.
 The personal example needs no `authorizationParams`: Connecta's
 [Google offline-access defaults](#google-offline-access-defaults) add
-`access_type=offline` to obtain a refresh token and `prompt=consent` to show
-consent again when reconnecting. See
+`access_type=offline` to obtain a refresh token and `prompt=consent` so a
+reconnect also receives one. See
 [Google's offline-access requirements](https://developers.google.com/identity/protocols/oauth2/web-server#offline).
 Connecta retains the stored refresh token when a successful refresh response
 omits `refresh_token`, allowing later refreshes with that same token. A grant

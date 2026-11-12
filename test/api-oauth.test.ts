@@ -494,11 +494,8 @@ describe("api() oauth authorization start", () => {
     expect(restarted.authorizationUrl).not.toBe(started.authorizationUrl);
   });
 
-  it.each([
-    [undefined, { access_type: "offline", prompt: "consent" }],
-    [{ prompt: "select_account" }, { access_type: "offline", prompt: "select_account" }],
-    [{ access_type: "online" }, { access_type: "online", prompt: "consent" }],
-  ])("defaults a Google consent URL to offline access unless the operator sets %j", async (params, expected) => {
+  const GOOGLE_AUTHORIZE = "https://accounts.google.com/o/oauth2/v2/auth";
+  const googleConsent = async (authorizationEndpoint: string, params?: Record<string, string>) => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(null, { status: 599 })),
@@ -506,16 +503,55 @@ describe("api() oauth authorization start", () => {
     const connector = api("google", {
       oauth: {
         ...OAUTH,
-        authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+        authorizationEndpoint,
         tokenEndpoint: "https://oauth2.googleapis.com/token",
         ...(params ? { authorizationParams: params } : {}),
       },
       tools: [],
     });
     const registry = makeRegistry([connector]);
-    const url = new URL((await connector.startAuth!(registry.contextFor("google", BASE))).authorizationUrl!);
-    expect(url.searchParams.getAll("access_type")).toEqual([expected.access_type]);
-    expect(url.searchParams.getAll("prompt")).toEqual([expected.prompt]);
+    return new URL((await connector.startAuth!(registry.contextFor("google", BASE))).authorizationUrl!);
+  };
+
+  it.each([
+    [undefined, { access_type: ["offline"], prompt: ["consent"] }],
+    [{ prompt: "select_account" }, { access_type: ["offline"], prompt: ["select_account"] }],
+    [{ access_type: "online" }, { access_type: ["online"], prompt: ["consent"] }],
+    // Names match in any case: the operator's variant replaces the default, never joins it.
+    [{ Access_Type: "online" }, { access_type: [], Access_Type: ["online"], prompt: ["consent"] }],
+    [{ PROMPT: "none" }, { access_type: ["offline"], prompt: [], PROMPT: ["none"] }],
+  ])("defaults a Google consent URL to offline access unless the operator sets %j", async (params, expected) => {
+    const url = await googleConsent(GOOGLE_AUTHORIZE, params);
+    for (const [name, values] of Object.entries(expected)) expect(url.searchParams.getAll(name)).toEqual(values);
+  });
+
+  it("keeps a Google parameter already on the authorization endpoint URL instead of the default", async () => {
+    const url = await googleConsent(`${GOOGLE_AUTHORIZE}?access_type=online`);
+    expect(url.searchParams.getAll("access_type")).toEqual(["online"]);
+    expect(url.searchParams.getAll("prompt")).toEqual(["consent"]);
+  });
+
+  it.each([
+    ["https://ACCOUNTS.Google.com/o/oauth2/v2/auth", true],
+    ["https://accounts.google.com:443/o/oauth2/v2/auth", true],
+    ["https://accounts.google.com.evil.test/o/oauth2/v2/auth", false],
+    ["https://accounts.google.com:8443/o/oauth2/v2/auth", false],
+    ["https://accounts.google.com./o/oauth2/v2/auth", false],
+    ["https://evil.test/accounts.google.com", false],
+    ["https://evil.test/auth?next=https://accounts.google.com", false],
+  ])("applies Google defaults only to Google's exact origin: %s → %s", async (endpoint, google) => {
+    const url = await googleConsent(endpoint);
+    expect(url.searchParams.getAll("access_type")).toEqual(google ? ["offline"] : []);
+    expect(url.searchParams.getAll("prompt")).toEqual(google ? ["consent"] : []);
+  });
+
+  it("refuses a Google authorization endpoint carrying userinfo before any consent", () => {
+    expect(() =>
+      api("google", {
+        oauth: { ...OAUTH, authorizationEndpoint: "https://x@accounts.google.com/o/oauth2/v2/auth" },
+        tools: [],
+      }),
+    ).toThrow(/authorizationEndpoint must be an absolute https URL/);
   });
 
   it("hands a pending consent back when a vault seals it", async () => {

@@ -471,12 +471,21 @@ describe("downstream OAuth best practice", () => {
   });
 
   it.each([
-    ["static", { type: "oauth", client: { issuer: ISSUER, clientId: "static-client", clientSecret: SECRET } }],
-    ["dcr", { type: "oauth", scope: "read" }],
-  ] as const)("INV-5: adds no Google defaults to a non-Google %s consent", async (_path, auth) => {
-    const flow = setup({ auth: auth as RemoteMcpAuth });
+    ["static", ISSUER],
+    ["dcr", ISSUER],
+    ["static", "https://accounts.google.com.evil.test"],
+    ["dcr", "https://accounts.google.com.evil.test"],
+    ["dcr", "https://accounts.google.com:8443"],
+  ] as const)("INV-5: adds no Google defaults to a non-Google %s consent at %s", async (path, issuer) => {
+    const flow = setup({
+      issuer,
+      auth:
+        path === "static"
+          ? { type: "oauth", client: { issuer, clientId: "static-client", clientSecret: SECRET } }
+          : { type: "oauth", scope: "read" },
+    });
     const url = new URL((await flow.start()).authorizationUrl!);
-    expect(url.origin).toBe(ISSUER);
+    expect(url.origin).toBe(issuer);
     expect(url.searchParams.has("access_type")).toBe(false);
     expect(url.searchParams.has("prompt")).toBe(false);
   });

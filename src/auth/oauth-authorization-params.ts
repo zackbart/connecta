@@ -54,9 +54,10 @@ export function authorizationParamsFor(value: unknown, path: string): ReadonlyAr
 const GOOGLE_AUTHORIZATION_ORIGIN = "https://accounts.google.com";
 
 /**
- * Google issues no refresh token without `access_type=offline`, and reissues
- * one on a repeat consent only with `prompt=consent`. Without both, a grant
- * dies with its first access token.
+ * `access_type=offline` makes Google return a refresh token on first
+ * authorization; without it a grant dies with its first access token.
+ * `prompt=consent` makes Google issue one again when an already-granted user
+ * reconnects or re-consents.
  */
 const GOOGLE_DEFAULTS: ReadonlyArray<readonly [string, string]> = [
   ["access_type", "offline"],
