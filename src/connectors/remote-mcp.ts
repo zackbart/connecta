@@ -122,7 +122,10 @@ export type RemoteMcpAuth =
       client?: RemoteOAuthClient;
       /** Space-separated default scopes when the resource server does not advertise them. */
       scope?: string;
-      /** Non-secret browser authorization parameters; protocol fields are reserved. Changes require reconnect. */
+      /**
+       * Non-secret browser authorization parameters; protocol fields are reserved. Changes require reconnect.
+       * Google's authorization server also gets `access_type=offline` and `prompt=consent` unless set here.
+       */
       authorizationParams?: Record<string, string>;
     };
 

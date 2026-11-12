@@ -22,6 +22,7 @@ import {
   registerAuth,
 } from "../native.js";
 import { discoveryIssuer } from "../oauth-grant.js";
+import { consentAuthorizationParams } from "../oauth-authorization-params.js";
 import type { KvOAuthProvider } from "../downstream-oauth.js";
 import { GRANT, type Grant, epochOf, parsed, plainObject } from "./grant-store.js";
 import { aborted } from "./refresh-coordinator.js";
@@ -323,7 +324,10 @@ export const consentMethods = {
       function* (this: KvOAuthProvider) {
         if (this.signal?.aborted) return;
         if (!this.allowAuthorization) throw this.authorizationRefused();
-        for (const [name, value] of this.clientOptions?.authorizationParams ?? []) {
+        for (const [name, value] of consentAuthorizationParams(
+          authorizationUrl,
+          this.clientOptions?.authorizationParams ?? [],
+        )) {
           authorizationUrl.searchParams.set(name, value);
         }
         this.assertCredentialFree(

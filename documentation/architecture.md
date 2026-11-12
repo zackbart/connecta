@@ -1321,6 +1321,9 @@ Downstream OAuth browser extensions use `auth.authorizationParams` on
 `remoteMcp()` and `oauth.authorizationParams` on `api()`. Both snapshot and
 validate the string map at construction, reserve protocol/security parameters
 case-insensitively, and add entries only when publishing the consent URL.
+`consentAuthorizationParams` (`src/auth/oauth-authorization-params.ts`) adds
+Google's `access_type=offline` and `prompt=consent` defaults there for any
+name the operator left unset; they never join a binding.
 Remote MCP includes canonical sorted entries in its existing client configuration
 binding (omitted and empty maps remain equivalent); static API OAuth retains
 its existing token-endpoint binding. The [auth contract](./auth.md#browser-authorization-parameters)

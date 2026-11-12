@@ -116,7 +116,9 @@ export interface ApiOAuthConfig {
   pkce?: boolean;
   /**
    * Extra authorization-request parameters, such as a provider's
-   * `access_type`. The grant's own parameters cannot be overridden.
+   * `access_type`. The grant's own parameters cannot be overridden. Google's
+   * authorization server also gets `access_type=offline` and `prompt=consent`
+   * unless set here.
    */
   authorizationParams?: Record<string, string>;
   /**
