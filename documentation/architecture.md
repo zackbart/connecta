@@ -646,7 +646,10 @@ hint never addresses another's entry, and a hint holds no catalog data. When a
 slot has one, its locating read also selects that revision's first eight chunks
 under the generation it reads, and a warm call reads manifest and chunks in one
 statement. Chunks are used only when the manifest names the hinted revision and
-every chunk of the read is present; otherwise they are read as before. Chunk
+every chunk of the read is present; otherwise they are read as before. Hinted
+chunks a read leaves unused, those of a revision the manifest no longer names
+or of a slot the SDK no longer reads after a hit, leave the request's memo when
+that read ends, however it ends, rather than when the request closes. Chunk
 keys carry the revision, so a catalog another isolate republished is read as
 its own revision, never through a stale hint. Fingerprint verification and the
 fresh generation and credential fence still decide acceptance. A new isolate,
@@ -2465,9 +2468,10 @@ Memoized:
 - catalog generation reads that only locate an entry, accepted or refused by a
   fresh fence;
 - catalog chunks the locating read selected by a revision hint, each taken
-  once and then dropped from the memo. A chunk key names its revision, whose
-  content never changes, and the manifest, fingerprint and fresh fence decide
-  whether it is served;
+  once and then dropped from the memo, with any the catalog read leaves unused
+  discarded when it ends. A chunk key names its revision, whose content never
+  changes, and the manifest, fingerprint and fresh fence decide whether it is
+  served;
 - the credential reads behind connector status, drift and the operator UI card,
   which only label a view. Only the built-in vault with its original `getAll`
   and `metadata` shares a read; a custom vault, a subclass, or an instance
@@ -2497,8 +2501,10 @@ grant, Cloudflare Access with `accessTokens()`, a D1 activity sink settled
 through `waitUntil`, the operator UI and QuickJS standing in for Dynamic Worker
 startup. "Cold isolate" is a new deployment instance over the populated
 database. The ceilings, measured value plus about 10% D1 headroom and exact
-downstream counts, live in its `BUDGETS` table. Measured in November 2026, with
-warm requests reading chunks through the isolate's revision hint:
+downstream counts, live in its `BUDGETS` table. Every warm catalog request must
+also read its chunks inside the locating read, since headroom alone would admit
+a separate chunk read. Measured in November 2026, with warm requests reading
+chunks through the isolate's revision hint:
 
 | Request                                  | Downstream | D1 round trips | SQL statements |
 | ---------------------------------------- | ---------: | -------------: | -------------: |

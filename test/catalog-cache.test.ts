@@ -21,6 +21,7 @@ import { claimDiscoveryProbe, type HealthSlot } from "../src/discovery-health.js
 import { ConnectorCallError } from "../src/errors.js";
 import { createExecuteTool } from "../src/execute.js";
 import { Registry } from "../src/registry.js";
+import { requestReads } from "../src/runtime/request-scope.js";
 import { runEdge } from "../src/runtime/run.js";
 import { sqlStorage, type SqlStatement, type SqlDriver } from "../src/storage/sql.js";
 import { sentSecretsForRequest } from "../src/sent-secrets.js";
@@ -1627,9 +1628,9 @@ describe("stale catalog listing", () => {
           storage: store,
           credentialVault: new CredentialVault(store, btoa(String.fromCharCode(...new Uint8Array(32).fill(9)))),
         });
-        // One request: a new request scope, closed when it ends.
-        const search = async () => {
-          const requestScope = {};
+        // One request: a new request scope whose connector scope closes when it
+        // ends. Its read memo stays open, as until the request owner closes.
+        const search = async (requestScope: object = {}) => {
           try {
             const result = await new CatalogService(registry, BASE, { requestScope }).search({
               query: "first second",
@@ -1645,6 +1646,7 @@ describe("stale catalog listing", () => {
       const chunks = async (store: KVStorage) =>
         (await store.list("response-cache:")).filter((key) => key.includes(id) && key.includes(":chunk:"));
       return {
+        id,
         isolate,
         chunks,
         listings: () => listings,
@@ -1675,8 +1677,31 @@ describe("stale catalog listing", () => {
       // Restore the superseded chunks, complete and intact: this isolate's
       // locating read selects them by its hint, beside the new manifest.
       for (const [key, value] of previous) await theirs.store.set(key, value, { ttlSeconds: 600 });
-      expect(await mine.search()).toEqual([expect.stringContaining("second")]);
+      const request = {};
+      expect(await mine.search(request)).toEqual([expect.stringContaining("second")]);
       expect(d.listings()).toBe(2);
+      // The obsolete revision's chunks are released once the manifest selects
+      // another, not held until the request closes.
+      for (const key of previous.keys()) expect(requestReads(request).take(mine.store, key)).toBeUndefined();
+    });
+
+    it("releases hinted chunks a missing manifest leaves unread before the request closes", async () => {
+      const d = await isolates();
+      const mine = d.isolate();
+      await mine.search();
+      await mine.search();
+      const chunks = await d.chunks(mine.store);
+      expect(chunks.length).toBeGreaterThan(0);
+      // Drop the manifest but keep its chunks: the locating read still selects
+      // them by the hint, and the slot's miss must let them go.
+      for (const key of (await mine.store.list("response-cache:")).filter(
+        (key) => key.includes(d.id) && !key.includes(":chunk:") && !key.endsWith(":generation"),
+      ))
+        await d.isolate().store.delete(key);
+      const request = {};
+      expect(await mine.search(request)).toEqual([expect.stringContaining("first")]);
+      expect(d.listings()).toBe(2);
+      for (const key of chunks) expect(requestReads(request).take(mine.store, key)).toBeUndefined();
     });
 
     it("INV-8: a hinted revision with a missing chunk is never served, and lists again", async () => {

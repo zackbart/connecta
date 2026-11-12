@@ -283,19 +283,34 @@ export class RequestReads {
     });
   }
 
+  /** A value this request already read, with no observed write to `key` since; never reads storage. */
+  peek(storage: KVStorage, key: string): string | null | undefined {
+    const values = this.valuesFor(storage, key);
+    return values?.map.has(values.key) ? values.map.get(values.key)! : undefined;
+  }
+
   /**
-   * A value this request already read, with no observed write to `key` since,
-   * removed so the memo stops holding it; `undefined` when there is none. Never
-   * reads storage: a caller that needs the value reads it itself.
+   * `peek`, removed so the memo stops holding it. Never reads storage: a
+   * caller that needs the value reads it itself.
    */
   take(storage: KVStorage, key: string): string | null | undefined {
-    const address = this.closed || !this.ref ? undefined : physicalStorageAddress(storage, key);
-    const values = address && this.stores.get(address.store)?.values;
-    if (!values?.has(address!.key)) return undefined;
-    const value = values.get(address!.key)!;
-    values.delete(address!.key);
+    const value = this.peek(storage, key);
+    if (value === undefined) return undefined;
+    this.discard(storage, key);
     if (this.trace) this.note(false, true, value, performance.now());
     return value;
+  }
+
+  /** Stop holding a value nobody will read; not a read, so the trace records nothing. */
+  discard(storage: KVStorage, key: string): void {
+    const values = this.valuesFor(storage, key);
+    values?.map.delete(values.key);
+  }
+
+  private valuesFor(storage: KVStorage, key: string): { map: Map<string, string | null>; key: string } | undefined {
+    const address = this.closed || !this.ref ? undefined : physicalStorageAddress(storage, key);
+    const map = address && this.stores.get(address.store)?.values;
+    return map ? { map, key: address!.key } : undefined;
   }
 
   /** `read` for a Promise-shaped caller, without another Effect edge. */

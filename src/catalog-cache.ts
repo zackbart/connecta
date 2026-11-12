@@ -33,6 +33,7 @@ import { callerOf } from "./connector-caller.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { Context } from "effect";
 import { ownerReads, RequestScope } from "./runtime/request-scope.js";
+import type { RequestReads } from "./runtime/request-reads.js";
 import { serviceFor, setViewService, viewServices } from "./runtime/call.js";
 import { ConnectorCallError } from "./errors.js";
 import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
@@ -764,6 +765,43 @@ function hintedChunkSuffixes(
   }
   return suffixes;
 }
+// Hinted chunks a request's locating reads put in its memo, by connector and
+// configuration, each with its listing method. A catalog read releases them
+// once its slot is decided (see `releaseHintedChunks`), so chunks of a revision
+// the manifest no longer names, or of a slot never read, are not held until
+// the request closes. Keyed by the request's own memo, so nothing outlives it.
+const hintedReads = new WeakMap<RequestReads, Map<string, Map<string, CatalogMethod>>>();
+const hintedGroup = (storage: KVStorage, connectorId: string, configHash: string) =>
+  JSON.stringify([storeIdentityOf(storage), connectorId, configHash]);
+function trackHintedChunks(reads: RequestReads, group: string, keys: readonly string[], method: CatalogMethod): void {
+  if (!keys.length) return;
+  let groups = hintedReads.get(reads);
+  if (!groups) hintedReads.set(reads, (groups = new Map()));
+  let tracked = groups.get(group);
+  if (!tracked) groups.set(group, (tracked = new Map()));
+  for (const key of keys) tracked.set(key, method);
+}
+/**
+ * Drop hinted chunks this read leaves unused: the slot's own after a miss,
+ * refusal or early return (the chunks it served were already taken), and on
+ * a hit every slot's of the same method, since the SDK reads no further slot.
+ */
+function releaseHintedChunks(
+  reads: RequestReads,
+  storage: KVStorage,
+  group: string,
+  method: string,
+  root: string,
+  served: boolean,
+): void {
+  const tracked = hintedReads.get(reads)?.get(group);
+  if (!tracked) return;
+  for (const [key, of] of tracked)
+    if (served ? of === method : key.startsWith(`${root}:chunk:`)) {
+      reads.discard(storage, key);
+      tracked.delete(key);
+    }
+}
 
 interface Listing {
   ctx: ConnectorContext;
@@ -851,12 +889,14 @@ export const prefetchCatalog = authMethod(
         );
       const storage = serviceFor(ctx, CatalogPolicy)?.storage ?? ctx.storage;
       // Hinted chunks join the manifests they belong to in the same snapshot.
+      const hinted = hintedChunkSuffixes(storage, connectorId, configHash, digests);
       const suffixes: string[] = [
         (yield catalogFenceFingerprint(sharing, partition, authPartition, credentialIdentity)).fingerprint,
         ...digests,
-        ...hintedChunkSuffixes(storage, connectorId, configHash, digests),
+        ...hinted,
       ];
-      yield ownerReads(Context.get(viewServices(ctx), RequestScope)).prefetch(
+      const reads = ownerReads(Context.get(viewServices(ctx), RequestScope));
+      yield reads.prefetch(
         [
           { storage: ctx.storage, key: negotiationKey },
           { storage, key: responseCacheKeys.generation(connectorId) },
@@ -869,6 +909,17 @@ export const prefetchCatalog = authMethod(
           suffixes,
         },
       );
+      // The snapshot composed the chunk keys from the generation it read.
+      const generation = reads.peek(storage, responseCacheKeys.generation(connectorId));
+      if (typeof generation === "string")
+        trackHintedChunks(
+          reads,
+          hintedGroup(storage, connectorId, configHash),
+          hinted.map((suffix) =>
+            responseCacheKeys.entry(responseCacheKeys.namespace(connectorId, configHash, generation), suffix),
+          ),
+          "tools/list",
+        );
     }),
 );
 
@@ -1249,8 +1300,10 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         }),
       );
       const store: ResponseCacheStore = {
-        get: cacheMethod((key: CacheKey) =>
-          authFlow<
+        get: cacheMethod((key: CacheKey) => {
+          // However this read ends, hinted chunks it leaves unused are released.
+          const decided: { root?: string; served?: boolean } = {};
+          return authFlow<
             | {
                 value: string;
                 stamp: number;
@@ -1265,6 +1318,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             trace?.record("catalog.cache.lookup");
             const root = (yield authCall(address, [key, operation])) as string | undefined;
             if (!root || stopped()) return undefined;
+            decided.root = root;
             // The SDK probes private, then public. Derive both addresses from
             // the already-bound locating generation and identity, and fetch
             // them in one statement. The post-chunk namespace check stays fresh.
@@ -1285,6 +1339,12 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               const fence = (yield authCall(fenceKey, [operation, operation.generation.value!])) as string;
               const chunks = hintedChunkSuffixes(storage, connectorId, configHash, digests).map((suffix) =>
                 responseCacheKeys.entry(namespace, suffix),
+              );
+              trackHintedChunks(
+                reads,
+                hintedGroup(storage, connectorId, configHash),
+                chunks,
+                key.method as CatalogMethod,
               );
               yield reads.prefetch(
                 [...roots, fence, ...chunks].map((key) => ({ storage, key })),
@@ -1396,9 +1456,24 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             trace?.record("catalog.cache.hit");
             observeCatalogFetch(ctx, m.fetchedAt, method);
             observeCatalogExpiry(ctx, method, clean.ttlMs, m.expiresAt);
+            decided.served = true;
             return { value: JSON.stringify(clean), stamp: m.stamp, expiresAt: m.expiresAt, scope: m.scope };
-          }),
-        ),
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (decided.root)
+                  releaseHintedChunks(
+                    reads,
+                    storage,
+                    hintedGroup(storage, connectorId, configHash),
+                    key.method,
+                    decided.root,
+                    decided.served === true,
+                  );
+              }),
+            ),
+          );
+        }),
         set: cacheMethod(
           (
             key: CacheKey,

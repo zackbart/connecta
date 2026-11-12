@@ -549,16 +549,23 @@ describe("request read memo", () => {
     await read(reads, alice, "chunk");
     // Bob's partition never answers from Alice's entry.
     expect(reads.take(bob, "chunk")).toBeUndefined();
-    // Another view of the same partition takes it once, then the memo holds nothing.
+    // Peeking leaves it; another view of the same partition takes it once,
+    // then the memo holds nothing.
+    expect(reads.peek(alice, "chunk")).toBe("alice");
+    expect(reads.peek(bob, "chunk")).toBeUndefined();
     expect(reads.take(view(storage, "principal:alice:"), "chunk")).toBe("alice");
     expect(reads.take(alice, "chunk")).toBeUndefined();
+    // Discarding stops holding a value without reading anything.
+    await read(reads, alice, "chunk");
+    reads.discard(alice, "chunk");
+    expect(reads.peek(alice, "chunk")).toBeUndefined();
     await read(reads, alice, "chunk");
     await alice.set("chunk", "rewritten");
     expect(reads.take(alice, "chunk")).toBeUndefined();
     await read(reads, alice, "chunk");
     reads.close();
     expect(reads.take(alice, "chunk")).toBeUndefined();
-    expect(loads).toEqual(["chunk", "chunk", "chunk"]);
+    expect(loads).toEqual(["chunk", "chunk", "chunk", "chunk"]);
     // A store whose writes are unobserved is never answered.
     const plain: KVStorage = { ...memoryStorage() };
     const other = new RequestReads();
@@ -1074,6 +1081,11 @@ describe("request budgets", () => {
         expect(catalog[0]).toContain(":chunk:");
         // This SELECT must follow the chunks, separate from the locating batch.
         expect(catalog[1]).toMatch(/^all \["response-cache:.*:generation"\]$/);
+      }
+      if (label.endsWith(", warm") || label === "execute_code, 5 calls") {
+        // A warm isolate's revision hints put chunks in the locating read.
+        const chunkReads = d1.count.log.filter((line) => line.startsWith("all ") && line.includes(":chunk:"));
+        for (const line of chunkReads) expect(line, `${label}: separate chunk read`).toContain(":generation");
       }
       const budget = BUDGETS[label];
       expect(measured.downstream, `${label}: downstream\n${log}`).toBeLessThanOrEqual(budget.downstream);
@@ -1592,30 +1604,34 @@ describe("request budgets", () => {
 // of two is one round trip and two statements. D1 ceilings carry about 10%
 // headroom (at least one); downstream ceilings are exact, since each request
 // is a protocol message. Lower is fine; tighten a ceiling when a change lowers
-// it, and explain any raise. Warm calls additionally pin exact counts and
-// the separate post-chunk fence, for both direct and one-call programs.
+// it, and explain any raise. Every ceiling below is the November 2026
+// measurement plus that headroom. Warm calls additionally pin exact counts and
+// the separate post-chunk fence, for both direct and one-call programs, and
+// every warm catalog request (calls, programs, unscoped search) must read its
+// chunks inside the locating read: headroom alone would admit a separate chunk
+// read again, for example on the five-call program.
 // Before the request read memo (#1184) a warm OAuth
 // call took 21 round trips and a refresh 51 statements without the vault or
 // activity sink.
 const BUDGETS = {
-  "legacy call, warm": { downstream: 5, roundTrips: 3, statements: 4 },
-  "legacy call, cold isolate": { downstream: 5, roundTrips: 10, statements: 13 },
-  "modern call, warm": { downstream: 1, roundTrips: 3, statements: 4 },
-  "modern call, cold isolate": { downstream: 1, roundTrips: 11, statements: 14 },
-  "OAuth call, warm": { downstream: 5, roundTrips: 15, statements: 16 },
-  "OAuth call, cold isolate": { downstream: 5, roundTrips: 24, statements: 27 },
-  "OAuth call, 401 refresh": { downstream: 9, roundTrips: 41, statements: 51 },
-  "OAuth call, proactive refresh": { downstream: 6, roundTrips: 37, statements: 46 },
+  "legacy call, warm": { downstream: 5, roundTrips: 4, statements: 5 },
+  "legacy call, cold isolate": { downstream: 5, roundTrips: 8, statements: 11 },
+  "modern call, warm": { downstream: 1, roundTrips: 4, statements: 5 },
+  "modern call, cold isolate": { downstream: 1, roundTrips: 8, statements: 11 },
+  "OAuth call, warm": { downstream: 5, roundTrips: 17, statements: 18 },
+  "OAuth call, cold isolate": { downstream: 5, roundTrips: 21, statements: 25 },
+  "OAuth call, 401 refresh": { downstream: 9, roundTrips: 39, statements: 49 },
+  "OAuth call, proactive refresh": { downstream: 6, roundTrips: 35, statements: 43 },
   "api credential call, warm": { downstream: 1, roundTrips: 4, statements: 5 },
   "api credential call, cold isolate": { downstream: 1, roundTrips: 7, statements: 10 },
-  "unscoped search, warm": { downstream: 0, roundTrips: 19, statements: 19 },
-  "execute_code, 5 calls": { downstream: 9, roundTrips: 10, statements: 15 },
+  "unscoped search, warm": { downstream: 0, roundTrips: 11, statements: 11 },
+  "execute_code, 5 calls": { downstream: 9, roundTrips: 8, statements: 14 },
   // A live detail records its stored status observation (#1173 item 2.3):
   // one write, batched with the expiry sweep, and, for a static api()
   // catalog whose listing reads no generation, the generation read.
   "UI detail, rest": { downstream: 0, roundTrips: 6, statements: 7 },
-  "UI detail, keyed": { downstream: 4, roundTrips: 11, statements: 12 },
-  "UI detail, oauth": { downstream: 4, roundTrips: 20, statements: 21 },
+  "UI detail, keyed": { downstream: 4, roundTrips: 11, statements: 13 },
+  "UI detail, oauth": { downstream: 4, roundTrips: 19, statements: 20 },
   "UI stored detail, rest": { downstream: 0, roundTrips: 5, statements: 5 },
   "UI stored detail, keyed": { downstream: 0, roundTrips: 5, statements: 5 },
   "UI stored detail, oauth": { downstream: 0, roundTrips: 3, statements: 3 },
