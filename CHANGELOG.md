@@ -2,6 +2,25 @@
 
 All notable changes to this package are documented here.
 
+## 0.46.0 — 2026-11-12
+
+This release bounds downstream OAuth answers, explains `connecta.emit` refusals, sharpens Cloudflare Access diagnostics and corrects the operator UI's Reconnect wording. Nothing is breaking, and no configuration change is required.
+
+**Bounded OAuth answers:** discovery metadata, dynamic client registration and token responses from a downstream authorization server are now read through a byte bound as they stream (128 KiB for metadata and registration, 64 KiB for tokens), so a hostile or broken server can no longer exhaust a Worker's memory during sign-in or refresh. An oversized answer fails its step as non-retryable `connector_call_failed`. Ordinary servers are unaffected.
+
+**Programs and operators:** `connecta.emit` now says why it cannot forward a data-only `{ format, data }` result or a paged handle, and how to recover a retained write's output without repeating the write. Cloudflare Access identity-lookup diagnostics report a caller that disconnected mid-lookup as `cancelled` rather than `timeout`; responses are unchanged. The Reconnect confirmation for account-checked API OAuth connectors, such as the Google providers in OAuth mode, now says the current connection keeps working until the new sign-in is accepted.
+
+### Changed
+
+- Distinguish cancelled Cloudflare Access identity lookups from deadline timeouts in checked diagnostics, preserving the retryable refusal response.
+
+### Fixed
+
+- Downstream OAuth answers are now read through a byte bound as they stream, instead of being buffered whole, which a hostile or broken server could use to exhaust a Worker's memory: discovery metadata and dynamic client registration to 128 KiB, token responses to 64 KiB. Every OAuth request is bounded by its step, including one a downstream points at its own MCP URL, and every 2xx answer, `202` included, is bounded whole. A declared `Content-Length` past the bound is refused unread, and a non-2xx body keeps only its first 64 KiB. An oversized answer fails its step as non-retryable `connector_call_failed` (`OAuthResponseTooLargeError`), naming the connector and step and quoting none of the body, and the flow sends nothing more; an oversized code exchange answer, previously reported as an OAuth `server_error`, now fails this way too. An oversized refresh answer still ends `auth_required` with its refresh token blocked (#1373).
+- Make deferred catalog refresh and deployment-key cache tests reliable under load in Node and Workers.
+- Explain why connecta.emit cannot forward data-only results or paged handles, with return/reduction guidance and a recovery call for retained write output. Align the guest declaration and program guidance with native-content forwarding.
+- Tell members and maintainers that reconnecting an account-checked API OAuth connector keeps the current connection working until the new sign-in is accepted. The member contract's OAuth `manage` and the maintainer's `/ui/data` and `/ui/connectors/<id>` rows carry `reconnectKeepsGrant` for such a connector, to those who may manage it (#1385).
+
 ## 0.45.0 — 2026-11-12
 
 This release makes Google Workspace work with personal sign-in, lets operators narrow who sees a connector, and makes warm catalog loads faster. Nothing is breaking; deployments that change no configuration behave as before, apart from Google consent URLs now asking for offline access.
