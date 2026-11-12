@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here.
 
+## 0.43.0 — 2026-11-12
+
+This release moves the Eve helper, `@zackbart/connecta-eve`, to Eve `1.0.0-rc.10`. The helper's peer is an exact pin, so an app using the helper must update to `eve@1.0.0-rc.10`, reinstall, rebuild and test before deploying. The helper's own APIs are unchanged; the helper README's upgrade notes list the app-owned changes in Eve rc.5 through rc.10, including the `agentWithModel` replacement, the Workflow world requirement and Vercel Schedules.
+
+The core package has no behavior changes. Deployments that do not use the Eve helper can take this release as a version bump.
+
+### Changed
+
+- **Breaking:** `@zackbart/connecta-eve` now requires exactly Eve `1.0.0-rc.10` as its peer. Update the app to `eve@1.0.0-rc.10`, reinstall, rebuild and test before deploying. The helper's APIs are unchanged; see the helper README's upgrade notes for the app-owned changes in Eve rc.5 through rc.10.
+
 ## 0.42.0 — 2026-11-05
 
 This release makes Connecta easier for agents to use: shorter served text, failures that name the next step, a read-only program route, and better discovery. Six breaking changes can alter how existing clients or deployments behave, so check them before upgrading.
