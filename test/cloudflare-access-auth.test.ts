@@ -437,7 +437,7 @@ describe("cloudflareAccessAuth", () => {
 });
 
 describe("Access identity lookup recovery", () => {
-  it.each(["lookup", "backoff", "deadline"] as const)(
+  it.each(["lookup", "backoff", "deadline", "deadline-then-abort", "rejected-then-abort"] as const)(
     "INV-7: distinguishes cancellation during %s from an identity deadline",
     async (phase) => {
       vi.useFakeTimers();
@@ -451,7 +451,11 @@ describe("Access identity lookup recovery", () => {
               resolve = done;
             }),
         );
-        if (phase === "backoff") getIdentity.mockRejectedValueOnce(new Error("private lookup failure"));
+        if (phase === "backoff" || phase === "rejected-then-abort")
+          getIdentity.mockRejectedValueOnce(new Error("private lookup failure"));
+        if (phase === "rejected-then-abort") getIdentity.mockRejectedValueOnce(new Error("private lookup failure"));
+        // The lookup's own failure settles first; a caller abort after it never relabels it.
+        const settlesFirst = phase === "deadline" || phase === "deadline-then-abort" || phase === "rejected-then-abort";
         const pending = cloudflareAccessAuth().authorize(
           new Request(`${BASE}/mcp`, { signal: controller.signal }),
           BASE,
@@ -459,8 +463,9 @@ describe("Access identity lookup recovery", () => {
         );
         await vi.advanceTimersByTimeAsync(1);
         expect(getIdentity).toHaveBeenCalledOnce();
-        if (phase !== "deadline") controller.abort(new Error("private cancellation reason"));
-        await vi.advanceTimersByTimeAsync(phase === "deadline" ? 5000 : 0);
+        if (!settlesFirst) controller.abort(new Error("private cancellation reason"));
+        await vi.advanceTimersByTimeAsync(phase === "rejected-then-abort" ? 300 : settlesFirst ? 5000 : 0);
+        if (phase !== "deadline" && settlesFirst) controller.abort(new Error("private cancellation reason"));
         const result = await pending;
         expect(result.ok).toBe(false);
         if (!result.ok) {
@@ -475,15 +480,20 @@ describe("Access identity lookup recovery", () => {
           expect(failureRecord({}, result.response)).toEqual({
             reason: "access_identity_unavailable",
             identityLookup: {
-              outcome: phase === "deadline" ? "timeout" : "cancelled",
+              outcome:
+                phase === "rejected-then-abort"
+                  ? "rejected"
+                  : phase === "deadline" || phase === "deadline-then-abort"
+                    ? "timeout"
+                    : "cancelled",
               durationMs: expect.any(Number),
               cold: expect.any(Boolean),
               inFlight: expect.any(Number),
             },
           });
         }
-        expect(getIdentity).toHaveBeenCalledOnce();
-        if (phase !== "backoff") {
+        expect(getIdentity).toHaveBeenCalledTimes(phase === "rejected-then-abort" ? 2 : 1);
+        if (phase !== "backoff" && phase !== "rejected-then-abort") {
           resolve(Object.defineProperty({ user_uuid: "late-human" }, Symbol.dispose, { value: dispose }));
           await vi.advanceTimersByTimeAsync(0);
           expect(dispose).toHaveBeenCalledOnce();
