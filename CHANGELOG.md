@@ -2,6 +2,27 @@
 
 All notable changes to this package are documented here.
 
+## 0.45.0 — 2026-11-12
+
+This release makes Google Workspace work with personal sign-in, lets operators narrow who sees a connector, and makes warm catalog loads faster. Nothing is breaking; deployments that change no configuration behave as before, apart from Google consent URLs now asking for offline access.
+
+**Google sign-in:** the maintained Google providers (Gmail, Drive, Docs, Sheets, Slides, Forms) now accept an OAuth mode beside the service account: `{ oauth: { clientId, clientSecret }, authScope: "personal" | "shared" }`. With `personal`, each signed-in person connects their own Google account; with `shared`, a maintainer connects one account for the pools that list it. Add `accounts` to restrict which Google account each person, or the shared connection, may bind: Connecta verifies Google's signed ID token before storing a grant, refuses any other account, and shows the bound address on the member page. A refused or abandoned reconnect keeps the working grant. Google consent URLs now add `access_type=offline` and `prompt=consent` unless the operator sets them, so Google grants refresh instead of expiring after an hour.
+
+**Connector members:** a connector's optional `members` list limits it to the listed people, and to agents only when `"agent:<name>"` is listed, on every surface that serves it; everyone else sees it as unknown. Maintainers do not bypass it on MCP endpoints. Read the members section in `documentation/auth.md` for the construction rules that apply to restricted connectors with shared OAuth or self-hosted client metadata.
+
+**Faster warm catalogs:** a warm remote MCP call now reads its catalog in two storage round trips instead of three.
+
+### Added
+
+- Connectors accept an optional `members` list (`remoteMcp()`, `api()`, every maintained provider, and custom connectors) that narrows who sees them on every endpoint, maintainers' plain `/mcp` included. A caller it omits meets an unknown connector on every surface; agents see the connector only when `"agent:<name>"` is listed (#1377).
+- OAuth-mode Google connections (`gmail`, `drive`, `docs`, `sheets`, `slides`, `forms`) take `accounts`, which predefines the Google accounts that may be connected. A shared connection takes one account's addresses or `{ domain }` rules. A personal connection takes rules for everyone, a map from person (a bare principal id, with `"*"` for everyone else) to rules, or a list of `{ person, accounts }` that also takes `{ namespace, id }`. People match on namespace and id both, and a person with no entry cannot connect. Reconnect keeps the working grant until an admitted account replaces it. At the OAuth callback, before anything is stored, the account comes from Google's ID token, checked against Google's signing keys, issuer, audience and lifetime. An address rule needs a verified email, and a domain rule matches only Google's hosted domain. A refused account stores and revokes nothing, and the page names the expected account, never the one used. The verified address is kept with the grant and shown on the member page and the connector's Connection tab (`ConnectorStatus.account`). Consent adds `openid email` and the account chooser only when `accounts` is set. The check is generic on `api()` OAuth as `oauth.account: { identify, allow }`. (#1381)
+- Google Workspace providers (`gmail`, `drive`, `docs`, `sheets`, `slides`, `forms`) take an OAuth mode beside domain-wide delegation: `{ oauth: { clientId, clientSecret }, authScope: "personal" | "shared" }` connects each person's own Google account (or one maintainer-connected account) through the downstream OAuth flow, requests exactly the product's scopes, renews a read once after a 401 and never resends a write. No Google revocation endpoint is configured. Construction requires exactly one mode. `defineApiProvider` now selects a machine grant or static OAuth per connection options. (#1375)
+
+### Changed
+
+- Downstream OAuth consent URLs for Google's authorization server (`https://accounts.google.com`) now carry `access_type=offline` and `prompt=consent` by default on `remoteMcp()` and `api()` connectors, so Google grants receive a refresh token instead of expiring after an hour. An operator's `authorizationParams` value for either name wins. Grants obtained without a refresh token need one Disconnect and reconnect.
+- A warm isolate reads a remote MCP catalog's chunks in the same storage round trip as its manifest. It remembers the last verified revision of each catalog slot (at most 256, keyed by store, connector, configuration and partition digest) and selects that revision's chunks with the locating read. A revision changed elsewhere is read as its own revision, and fingerprint checks and the fresh generation and credential fence still decide acceptance. A warm remote MCP call makes one fewer D1 round trip; with 100 ms injected per round trip, local warm catalog time fell from about 320 ms to 220 ms.
+
 ## 0.44.0 — 2026-11-12
 
 This release hardens connecta against what a week of production Worker logs showed: oversized downstream answers, calls dispatched with no time left, Cloudflare Access gaps on fresh isolates, undisposed RPC results and noisy warnings. No configuration is required to upgrade. One change is breaking: remote MCP answers past the new bound now fail instead of being processed, and two others change what operators and slow identity providers see.
