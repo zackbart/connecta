@@ -1220,7 +1220,9 @@ describe("api() oauth early renewal", () => {
     await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
     await expiring(storage, Date.now() + 30_000);
     provider.control.lifetime = 120;
-    const error = await writeError(registry);
+    // The handler's simulated 130 s exceeds the default 55 s response ceiling,
+    // whose deadline the physical send would rightly enforce; renewal is the subject here.
+    const error = await writeError(registry, 600_000);
     expect(error).toBeUndefined();
     expect(provider.apiAuthorizations).toEqual([
       "Bearer access-alice-2",
@@ -1327,9 +1329,12 @@ describe("api() oauth early renewal", () => {
     onTestFinished(() => spy.mockRestore());
     return clock;
   }
-  const writeError = async (registry: ReturnType<typeof makeRegistry>) => {
-    const text = (await createMetaTools(registry, BASE).callDestructiveTool({ address: "ccb.post_note" })).content[0]!
-      .text;
+  const writeError = async (registry: ReturnType<typeof makeRegistry>, responseCeilingMs?: number) => {
+    const text = (
+      await createMetaTools(registry, BASE, responseCeilingMs ? { responseCeilingMs } : {}).callDestructiveTool({
+        address: "ccb.post_note",
+      })
+    ).content[0]!.text;
     return (JSON.parse(text) as { error?: Record<string, unknown> }).error;
   };
 

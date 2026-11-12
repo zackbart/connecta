@@ -50,6 +50,7 @@ import {
   isSettledWrite,
   keyProtectsCall,
   knownCallFailure,
+  refusedUnsentAtDeadline,
   refusalRequest,
   onlyAuxiliaryRequests,
   type LogicalCall,
@@ -979,6 +980,8 @@ export class InvocationService {
               const connector = target.connector;
               const callTool = connector.callTool;
               logicalCall = openLogicalCall(connectorContext, connector, callTool);
+              // The physical send checks this again, after the connector's own waits.
+              if (context.dispatchDeadline) logicalCall.dispatchBy = context.dispatchDeadline.at;
               yield* Effect.gen(function* () {
                 if (target.connector.credential) {
                   if (!connectorContext.credential) {
@@ -1104,6 +1107,17 @@ export class InvocationService {
             if (isCallerCancellation(thrown, context.requestSignal)) return callerCancelledDetails();
             const failureWrite = write || sentSourceWrite();
             answered = answeredFailure(thrown, failureWrite, logicalCall);
+            // The connector's own connection, renewal or auth wait spent the
+            // time, and its physical send refused the request. Only with proof
+            // that nothing left is this the gate's refusal; otherwise the
+            // failure keeps its usual, possibly unknown, outcome below.
+            if (context.dispatchDeadline && refusedUnsentAtDeadline(logicalCall, thrown, failureWrite)) {
+              dispatchedToConnector = false;
+              answered = false;
+              gateRefused = true;
+              attempts = 0;
+              return context.dispatchDeadline.refusal(canonicalAddress);
+            }
             // Q8 is decided here for every served write, whatever its
             // connector made of the 401: over the logical call's whole ledger.
             const attemptError = failureWrite ? settleWrite(logicalCall?.sent ?? [], thrown, answered) : thrown;

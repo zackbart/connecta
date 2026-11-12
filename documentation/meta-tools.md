@@ -738,7 +738,9 @@ left (100 ms, or a tenth of a ceiling shorter than one second: less than one ven
 round trip) is refused before it resolves, as a retryable `timeout` at
 `details.stage: "response ceiling"` that says it was not sent. A call whose time runs
 down to the floor during resolution, admission or auth gets the same refusal from a
-check that is the last step before its connector. Either refusal records a
+check that is the last step before its connector, and again from `remoteMcp()` and
+`api()` at the physical send, after any reconnect, grant renewal or credential
+refresh, when the call's ledger proves nothing left (`L3`). Each refusal records a
 `cancelled` activity event with `attempts: 0` and `errorCode: "timeout"`, since
 nothing downstream timed out. See [`L3`](./code-mode.md#cancellation-and-limits). The admission queue's own timeout may expire
 sooner but cannot extend the call deadline. Result processing happens after that
