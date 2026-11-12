@@ -499,8 +499,13 @@ the configured team/project/environment, required expiration and issued-at,
 and not-before when present, with 30 seconds of clock skew. External-user
 tokens carrying `external_sub` are refused. Public keys cache for five minutes;
 an unknown key can trigger one additional refresh per 30 seconds. Failed fetches
-back off for 30 seconds and never admit with expired cached keys. Fetches have
-the same five-second authentication deadline as agent tokens. Neither token
+back off for 30 seconds and never admit with expired cached keys. Each key fetch
+runs to completion under its own four-second deadline, inside the request's
+five-second authentication deadline. A caller that disconnects stops waiting
+but neither cancels nor discards the fetch, whose outcome alone fills the cache
+or starts the backoff, so disconnects cannot start fetches faster than these
+bounds. The fetch stays charged to the request that started it until it
+settles. Neither token
 contents nor upstream errors enter activity; activity names the declared agent.
 If the two concurrent key-fetch slots are occupied on a cold or expired cache,
 the endpoint returns 503 with `Retry-After: 1`, rather than rejecting the credential
@@ -2412,7 +2417,10 @@ Keys are cached per adapter for five minutes. Access rotates its signing key
 every six weeks and serves the new key beside the previous one, so an unknown
 `kid` refreshes the set, at most once every 30 seconds. A failed read blocks
 further reads for 30 seconds, at most two reads run at once, the body is capped
-at 64 KiB, and redirects are refused.
+at 64 KiB, and redirects are refused. Each read runs to completion under its own
+four-second deadline, even when the request that started it disconnects, and
+only its own outcome fills the cache or starts the backoff, so disconnects
+cannot start reads faster than these bounds.
 
 A verified assertion proves that Access issued it for this application and
 person and that it has not expired. Unlike `ctx.access`, it does not prove that

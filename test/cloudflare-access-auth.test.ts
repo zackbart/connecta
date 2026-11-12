@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { authenticationSnapshot } from "../src/auth-admission.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { InboundAuthRuntimeContext } from "../src/types.js";
@@ -719,17 +720,82 @@ describe("Access assertion verification without context", () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("INV-7: answers a hanging key fetch at the native deadline without admitting", async () => {
+  it("INV-7: ends a hanging key fetch at its own deadline and backs off before fetching again", async () => {
+    const value = await token({ exp: now() + 7200 });
     vi.useFakeTimers();
-    vi.spyOn(globalThis, "fetch").mockImplementation(
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(
       (_url, init) =>
         new Promise((_resolve, reject) => {
           init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
         }),
     );
-    const pending = cloudflareAccessAuth({ assertion }).authorize(asserted(await token()), BASE);
-    await vi.advanceTimersByTimeAsync(5001);
+    const auth = cloudflareAccessAuth({ assertion });
+    const pending = auth.authorize(asserted(value), BASE);
+    await vi.advanceTimersByTimeAsync(4_001);
     await refused(await pending);
+    expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(true);
+    // A deadline is a failed read: no request starts another for thirty seconds.
+    for (let i = 0; i < 5; i++) await refused(await auth.authorize(asserted(value), BASE));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    fetcher.mockImplementation(async () => Response.json({ keys: [{ ...publicCurrent, kid: "current" }] }));
+    await expect(auth.authorize(asserted(value), BASE)).resolves.toMatchObject({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("INV-7: repeated disconnects start at most two key fetches, charged to their starters until they fill the cache", async () => {
+    const deployment = makeDeployment({
+      auth: cloudflareAccessAuth({ assertion }),
+      maintainers: ["operator-1"],
+      logger: "silent",
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      await gate;
+      init?.signal?.throwIfAborted();
+      return Response.json({ keys: [{ ...publicCurrent, kid: "current" }] });
+    });
+    const kept: Promise<unknown>[] = [];
+    const context = { waitUntil: (pending: Promise<unknown>) => void kept.push(pending) };
+    const baseline = authenticationSnapshot().active;
+    try {
+      const value = await token();
+      for (let i = 0; i < 20; i++) {
+        const controller = new AbortController();
+        const request = new Request(`${BASE}/ui/connectors/calc`, {
+          headers: { "Cf-Access-Jwt-Assertion": value },
+          signal: controller.signal,
+        });
+        const pending = deployment.fetch(request, undefined, context);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        controller.abort();
+        await pending.then(
+          (response) => response.body?.cancel(),
+          () => {},
+        );
+      }
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      // Each fetch outlives the caller that left, still charged and kept runnable.
+      for (const call of fetcher.mock.calls) expect(call[1]?.signal?.aborted).toBe(false);
+      expect(authenticationSnapshot().active).toBe(baseline + 2);
+      release();
+      await Promise.all(kept);
+      expect(authenticationSnapshot().active).toBe(baseline);
+      const admitted = await deployment.fetch(
+        new Request(`${BASE}/ui/connectors/calc`, { headers: { "Cf-Access-Jwt-Assertion": value } }),
+        undefined,
+        { waitUntil() {} },
+      );
+      expect(admitted.status).toBe(200);
+      await admitted.body?.cancel();
+      expect(fetcher).toHaveBeenCalledTimes(2);
+    } finally {
+      release();
+      await deployment.close();
+    }
   });
 
   it("INV-4 INV-7: follows key rotation with one bounded refresh and keeps the previous key", async () => {
