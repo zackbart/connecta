@@ -34,7 +34,9 @@ import {
   sendCredentialPost,
 } from "../../guarded-transport.js";
 import {
+  assertDispatchTime,
   dispatchProviderRequest,
+  recordCallRequestSent,
   recordProviderResponse,
   knownProviderFailure,
   providerRequest,
@@ -519,6 +521,10 @@ export function remoteMcpTransport(
           });
         const entry = request?.entry;
         const dispatch = () => {
+          // Connecting and renewal ran after the invocation's gate. A read's
+          // entry is auxiliary in the ledger, so check the call itself here,
+          // before anything records it as sent.
+          if (request) assertDispatchTime(request.ctx, request.entry.provider);
           if (flight?.write) {
             if (flight.sent) throw resendRefused(flight);
             flight.sent = true;
@@ -526,6 +532,9 @@ export function remoteMcpTransport(
           if (request && entry) {
             if (flight?.sourceWrite) recordRequestField(entry, "sourceWrite", true);
             dispatchProviderRequest(request.ctx, entry, init?.headers, init?.method ?? "GET");
+            // A read's entry is auxiliary; the call still went out, and a
+            // refused replay after it must not make it unsent.
+            recordCallRequestSent(request.ctx);
           }
         };
         trackSentRequest(ctx, input, init);

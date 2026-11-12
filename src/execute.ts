@@ -59,7 +59,7 @@ import { failureRecord, logFailure } from "./operator-record.js";
 import { HeldResults, sealHeldResults } from "./result-seal.js";
 import { redactAgentOutput, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
-import { normalizeTimeoutMs } from "./timeout.js";
+import { dispatchFloorMs, normalizeTimeoutMs } from "./timeout.js";
 import { fromSignal, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
@@ -110,6 +110,11 @@ function readDeadlineAt(executor: Executor, ceiling: ResponseCeiling): number {
   const { deadlineMs } = executor;
   if (deadlineMs === undefined) return beforeCeiling;
   return Math.min(beforeCeiling, Date.now() + deadlineMs - readMarginMs(deadlineMs));
+}
+
+/** The least time before reads stop that a run's downstream call is sent with. */
+function runDispatchFloorMs(executor: Executor, ceiling: ResponseCeiling): number {
+  return dispatchFloorMs(Math.min(executor.deadlineMs ?? ceiling.ms, ceiling.ms));
 }
 
 /** The time by which a request must have its answer, counted from its arrival (`execute.watchdogMs`). */
@@ -557,6 +562,8 @@ interface SandboxLimits {
   programDeadlineAt?: number | undefined;
   /** When reads stop, shortly before the executor's own deadline. Writes are exempt (W9). */
   readDeadlineAt?: number | undefined;
+  /** No downstream call is sent with less than this left before reads stop. Default 0. */
+  dispatchFloorMs?: number | undefined;
   signal?: AbortSignal | undefined;
   hostCalls?: HostCalls | undefined;
   maxHostCalls?: number | undefined;
@@ -669,6 +676,21 @@ function sandboxProvider(
   /** The part of `requestedMs` left before reads stop; never below one tick. */
   const readBudget = (requestedMs: number) =>
     Math.min(requestedMs, Math.max(1, (limits.readDeadlineAt ?? Infinity) - Date.now()));
+  // With no more than this left, a call could not finish one round trip before
+  // reads stop: it is refused unsent instead of dispatched on the last tick (L3).
+  const floorMs = Math.max(1, Math.trunc(limits.dispatchFloorMs ?? 0));
+  /** The run's time is spent for downstream calls: no more than the floor is left. */
+  const outOfTime = (at = limits.readDeadlineAt) => at !== undefined && Date.now() >= at - floorMs;
+  /** A call refused unsent because the run is out of time, and what the program does next. */
+  const outOfTimeRefusal = (operation: string, stage: string, at = limits.readDeadlineAt): CallErrorDetails => {
+    const remainingMs = Math.max(0, (at ?? Date.now()) - Date.now());
+    return {
+      code: "timeout",
+      message: `This run has ${remainingMs}ms left before its calls stop, too little for ${operation} to finish, so it was not sent. Return the results you already have now, and do the rest in a new program, with fewer calls or smaller pages per run.`,
+      retryable: true,
+      details: { operation, stage, remainingMs, minimumMs: floorMs },
+    };
+  };
   const hostCalls = limits.hostCalls ?? { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
   let budgetFailure: InvocationFailure | undefined;
   let emitAttempts = 0;
@@ -736,11 +758,14 @@ function sandboxProvider(
     sending: { settle?: SettleWrite; rewritten: boolean },
     timeoutMs: number,
     writeTimeoutMs: number,
+    refusal?: CallErrorDetails,
   ) => ({
     source: limits.readProgram ? READ_PROGRAM_SOURCE : ("execute_code" as const),
     sentSecrets,
     timeoutMs,
     writeTimeoutMs,
+    // Nothing resolves: a call's classification would cost time the run no longer has.
+    ...(refusal ? { refusal } : {}),
     ...(limits.routes ? { routes: limits.routes } : {}),
     ...(signal !== undefined ? { requestSignal: signal } : {}),
     ...(limits.dispatchController ? { dispatchSignal: limits.dispatchController.signal } : {}),
@@ -748,13 +773,8 @@ function sandboxProvider(
       ? {
           // Past the gate's time, a call's answer could not reach the program either.
           dispatchDeadline: {
-            at: dispatchDeadlineAt,
-            refusal: (address: string): CallErrorDetails => ({
-              code: "timeout",
-              message: `Too little of this run's deadline remains for ${address}, so it was not sent. Return what you have and send it in a new program.`,
-              retryable: true,
-              details: { operation: address, stage: "dispatch gate" },
-            }),
+            at: dispatchDeadlineAt - floorMs,
+            refusal: (address: string) => outOfTimeRefusal(address, "dispatch gate", dispatchDeadlineAt),
           },
         }
       : {}),
@@ -896,15 +916,10 @@ function sandboxProvider(
         }
         // Its answer could not reach the program, so refuse now while the outcome
         // is known. Earlier writes go out and drain past the deadline (W9).
-        if (limits.readDeadlineAt !== undefined && Date.now() >= limits.readDeadlineAt) {
+        if (outOfTime()) {
           return {
             kind: "refuse",
-            error: {
-              code: "timeout",
-              message: `Too little of this run's deadline remains for ${target.connector.id}.${target.toolName}, so it was not sent. Return what you have and send it in a new program.`,
-              retryable: true,
-              details: { operation: `${target.connector.id}.${target.toolName}`, stage: "write gate" },
-            },
+            error: outOfTimeRefusal(`${target.connector.id}.${target.toolName}`, "write gate"),
           };
         }
         const budgeted = target.definition.classification !== "read";
@@ -969,8 +984,9 @@ function sandboxProvider(
       // outcome. Credentials are filtered from arguments; submitted private values are not.
       const filtered = sentSecrets.filterCredentials(args ?? {});
       const sending: { settle?: SettleWrite; rewritten: boolean } = { rewritten: filtered.changed };
+      const refusal = outOfTime() ? outOfTimeRefusal(boundedEchoText(address, 512), "run deadline") : undefined;
       const outcome = yield* invocation
-        .pipeline(address, filtered.value, invocationContext(sending, timeoutMs, writeTimeoutMs))
+        .pipeline(address, filtered.value, invocationContext(sending, timeoutMs, writeTimeoutMs, refusal))
         .pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
@@ -1222,6 +1238,10 @@ function sandboxProvider(
       Effect.suspend(() => {
         const started = Date.now();
         let connectorMs = 0;
+        if (outOfTime()) {
+          diagnostics?.recordRead(0, 0, false);
+          return Effect.fail(new InvocationFailure(outOfTimeRefusal("connecta.read", "run deadline")));
+        }
         return readResource(registry, uri, {
           baseUrl,
           requestScope,
@@ -1789,6 +1809,7 @@ export function createExecuteTool(
                 defaultToolTimeoutMs: config.defaultToolTimeoutMs,
                 programDeadlineAt: ceiling.at,
                 readDeadlineAt: readDeadlineAt(executor, ceiling),
+                dispatchFloorMs: runDispatchFloorMs(executor, ceiling),
                 defer: config.defer,
                 readOnly: config.readOnly,
                 maxWrites: config.maxWrites,

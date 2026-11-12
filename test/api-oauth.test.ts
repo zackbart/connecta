@@ -23,7 +23,9 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { classifyWriteOutcome } from "../src/write-outcome.js";
 import { oauthFlowKeys, oauthGrantKeys, scopes } from "../src/storage/keys.js";
 import type { Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
-import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { InvocationService } from "../src/invocation.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { deferred, scriptedExecutor } from "./fixtures/misc.js";
 import { CLERK_OPTIONS } from "./fixtures/ui.js";
@@ -977,6 +979,45 @@ describe("api() oauth refresh", () => {
     ).toEqual(["refresh-alice-1", "refresh-alice-2"]);
   });
 
+  it("INV-9: control: a read sent once, answered 401, whose replay the dispatch deadline refuses after the refresh, is never recorded unsent", async () => {
+    const provider = fakeProvider();
+    install(provider);
+    const connector = ccb();
+    const registry = makeRegistry([connector]);
+    await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
+    provider.expireAccess();
+    // The refresh outlasts the call: the clock reads a minute later once it is requested.
+    const real = Date.now.bind(Date);
+    let jump = 0;
+    const spy = vi.spyOn(Date, "now").mockImplementation(() => real() + jump);
+    onTestFinished(() => spy.mockRestore());
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string | URL | Request, init: RequestInit = {}) => {
+        if (String(input) === TOKEN && String(init.body).includes("grant_type=refresh_token")) jump = 60_000;
+        return provider.fetchStub(input, init);
+      }),
+    );
+    const { activity, events } = activitySink();
+    const outcome = await new InvocationService(registry, new CatalogService(registry, BASE), activity).invoke(
+      "ccb.whoami",
+      {},
+      {
+        source: "call_tool",
+        dispatchDeadline: {
+          at: Date.now() + 1_000,
+          refusal: (address) => ({ code: "timeout", message: `${address} was not sent.`, retryable: true }),
+        },
+      },
+    );
+    // The first send left with the expired token; the refreshed replay never did.
+    expect(provider.apiAuthorizations).toEqual(["Bearer access-alice-1"]);
+    expect(outcome).toMatchObject({ ok: false, dispatched: true, attempts: 1 });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ attempts: 1 });
+    expect(events[0]!.outcome).not.toBe("cancelled");
+  });
+
   it("coalesces concurrent refreshes across request scopes into one redemption", async () => {
     const provider = fakeProvider();
     install(provider);
@@ -1220,7 +1261,9 @@ describe("api() oauth early renewal", () => {
     await authorize(connector, () => registry.contextFor("ccb", BASE), provider);
     await expiring(storage, Date.now() + 30_000);
     provider.control.lifetime = 120;
-    const error = await writeError(registry);
+    // The handler's simulated 130 s exceeds the default 55 s response ceiling,
+    // whose deadline the physical send would rightly enforce; renewal is the subject here.
+    const error = await writeError(registry, 600_000);
     expect(error).toBeUndefined();
     expect(provider.apiAuthorizations).toEqual([
       "Bearer access-alice-2",
@@ -1327,9 +1370,12 @@ describe("api() oauth early renewal", () => {
     onTestFinished(() => spy.mockRestore());
     return clock;
   }
-  const writeError = async (registry: ReturnType<typeof makeRegistry>) => {
-    const text = (await createMetaTools(registry, BASE).callDestructiveTool({ address: "ccb.post_note" })).content[0]!
-      .text;
+  const writeError = async (registry: ReturnType<typeof makeRegistry>, responseCeilingMs?: number) => {
+    const text = (
+      await createMetaTools(registry, BASE, responseCeilingMs ? { responseCeilingMs } : {}).callDestructiveTool({
+        address: "ccb.post_note",
+      })
+    ).content[0]!.text;
     return (JSON.parse(text) as { error?: Record<string, unknown> }).error;
   };
 

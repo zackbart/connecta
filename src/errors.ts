@@ -455,6 +455,9 @@ interface UnavailableDetails {
   stage?: string;
   elapsedMs?: number;
   deadlineMs?: number;
+  /** A call refused unsent for want of time: what was left, and the least it needed. */
+  remainingMs?: number;
+  minimumMs?: number;
   /** HTTP(S) origin only, at most 253 UTF-8 bytes. */
   host?: string;
   /** Validated network errno or `timeout`, at most 32 bytes. */

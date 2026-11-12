@@ -53,6 +53,20 @@ export interface LogicalCall {
   auxiliaryReads: ProviderRequest[];
   /** A kit auxiliary declared as a read dispatched without physical read proof. */
   nonReadAuxiliaryDispatched: boolean;
+  /**
+   * The invocation's dispatch deadline: no resource request of this call may
+   * leave at or after it. Connection, renewal and auth waits inside the
+   * connector come after the invocation's own gate, so the physical send checks again.
+   */
+  dispatchBy?: number;
+  /** A resource request was refused at its physical send because `dispatchBy` had passed. */
+  deadlineRefused?: boolean;
+  /**
+   * The call's own request left at least once, whatever its ledger entry says:
+   * a remote MCP read's tools/call is auxiliary there, so `sent` never shows it.
+   * Credential and token requests never set it.
+   */
+  callRequestSent?: boolean;
 }
 
 export function providerCallContext(ctx: ConnectorContext, classification?: "read" | "write"): ConnectorContext {
@@ -138,6 +152,47 @@ export function assertProviderCallOpen(ctx: ConnectorContext, provider: string, 
   );
 }
 
+/**
+ * Refuse a request of `ctx`'s logical call whose dispatch deadline has passed,
+ * before anything records it as sent. Call it immediately before the physical
+ * send, after every connection, renewal and credential wait.
+ */
+export function assertDispatchTime(ctx: ConnectorContext | undefined, provider: string): void {
+  const logical = ctx && recordedService(ctx, LogicalLedger);
+  if (logical?.dispatchBy === undefined || Date.now() < logical.dispatchBy) return;
+  logical.deadlineRefused = true;
+  throw new ConnectorCallError(
+    "timeout",
+    `Too little of this call's time was left to send its ${provider} request, so it was not sent.`,
+  );
+}
+
+/**
+ * Record that `ctx`'s call sent its own request, for a request its ledger files
+ * as auxiliary. Call it synchronously with that send.
+ */
+export function recordCallRequestSent(ctx: ConnectorContext): void {
+  const logical = recordedService(ctx, LogicalLedger);
+  if (logical) logical.callRequestSent = true;
+}
+
+/**
+ * Proof that `call` ended on a dispatch-deadline refusal at its physical send
+ * and sent nothing that could apply it: neither its own request, on any earlier
+ * attempt (a replay after a 401, say), nor any other resource request. A write also
+ * needs its one owning boundary to have marked the failure known-unsent
+ * ({@link knownCallFailure}), so a wrapper that could send around the ledger
+ * never borrows the proof.
+ */
+export function refusedUnsentAtDeadline(call: LogicalCall | undefined, error: unknown, write: boolean): boolean {
+  return (
+    call?.deadlineRefused === true &&
+    call.callRequestSent !== true &&
+    !call.sent.some((request) => request.dispatched && !request.auxiliary) &&
+    (!write || knownCallFailure(call, error))
+  );
+}
+
 /** Record that a request leaves now; synchronous with the send that follows it. */
 export function dispatchProviderRequest(
   ctx: ConnectorContext | undefined,
@@ -146,6 +201,8 @@ export function dispatchProviderRequest(
   method = request.method,
 ): void {
   if (ctx) assertProviderCallOpen(ctx, request.provider, request.auxiliary);
+  // Credential and token requests may still leave; the call's own may not.
+  if (!request.auxiliary) assertDispatchTime(ctx, request.provider);
   if (request.dispatched) throw new Error("Provider request already dispatched.");
   if (hasMethodOverride(headers)) request.classification = "write";
   recordRequestField(request, "method", method);

@@ -50,6 +50,7 @@ import {
   isSettledWrite,
   keyProtectsCall,
   knownCallFailure,
+  refusedUnsentAtDeadline,
   refusalRequest,
   onlyAuxiliaryRequests,
   type LogicalCall,
@@ -397,6 +398,8 @@ export class InvocationService {
       let unrecorded = false;
       // The gate's refusal states its own deadline facts; nothing timed out here.
       let gateRefused = false;
+      // Refused unsent for want of time: recorded as no attempt and no failure.
+      let deadlineRefused = false;
       // The deadline this call runs under, once its classification is known.
       let timeoutMs = context.timeoutMs;
       let resolved: ResolvedCatalogTool | undefined;
@@ -434,7 +437,8 @@ export class InvocationService {
           outcome,
           ...(activityTarget?.connector.authScope === "personal" ? { personal: true } : {}),
           durationMs: Date.now() - started,
-          attempts,
+          // A local refusal counts as the one attempt it made; a deadline refusal, none.
+          attempts: deadlineRefused ? 0 : Math.max(1, attempts),
           ...defined({
             classification: resolved?.definition.classification,
             resultBytes,
@@ -772,6 +776,14 @@ export class InvocationService {
         // A write refused only because its program had already returned
         // leaves no event and nothing in the operator's log.
         if (unrecorded) return outcome();
+        // A gate's deadline refusal sent nothing, so no downstream timed out:
+        // its event is a cancelled call of no attempts, and no failure is logged.
+        if (gateRefused && error.code === "timeout") {
+          attempts = 0;
+          deadlineRefused = true;
+          record("cancelled", { errorCode: "timeout" });
+          return outcome();
+        }
         // Activity rows and this log line are both payload-free by
         // construction: the line is the failure's typed record, never its
         // message, which may be the downstream's own words (INV-6).
@@ -968,6 +980,8 @@ export class InvocationService {
               const connector = target.connector;
               const callTool = connector.callTool;
               logicalCall = openLogicalCall(connectorContext, connector, callTool);
+              // The physical send checks this again, after the connector's own waits.
+              if (context.dispatchDeadline) logicalCall.dispatchBy = context.dispatchDeadline.at;
               yield* Effect.gen(function* () {
                 if (target.connector.credential) {
                   if (!connectorContext.credential) {
@@ -1004,6 +1018,8 @@ export class InvocationService {
               if (admissionSignal?.aborted) throw admissionSignal.reason;
               if (context.dispatchDeadline && Date.now() >= context.dispatchDeadline.at) {
                 gateRefused = true;
+                // Refused for want of time, the call was never attempted.
+                attempts = 0;
                 pastDeadline = context.dispatchDeadline.refusal(canonicalAddress);
                 return undefined;
               }
@@ -1091,6 +1107,17 @@ export class InvocationService {
             if (isCallerCancellation(thrown, context.requestSignal)) return callerCancelledDetails();
             const failureWrite = write || sentSourceWrite();
             answered = answeredFailure(thrown, failureWrite, logicalCall);
+            // The connector's own connection, renewal or auth wait spent the
+            // time, and its physical send refused the request. Only with proof
+            // that nothing left is this the gate's refusal; otherwise the
+            // failure keeps its usual, possibly unknown, outcome below.
+            if (context.dispatchDeadline && refusedUnsentAtDeadline(logicalCall, thrown, failureWrite)) {
+              dispatchedToConnector = false;
+              answered = false;
+              gateRefused = true;
+              attempts = 0;
+              return context.dispatchDeadline.refusal(canonicalAddress);
+            }
             // Q8 is decided here for every served write, whatever its
             // connector made of the 401: over the logical call's whole ledger.
             const attemptError = failureWrite ? settleWrite(logicalCall?.sent ?? [], thrown, answered) : thrown;
