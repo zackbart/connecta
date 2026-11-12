@@ -3639,11 +3639,29 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           expect(warnings.join("\n")).not.toContain("mallory");
           const config = async () =>
             (await (await as("/ui/api/config", { headers: { Origin: BASE } })).json()) as {
-              connectors: Array<{ id: string; connection: { state: string; account?: string } | null }>;
+              connectors: Array<{
+                id: string;
+                connection: { state: string; account?: string } | null;
+                manage: { kind: string; reconnectKeepsGrant?: true };
+              }>;
             };
           const unbound = (await config()).connectors.find((c) => c.id === "mail")!.connection!;
           expect(unbound.state).toBe("auth_required");
           expect(unbound).not.toHaveProperty("account");
+          // A reconnect keeps the working grant until a new account is admitted (#1385).
+          expect((await config()).connectors.find((c) => c.id === "mail")!.manage).toEqual({
+            kind: "oauth",
+            actions: ["connect", "restart", "disconnect"],
+            reconnectKeepsGrant: true,
+          });
+          const maintained = (await (await as("/ui/data", { headers: { Origin: BASE } }, "alice")).json()) as {
+            connectors: Array<{ id: string; reconnectKeepsGrant?: true }>;
+          };
+          expect(maintained.connectors.find((c) => c.id === "mail")!.reconnectKeepsGrant).toBe(true);
+          const row = (await (await as("/ui/connectors/mail", { headers: { Origin: BASE } }, "alice")).json()) as {
+            reconnectKeepsGrant?: true;
+          };
+          expect(row.reconnectKeepsGrant).toBe(true);
 
           await signsInAs("bob", "bob@org.example");
           const connected = await consent();

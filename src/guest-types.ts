@@ -15,8 +15,10 @@ export interface GuestApi {
     options?: { page?: number; offset?: number; maxBytes?: number },
   ): Promise<GuestResultPage>;
   skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
-  /** Forwards an authored block, a block from result.content, or an inline result; a paged handle is refused. */
-  emit(block: GuestNativeBlock | Exclude<GuestResult, GuestResultHandle>): PromiseLike<void>;
+  /** Forwards an authored block or original native call content; data-only results and paged handles are refused. */
+  emit(
+    block: GuestNativeBlock | (Exclude<GuestResult, GuestResultHandle> & { content: GuestNativeBlock[] }),
+  ): PromiseLike<void>;
 }
 
 export interface GuestResourceResult {

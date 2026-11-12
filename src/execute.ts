@@ -293,6 +293,19 @@ function requireEmittedBlock(raw: unknown): GuestBlock {
     throw guestFailure("invalid_args", `connecta.emit accepts exactly one content block: ${EMIT_SHAPE_HINT}`);
   }
   const block = raw as Record<string, unknown>;
+  if (block.format === "paged" || ((block.format === "json" || block.format === "text") && "data" in block)) {
+    const recovery =
+      typeof block.resultId === "string"
+        ? ` Retained output: use connecta.result(${JSON.stringify(block.resultId)}, { offset: 0 }) in a new program, then continue from nextOffset while hasMore. Do not repeat the write for output.`
+        : "";
+    throw guestFailure(
+      "invalid_args",
+      (block.format === "paged"
+        ? "connecta.emit cannot forward a paged result: native content is not inline. Read it with connecta.result, reduce it first, then return the value or emit an authored block."
+        : "connecta.emit cannot forward a { format, data } result with no native content. Return the value (or reduce it first); emit accepts native call content or an authored text, image, or audio block.") +
+        recovery,
+    );
+  }
   const fields =
     block.type === "text"
       ? ["type", "text"]
@@ -2320,9 +2333,9 @@ Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or
 \`\`\`ts
 ${GUEST_API_DECLARATION}
 \`\`\`
-search and describe return objects, not arrays.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows a TypeScript signature by default; describe, JSON Schema. A call result over 1 MiB returns a paged handle: follow its hint. Every function except ${UNCOUNTED_GUEST_FUNCTIONS} spends a host call; over the limit the program returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction.
+search/describe return { tools }.${connectorGuides ? " A row with guideRequired: read its connector guide first." : ""} Search shows TypeScript signatures; describe, JSON Schema. Over 1 MiB, call returns a paged handle; follow its hint. Except ${UNCOUNTED_GUEST_FUNCTIONS}, functions spend a host call; exceeding the limit returns nothing, even under Promise.allSettled. Near the host-call limit, return page.nextCursor to resume next program. An oversized return carries nextAction.
 
-${readOnly ? "" : "Never repeat writes for output. "}emit(result) or emit(block) forwards MCP blocks; authored image/audio data is base64. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; text shares the return cap. connecta.skill("usage"): repair.`;
+${readOnly ? "" : "Never repeat writes for output. "}emit(result) needs native content; author text or base64 image/audio blocks. Return data; page/reduce handles. Caps: ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; text shares the return cap. connecta.skill("usage"): repair.`;
 
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and

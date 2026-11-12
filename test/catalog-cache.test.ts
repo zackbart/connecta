@@ -26,7 +26,8 @@ import { runEdge } from "../src/runtime/run.js";
 import { sqlStorage, type SqlStatement, type SqlDriver } from "../src/storage/sql.js";
 import { sentSecretsForRequest } from "../src/sent-secrets.js";
 import { oauthGrantKeys, responseCacheKeys, scopes } from "../src/storage/keys.js";
-import { withDeadline } from "../src/timeout.js";
+import { UNSCOPED_DISCOVERY_BUDGET_MS, withDeadline } from "../src/timeout.js";
+import { LOCAL_CLOSE_BUDGET_MS } from "../src/connectors/remote-mcp/transport.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { connectorContext, deferred, scriptedExecutor, waitFor } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
@@ -94,6 +95,7 @@ async function fixture(
     description?: string;
     operatorShared?: boolean;
     nextPage?: { ttl: number; scope: "public" | "private" };
+    onStalled?: () => void;
   } = {},
 ) {
   const store = await storage();
@@ -141,6 +143,7 @@ async function fixture(
           if (signal?.aborted) reject(signal.reason);
           signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
           stalled.add(resolve);
+          options.onStalled?.();
         });
       if (mode === "error" || (mode === "partial" && body.params?.cursor))
         return new Response(`Refused ${token}`, { status: 403 });
@@ -1720,15 +1723,19 @@ describe("stale catalog listing", () => {
   });
 
   it("INV-7 INV-8: refreshes past the probe deadline under defer, in a scope of its own", async () => {
-    const f = await fixture({ ttl: 1_000 });
+    const entered = deferred<void>();
+    const f = await fixture({ ttl: 1_000, onStalled: () => entered.resolve() });
     const time = clock();
     const root = f.registry();
     await f.read(root);
     time.now += 2_000;
     f.mode("stalled");
-    const deferred: Promise<unknown>[] = [];
-    const defer = (work: Promise<unknown>) => void deferred.push(work);
-    await f.discover(
+    // Only the probe deadline advances. Storage and the tail can settle at
+    // their own pace without spending a wall-clock refresh budget.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const tails: Promise<unknown>[] = [];
+    const defer = (work: Promise<unknown>) => void tails.push(work);
+    const discovery = f.discover(
       f.viewFor(root),
       async (service) => {
         const page = await search(service);
@@ -1736,10 +1743,13 @@ describe("stale catalog listing", () => {
       },
       { defer },
     );
-    expect(deferred).toHaveLength(1);
+    await entered.promise;
+    await vi.advanceTimersByTimeAsync(100);
+    await discovery;
+    expect(tails).toHaveLength(1);
     // The downstream recovers after the request ended; the tail's listing owns its own signal and connection.
     f.mode("ok");
-    await Promise.all(deferred);
+    await Promise.all(tails);
     const listings = f.listings();
     const page = await f.discover(f.viewFor(root), search, { defer });
     // A warmed cache with a cleared record: the next search reports nothing and asks nothing.
@@ -2756,42 +2766,50 @@ describe("pre-connect cached catalogs", () => {
   });
 
   // Every stored row that addresses a downstream catalog, negotiation verdict or health record.
-  const cacheRows = async (store: KVStorage) =>
+  const cacheRows = async (store: KVStorage, suffix = "") =>
     Promise.all(
       (await store.list(""))
-        .filter((key) => /response-cache:|negotiation:|connector-health:/.test(key))
+        .filter((key) => key.includes(suffix) && /response-cache:|negotiation:|connector-health:/.test(key))
         .map(async (key) => [key, (await store.get(key)) ?? ""] as const),
     );
 
-  it("INV-5 INV-6: cache keys depend on the deployment key, never on a guessable configured value alone", async () => {
-    const store = await storage();
-    const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
-    const url = `https://crm.test/mcp?key=${TOKEN_B}`;
-    const first = await deployment({}, { store, suffix, url });
-    await first.search();
-    const before = await cacheRows(store);
-    // No row holds a configured secret, or a plain digest of a guess at one.
-    const guesses = [TOKEN_A, TOKEN_B, `Bearer ${TOKEN_A}`, `?key=${TOKEN_B}`, url];
-    const digests = await Promise.all(guesses.map((guess) => sha256Hex(guess)));
-    for (const [key, value] of before)
-      for (const needle of [...guesses, ...guesses.map(encodeURIComponent), ...digests]) {
-        expect(key).not.toContain(needle);
-        expect(value).not.toContain(needle);
-      }
-    // The same secrets under another deployment key address none of those
-    // rows: a stored key is no function of public inputs and a guessed secret.
-    const second = await deployment({}, { store, suffix, url, vaultKey: 9 });
-    await second.search();
-    // Every connector's configuration is keyed whole, so each lists again.
-    expect(second.downstreams.map((downstream) => downstream.listings())).toEqual([1, 1, 1]);
-    expect(second.handshakes()).toBe(3);
-    const keys = (rows: (readonly [string, string])[]) =>
-      new Set(rows.map(([key]) => key).filter((key) => !key.endsWith(":generation")));
-    const earlier = keys(before);
-    expect(earlier.size).toBeGreaterThan(0);
-    const fresh = [...keys(await cacheRows(store))].filter((key) => !earlier.has(key));
-    for (const id of Object.values(first.ids)) expect(fresh.some((key) => key.includes(id))).toBe(true);
-  });
+  // Two searches, each with a bounded fan-out and three sequential transport
+  // closes. The test runner must allow the fixture's complete request budget.
+  it(
+    "INV-5 INV-6: cache keys depend on the deployment key, never on a guessable configured value alone",
+    async () => {
+      const store = await storage();
+      const suffix = crypto.randomUUID().replaceAll("-", "").slice(0, 12);
+      const url = `https://crm.test/mcp?key=${TOKEN_B}`;
+      const first = await deployment({}, { store, suffix, url });
+      await first.search();
+      // Other tests share D1: inspect only this deployment's rows, including
+      // its negotiation and health records, regardless of suite/repeat order.
+      const rows = () => cacheRows(store, suffix);
+      const before = await rows();
+      // No row holds a configured secret, or a plain digest of a guess at one.
+      const guesses = [TOKEN_A, TOKEN_B, `Bearer ${TOKEN_A}`, `?key=${TOKEN_B}`, url];
+      const digests = await Promise.all(guesses.map((guess) => sha256Hex(guess)));
+      const needles = [...guesses, ...guesses.map(encodeURIComponent), ...digests];
+      expect(
+        before.flatMap(([key, value]) => needles.filter((needle) => key.includes(needle) || value.includes(needle))),
+      ).toEqual([]);
+      // The same secrets under another deployment key address none of those
+      // rows: a stored key is no function of public inputs and a guessed secret.
+      const second = await deployment({}, { store, suffix, url, vaultKey: 9 });
+      await second.search();
+      // Every connector's configuration is keyed whole, so each lists again.
+      expect(second.downstreams.map((downstream) => downstream.listings())).toEqual([1, 1, 1]);
+      expect(second.handshakes()).toBe(3);
+      const keys = (rows: (readonly [string, string])[]) =>
+        new Set(rows.map(([key]) => key).filter((key) => !key.endsWith(":generation")));
+      const earlier = keys(before);
+      expect(earlier.size).toBeGreaterThan(0);
+      const fresh = [...keys(await rows())].filter((key) => !earlier.has(key));
+      for (const id of Object.values(first.ids)) expect(fresh.some((key) => key.includes(id))).toBe(true);
+    },
+    2 * (UNSCOPED_DISCOVERY_BUDGET_MS + 3 * LOCAL_CLOSE_BUDGET_MS),
+  );
 
   it("INV-4 INV-5 INV-6: an endpoint path token keys its partitions only through the deployment key", async () => {
     const store = await storage();

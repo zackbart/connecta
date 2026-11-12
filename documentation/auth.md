@@ -2393,7 +2393,9 @@ A rejected human identity, including a service identity or an unusable user
 id, returns 403. A thrown identity lookup gets one retry after 100–250 ms of
 jitter, within the original five-second deadline. A hanging lookup is never
 retried concurrently. The second rejection or the deadline returns retryable
-503 with `problem: "identity_unavailable"` and `Retry-After: 1`. Every refusal
+503 with `problem: "identity_unavailable"` and `Retry-After: 1`. A caller whose
+request signal aborts during lookup or retry backoff receives the same refusal,
+with a distinct `cancelled` diagnostic outcome; a late result never admits it. Every refusal
 carries `Cache-Control: no-store`; every unavailable-verification 503 carries
 `Retry-After: 1` and no `WWW-Authenticate` challenge. None of these failures admits an identity,
 and an unavailable lookup never falls back to another provider. The operator
@@ -2414,7 +2416,8 @@ with the same facts and `access_context_unavailable`, `access_audience_invalid`,
 `access_keys_unavailable`; the last two come only from
 [assertion verification](#verify-the-assertion-when-access-context-is-missing).
 Identity lookup failures additionally carry
-checked `identityLookup` facts: `outcome` (`timeout` or `rejected`), `durationMs`,
+checked `identityLookup` facts: `outcome` (`cancelled` when the request signal aborted, otherwise `rejected`
+after the second rejection or `timeout` at the five-second deadline), `durationMs`,
 `cold` (whether this was the isolate's first identity lookup), and `inFlight`
 (the isolate's lookup attempts still pending when the failure was recorded; this
 request's own attempt counts only while it is pending, so a hung lookup counts
@@ -2428,7 +2431,8 @@ not an identity cache key. Failed identity lookups always refuse admission.
 
 After an authorized release, validate this mitigation with about 20 concurrent
 sessions. Count runs containing `identity_unavailable`, targeting fewer than
-1% of runs; distinguish `timeout` from `rejected` in the checked lookup facts.
+1% of runs; distinguish `timeout` from `rejected` in the checked lookup facts,
+and exclude `cancelled` callers from outage acceptance counts.
 A passing local concurrency fixture does not establish production acceptance.
 
 Protect the Worker with a Worker-level Access application whose destination is

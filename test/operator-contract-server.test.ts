@@ -257,6 +257,92 @@ const notesManage = (actions: Array<"save" | "test" | "clear">): OperatorMemberM
 });
 
 describe("operator contract v2 server", () => {
+  it("advertises kept-grant reconnect only for account-checked api OAuth (#1385)", async () => {
+    const oauth = {
+      authorizationEndpoint: "https://provider.test/authorize",
+      tokenEndpoint: "https://provider.test/token",
+      clientId: "client",
+      apiOrigins: ["https://provider.test"],
+    };
+    const connectors = [
+      api("checked", {
+        authScope: "personal",
+        oauth: {
+          ...oauth,
+          account: { identify: async () => ({ address: "bob@example.com" }), allow: "bob@example.com" },
+        },
+        tools: [],
+      }),
+      api("unchecked", { authScope: "personal", oauth, tools: [] }),
+      Object.assign(remoteMcp("remote", { url: "https://provider.test/mcp", authScope: "personal" }), {
+        status: async () => ({ state: "auth_required" as const }),
+        listTools: async () => [],
+      }),
+      notes(),
+    ];
+    const storage = memoryStorage();
+    const app = deploy({
+      connectors,
+      storage,
+      auth: people(),
+      maintainers: ["alice"],
+      vault: encryptedCredentialVault(storage, KEY),
+      pools: { team: { tools: ["checked", "unchecked", "remote", "notes"], members: ["bob"] } },
+    });
+    const send = sender(app);
+    const member = await read(send, "bob");
+    expect(member.connectors.find((c) => c.id === "checked")!.manage).toEqual({
+      kind: "oauth",
+      actions: ["connect", "restart", "disconnect"],
+      reconnectKeepsGrant: true,
+    });
+    for (const connector of member.connectors.filter((c) => c.id !== "checked"))
+      expect(connector.manage).not.toHaveProperty("reconnectKeepsGrant");
+    const response = await send("alice", "/ui/data");
+    expect(response.status).toBe(200);
+    const data = (await response.json()) as { connectors: UiConnector[] };
+    expect(data.connectors.find((c) => c.id === "checked")).toHaveProperty("reconnectKeepsGrant", true);
+    for (const connector of data.connectors.filter((c) => c.id !== "checked"))
+      expect(connector).not.toHaveProperty("reconnectKeepsGrant");
+  });
+
+  it("advertises kept-grant reconnect only to someone who may manage the connector (#1385)", async () => {
+    // Listed for Bob alone: maintainer Alice sees the row but may not reconnect it.
+    const restricted = api("restricted", {
+      authScope: "personal",
+      members: ["bob"],
+      oauth: {
+        authorizationEndpoint: "https://provider.test/authorize",
+        tokenEndpoint: "https://provider.test/token",
+        clientId: "client",
+        apiOrigins: ["https://provider.test"],
+        account: { identify: async () => ({ address: "bob@example.com" }), allow: "bob@example.com" },
+      },
+      tools: [],
+    });
+    const storage = memoryStorage();
+    const app = deploy({
+      connectors: [restricted],
+      storage,
+      auth: people(),
+      maintainers: ["alice"],
+      vault: encryptedCredentialVault(storage, KEY),
+      pools: { team: { tools: ["restricted"], members: ["bob"] } },
+    });
+    const send = sender(app);
+    const summary = (await (await send("alice", "/ui/data")).json()) as { connectors: UiConnector[] };
+    const row = summary.connectors.find((c) => c.id === "restricted");
+    const detail = (await (await send("alice", "/ui/connectors/restricted")).json()) as UiConnector;
+    expect(detail.id).toBe("restricted");
+    for (const seen of [row!, detail]) {
+      expect(seen.permissions).toEqual({ use: false, manageSharedAuth: false, connectPersonal: false });
+      expect(seen).not.toHaveProperty("reconnectKeepsGrant");
+    }
+    // Bob, who may, still learns that his reconnect keeps the grant.
+    const member = await read(send, "bob");
+    expect(member.connectors.find((c) => c.id === "restricted")!.manage).toHaveProperty("reconnectKeepsGrant", true);
+  });
+
   it("INV-4 INV-5 INV-6: each member's real view is exactly their projection from config, membership and partition", async () => {
     const { app, send } = await team();
     const pools = describedPools(app);

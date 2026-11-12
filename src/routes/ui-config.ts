@@ -1,3 +1,4 @@
+import { accountRestrictionOf } from "../oauth-account.js";
 import { storedAuthObservation } from "../auth/stored-observation.js";
 import { agentDescriptions } from "../agent-description.js";
 import { readAgentAdmission } from "../agent-observation.js";
@@ -710,6 +711,7 @@ function memberManage(
   if (!connect && !disconnect) return Effect.succeed({ kind: "none" });
   return Effect.succeed({
     kind: "oauth",
+    ...(accountRestrictionOf(connector) ? { reconnectKeepsGrant: true as const } : {}),
     actions: [...(connect ? (["connect", "restart"] as const) : []), ...(disconnect ? (["disconnect"] as const) : [])],
   });
 }

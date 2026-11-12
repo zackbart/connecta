@@ -390,7 +390,11 @@ export interface PendingConfirm {
 }
 
 /** The confirm's question, naming the connector by its title. */
-export function confirmCopy(action: PendingConfirm["action"], name: string): { question: string; confirm: string } {
+export function confirmCopy(
+  action: PendingConfirm["action"],
+  name: string,
+  reconnectKeepsGrant = false,
+): { question: string; confirm: string } {
   if (action === "oauth_disconnect") {
     return {
       question: `Disconnect ${name}? Its tools stop working until you connect again.`,
@@ -399,7 +403,9 @@ export function confirmCopy(action: PendingConfirm["action"], name: string): { q
   }
   if (action === "oauth_restart") {
     return {
-      question: `Reconnect ${name}? It stops working until you finish in the new tab.`,
+      question: reconnectKeepsGrant
+        ? `Reconnect ${name}? Your current connection keeps working until the new sign-in is accepted.`
+        : `Reconnect ${name}? It stops working until you finish in the new tab.`,
       confirm: "Reconnect",
     };
   }
