@@ -305,6 +305,18 @@ class DownstreamResponseTooLargeError extends ConnectorCallError {
 }
 labelErrorClass(DownstreamResponseTooLargeError, "DownstreamResponseTooLargeError");
 
+/** A request awaiting its answer, which a resumed stream may still carry. */
+interface PendingRequest {
+  rpcId: string | number;
+  /** How the error names what was answered: a quoted tool, or a method. */
+  answered: string;
+  limit: number;
+  call: "read" | "write" | undefined;
+  flight: CallDispatch | undefined;
+  /** The last SSE event id its answer stream carried. */
+  eventId?: string;
+}
+
 /** Lost tracking cannot prove whether an earlier message already sent a write. */
 function missingDispatch(): ConnectorCallError {
   return new ConnectorCallError(
@@ -420,9 +432,21 @@ export function remoteMcpTransport(
     };
     // This transport's calls on the wire, by JSON-RPC id, while each is sent.
     const flights = new Map<string | number, CallDispatch>();
-    // A tool call's answer stream by its SSE event ids, so the SDK's GET
-    // resumption with `Last-Event-ID` is bounded and answered as that call.
-    const resumes = new Map<string, { rpcId: string | number; tool: string; flight: CallDispatch | undefined }>();
+    // Each request awaiting its answer, by JSON-RPC id, until the answer
+    // arrives (see `sendingEachWriteOnce`), and by the last SSE event id its
+    // answer stream carried: a GET resuming that stream with `Last-Event-ID`
+    // is bounded and answered as that request, under its own bound.
+    const pending = new Map<string | number, PendingRequest>();
+    const byEventId = new Map<string, PendingRequest>();
+    const answered = (rpcId: unknown) => {
+      const request = pending.get(rpcId as string | number);
+      if (!request) return;
+      pending.delete(request.rpcId);
+      if (request.eventId !== undefined) byEventId.delete(request.eventId);
+    };
+    // Set once a stream no request owns, the standing GET, passed its bound:
+    // the SDK reopens such a stream after every success, so it stays closed.
+    let fenced = false;
     const era: EraRefusal = {};
     const trackedFetch: FetchLike = authMethod((input: string | URL, init: RequestInit | undefined) =>
       authFlow<Response>(function* () {
@@ -441,6 +465,13 @@ export function remoteMcpTransport(
         if (toolCall && !flight && !untrackedRead(toolCall.params)) throw missingDispatch();
         const credentialPost =
           isOauth && (init?.method ?? "GET").toUpperCase() === "POST" && (!skillObject(rpc) || rpc.jsonrpc !== "2.0");
+        const transportRequest =
+          !credentialPost && new Headers(init?.headers).get("accept")?.includes("text/event-stream") === true;
+        const lastEventId = init?.method === "GET" ? new Headers(init.headers).get("last-event-id") : null;
+        const resumedRequest = lastEventId === null ? undefined : byEventId.get(lastEventId);
+        // 405 is the SDK's own "no stream here": it stops reopening.
+        if (fenced && transportRequest && init?.method === "GET" && !resumedRequest)
+          return new Response(null, { status: 405 });
         // OAuth discovery, registration and exchange share this fetch, but do
         // not use the resource credential. Guard the assembled MCP request,
         // after the SDK token read and before dispatch bookkeeping or fetch.
@@ -533,47 +564,61 @@ export function remoteMcpTransport(
         })) as Response;
         // Every transport answer is bounded as it streams (#1364): an HTTP error
         // or 202 body to a prefix, a tool's answer to the result store, a
-        // listing to the catalog ceiling. A resumed stream answers its call.
-        const resumed =
-          init?.method === "GET" ? resumes.get(new Headers(init.headers).get("last-event-id") ?? "") : undefined;
+        // listing to the catalog ceiling, and a resumed stream as its request.
         if (
-          !credentialPost &&
-          new Headers(init?.headers).get("accept")?.includes("text/event-stream") &&
+          transportRequest &&
           !(skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read"))
         ) {
-          const method = skillObject(rpc) && typeof rpc.method === "string" ? rpc.method : "";
-          const call =
-            resumed ??
-            (toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
-              ? {
-                  rpcId: toolCall.id,
-                  tool: skillObject(toolCall.params) ? String(toolCall.params.name) : "",
-                  flight,
-                }
-              : undefined);
-          const limit = method.endsWith("/list")
-            ? Math.max(responseBytes, MAX_SERIALIZED_CATALOG_BYTES)
-            : responseBytes;
+          let request = resumedRequest;
+          if (
+            !request &&
+            skillObject(rpc) &&
+            typeof rpc.method === "string" &&
+            (typeof rpc.id === "string" || typeof rpc.id === "number")
+          ) {
+            const tool = toolCall && skillObject(toolCall.params) ? `"${String(toolCall.params.name)}"` : undefined;
+            const created: PendingRequest = {
+              rpcId: rpc.id,
+              answered: tool ?? rpc.method,
+              limit: rpc.method.endsWith("/list")
+                ? Math.max(responseBytes, MAX_SERIALIZED_CATALOG_BYTES)
+                : responseBytes,
+              call: tool === undefined ? undefined : flight?.write ? "write" : "read",
+              flight,
+            };
+            request = created;
+            // Only an answer that can carry the response awaits it.
+            if (response.ok && response.status !== 202 && response.status !== 204) {
+              pending.set(created.rpcId, created);
+              if (pending.size > 1024) answered(pending.keys().next().value);
+            }
+          }
+          const limit = request?.limit ?? responseBytes;
           response = boundedMcpBody(response, {
             limit,
-            rpcId:
-              call?.rpcId ?? (skillObject(rpc) && typeof rpc.id !== "object" ? (rpc.id as string | number) : undefined),
+            rpcId: request?.rpcId,
             exceeded: () => {
-              const error = new DownstreamResponseTooLargeError(
-                id,
-                call ? `"${call.tool}"` : method || "a stream",
-                limit,
-                call && (call.flight?.write ? "write" : "read"),
-              );
-              if (call?.flight) call.flight.tooLarge = error;
+              if (!request) {
+                if (!fenced)
+                  logFailure(
+                    ctx.logger,
+                    "downstream standing stream passed its byte bound and is closed for this connection",
+                    failureRecord({ connector: id }),
+                  );
+                fenced = true;
+                return new DownstreamResponseTooLargeError(id, "its standing stream", limit, undefined);
+              }
+              answered(request.rpcId);
+              const error = new DownstreamResponseTooLargeError(id, request.answered, limit, request.call);
+              if (request.flight) request.flight.tooLarge = error;
               return error;
             },
             onEventId:
-              call &&
+              request &&
               ((eventId) => {
-                resumes.delete(eventId);
-                resumes.set(eventId, call);
-                if (resumes.size > 64) resumes.delete(resumes.keys().next().value!);
+                if (request.eventId !== undefined) byEventId.delete(request.eventId);
+                request.eventId = eventId;
+                if (pending.get(request.rpcId) === request) byEventId.set(eventId, request);
               }),
           });
         }
@@ -781,7 +826,7 @@ export function remoteMcpTransport(
           ]) as Effect.Effect<void, unknown>;
         }),
       );
-      return sendingEachWriteOnce(transport, flights, untrackedRead, era);
+      return sendingEachWriteOnce(transport, flights, untrackedRead, era, answered);
     }
     const headers =
       opts.auth?.type === "headers"
@@ -800,6 +845,7 @@ export function remoteMcpTransport(
       flights,
       untrackedRead,
       era,
+      answered,
     );
   };
 
@@ -814,8 +860,13 @@ export function remoteMcpTransport(
     flights: Map<string | number, CallDispatch>,
     untrackedRead: (params: unknown) => boolean,
     era: EraRefusal,
+    answered: (rpcId: unknown) => void,
   ): StreamableHTTPClientTransport => {
     eraRefusals.set(transport, era);
+    // The client chains this observer: every answer releases its request.
+    transport.onmessage = (message) => {
+      if ("id" in message && ("result" in message || "error" in message)) answered(message.id);
+    };
     const send = transport.send.bind(transport);
     transport.send = authMethod(
       (

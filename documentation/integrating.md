@@ -256,8 +256,11 @@ whole. A listing page (`tools/list` and other `*/list`) is bounded to the 32 MiB
 catalog ceiling and any other answer to the tool bound. A JSON body past its
 bound, declared by `Content-Length` or counted, fails; on an event stream each
 event is bounded, progress and other events still arrive as they complete, and
-an answer resumed with `Last-Event-ID` is bounded and answered as the call it
-resumes. An HTTP error or `202 Accepted` keeps its status, so authorization
+an answer resumed with `Last-Event-ID` is bounded and answered as the request
+it resumes, under that request's bound, for as long as the request awaits its
+answer. A standing stream no request owns that passes the tool bound is closed
+for the rest of that connection and logged once, so the SDK cannot reopen it
+again and again. An HTTP error or `202 Accepted` keeps its status, so authorization
 recovery and write outcomes are unchanged, and only its first 64 KiB are read.
 A tool call answered past its bound fails as non-retryable
 `connector_call_failed`, whose message names the bound and says to narrow the
