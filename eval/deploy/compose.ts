@@ -143,9 +143,13 @@ function evalConnector(spec: ConnectorSpec, fixtures: EvalFixtures) {
   }
   if (spec.google) {
     const factory = { gmail, drive, docs, sheets, slides, forms }[spec.google.product];
+    if (spec.google.oauth) {
+      const { authScope, ...oauth } = spec.google.oauth;
+      return factory(spec.id, { ...options, oauth, authScope });
+    }
     return factory(spec.id, {
       ...options,
-      serviceAccount: spec.google.serviceAccount,
+      serviceAccount: spec.google.serviceAccount!,
       subject: spec.google.subject === "fixed" ? fixtures.alice : () => fixtures.alice,
     });
   }

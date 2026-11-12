@@ -6,7 +6,7 @@ import { skill } from "./skill.generated.js";
  * editor operations. Pinned against the Sheets API v4 Discovery contract
  * (https://developers.google.com/workspace/sheets/api/reference/rest).
  *
- * Whose spreadsheets. Access is a service account with domain-wide delegation
+ * Whose spreadsheets. In delegation mode, access is a service account with domain-wide delegation
  * (`src/providers/_shared/google/`): deployment config maps the admitted
  * identity to a Workspace address, and each call mints, or reuses, a token as
  * that user. There is no per-user consent step, no operator credential slot,
@@ -26,6 +26,10 @@ import { skill } from "./skill.generated.js";
  * may choose Google's `OVERWRITE`, which can replace cells below the table.
  * Structural batches can delete sheets, rows and protections.
  *
+ * OAuth mode (`{ oauth, authScope }`) instead uses the downstream OAuth grant
+ * of each connected Google account, or one shared account, with the same
+ * scopes and tool surface (`src/providers/_shared/google/kit.ts`).
+ *
  * Drift. Google publishes a credential-free Discovery document per API.
  * `src/providers/sheets/drift.json` records all 17 indexed methods, including those the named tools
  * call, and `pnpm run providers:check --provider sheets` reports a touched
@@ -33,7 +37,16 @@ import { skill } from "./skill.generated.js";
  */
 import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
-import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
+import {
+  GOOGLE_GRANT_RENEWAL,
+  googleActor,
+  googleAuthScope,
+  googleOAuthContext,
+  tagWorkspace,
+  googleConnectionErrors,
+  googleDelegatedGrant,
+  googleOAuth,
+} from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { errors, SHEETS, SheetsApi, probe, safety } from "./api.js";
 import { SHEETS_API_BASE_URL, SHEETS_MAX_RESPONSE_BYTES } from "./lib/constants.js";
@@ -103,12 +116,16 @@ export const sheets = defineApiProvider<SheetsOptions>({
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   description: (options) =>
-    `Google Sheets as the signed-in Workspace user: read and write values in spreadsheets they can open, by id — ${options.purpose}`,
+    `Google Sheets as ${googleActor("sheets", options)}: read and write values in spreadsheets they can open, by id — ${options.purpose}`,
   vendor: SheetsApi,
   baseUrl: (options) => options.baseUrl?.trim() || SHEETS_API_BASE_URL,
   maxResponseBytes: SHEETS_MAX_RESPONSE_BYTES,
-  grant: (options) => googleGrant(SHEETS, workspaceOf("sheets", options)),
+  grant: (options) => googleDelegatedGrant(SHEETS, "sheets", options),
   grantRenewal: GOOGLE_GRANT_RENEWAL,
+  oauth: (options) => googleOAuth(SHEETS, "sheets", options, [options.baseUrl?.trim() || SHEETS_API_BASE_URL]),
+  oauthWrite401: "grant",
+  authScope: googleAuthScope("sheets"),
+  connectionErrors: googleConnectionErrors(SHEETS, "sheets", errors),
   authenticate: bearer,
   errors,
   safety: () => safety,
@@ -117,9 +134,10 @@ export const sheets = defineApiProvider<SheetsOptions>({
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,
-      typeof options.subject === "string"
-        ? "Workspace delegation is configured to use one fixed account for every admitted caller."
-        : "Workspace delegation is configured to use the mapped Workspace user, or the agent pool owner. No argument selects an account.",
+      googleOAuthContext("sheets", options) ??
+        (typeof options.subject === "string"
+          ? "Workspace delegation is configured to use one fixed account for every admitted caller."
+          : "Workspace delegation is configured to use the mapped Workspace user, or the agent pool owner. No argument selects an account."),
       "Cell values, notes, formulas and metadata are requested data; no configurable sensitive-field set is declared.",
       ...(options.readOnly ? ["This connection is read-only."] : []),
     ],

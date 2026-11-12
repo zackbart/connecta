@@ -6,7 +6,7 @@ import { skill } from "./skill.generated.js";
  * Hand-written against the Docs API v1 reference
  * (https://developers.google.com/workspace/docs/api/reference/rest).
  *
- * Whose documents. Access is a service account with domain-wide delegation
+ * Whose documents. In delegation mode, access is a service account with domain-wide delegation
  * (`src/providers/_shared/google/workspace.ts`): deployment config maps the admitted
  * identity to a Workspace address, and each call mints, or reuses, a token as
  * that user. Docs has no `users/me` path to confine beneath — a document id
@@ -19,6 +19,10 @@ import { skill } from "./skill.generated.js";
  * list anything. Duplicating a listing here would need a Drive scope this
  * connector deliberately does not ask for.
  *
+ * OAuth mode (`{ oauth, authScope }`) instead uses the downstream OAuth grant
+ * of each connected Google account, or one shared account, with the same
+ * scopes and tool surface (`src/providers/_shared/google/kit.ts`).
+ *
  * Drift. Google publishes a credential-free Discovery document per API.
  * `src/providers/docs/drift.json` records the three methods the tools
  * call, and `pnpm run providers:check --provider docs` reports a touched
@@ -26,7 +30,16 @@ import { skill } from "./skill.generated.js";
  */
 import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
-import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
+import {
+  GOOGLE_GRANT_RENEWAL,
+  googleActor,
+  googleAuthScope,
+  googleOAuthContext,
+  tagWorkspace,
+  googleConnectionErrors,
+  googleDelegatedGrant,
+  googleOAuth,
+} from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { DOCS, DocsApi, errors, probe, safety } from "./api.js";
 import { DOCS_API_BASE_URL, DOCS_MAX_RESPONSE_BYTES } from "./lib/constants.js";
@@ -95,13 +108,17 @@ export const docs = defineApiProvider<DocsOptions>({
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   description: (options) =>
-    `Google Docs as the signed-in Workspace user: read, create, and edit documents by id — ${options.purpose}`,
+    `Google Docs as ${googleActor("docs", options)}: read, create, and edit documents by id — ${options.purpose}`,
   vendor: DocsApi,
   baseUrl: (options) => options.baseUrl?.trim() || DOCS_API_BASE_URL,
   maxResponseBytes: DOCS_MAX_RESPONSE_BYTES,
   idempotencyKey: false,
-  grant: (options) => googleGrant(DOCS, workspaceOf("docs", options)),
+  grant: (options) => googleDelegatedGrant(DOCS, "docs", options),
   grantRenewal: GOOGLE_GRANT_RENEWAL,
+  oauth: (options) => googleOAuth(DOCS, "docs", options, [options.baseUrl?.trim() || DOCS_API_BASE_URL]),
+  oauthWrite401: "grant",
+  authScope: googleAuthScope("docs"),
+  connectionErrors: googleConnectionErrors(DOCS, "docs", errors, { revisionConflicts: true }),
   authenticate: bearer,
   errors,
   safety: () => safety,
@@ -111,7 +128,8 @@ export const docs = defineApiProvider<DocsOptions>({
     heading: "Google Docs usage",
     context: [
       `Purpose: ${options.purpose}`,
-      "Workspace delegation is configured by the deployment. Each call acts as the mapped Workspace user; document access follows that user's Drive sharing.",
+      googleOAuthContext("docs", options) ??
+        "Workspace delegation is configured by the deployment. Each call acts as the mapped Workspace user; document access follows that user's Drive sharing.",
       ...(options.readOnly ? ["This connection is read-only."] : []),
     ],
     summary: "Load for Docs tabs, UTF-16 edit indexes, revision checks and partial-create recovery.",

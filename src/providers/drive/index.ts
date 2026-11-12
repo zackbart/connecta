@@ -6,13 +6,17 @@ import { skill } from "./skill.generated.js";
  * to a new owner. Hand-written against the Drive API v3 reference
  * (https://developers.google.com/workspace/drive/api/reference/rest/v3).
  *
- * Whose Drive. Access is a service account with domain-wide delegation
+ * Whose Drive. In delegation mode, access is a service account with domain-wide delegation
  * (`src/providers/_shared/google/workspace.ts`): deployment config maps the admitted
  * identity to a Workspace address, and each call mints, or reuses, a token as
  * that user. Drive has no `users/me` segment to confine beneath; the token's
  * subject is what every request acts as, so a file id reaches exactly what
  * that person could open in the Drive web app, shared drives included, and no
  * argument names anyone else.
+ *
+ * OAuth mode (`{ oauth, authScope }`) instead uses the downstream OAuth grant
+ * of each connected Google account, or one shared account, with the same
+ * scopes and tool surface (`src/providers/_shared/google/kit.ts`).
  *
  * Two transports, one account. Uploads go to Drive's upload host
  * (`/upload/drive/v3`), outside the API root, so the provider builds a second
@@ -32,9 +36,15 @@ import { skill } from "./skill.generated.js";
  */
 import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
-import { GOOGLE_GRANT_RENEWAL, tagWorkspace } from "../_shared/google/kit.js";
+import {
+  GOOGLE_GRANT_RENEWAL,
+  googleActor,
+  googleAuthScope,
+  googleOAuthContext,
+  tagWorkspace,
+} from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
-import { driveGrant, DriveApi, errors, probe, result, safety } from "./api.js";
+import { connectionErrors, driveGrant, driveOAuth, DriveApi, errors, probe, result, safety } from "./api.js";
 import { DRIVE_API_BASE_URL, DRIVE_MAX_RESPONSE_BYTES } from "./lib/constants.js";
 import { DRIVE_HATCH, driveBinding } from "./lib/hatch.js";
 import { driveTools } from "./tools.js";
@@ -95,13 +105,17 @@ export const drive = defineApiProvider<DriveOptions>({
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   description: (options) =>
-    "Google Drive as the signed-in Workspace user: search, read, write, and share files, never delete them for good — " +
+    `Google Drive as ${googleActor("drive", options)}: search, read, write, and share files, never delete them for good — ` +
     options.purpose,
   vendor: DriveApi,
   baseUrl: (options) => options.baseUrl?.trim() || DRIVE_API_BASE_URL,
   maxResponseBytes: DRIVE_MAX_RESPONSE_BYTES,
   grant: driveGrant,
   grantRenewal: GOOGLE_GRANT_RENEWAL,
+  oauth: driveOAuth,
+  oauthWrite401: "grant",
+  authScope: googleAuthScope("drive"),
+  connectionErrors,
   authenticate: bearer,
   errors,
   safety: () => safety,
@@ -113,7 +127,8 @@ export const drive = defineApiProvider<DriveOptions>({
   guide: (options) => ({
     context: [
       `Connection purpose: ${options.purpose}`,
-      "Acts as the Workspace user deployment config maps from the admitted caller or pool owner. No caller argument selects an account. An unmapped or ownerless caller has no access unless the deployment fixes a shared account.",
+      googleOAuthContext("drive", options) ??
+        "Acts as the Workspace user deployment config maps from the admitted caller or pool owner. No caller argument selects an account. An unmapped or ownerless caller has no access unless the deployment fixes a shared account.",
     ],
     summary: "Load for Drive file discovery, bounded content, recoverable trash and sharing.",
     required: true,

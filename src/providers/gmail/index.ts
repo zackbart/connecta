@@ -5,7 +5,7 @@ import { skill } from "./skill.generated.js";
  * or relabels. Hand-written against the Gmail API v1 reference
  * (https://developers.google.com/workspace/gmail/api/reference/rest).
  *
- * Whose mailbox. Access is a service account with domain-wide delegation
+ * Whose mailbox. In delegation mode, access is a service account with domain-wide delegation
  * (`src/providers/_shared/google/workspace.ts`): deployment config maps the admitted
  * identity to a Workspace address, and each call mints, or reuses, a token as
  * that user. There is no per-user consent step, no operator credential slot,
@@ -19,6 +19,10 @@ import { skill } from "./skill.generated.js";
  * agent to send mail is choosing something this provider deliberately does
  * not offer.
  *
+ * OAuth mode (`{ oauth, authScope }`) instead uses the downstream OAuth grant
+ * of each connected Google account, or one shared account, with the same
+ * scopes and tool surface (`src/providers/_shared/google/kit.ts`).
+ *
  * Drift. Google publishes a credential-free Discovery document per API.
  * `src/providers/gmail/drift.json` records the frozen inventory and the methods the tools
  * call, and `pnpm run providers:check --provider gmail` reports a touched
@@ -26,7 +30,16 @@ import { skill } from "./skill.generated.js";
  */
 import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
-import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
+import {
+  GOOGLE_GRANT_RENEWAL,
+  googleActor,
+  googleAuthScope,
+  googleOAuthContext,
+  tagWorkspace,
+  googleConnectionErrors,
+  googleDelegatedGrant,
+  googleOAuth,
+} from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { errors, GMAIL, GmailApi, probe, result, safety } from "./api.js";
 import { GMAIL_API_BASE_URL, GMAIL_MAX_RESPONSE_BYTES } from "./lib/constants.js";
@@ -91,12 +104,16 @@ export const gmail = defineApiProvider<GmailOptions>({
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   description: (options) =>
-    `Gmail as the signed-in Workspace user: read mail and write drafts, never send — ${options.purpose}`,
+    `Gmail as ${googleActor("gmail", options)}: read mail and write drafts, never send — ${options.purpose}`,
   vendor: GmailApi,
   baseUrl: (options) => options.baseUrl?.trim() || GMAIL_API_BASE_URL,
   maxResponseBytes: GMAIL_MAX_RESPONSE_BYTES,
-  grant: (options) => googleGrant(GMAIL, workspaceOf("gmail", options)),
+  grant: (options) => googleDelegatedGrant(GMAIL, "gmail", options),
   grantRenewal: GOOGLE_GRANT_RENEWAL,
+  oauth: (options) => googleOAuth(GMAIL, "gmail", options, [options.baseUrl?.trim() || GMAIL_API_BASE_URL]),
+  oauthWrite401: "grant",
+  authScope: googleAuthScope("gmail"),
+  connectionErrors: googleConnectionErrors(GMAIL, "gmail", errors),
   authenticate: bearer,
   errors,
   pageSize: { default: 10, max: 25 },
@@ -138,11 +155,15 @@ export const gmail = defineApiProvider<GmailOptions>({
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,
-      "Workspace delegation is already configured. The deployment chooses the subject; no argument selects a mailbox.",
-      typeof options.subject === "string"
-        ? "Every caller uses the deployment's fixed mailbox."
-        : "Each call uses the mailbox mapped from its admitted caller or pool owner.",
-      "A missing subject fails auth_required; ask the operator to repair configuration after an auth failure.",
+      ...(googleOAuthContext("gmail", options) !== undefined
+        ? [googleOAuthContext("gmail", options)!]
+        : [
+            "Workspace delegation is already configured. The deployment chooses the subject; no argument selects a mailbox.",
+            typeof options.subject === "string"
+              ? "Every caller uses the deployment's fixed mailbox."
+              : "Each call uses the mailbox mapped from its admitted caller or pool owner.",
+            "A missing subject fails auth_required; ask the operator to repair configuration after an auth failure.",
+          ]),
       ...(options.readOnly ? ["This connection is read-only; draft writes are refused."] : []),
     ],
     summary: "Load for Gmail search, capped message bodies, threaded replies and drafts that never send.",

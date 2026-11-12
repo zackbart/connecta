@@ -1082,7 +1082,11 @@ both. The removed `trust` option fails construction with a message naming
 
 An agent has no Workspace account. On a Workspace connector (`gmail()`,
 `drive()`, `sheets()`, `slides()`, `forms()`, `docs()`) whose `subject` is a
-mapping function, the caller decides whose account a call opens:
+mapping function, the caller decides whose account a call opens. This applies
+to delegation mode only: a Workspace connector in OAuth mode (`{ oauth,
+authScope }`) has no subject, ignores pool owners and follows its `authScope`
+like any [`api()` OAuth connector](#downstream-oauth-on-api), so a personal one is absent
+for agents.
 
 | Caller                        | Acts as                                                                         |
 | ----------------------------- | ------------------------------------------------------------------------------- |

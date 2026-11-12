@@ -2,6 +2,8 @@
 import { Effect, Schema } from "effect";
 import { guardedClient } from "../../http/client.js";
 import { bearer, Grant, refreshOnce } from "../../http/oauth.js";
+import { callGrant, oauthGrantRenewal } from "../../http/provider.js";
+import { OAUTH_CHALLENGE_MAX_BYTES } from "../../auth/renewable-grant.js";
 import { resultSafety } from "../../http/safety.js";
 import { connect, del, get, patch, post, type Connection, type ConnectOptions } from "../../http/vendor.js";
 import type { HttpFailure, OperationRef } from "../../http/errors.js";
@@ -9,9 +11,11 @@ import type { CallServices } from "../../http/services.js";
 import {
   GOOGLE_GRANT_RENEWAL,
   googleClient,
+  googleConnectionErrors,
+  googleDelegatedGrant,
   googleErrors,
   googleGrant,
-  workspaceOf,
+  googleOAuth,
   type GoogleClient,
   type GoogleProduct,
   type GoogleRequest,
@@ -75,6 +79,8 @@ export const errors: ReturnType<typeof googleErrors> = {
   ...google,
   meanings: { ...google.meanings!, conflicts: ["A Drive source page changed before its local cursor resumed"] },
 };
+/** {@link errors}, worded for the connection's access mode. */
+export const connectionErrors = googleConnectionErrors(DRIVE, "drive", errors);
 const values = valueSafety(DRIVE_VALUE_SAFETY, () => driveIndex);
 export const safety = {
   reviewed: {
@@ -105,14 +111,18 @@ export const result: NonNullable<ConnectOptions["result"]> = (body, answer) =>
 
 // Both connections share this exact grant program and its once-per-call subject memo.
 // Only the service-account token cache's strings and expiries cross requests.
-const grants = new WeakMap<object, ReturnType<typeof googleGrant>>();
-export function driveGrant(options: Readonly<DriveOptions>): ReturnType<typeof googleGrant> {
-  let grant = grants.get(options);
-  if (!grant) {
-    grant = googleGrant(DRIVE, workspaceOf("drive", options));
-    grants.set(options, grant);
-  }
-  return grant;
+// OAuth mode has none: both connections use the call's own OAuth grant.
+const grants = new WeakMap<object, ReturnType<typeof googleGrant> | undefined>();
+export function driveGrant(options: Readonly<DriveOptions>): ReturnType<typeof googleGrant> | undefined {
+  if (!grants.has(options)) grants.set(options, googleDelegatedGrant(DRIVE, "drive", options));
+  return grants.get(options);
+}
+
+const apiBaseUrl = (options: Readonly<DriveOptions>) => options.baseUrl?.trim() || DRIVE_API_BASE_URL;
+
+/** OAuth mode's grant over both Drive hosts' one origin; undefined in delegation mode. */
+export function driveOAuth(options: Readonly<DriveOptions>) {
+  return googleOAuth(DRIVE, "drive", options, [apiBaseUrl(options), uploadBaseUrl(apiBaseUrl(options))]);
 }
 
 /** The upload host beside an API root: `…/drive/v3` → `…/upload/drive/v3`. */
@@ -121,24 +131,30 @@ function uploadBaseUrl(apiBase: string): string {
   return `${url.origin}/upload${url.pathname.replace(/\/+$/, "")}`;
 }
 
-/** Stripe's fixed secondary-connection pattern, built once by driveTools, outside all caller contexts. */
-export function driveUploadConnection(options: Readonly<DriveOptions>): Connection {
+/**
+ * Stripe's fixed secondary-connection pattern, built once by driveTools,
+ * outside all caller contexts. It authenticates as the primary connection
+ * does: the delegated grant, or in OAuth mode the call's own OAuth grant with
+ * the same renewal and write-401 diagnostic as connector `id`'s API.
+ */
+export function driveUploadConnection(options: Readonly<DriveOptions>, id: string): Connection {
   const grant = driveGrant(options);
   const connected = connect(
     DriveApi,
     refreshOnce(
       guardedClient({
         provider: DRIVE.provider,
-        baseUrl: uploadBaseUrl(options.baseUrl?.trim() || DRIVE_API_BASE_URL),
+        baseUrl: uploadBaseUrl(apiBaseUrl(options)),
         maxResponseBytes: DRIVE_MAX_RESPONSE_BYTES,
+        ...(grant ? {} : { maxUnauthorizedResponseBytes: OAUTH_CHALLENGE_MAX_BYTES }),
         authenticate: bearer,
       }),
-      GOOGLE_GRANT_RENEWAL,
+      grant ? GOOGLE_GRANT_RENEWAL : oauthGrantRenewal(id),
     ),
-    { errors, safety: resultSafety(safety), result },
+    { errors: connectionErrors(options), safety: resultSafety(safety), result },
   );
   const authorize = <A>(work: Effect.Effect<A, HttpFailure, CallServices | Grant>) =>
-    work.pipe(Effect.provideServiceEffect(Grant, grant));
+    work.pipe(Effect.provideServiceEffect(Grant, grant ?? callGrant));
   return {
     ...connected,
     send: (...args) => authorize(connected.send(...args)),

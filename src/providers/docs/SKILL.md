@@ -11,7 +11,7 @@ Document ids join Docs to Drive: take the part after `/d/` in a document URL,
 or find the file by name through a Google Drive connection. An id the person
 provides works as is. Docs has no
 account-data search or listing; its operation search discovers API methods.
-A missing document may be absent or inaccessible to the mapped Workspace user.
+A missing document may be absent or inaccessible to the connection's Google account.
 
 ## Read before editing
 

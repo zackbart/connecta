@@ -135,3 +135,23 @@ With `VITEST_MAX_WORKERS=2` on Node 22.23.3: 83 standard/convention checks passe
 ## Round-1 corrections
 
 Thread pages survive field selection, and the domain guide explicitly describes their continuation and search thread identities. Native message examples use an id placeholder. Label reads return one bounded terminal list, with omissions in `truncated`, rather than re-downloading artificial pages. The runtime safety resolver now lives in `safety.ts`; the unused parallel TABLE is removed, and provider assertions exercise every indexed runtime admission. Copied threading accepts RFC 5322 comments, adjacent ids, quoted/local-domain forms and obsolete phrases while retaining the H8 ASCII, control and withheld-token boundary. The grammar follows [RFC 5322 sections 3.6.4 and 4.5.4](https://www.rfc-editor.org/rfc/rfc5322.html#section-3.6.4).
+
+## OAuth mode (#1375)
+
+Besides domain-wide delegation, a connection may select OAuth mode with
+`{ oauth: { clientId, clientSecret }, authScope }`. The grant follows Google's
+web-server authorization-code flow
+(https://developers.google.com/identity/protocols/oauth2/web-server): consent at
+`https://accounts.google.com/o/oauth2/v2/auth`, code exchange and refresh at
+`https://oauth2.googleapis.com/token` with the client credentials in the request
+body, S256 PKCE, and exactly the product's delegation scopes. The access token
+is sent only to the product's API origin. No revocation endpoint is configured:
+Google's revocation ends every grant the person gave the Google Cloud project,
+including its other OAuth clients, so revoking one connector's token would also
+end other connectors' and other clients' grants. A read
+answered 401 renews once and replays once; a write answered 401 is never resent
+and keeps the downstream authorization handoff. Google's granular consent lets
+a person decline a requested scope; the resulting `insufficientPermissions`
+refusal tells them to reconnect and allow every requested permission. Tool
+classification, value safety, confinement and the operation index are the same
+in both modes; only the token source and error advice differ.
