@@ -67,7 +67,7 @@ import {
   storageList,
 } from "./runtime/storage.js";
 import { redactCatalog, sentSecretsFor, sentSecretsForRequest } from "./sent-secrets.js";
-import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary, connectorGuide, connectorGuideSummary } from "./skills.js";
+import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary, connectorGuide, undecoratedGuideSummary } from "./skills.js";
 import {
   jsonCodec,
   OAUTH_HANDOFF_TTL_SECONDS,
@@ -108,16 +108,18 @@ const GUIDE_ACCESS_RE =
   /\b(key|keys|token|tokens|credential|credentials|secret|secrets|scope|scopes|scoped|configured|authenticated|authorized|access|permission|permissions|oauth)\b/i;
 
 /**
- * Advisory English-language heuristic for a guide summary that cannot tell an
- * agent when to load the guide: a bare label (such as a derived summary that
- * is only the guide's heading), or one that states only credential or scope
- * facts. A capability description without a task verb is not flagged;
- * non-English prose can still produce a false positive.
+ * Advisory heuristic for a guide summary that cannot tell an agent when to
+ * load the guide: one derived from a guide with no paragraph (its heading or a
+ * generic fallback), or, by English vocabulary, one that states only
+ * credential or scope facts. Read-only decoration is ignored. A capability
+ * description without a task verb is not flagged; non-English prose can still
+ * produce a false positive.
  */
 function weakGuideSummary(connector: Connector): boolean {
-  const summary = connectorGuideSummary(connector)?.trim() ?? "";
-  const label = !/\S\s+\S/u.test(summary) && summary.length < 12;
-  return label || (GUIDE_ACCESS_RE.test(summary) && !GUIDE_TASK_RE.test(summary));
+  const derived = undecoratedGuideSummary(connector);
+  if (!derived) return false;
+  if (derived.source === "heading" || derived.source === "fallback") return true;
+  return GUIDE_ACCESS_RE.test(derived.summary) && !GUIDE_TASK_RE.test(derived.summary);
 }
 
 const DEFAULT_MAX_RESULT_BYTES = CONFIG_DEFAULTS.calls.maxResultBytes;

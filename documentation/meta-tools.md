@@ -554,11 +554,12 @@ connector's generated name: allocation depends on the IDs a catalog can see, so
 adding one moves the other guide to a suffixed name.
 The former `connector-<48-character-hash>` names, roots and file URIs remain
 resolvable aliases. The deployment's construction warns once, without
-rejecting a guide, when the advisory English heuristic finds a summary that
-cannot say when to load it: a bare label, such as a derived summary that is
-only the guide's heading, or a credential or scope statement with no task verb
-or operation noun. A capability description is not flagged. Personal
-registries built per principal never repeat the warning. Set
+rejecting a guide, when its summary cannot say when to load it: a summary
+derived from a guide with no paragraph (its first heading, however long, or
+the generic fallback), or, by an advisory English heuristic, a credential or
+scope statement with no task verb or operation noun. The `Read-only.` prefix of
+a read-only connector is ignored. A capability description is not flagged.
+Personal registries built per principal never repeat the warning. Set
 `usageGuide.summary` to say when to load the guide; non-English prose may
 produce a false-positive warning.
 The suffix makes each
