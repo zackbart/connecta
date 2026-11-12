@@ -113,6 +113,8 @@ export interface UiConnector {
   observedAt?: number;
   /** This connector exposes manageable downstream OAuth lifecycle hooks. */
   oauth?: boolean;
+  /** Account-checked api() OAuth keeps a live grant until an accepted sign-in replaces it. */
+  reconnectKeepsGrant?: true;
   /** Selected downstream client identity mechanism; never a client ID or secret. */
   registrationPath?: "cimd" | "dcr" | "static";
   /** The connected downstream account a verified sign-in bound; only when `ok` and the connector checks accounts. */

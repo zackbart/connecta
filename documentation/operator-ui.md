@@ -524,7 +524,13 @@ gates every action. A credential slot offers `save` when a vault is
 configured, `clear` when a value is stored in the member's partition, and
 `test` when one is stored in the declared shape and the connector has the
 matching test hook; an unreadable partition offers `save` alone, so the page
-reads stored-ness from `actions`. OAuth offers `connect` and `restart` when
+reads stored-ness from `actions`. OAuth `manage` includes optional `reconnectKeepsGrant: true` only for
+account-checked `api()` OAuth connectors. The maintainer `GET /ui/data`
+connector row carries the same optional field (also on its detail response).
+For these connectors, Reconnect says the current connection keeps working
+until the new sign-in is accepted. Other OAuth connectors omit the field and
+warn that the connection stops working until sign-in finishes.
+OAuth offers `connect` and `restart` when
 the connector has `startAuth`, `finishAuth` and `verifyState` and the
 deployment can sign the connect hand-off, and `disconnect` when it has
 `disconnectAuth`. No actions is `{ kind: "none" }`. The view carries no shared

@@ -196,7 +196,7 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
       {oauthConfirm ? (
         <ConfirmBar
           id={id}
-          {...confirmCopy(oauthConfirm.action, name)}
+          {...confirmCopy(oauthConfirm.action, name, connector.reconnectKeepsGrant)}
           onConfirm={() => {
             if (oauthConfirm.action === "oauth_restart") void startOAuth(id, "restart");
             else void disconnectOAuth(id);
