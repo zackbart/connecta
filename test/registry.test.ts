@@ -166,9 +166,40 @@ it("warns without leaking guide text or rejecting weak summaries", () => {
   expect(warn).toHaveBeenCalledTimes(3);
   expect(JSON.stringify(warn.mock.calls)).not.toContain("REST access token");
   warn.mockClear();
-  makeRegistry(
-    [{ ...calcConnector, usageGuide: { content: "# Guide", summary: "Load when querying CRM contacts." } }],
+  // A guide with no paragraph derives its summary from a heading, however long,
+  // and read-only decoration does not make that summary actionable.
+  for (const connector of [
+    { ...calcConnector, usageGuide: "# CRM Guide" },
+    { ...calcConnector, usageGuide: "# Documentation" },
+    { ...calcConnector, usageGuide: "# Customer relationship management workspace guide" },
+    { ...calcConnector, readOnly: true, usageGuide: "# Guide" },
+    { ...calcConnector, readOnly: true, usageGuide: { content: "# Guide", summary: "Token is configured." } },
+  ]) {
+    makeRegistry([connector], { logger: { ...silentLogger, warn } });
+  }
+  expect(warn).toHaveBeenCalledTimes(5);
+  warn.mockClear();
+  for (const summary of [
+    "Load when querying CRM contacts.",
+    // A capability description is actionable without a task verb.
+    "Customer messaging campaigns, segments and delivery metrics.",
+    "Söhne-Kampagnen und Segmente im CRM.",
+  ]) {
+    makeRegistry([{ ...calcConnector, usageGuide: { content: "# Guide", summary } }], {
+      logger: { ...silentLogger, warn },
+    });
+  }
+  makeRegistry([{ ...calcConnector, readOnly: true, usageGuide: "# CRM\n\nContacts, deals and pipelines." }], {
+    logger: { ...silentLogger, warn },
+  });
+  expect(warn).not.toHaveBeenCalled();
+
+  // The deployment registry warns once; a personal registry repeats nothing.
+  const root = makeRegistry(
+    [{ ...calcConnector, authScope: "personal", usageGuide: { content: "# Guide", summary: "Token is configured." } }],
     { logger: { ...silentLogger, warn } },
   );
-  expect(warn).not.toHaveBeenCalled();
+  expect(warn).toHaveBeenCalledTimes(1);
+  for (const principalKey of ["alice", "bob"]) root.scoped({ connectorIds: "all", principalKey });
+  expect(warn).toHaveBeenCalledTimes(1);
 });

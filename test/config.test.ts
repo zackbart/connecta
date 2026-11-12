@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ConfigError } from "../src/config-schema.js";
 import type { CredentialVault } from "../src/credential-contract.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
@@ -317,6 +317,28 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     expect(Object.getPrototypeOf(resolved.pools)).toBeNull();
     expect(resolved.pools?.["constructor"]).toBeUndefined();
     expect(resolved.pools?.["toString"]).toBeUndefined();
+  });
+});
+
+describe("default logger", () => {
+  it("prefixes each console line with [connecta] exactly once", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const notes: Connector = {
+        id: "notes",
+        usageGuide: { content: "# Notes", summary: "Token is configured." },
+        listTools: async () => [],
+        callTool: async () => null,
+      };
+      createConnecta({ readOnly: false, connectors: [notes], executor });
+      const lines = warn.mock.calls.map((args) => args.map(String).join(" "));
+      // One line the call site prefixed, one the logger did.
+      expect(lines.some((line) => line.startsWith("[connecta] running with no inbound authentication"))).toBe(true);
+      expect(lines.some((line) => line.startsWith('[connecta] Connector "notes" guide'))).toBe(true);
+      for (const line of lines) expect(line).not.toContain("[connecta] [connecta]");
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

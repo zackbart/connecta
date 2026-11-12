@@ -86,13 +86,16 @@ const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const CSS_LENGTH = /^(?:0|[0-9]{1,3}(?:\.[0-9]{1,3})?)(px|rem|em)?$/;
 
 /**
- * One family name: bare, or wrapped in matching quotes. The character class
- * excludes everything CSS needs to end a declaration or open a function (`;`,
- * `{`, `}`, `(`, `)`, backslash, `<`, `>`, `@`, `*`, `/`, `:`), and matched
+ * One family name: bare, or wrapped in matching quotes. Names are letters,
+ * digits and combining marks in any script (`Söhne`, `思源黑体`), plus the
+ * ASCII space, `.`, `_` and `-`. The character class therefore excludes
+ * everything CSS needs to end a declaration or open a function (`;`, `{`, `}`,
+ * `(`, `)`, backslash, `<`, `>`, `@`, `*`, `/`, `:`), every other space,
+ * control or format character (a newline, a zero-width joiner), and matched
  * quotes mean the value cannot leave an open string that swallows the CSS
  * after it.
  */
-const FONT_NAME = /^(?:"[a-z0-9 ._-]+"|'[a-z0-9 ._-]+'|[a-z][a-z0-9 ._-]*)$/i;
+const FONT_NAME = /^(?:"[\p{L}\p{M}\p{N} ._-]+"|'[\p{L}\p{M}\p{N} ._-]+'|\p{L}[\p{L}\p{M}\p{N} ._-]*)$/u;
 
 /** A font-family list: comma-separated names and nothing else. */
 function isFontStack(value: string): boolean {

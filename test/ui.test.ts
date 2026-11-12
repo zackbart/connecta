@@ -11,6 +11,7 @@ import { responseCacheKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { withAbortableTimeout } from "../src/timeout.js";
 import type { Connector, InboundAuth } from "../src/types.js";
+import { droppedThemeTokens } from "../src/branding.js";
 import { buildUiData, isSafeHttpsUrl, isSafeIconHref } from "../src/ui.js";
 import { CONNECTA_VERSION } from "../src/version.js";
 import { calcApi, fakeClerkAuth, makeDeployment } from "./fixtures/http.js";
@@ -798,6 +799,46 @@ describe("isSafeHttpsUrl", () => {
     expect(isSafeHttpsUrl("")).toBe(false);
     expect(isSafeHttpsUrl(undefined)).toBe(false);
     expect(isSafeHttpsUrl(42)).toBe(false);
+  });
+});
+
+describe("droppedThemeTokens", () => {
+  it("keeps font names in any script and drops every CSS-escaping one", () => {
+    for (const fontFamily of [
+      "Söhne, system-ui, sans-serif",
+      '"Söhne Breit", Inter',
+      "'Noto Sans JP', 思源黑体",
+      "Ｍ ＰＬＵＳ 1p",
+      "Cafe\u0301 Sans",
+    ]) {
+      expect(droppedThemeTokens({ fontFamily, monoFamily: fontFamily })).toEqual([]);
+    }
+    for (const fontFamily of [
+      "Söhne;}body{display:none",
+      "Inter{",
+      "Inter}",
+      "url(https://evil.test/x)",
+      "var(--accent)",
+      "Söhne\\",
+      "<style>",
+      "@import x",
+      "Inter*",
+      "Inter/x",
+      "Inter:x",
+      '"Söhne',
+      "'Söhne\"",
+      "Söhne\nInter",
+      "Söhne\u00a0Inter",
+      "Söhne\u200dInter",
+      "Söhne\u2028Inter",
+      "；Söhne",
+      "1Söhne",
+    ]) {
+      expect(droppedThemeTokens({ fontFamily, monoFamily: fontFamily })).toEqual([
+        "theme.fontFamily",
+        "theme.monoFamily",
+      ]);
+    }
   });
 });
 

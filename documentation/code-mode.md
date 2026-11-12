@@ -1390,7 +1390,8 @@ all calls this deployment can make through it.
 
 Unknown connector override keys fail construction. Unknown static tool keys
 fail construction. An absent runtime-discovered tool leaves its override
-dormant and emits an operator warning once per catalog change; the override applies if the name returns.
+dormant and emits an operator warning once each time a catalog read changes the connector's override
+warnings in that runtime, across callers and principals; the override applies if the name returns.
 Hidden tools are absent from search and describe and refuse every call, including
 a guessed name. `"write"` selects the host approval path. MCP recovery sends a
 tool only once when either its effective or source class is write, including a

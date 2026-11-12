@@ -2061,7 +2061,8 @@ the signal sees the same reason the caller does, and `fromSignal`, which turns
 an `AbortSignal` into a failure to race against. Nothing runs Effect at module
 scope, where a Worker may not start work, and nothing logs through
 `Effect.log`: logging goes through the configured `Logger`, which is what
-honors `logger: "silent"`.
+honors `logger: "silent"`. The default console logger prefixes each line with
+`[connecta]` once, leaving lines whose call site already wrote it unchanged.
 
 There is no per-Connecta runtime. createConnecta resolves its configuration
 into plain values once (`src/config.ts`), and nothing needs a service context
