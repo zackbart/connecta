@@ -308,6 +308,12 @@ export interface ConnectorStatus {
   /** The client registration mechanism actually selected for this grant. */
   registrationPath?: "cimd" | "dcr" | "static";
   /**
+   * The downstream account this owner's OAuth grant is bound to, as a verified
+   * sign-in reported it, for an `api()` OAuth connector that checks accounts
+   * (`oauth.account`). Kept only when connecta wrote the status.
+   */
+  account?: string;
+  /**
    * From `startAuth()`, the message reaches the agent. From `status()`, it is
    * never logged, and `Registry.statusFor` keeps it only when connecta wrote
    * it: a custom connector's `status()` contributes its state alone, since

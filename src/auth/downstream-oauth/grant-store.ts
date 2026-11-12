@@ -107,7 +107,7 @@ export function epochOf(raw: string | null): string {
 /** Nothing here trusts stored bytes: keep only what has the expected shape. */
 function grantBody(value: unknown): GrantBody {
   if (!plainObject(value)) return {};
-  const { issuer, client, tokens, expiresAt, discovery, refreshConsent } = value;
+  const { issuer, client, tokens, expiresAt, account, discovery, refreshConsent } = value;
   const hasTokens = plainObject(tokens) && typeof tokens.access_token === "string";
   return {
     ...(typeof issuer === "string" ? { issuer } : {}),
@@ -128,6 +128,7 @@ function grantBody(value: unknown): GrantBody {
     ...(hasTokens ? { tokens: tokens as unknown as OAuthTokens } : {}),
     // Meaningful only beside the tokens it describes.
     ...(hasTokens && typeof expiresAt === "number" && Number.isFinite(expiresAt) ? { expiresAt } : {}),
+    ...(hasTokens && typeof account === "string" ? { account } : {}),
     ...(discoveryIssuer(discovery) !== undefined ? { discovery: discovery as unknown as OAuthDiscoveryState } : {}),
     ...(plainObject(refreshConsent) &&
     typeof refreshConsent.digest === "string" &&
@@ -262,7 +263,13 @@ export const grantStoreMethods = {
     ).pipe(Effect.catch(() => Effect.succeed(false)));
   },
   peekGrant: function (this: KvOAuthProvider) {
-    return authFlow<{ epoch: string; tokens?: OAuthTokens; issuer?: string; observation?: GrantObservation }>(
+    return authFlow<{
+      epoch: string;
+      tokens?: OAuthTokens;
+      issuer?: string;
+      account?: string;
+      observation?: GrantObservation;
+    }>(
       function* (this: KvOAuthProvider) {
         const raw = (yield authInvoke(this, "wait", [
           authMethod(() => authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>),
@@ -272,6 +279,7 @@ export const grantStoreMethods = {
           epoch: grant.epoch,
           ...(grant.body.tokens ? { tokens: grant.body.tokens } : {}),
           ...(grant.body.issuer !== undefined ? { issuer: grant.body.issuer } : {}),
+          ...(grant.body.account !== undefined ? { account: grant.body.account } : {}),
           ...(grant.observation ? { observation: grant.observation } : {}),
         };
       }.bind(this),
@@ -409,7 +417,9 @@ export const grantStoreMethods = {
         // The SDK saves a code exchange's tokens once its answer is read;
         // their lifetime started when its request was sent.
         const issuedAt = (field === "tokens" ? this.tokenRequestSent : undefined) ?? Date.now();
-        (yield authInvoke(this, "updateGrant", [
+        // An admitted exchange that commits under a new epoch: the epoch it replaced.
+        let retired: string | undefined;
+        const written = (yield authInvoke(this, "updateGrant", [
           (grant: Grant) => {
             const body: GrantBody =
               issuer !== undefined && grant.body.issuer !== issuer ? { issuer } : { ...grant.body };
@@ -424,14 +434,44 @@ export const grantStoreMethods = {
               body.tokens = tokens;
               delete body.expiresAt;
               if (expiresAt !== undefined) body.expiresAt = expiresAt;
+              // A code exchange states its account, or that it has none; a
+              // refresh, which states nothing, keeps the label it renewed.
+              if (this.exchangeAccount !== undefined) {
+                delete body.account;
+                if (this.exchangeAccount !== null) body.account = this.exchangeAccount;
+              }
               delete body.refreshConsent;
               if (refreshConsent) body.refreshConsent = refreshConsent;
             }
             const next = this.withIssuer(grant, body);
+            if (field === "tokens" && this.exchangeNewEpoch) {
+              // The tokens, label and a fresh epoch land in this one
+              // compare-and-set. Every refresh, lease and refusal begun under
+              // the replaced epoch is fenced by its epoch check, and the new
+              // grant starts its own refresh generation.
+              retired = grant.epoch;
+              return nextTokenGrant(
+                {
+                  epoch: `${ACTIVE_EPOCH_PREFIX}${crypto.randomUUID()}`,
+                  body,
+                  ...(grant.tokenRevision !== undefined ? { tokenRevision: grant.tokenRevision } : {}),
+                },
+                body,
+              );
+            }
+            retired = undefined;
             return field === "tokens" ? nextTokenGrant(next, body) : next;
           },
         ])) as boolean;
         if (field === "tokens") this.tokenRequestSent = undefined;
+        if (written && retired !== undefined) {
+          this.exchangeNewEpoch = false;
+          this.refreshCoordinator?.retire(retired);
+          // As after a reset: what the old epoch left is unusable, so its
+          // removal is housekeeping, never a condition of the commit.
+          (yield authCatch(authInvoke(this, "sweepConsents", []), () => {})) as void | undefined;
+          (yield authCatch(authInvoke(this, "sweepRefreshLeases", []), () => {})) as void | undefined;
+        }
         // A flow may invalidate what it wrote itself.
         this.seen[field] = fingerprint(field === "client" ? (value as NonNullable<GrantBody["client"]>).value : value);
       }.bind(this),

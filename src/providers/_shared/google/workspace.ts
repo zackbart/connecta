@@ -65,6 +65,7 @@ import type { ProviderOptions } from "../../../provider.js";
 import { ConnectorCallError } from "../../../errors.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
 import { isWorkspaceAddress } from "../../../workspace-address.js";
+import { allowedAccounts, type OAuthPersonalAccounts } from "../../../oauth-account.js";
 import { parseServiceAccount, type GoogleServiceAccount, type ServiceAccountKey } from "./service-account.js";
 
 export type { GoogleServiceAccount } from "./service-account.js";
@@ -141,6 +142,7 @@ export interface GoogleServiceAccountOptions extends GoogleWorkspaceCommonOption
   subject: GoogleWorkspaceSubject;
   oauth?: never;
   authScope?: never;
+  accounts?: never;
 }
 
 /** OAuth mode: the downstream OAuth grant of a connected Google account. */
@@ -153,16 +155,40 @@ interface GoogleOAuthOptions extends GoogleWorkspaceCommonOptions {
    * account a maintainer connects for every caller the pools admit.
    */
   authScope: "personal" | "shared";
+  /**
+   * Which Google accounts may be connected; omitted, any account may. Each
+   * rule is an address or `{ domain }` (a Google Workspace domain, matched on
+   * Google's hosted-domain claim). `"shared"` takes the one account's rules.
+   * `"personal"` takes rules for everyone, or a map from person (a bare
+   * principal id, as pool members name people) to their rules, with `"*"`
+   * for everyone else; a person with no entry cannot connect. Checked when
+   * the person finishes consent, before anything is stored; adds the
+   * `openid` and `email` scopes to the consent.
+   */
+  accounts?: GoogleOAuthAccounts;
   serviceAccount?: never;
   subject?: never;
 }
+
+/** The Google accounts an OAuth-mode connection may bind; see {@link GoogleOAuthOptions.accounts}. */
+type GoogleOAuthAccounts = OAuthPersonalAccounts;
 
 /** Every Workspace product provider's options: exactly one mode. */
 export type GoogleWorkspaceOptions = GoogleServiceAccountOptions | GoogleOAuthOptions;
 
 /** The closed options every Workspace provider accepts; see `assertKnownOptions`. */
 export const GOOGLE_WORKSPACE_OPTIONS = optionsOf<GoogleWorkspaceOptions>()({
-  ...keys("purpose", "subject", "title", "instructions", "maxResultBytes", "baseUrl", "readOnly", "authScope"),
+  ...keys(
+    "purpose",
+    "subject",
+    "title",
+    "instructions",
+    "maxResultBytes",
+    "baseUrl",
+    "readOnly",
+    "authScope",
+    "accounts",
+  ),
   // A string is the key's JSON; only the object form has keys to check.
   serviceAccount: optionsOf<GoogleServiceAccount>()(keys("clientEmail", "privateKey", "clientId")),
   members: MEMBERS,
@@ -184,6 +210,8 @@ export interface WorkspaceOAuthConnection {
   purpose: string;
   client: Readonly<GoogleOAuthClient>;
   authScope: "personal" | "shared";
+  /** The checked `accounts` option, as given; absent binds any account. */
+  accounts?: GoogleOAuthAccounts;
 }
 
 /** Whichever mode a connection's options select. */
@@ -202,6 +230,11 @@ export function workspaceConnection(factory: string, options: GoogleWorkspaceOpt
   if (!purpose) throw new Error(`${factory}() requires a non-empty purpose.`);
   const oauthMode = options.oauth !== undefined || options.authScope !== undefined;
   const delegationMode = options.serviceAccount !== undefined || options.subject !== undefined;
+  if (options.accounts !== undefined && !oauthMode) {
+    throw new Error(
+      `${factory}() accounts restricts which Google account an OAuth-mode connection may bind; delegation acts as the subject the deployment maps instead.`,
+    );
+  }
   if (oauthMode && delegationMode) {
     throw new Error(
       `${factory}() takes either { serviceAccount, subject } (domain-wide delegation) or { oauth, authScope } (each connected Google account's own grant), never both.`,
@@ -233,7 +266,7 @@ export function workspaceConnection(factory: string, options: GoogleWorkspaceOpt
 function oauthClient(
   factory: string,
   options: GoogleOAuthOptions,
-): Pick<WorkspaceOAuthConnection, "client" | "authScope"> {
+): Pick<WorkspaceOAuthConnection, "client" | "authScope" | "accounts"> {
   const client = options.oauth as unknown;
   if (client === null || typeof client !== "object" || Array.isArray(client)) {
     throw new Error(
@@ -256,9 +289,12 @@ function oauthClient(
       `${factory}() OAuth mode requires authScope: "personal" (each signed-in person connects their own Google account) or "shared" (a maintainer connects one account for the pools that list this connection).`,
     );
   }
+  // Checked here, by this option's own path; core checks the same rules again.
+  if (options.accounts !== undefined) allowedAccounts(options.accounts, options.authScope, `${factory}() accounts`);
   return {
     client: Object.freeze({ clientId: clientId!.trim(), clientSecret: clientSecret! }),
     authScope: options.authScope,
+    ...(options.accounts !== undefined ? { accounts: options.accounts } : {}),
   };
 }
 

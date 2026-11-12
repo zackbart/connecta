@@ -23,6 +23,8 @@ export interface OperatorConnectorOverlay {
   status: ConnectorStatus["state"];
   /** Selected downstream client mechanism, when a client has been selected. */
   auth?: { registrationPath: NonNullable<ConnectorStatus["registrationPath"]> };
+  /** The connected downstream account a verified sign-in bound, when `ok` and the connector checks accounts. */
+  account?: string;
   problem?: UiProblem;
   tools: OperatorTool[];
   /** Age of the last complete listing. Static or unobserved catalogs have no age. */
@@ -91,8 +93,12 @@ export interface OperatorMemberConnector {
   authScope: "shared" | "personal";
   /** Tools their pools grant. */
   tools: Array<{ address: string; classification: "read" | "write" }>;
-  /** Own connection state for personal connectors; null for shared ones. */
-  connection: { state: ConnectorStatus["state"]; problem?: UiProblem } | null;
+  /**
+   * Own connection state for personal connectors; null for shared ones.
+   * `account` is the downstream account their grant is bound to, present only
+   * when `ok` and the connector checks accounts.
+   */
+  connection: { state: ConnectorStatus["state"]; problem?: UiProblem; account?: string } | null;
   /** What the member may do. Always "none" for shared connectors. */
   manage: OperatorMemberManage;
 }

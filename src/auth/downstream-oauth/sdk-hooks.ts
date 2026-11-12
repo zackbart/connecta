@@ -239,7 +239,10 @@ export const sdkHookMethods = {
                 if (current === undefined) continue;
                 if (field !== "discovery" && fingerprint(current) !== this.seen[field]) continue;
                 delete body[field];
-                if (field === "tokens") delete body.expiresAt;
+                if (field === "tokens") {
+                  delete body.expiresAt;
+                  delete body.account;
+                }
                 changed = true;
               }
               return changed ? { ...grant, body } : undefined;

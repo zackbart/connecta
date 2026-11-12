@@ -18,6 +18,13 @@ export interface OAuthGrantBody {
    * server sent no `expires_in`, has none and is refreshed only after a 401.
    */
   expiresAt?: number;
+  /**
+   * The downstream account a verified sign-in bound these tokens to, when the
+   * connector checks accounts (`oauth.account`): a label, never a credential.
+   * Written with the code exchange's tokens and dropped with them; a refresh
+   * keeps it.
+   */
+  account?: string;
   discovery?: OAuthDiscoveryState;
 }
 

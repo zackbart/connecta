@@ -32,6 +32,7 @@ import {
 } from "../provider-call.js";
 import { providerCallFailure, providerCallResult } from "../write-outcome.js";
 import { deriveContext } from "../derived-context.js";
+import type { AccountRestriction, ApiOAuthAccountCheck } from "../oauth-account.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -145,6 +146,16 @@ export interface ApiOAuthConfig {
    * it is sent, so an untrusted URL in a response cannot carry the token off.
    */
   apiOrigins: readonly string[];
+  /**
+   * Restrict which downstream account a consent may bind: `identify` learns
+   * the signed-in account from a verified source, and `allow` lists the
+   * accounts allowed (for a personal connector, per person). Checked in the
+   * OAuth callback, after the code exchange and before the grant is stored; a
+   * refused account stores nothing, revokes nothing, and its page names the
+   * account(s) expected, never the one used. The verified address is kept
+   * with the grant as its label (`ConnectorStatus.account`).
+   */
+  account?: ApiOAuthAccountCheck;
 }
 
 /** A handler's use of its connector's OAuth grant, never the grant itself. */
@@ -276,6 +287,7 @@ export const API_OPTIONS = optionsOf<ApiOptions>()({
     authorizationParams: strings(),
     expectedCallbackParameters: strings(),
     tokenRequestHeaders: strings(),
+    account: optionsOf<ApiOAuthAccountCheck>()(keys("identify", "allow")),
   }),
   // A tool's annotations stay open: MCP lets a tool carry hints Connecta
   // does not interpret, and its schemas are JSON Schema, not options. A tool
@@ -322,6 +334,8 @@ function describedApiAuth(opts: ApiOptions): ConnectorAuthDescription {
  * module never imports the grant machinery.
  */
 export interface ApiOAuthHooks {
+  /** The checked `oauth.account`, when the connector restricts accounts. */
+  readonly account?: AccountRestriction;
   status(ctx: ConnectorContext): Promise<ConnectorStatus>;
   /**
    * `status` for a call about to enter a handler, which also renews a token

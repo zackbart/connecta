@@ -59,6 +59,15 @@ import {
   authMethods,
 } from "./native.js";
 import { trackOAuthStartReset } from "./oauth-start-reset.js";
+import { callerOf } from "../connector-caller.js";
+import {
+  accountRestriction,
+  admitAccount,
+  OAuthAccountUnverifiedError,
+  type AccountRestriction,
+  type OAuthAccount,
+} from "../oauth-account.js";
+import { ownStatus } from "../operator-record.js";
 import type { OAuthGrantBody } from "./oauth-grant.js";
 import { bindRenewableGrant, OAUTH_CHALLENGE_MAX_BYTES, type RenewableGrant } from "./renewable-grant.js";
 
@@ -167,6 +176,8 @@ interface StaticOAuthSettings {
   apiOrigins: ReadonlySet<string>;
   /** Where the SDK's `serverUrl` points: the first API origin. */
   serverUrl: URL;
+  /** Which downstream account a consent may bind; absent binds any. */
+  account?: AccountRestriction;
   /**
    * The authorization server identity tokens are bound to. A static
    * configuration has no advertised issuer, so the token endpoint stands in:
@@ -177,7 +188,7 @@ interface StaticOAuthSettings {
 }
 
 /** Structural mistakes throw here, where they are written. */
-function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
+function settingsFor(id: string, config: ApiOAuthConfig, authScope: "shared" | "personal"): StaticOAuthSettings {
   if (!config || typeof config !== "object") {
     throw new Error(`[connecta] connector "${id}" oauth must be an object.`);
   }
@@ -299,6 +310,9 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
     apiOrigins,
     serverUrl: new URL(origins[0]!),
     identity: tokenEndpoint.href,
+    ...(config.account !== undefined
+      ? { account: accountRestriction(config.account, authScope, `[connecta] connector "${id}" oauth.account`) }
+      : {}),
   };
 }
 
@@ -311,6 +325,17 @@ function settingsFor(id: string, config: ApiOAuthConfig): StaticOAuthSettings {
 class StaticOAuthProvider extends KvOAuthProvider {
   /** Set only for the code exchange of a PKCE-less flow. */
   private exchangeCode: string | undefined;
+  /**
+   * @internal Set only for a callback's code exchange on a connector that
+   * checks accounts: learns and admits the account before any token is saved.
+   */
+  accountCheck: ((tokens: { access_token: string; id_token?: string }) => Promise<string>) | undefined;
+  /**
+   * @internal A reconnect that keeps the live grant: the SDK is shown no
+   * tokens, so it starts consent in the current epoch instead of reporting
+   * the grant healthy, and the grant is replaced only by a verified exchange.
+   */
+  consentOnly = false;
 
   constructor(
     connectorId: string,
@@ -415,8 +440,30 @@ class StaticOAuthProvider extends KvOAuthProvider {
 
   declare redirectToAuthorization: (authorizationUrl: URL) => Promise<void>;
 
+  /**
+   * The base save, after this exchange's account check: a refused account
+   * throws before anything is written, so its tokens are never stored.
+   */
+  declare saveTokens: KvOAuthProvider["saveTokens"];
+  declare tokens: KvOAuthProvider["tokens"];
+
   static {
     authMethods(StaticOAuthProvider.prototype, {
+      tokens: function (this: StaticOAuthProvider, ...args: Parameters<KvOAuthProvider["tokens"]>) {
+        return this.consentOnly ? Effect.succeed(undefined) : authCall(KvOAuthProvider.prototype.tokens, args, this);
+      },
+      saveTokens: function (this: StaticOAuthProvider, ...args: Parameters<KvOAuthProvider["saveTokens"]>) {
+        return authFlow<void>(
+          function* (this: StaticOAuthProvider) {
+            const check = this.accountCheck;
+            if (check) {
+              this.accountCheck = undefined;
+              this.exchangeAccount = (yield authCall(check, [args[0]])) as string;
+            }
+            (yield authCall(KvOAuthProvider.prototype.saveTokens, args, this)) as void;
+          }.bind(this),
+        );
+      },
       clientInformation: function (this: StaticOAuthProvider) {
         return authValue(() => this.configuredClientInformation());
       },
@@ -522,8 +569,12 @@ const readChallengeNative = /* @__PURE__ */ registerAuth(
 );
 
 /** The grant behind one `api()` connector's `oauth`, as the hooks it exposes. */
-export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
-  const settings = settingsFor(id, config);
+export function staticOAuth(
+  id: string,
+  config: ApiOAuthConfig,
+  authScope: "shared" | "personal" = "shared",
+): ApiOAuthHooks {
+  const settings = settingsFor(id, config, authScope);
   const callbackParametersMatch = (params?: URLSearchParams): boolean =>
     settings.expectedCallbackParameters.every(([name, expected]) => {
       const values = params?.getAll(name);
@@ -1121,7 +1172,9 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
             state: "auth_required",
             message: "Authorization required — the downstream rejected this connector's OAuth grant.",
           }
-        : { state: "ok" };
+        : settings.account && grant.account !== undefined
+          ? ownStatus({ state: "ok", account: grant.account })
+          : { state: "ok" };
     });
   });
   const status = authMethod((ctx: ConnectorContext) => {
@@ -1165,7 +1218,21 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           ReturnType<StaticOAuthProvider["peekGrant"]>
         >;
         const refused = observed.observation?.outcome === "refused";
-        if (opts?.force || disconnected || refused || rejectedScopes.has(scopeOf(original))) {
+        // A connector that checks accounts reconnects without removing the
+        // grant it holds: consent starts in the live epoch, and only an exchange
+        // whose account is admitted replaces the tokens and label. A refused or
+        // abandoned reconnect leaves the working grant as it was; a Disconnect
+        // meanwhile replaces the epoch, and the pending consent cannot complete.
+        const keepGrant =
+          opts?.force === true &&
+          settings.account !== undefined &&
+          observed.tokens !== undefined &&
+          observed.issuer === settings.identity &&
+          !refused &&
+          !rejectedScopes.has(scopeOf(original)) &&
+          !provider.isOperatorDisconnectedEpoch(observed.epoch);
+        if (keepGrant) provider.consentOnly = true;
+        else if (opts?.force || disconnected || refused || rejectedScopes.has(scopeOf(original))) {
           const fence =
             !opts?.force && !disconnected && refused
               ? { epoch: observed.epoch, revision: observed.observation!.revision }
@@ -1189,7 +1256,8 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
         try {
           // A grant from a since-repointed token endpoint reads as absent here,
           // and the consent this start begins replaces it.
-          (yield authInvoke(provider, "beginFlow", [])) as string;
+          // Kept, the grant's epoch must still be the one peeked above.
+          (yield authInvoke(provider, "beginFlow", keepGrant ? [observed.epoch] : [])) as string;
           if (
             (yield authInvoke(provider, "tokens", [issuerContext])) as
               | {
@@ -1294,7 +1362,39 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
           }
           provider.validateCallbackIssuer(callbackParams?.get("iss") ?? null);
           provider.exchanging(authorizationCode);
+          // Every exchange states its account: the verified one, or none.
+          provider.exchangeAccount = null;
+          const restriction = settings.account;
+          if (restriction) {
+            // The person connecting, attached by the callback route; a shared
+            // connection's rules name no person.
+            const identity = callerOf(ctx)?.identity;
+            const signal = ctx.signal ?? AbortSignal.timeout(30_000);
+            provider.accountCheck = async (tokens) => {
+              let account: OAuthAccount;
+              try {
+                account = await restriction.identify(
+                  {
+                    accessToken: tokens.access_token,
+                    ...(typeof tokens.id_token === "string" ? { idToken: tokens.id_token } : {}),
+                  },
+                  { signal },
+                );
+              } catch (cause) {
+                throw new OAuthAccountUnverifiedError(cause);
+              }
+              return admitAccount(restriction, identity, account);
+            };
+          }
           (yield authInvoke(provider, "bindFlow", [])) as void;
+          // A reconnect may run beside a working grant (startAuth's keepGrant):
+          // a refused code must not invalidate the tokens this exchange replaces.
+          if (restriction) {
+            provider.seen = { ...provider.seen, tokens: undefined };
+            // An admitted account replaces any grant it ran beside under a new
+            // epoch, so no refresh, lease or refusal of the old one reaches it.
+            provider.exchangeNewEpoch = true;
+          }
           const result = (yield authCall(runAuth, [
             provider,
             ctx,
@@ -1315,6 +1415,7 @@ export function staticOAuth(id: string, config: ApiOAuthConfig): ApiOAuthHooks {
 
   return withStoredAuth(
     {
+      ...(settings.account ? { account: settings.account } : {}),
       status: retainAuthPartition(status, 0),
       prepareCall: retainAuthPartition(prepareCall, 0),
       startAuth: retainAuthPartition(startAuth, 0),

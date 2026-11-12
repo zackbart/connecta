@@ -111,6 +111,17 @@ export class KvOAuthProvider implements OAuthClientProvider {
   /** Resolution observed when the code answer completed, before the SDK saves. */
   exchangeConsent: GrantBody["refreshConsent"];
   /**
+   * @internal The verified account label this flow's code exchange saves with
+   * its tokens, `null` to save none; undefined for any other token write,
+   * which keeps the stored label.
+   */
+  exchangeAccount: string | null | undefined;
+  /**
+   * @internal This flow's code exchange commits its tokens under a new epoch,
+   * in the same compare-and-set, fencing everything begun under the old one.
+   */
+  exchangeNewEpoch = false;
+  /**
    * The client and tokens as this flow last saw them. An invalidation removes
    * only these, never a value another flow wrote meanwhile.
    */
@@ -183,6 +194,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     epoch: string;
     tokens?: OAuthTokens;
     issuer?: string;
+    account?: string;
     observation?: { revision: number; outcome: "accepted" | "refused" };
   }>;
   declare recordTokenOutcome: (

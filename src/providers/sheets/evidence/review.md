@@ -174,3 +174,17 @@ a person decline a requested scope; the resulting `insufficientPermissions`
 refusal tells them to reconnect and allow every requested permission. Tool
 classification, value safety, confinement and the operation index are the same
 in both modes; only the token source and error advice differ.
+
+## Allowed accounts (#1381)
+
+An OAuth-mode connection may set `accounts`, which restricts the Google account
+a consent may bind. It adds `openid` and `email` to the product's scopes and
+`prompt=select_account consent` to consent, and nothing else. At the callback,
+before the grant is stored, the account comes from the ID token in Google's
+token response, validated as
+https://developers.google.com/identity/openid-connect/openid-connect#validatinganidtoken
+describes: an RS256 signature by a key from `https://www.googleapis.com/oauth2/v3/certs`,
+issuer `https://accounts.google.com` or `accounts.google.com`, the client id as
+`aud`, and a current lifetime. Only a verified `email` matches an address rule.
+Only `hd` matches a domain rule, because a consumer account may carry a verified
+address at any domain. A refused account stores nothing and revokes nothing.

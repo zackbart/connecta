@@ -204,8 +204,9 @@ tabs:
 - **Tools.** Each tool by its mono address with a Read or Write badge and
   annotation badges (Destructive, Open world), filtered by search and All,
   Read and Write. A tool opens its schema in a side drawer.
-- **Connection.** An Authentication card (mode, OAuth client mechanism, who
-  manages it, the last verification, OAuth actions, and the credential card
+- **Connection.** An Authentication card (mode, OAuth client mechanism, the
+  connected **Account** when the connector checks accounts, who manages it, the
+  last verification, OAuth actions, and the credential card
   with masked last four, field states, and Replace, Test and Remove); a
   Diagnostics card of tiles
   (catalog age and last call) with a fix prompt beside each
@@ -361,7 +362,8 @@ an **Account** button with Sign out or Change token. It lists:
   `https://connecta.example.com/mcp` into an MCP client and authenticates as
   Bob.
 - **Your accounts**: the personal connectors in their pools, each with a
-  monogram, tool count, one status badge in an aligned column, and only the
+  monogram, tool count, the connected account's address when the connector
+  checks accounts, one status badge in an aligned column, and only the
   controls its `manage.actions` lists. A saved credential that no longer fits
   or does not work adds a short note beside the tool count. An OAuth connector
   offers Connect, Reconnect or Disconnect; Reconnect and Disconnect ask first.
@@ -491,7 +493,9 @@ The maintainer view carries:
   last-call time/outcome. Catalog descriptions and schemas are allowed;
   grammar-failing names and addresses become `<withheld>`.
   `auth.registrationPath` reports the selected downstream OAuth client
-  mechanism when known. Static and unobserved catalogs have a null age;
+  mechanism when known. `account` is the downstream account the maintainer's
+  view of the grant is bound to, present only when the status is `ok` and the
+  connector [checks accounts](./auth.md#allowed-accounts-on-api-oauth). Static and unobserved catalogs have a null age;
   persisted catalogs retain their original fetch time.
 - `live.activity`: available, unconfigured, forbidden, or unavailable history.
   Historical last-call and last-seen lookups need the activity permission and read gate,
@@ -511,7 +515,9 @@ member's catalog reads carry that pool as plain `/mcp` would. `connectors` lists
 each connector in those pools with its title, the member's pools that serve
 it, its auth scope, the tools those pools grant with their classification,
 `connection` (their own partition's state and problem code for a personal
-connector, `null` for a shared one) and `manage`. `manage` is derived on the
+connector, `null` for a shared one, plus `account` when the state is `ok` and
+the connector [checks accounts](./auth.md#allowed-accounts-on-api-oauth): the
+address their grant is bound to) and `manage`. `manage` is derived on the
 server. A shared connector is always `{ kind: "none" }`. For a personal one,
 the member's own permission (an interactive person in a pool that holds it)
 gates every action. A credential slot offers `save` when a vault is
@@ -726,6 +732,11 @@ Concurrent authorizations retain independent cancellation and publication. Succe
 failed reads, disconnect, navigation, unmount and identity reset stop the matching
 poll; a `connector_timeout` result does not. Recovery never starts authorization. A scoped result cannot confirm identity,
 role, token slots or any other deployment-wide admission fact.
+
+An OAuth connector that [checks accounts](./auth.md#allowed-accounts-on-api-oauth)
+adds `account`, the address its grant is bound to, to its `/ui/data` and
+`/ui/connectors/<id>` row (and to the row's overlay) while its status is `ok`;
+the Connection tab shows it as **Account**.
 
 A credential connector's `/ui/data` and `/ui/connectors/<id>` row carries
 `verification: { outcome, observedAt }` when a record of the stored save
