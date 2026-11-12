@@ -186,6 +186,14 @@ describe.skipIf(!inWorkerd)("Worker native resource ownership", () => {
     expect(await outcome).toBe(reason);
     expect(h.events).toEqual(["load", "entry disposed", "worker disposed"]);
     expect(h.executor.admissionSnapshot?.()).toMatchObject({ active: 0 });
+    // Native evaluation outlives the cancelled run; its late result, and any
+    // stubs it carries, is still disposed exactly once.
+    const disposed = vi.fn(() => h.events.push("late result disposed"));
+    h.resolve(Object.defineProperty({ result: { f: "stub" } }, Symbol.dispose, { value: disposed }));
+    await vi.waitFor(() => expect(disposed).toHaveBeenCalledOnce());
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(disposed).toHaveBeenCalledOnce();
+    expect(h.events).toEqual(["load", "entry disposed", "worker disposed", "late result disposed"]);
     await h.executor.close?.();
   });
 
