@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-12: Connector members (#1377) add member resolution, the scoped-view check, and the member-page, management and activity filters. A same-toolchain comparison against origin/main c2c0b5c6 (Node 26.13.0, system zlib) measures the root at 441,499 to 441,996 B (+497 B), examples/worker at 827,949 to 828,426 B (+477 B) and ./ui at 347,799 to 347,926 B (+127 B). Root and examples/worker exceed their recorded 336 B and 385 B CI headroom, so the root cap moves 441,350 to 441,900 B and examples/worker 824,800 to 825,300 B, pending owner approval; ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-12: The log-review batch has landed (#1366, #1367, #1368, #1370, #1371), so its temporary headroom ends. CI at 480ffb06, identical to main at 3c31b8ac, measures the root at 441,014 B and examples/worker at 824,415 B. The caps move from 443,000 B and 826,000 B to 441,350 B and 824,800 B, leaving 336 B and 385 B.",
     "2026-11-12: Temporary headroom for the production log-review batch: the remote MCP response byte cap (#1366), the minimum dispatch budget (#1368), log-noise fixes (#1367) and the Cloudflare Access assertion fallback, which otherwise collide on these caps one PR at a time. CI measured #1366 at 439,819 B and 822,445 B and #1368 at 439,232 B on the root, against main's 439,150 B and 821,900 B caps. The root cap moves to 443,000 B and the examples/worker cap to 826,000 B. Each PR's size change still shows in the CI bundle table, and these caps get tightened to measured sizes plus normal headroom when the batch lands.",
     "2026-11-05: The read-only program route on main at 79a839b3, with whole reads, connector purposes and previews landed, the release candidate's final caps. It names the read route in previews and carries the connector inventory on it. Official Node 22.23.4 measures the root at 438,867 B and examples/worker at 821,608 B, up 875 B and 671 B on the 437,992 B and 820,937 B measured for previews. The caps move to 439,150 B and 821,900 B.",
@@ -86,7 +87,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 441350
+      "maxGzip": 441900
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -169,7 +170,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 824800
+      "maxGzip": 825300
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

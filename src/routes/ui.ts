@@ -142,7 +142,8 @@ function operatorView({ opts }: RouteContext, authz: Authorized, registry: Regis
     return Boolean(connector && mayManageConnector(opts, authz, connector));
   };
   const permissions = (connector: Connector) => ({
-    use: true,
+    // Whether this person's own /mcp serves it; connector members can narrow it.
+    use: opts.registry.connectorAdmits(connector.id, authz.identity),
     manageSharedAuth: connector.authScope !== "personal" && mayManage(connector.id),
     connectPersonal: connector.authScope === "personal" && mayManage(connector.id),
   });
@@ -178,7 +179,7 @@ function connectorDetail(context: RouteContext, id: string): Effect.Effect<Respo
     const connector = registry.getConnector(id);
     if (!connector) return yield* refuse("unknown connector", 404);
     const data = yield* uiData(
-      opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, [connector.id])),
+      opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, [connector.id], undefined, "management")),
       baseUrl,
       {
         serverInfo: opts.config.serverInfo,

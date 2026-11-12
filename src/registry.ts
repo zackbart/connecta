@@ -31,6 +31,7 @@ import { carryCatalogFreshness, markCatalogFreshness, markCatalogStale } from ".
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { usesCallerIdentity, type ConnectorCaller } from "./connector-caller.js";
+import { connectorAdmits, type Member } from "./membership.js";
 import { forwardsPrincipal } from "./request-principal.js";
 import { canonicalJson } from "./canonical-json.js";
 import type { CredentialVault } from "./credential-contract.js";
@@ -86,6 +87,7 @@ import {
   type ClassificationOverride,
 } from "./tool-safety.js";
 import type {
+  AuthenticatedIdentity,
   CatalogAccessObservation,
   Connector,
   ConnectorCatalogPeek,
@@ -190,6 +192,12 @@ function frozenFacts(tools: ToolDef[]): ToolDef[] {
 }
 
 export interface RegistryOptions {
+  /**
+   * Each connector's resolved `members` (#1377), keyed by connector id. A
+   * connector that declares `members` with no entry here is visible to nobody
+   * but management, so an unresolved list never fails open.
+   */
+  connectorMembers?: ReadonlyMap<string, readonly Member[]> | undefined;
   publicUrl?: string | undefined;
   oauthClientName?: string | undefined;
   classification?: Readonly<Record<string, Readonly<Record<string, ClassificationOverride>>>> | undefined;
@@ -390,6 +398,13 @@ export interface RegistryScope {
   caller?: ConnectorCaller;
   /** Operator admission, forwarded only to principal-forwarding remote MCP connectors. */
   operatorCaller?: ConnectorCaller;
+  /**
+   * Whom connector `members` are matched against (#1377). Absent, a
+   * connector that lists members is hidden. `"management"` keeps every
+   * connector, for a maintainer's operator routes and for continuations a
+   * member-checked start already admitted; it never reaches an MCP endpoint.
+   */
+  viewer?: Readonly<AuthenticatedIdentity> | "management";
 }
 
 const MAX_PERSONAL_REGISTRIES = 1_024;
@@ -796,6 +811,21 @@ export class Registry implements RegistryView {
 
   listConnectors(): Connector[] {
     return [...this.connectors.values()];
+  }
+
+  /**
+   * Whether a connector's `members` let this viewer see it (#1377). A
+   * connector without members is visible to whoever its endpoint admits.
+   */
+  /** A connector's resolved `members`, or undefined when it lists none. */
+  connectorMembers(id: string): readonly Member[] | undefined {
+    if (this.connectors.get(id)?.members === undefined) return undefined;
+    return this.opts.connectorMembers?.get(id) ?? [];
+  }
+
+  connectorAdmits(id: string, viewer: RegistryScope["viewer"]): boolean {
+    if (viewer === "management") return true;
+    return connectorAdmits(this.connectorMembers(id), viewer);
   }
 
   getConnector(id: string): Connector | undefined {
@@ -1518,7 +1548,13 @@ export class Registry implements RegistryView {
           return {
             registry:
               connector.authScope === "personal"
-                ? self.scoped({ connectorIds: [connectorId], subjectKey: principalKey, principalKey })
+                ? // The start was member-checked; the callback route asks mayManageConnector again.
+                  self.scoped({
+                    connectorIds: [connectorId],
+                    subjectKey: principalKey,
+                    principalKey,
+                    viewer: "management",
+                  })
                 : self,
             principalKey,
           };
@@ -1682,6 +1718,9 @@ class ScopedRegistryView implements RegistryView {
     if (!this.allowed.has(id)) return undefined;
     const connector = this.root.getConnector(id);
     if (!connector) return undefined;
+    // Connector members narrow every surface this view serves, exactly as an
+    // id outside the pool does: a non-member meets a connector that is not there.
+    if (!this.root.connectorAdmits(id, this.scope.viewer)) return undefined;
     // An agent has no Workspace account: on a mapping-subject Workspace
     // connector it acts as the pool's owner. Without one there is no account
     // to act as, so the connector is absent, as a personal connector is.

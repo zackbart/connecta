@@ -144,6 +144,42 @@ export function resolvePoolMembers(value: unknown, path: string, context: Member
 }
 
 /**
+ * Resolve a connector's `members` (#1377): the people and agents it is
+ * visible to, wherever a pool or plain `/mcp` serves it. Unlike a pool's list
+ * it may mix people and agents. An agent never acts on a personal connector,
+ * so listing one there is refused rather than silently ignored.
+ */
+export function resolveConnectorMembers(
+  value: unknown,
+  connectorId: string,
+  authScope: "shared" | "personal" | undefined,
+  context: MemberContext,
+): readonly Member[] {
+  const path = `Connector(${JSON.stringify(connectorId)}).members`;
+  if (Array.isArray(value) && value.length === 0) {
+    throw new ConfigError(`${path} is empty; omit it instead.`);
+  }
+  const members = resolveMembers(value, path, context);
+  const index = members.findIndex((member) => member.kind === "agent");
+  if (authScope === "personal" && index >= 0) {
+    throw new ConfigError(`${path}[${index}] is an agent; personal connectors never reach agents.`);
+  }
+  return Object.freeze(members);
+}
+
+/**
+ * Whether a connector's `members` let this identity see it. A connector that
+ * lists none is visible to whoever its endpoint admits.
+ */
+export function connectorAdmits(
+  members: readonly Member[] | undefined,
+  identity: Readonly<AuthenticatedIdentity> | undefined,
+): boolean {
+  if (members === undefined) return true;
+  return identity !== undefined && members.some((member) => isMember(member, identity));
+}
+
+/**
  * `maintainers`: people only. Required whenever an inbound provider can admit
  * a person, which is any provider but the built-in agent-token adapter. With
  * agents alone nobody can be a maintainer, so plain `/mcp` admits nobody.

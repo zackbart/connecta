@@ -9,8 +9,10 @@ import { ConfigError } from "./config-schema.js";
 import {
   memberContext,
   peopleInSeveralPools,
+  resolveConnectorMembers,
   resolveMaintainers,
   resolvePoolMembers,
+  type Member,
   type MemberContext,
   type ResolvedPool,
 } from "./membership.js";
@@ -253,7 +255,17 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const routes = deploymentRoutes(config);
   const { logger } = resolved;
   const storage = resolved.storage;
+  const members = memberContext(resolved.auth, resolved.agents);
+  const connectorMembers = new Map<string, readonly Member[]>();
+  for (const connector of resolved.connectors) {
+    if (connector.members === undefined) continue;
+    connectorMembers.set(
+      connector.id,
+      resolveConnectorMembers(connector.members, connector.id, connector.authScope, members),
+    );
+  }
   const registry = new Registry([...resolved.connectors], {
+    connectorMembers,
     storage,
     logger,
     publicUrl: resolved.publicUrl,
@@ -276,7 +288,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     classification: resolved.classification,
     routes,
   });
-  const members = memberContext(resolved.auth, resolved.agents);
   const maintainers = resolveMaintainers(
     input.maintainers,
     resolved.auth.some((provider) => !assertsAgents(provider)),

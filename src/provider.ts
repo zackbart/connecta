@@ -36,6 +36,8 @@ export interface ProviderOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<Connector["members"]>;
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
@@ -102,10 +104,23 @@ export const READ_ONLY = opaque<boolean>({
   },
 });
 
+/**
+ * A connector's `members`: a non-empty array. Each reference is resolved
+ * against the deployment's auth and agents by `createConnecta`.
+ */
+export const MEMBERS = opaque<NonNullable<Connector["members"]>>({
+  check(value, path) {
+    if (!Array.isArray(value) || value.length === 0) {
+      throw new ConfigError(`${path} must be a non-empty array of member references.`);
+    }
+  },
+});
+
 /** Options every maintained provider shares. */
 export const PROVIDER_COMMON = {
   ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes"),
   readOnly: READ_ONLY,
+  members: MEMBERS,
   callAdmission: CALL_ADMISSION,
 };
 
@@ -187,7 +202,7 @@ export interface ProviderContext {
    * spread into `remoteMcp()` or `api()` options.
    */
   readonly connectorOptions: Readonly<
-    Pick<ProviderOptions, "authScope" | "maxResultBytes" | "callAdmission" | "readOnly">
+    Pick<ProviderOptions, "authScope" | "maxResultBytes" | "callAdmission" | "readOnly" | "members">
   >;
   /**
    * Render the maintained skill with this connection's context and the
@@ -387,6 +402,7 @@ export function defineProvider<O extends ProviderOptions>(definition: ProviderDe
       const connector = frozen.create(id, resolved, {
         connectorOptions: {
           ...(options.readOnly !== undefined ? { readOnly: options.readOnly } : {}),
+          ...(options.members !== undefined ? { members: options.members } : {}),
           ...(options.authScope !== undefined ? { authScope: options.authScope } : {}),
           ...(options.maxResultBytes !== undefined ? { maxResultBytes: options.maxResultBytes } : {}),
           ...(options.callAdmission !== undefined ? { callAdmission: options.callAdmission } : {}),
@@ -445,6 +461,7 @@ function asProvider<O extends ProviderOptions, C extends Connector>(
     options = assertKnownOptions(options, `${factory}(${JSON.stringify(id)})`, shape);
     if (options?.readOnly !== undefined)
       READ_ONLY.parse(options.readOnly, `${factory}(${JSON.stringify(id)}).readOnly`);
+    if (options?.members !== undefined) MEMBERS.parse(options.members, `${factory}(${JSON.stringify(id)}).members`);
     const admission = options == null ? undefined : options.callAdmission;
     if (admission !== undefined) CALL_ADMISSION.parse(admission, `${factory}(${JSON.stringify(id)}).callAdmission`);
     connector = build(id, options);
@@ -454,19 +471,30 @@ function asProvider<O extends ProviderOptions, C extends Connector>(
   const describe = connector.describe?.bind(connector);
   const ownDescribe = Object.getOwnPropertyDescriptor(connector, "describe");
   const ownReadOnly = Object.getOwnPropertyDescriptor(connector, "readOnly");
+  const ownMembers = Object.getOwnPropertyDescriptor(connector, "members");
   // Keep the receiver of prototype methods (including private fields). When
   // the description cannot be replaced, inherit the whole connector instead
   // of copying it: decorators may inherit their id and methods.
   const stamped =
     Object.isExtensible(connector) &&
     (!ownDescribe || ownDescribe.configurable) &&
-    (options.readOnly === undefined || !ownReadOnly || ownReadOnly.configurable)
+    (options.readOnly === undefined || !ownReadOnly || ownReadOnly.configurable) &&
+    (options.members === undefined || !ownMembers || ownMembers.configurable)
       ? connector
       : (Object.create(connector) as C);
   // An inheriting stamp serves the connector itself, so it keeps its call identity.
   if (stamped !== connector) aliasCallIdentity(stamped, connector);
   if (options.readOnly !== undefined) {
     Object.defineProperty(stamped, "readOnly", { value: options.readOnly, enumerable: true, configurable: true });
+  }
+  // Every maintained provider honors `members`, whether or not its builder
+  // forwards it to remoteMcp() or api().
+  if (options.members !== undefined) {
+    Object.defineProperty(stamped, "members", {
+      value: Object.freeze([...options.members]),
+      enumerable: true,
+      configurable: true,
+    });
   }
   Object.defineProperty(stamped, "describe", {
     configurable: true,

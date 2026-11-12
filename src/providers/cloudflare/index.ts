@@ -10,7 +10,7 @@ import { skill } from "./skill.generated.js";
  */
 import type { ConnectorCallAdmissionPolicy, ConnectorCredentialConfig } from "../../types.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
-import { CALL_ADMISSION, type ProviderGuideInput } from "../../provider.js";
+import { CALL_ADMISSION, MEMBERS, type ProviderGuideInput, type ProviderOptions } from "../../provider.js";
 import { defineApiProvider } from "../../http/provider.js";
 import {
   CloudflareApi,
@@ -47,6 +47,8 @@ interface CloudflareCommonOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
 }
 
 interface CloudflareKeyOptions extends CloudflareCommonOptions {
@@ -137,7 +139,10 @@ const GLOBAL_API_KEY_CREDENTIAL: ConnectorCredentialConfig = {
   ],
 };
 
-const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
+const COMMON = {
+  ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly"),
+  members: MEMBERS,
+};
 const KEY_COMMON = keys("accountId", "zoneId", "baseUrl", "maxConcurrency");
 const PIN = optionsOf<CloudflarePin>()(keys("accountIds", "zoneIds"));
 

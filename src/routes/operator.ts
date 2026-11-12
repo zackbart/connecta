@@ -132,15 +132,21 @@ export function operatorViewerKey(context: RouteContext, authz: Authorized): Eff
   ).pipe(Effect.catch(() => refuse("operator identity could not be read", 503)));
 }
 
-/** The partition an identity carries into a registry view of the given connectors. */
+/**
+ * The partition an identity carries into a registry view of the given
+ * connectors. Connector members are matched against the identity unless a
+ * maintainer's management route passes `"management"`.
+ */
 export function scopeFor(
   authz: Authorized,
   authenticated: boolean,
   connectorIds: RegistryScope["connectorIds"] = "all",
   pool?: string,
+  viewer: NonNullable<RegistryScope["viewer"]> = authz.identity,
 ): RegistryScope {
   return {
     connectorIds,
+    viewer,
     ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
     ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
     operatorCaller: { identity: authz.identity, authenticated, ...(pool !== undefined ? { pool } : {}) },
@@ -154,7 +160,9 @@ export function scopeFor(
 export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
   // Operator catalogs describe the default endpoint's view, never a pool view.
   if (!admitsMaintainer(opts, authz)) return refuse("not found", 404);
-  return Effect.succeed(opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0)));
+  return Effect.succeed(
+    opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, "all", undefined, "management")),
+  );
 }
 
 /**
@@ -163,8 +171,12 @@ export function visibleRegistry({ opts }: RouteContext, authz: Authorized): Effe
  * private 404 for anyone else. mayManageConnector still decides each action.
  */
 export function managementRegistry({ opts }: RouteContext, authz: Authorized): Effect.Effect<RegistryView, Answer> {
+  // Shared auth is administered deployment-wide; mayManageConnector applies
+  // connector members to each personal action.
   if (isMaintainer(opts.maintainers, authz.identity))
-    return Effect.succeed(opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0)));
+    return Effect.succeed(
+      opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, "all", undefined, "management")),
+    );
   const ids = memberConnectors(opts, authz.identity);
   if (ids !== "all" && ids.size === 0) return refuse("not found", 404);
   return Effect.succeed(

@@ -4,6 +4,7 @@ import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { defineApiProvider } from "../../http/provider.js";
+import type { ProviderOptions } from "../../provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   accountSummary,
@@ -52,6 +53,8 @@ export interface BreezeOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
   /** Default page size for paged lists. Defaults to 100; connecta's cap is 1,000. */
   defaultPageSize?: number;
 }

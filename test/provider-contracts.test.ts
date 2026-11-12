@@ -15,6 +15,18 @@ describe.each(providerFixtures as unknown as ContractFixture[])("$name provider 
       expect(() => fixture.create("reader", { ...scenario.options, readOnly: "true" })).toThrow(/readOnly.*boolean/);
     }
   });
+
+  it("INV-11: accepts and retains connector members in every provider mode, refusing an empty list (#1377)", () => {
+    for (const scenario of fixture.cases) {
+      const members = ["bob", { namespace: "https://identity.test", id: "carol" }, "agent:assistant"];
+      expect(fixture.create("reader", { ...scenario.options, members }).members).toEqual(members);
+      expect(fixture.create("reader", scenario.options).members).toBeUndefined();
+      for (const invalid of [[], "bob"])
+        expect(() => fixture.create("reader", { ...scenario.options, members: invalid })).toThrow(
+          /members to be a non-empty array/,
+        );
+    }
+  });
 });
 
 it.each([

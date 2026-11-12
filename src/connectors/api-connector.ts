@@ -12,7 +12,7 @@ import { attachFailureFacts, carryFailureFacts, errorLabel } from "../operator-r
 import { compileValidator, normalizeToolInput, validateCatalogToolInput } from "../validate.js";
 import { array, assertKnownOptions, instance, keys, optionsOf, strings } from "../config-schema.js";
 import { describedEndpoint, describedOrigin, describedTools } from "../described.js";
-import { READ_ONLY, CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
+import { READ_ONLY, MEMBERS, CALL_ADMISSION, CREDENTIAL, USAGE_GUIDE } from "./option-shapes.js";
 import { assertStaticToolNames } from "../tool-name.js";
 import { registerInvocationAuth } from "../invocation-auth.js";
 import { redactCatalog, redactSentSecrets, sentSecretsFetch } from "../sent-secrets.js";
@@ -184,6 +184,8 @@ export interface ApiOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<Connector["members"]>;
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /**
@@ -252,6 +254,7 @@ function checkToolContract(id: string, tool: ApiTool): void {
 export const API_OPTIONS = optionsOf<ApiOptions>()({
   ...keys("title", "description", "authScope", "maxResultBytes", "testCredential", "testCredentials", "validateArgs"),
   readOnly: READ_ONLY,
+  members: MEMBERS,
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
   credential: CREDENTIAL,
@@ -344,6 +347,7 @@ export interface ApiOAuthHooks {
 export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks): Connector {
   opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
   if (opts.readOnly !== undefined) READ_ONLY.parse(opts.readOnly, `Connector(${JSON.stringify(id)}).readOnly`);
+  if (opts.members !== undefined) MEMBERS.parse(opts.members, `api(${JSON.stringify(id)}).members`);
   if (opts.callAdmission !== undefined)
     CALL_ADMISSION.parse(opts.callAdmission, `api(${JSON.stringify(id)}).callAdmission`);
   assertStaticToolNames(opts.tools, `api(${JSON.stringify(id)}).tools`);
@@ -381,6 +385,7 @@ export function apiConnector(id: string, opts: ApiOptions, oauth?: ApiOAuthHooks
       description: opts.description,
       authScope: opts.authScope,
       readOnly: opts.readOnly,
+      members: opts.members === undefined ? undefined : Object.freeze([...opts.members]),
       maxResultBytes: opts.maxResultBytes,
       callAdmission: opts.callAdmission,
       usageGuide: opts.usageGuide,

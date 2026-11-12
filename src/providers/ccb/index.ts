@@ -2,7 +2,8 @@ import { readOnlyNotice } from "../_shared/guide.js";
 import { CCB_ENVIRONMENTS, CCB_MEDIA_TYPE } from "./lib/constants.js";
 import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
-import { CALL_ADMISSION } from "../../connectors/option-shapes.js";
+import { CALL_ADMISSION, MEMBERS } from "../../connectors/option-shapes.js";
+import type { ProviderOptions } from "../../provider.js";
 import { defineApiProvider } from "../../http/provider.js";
 import { sensitiveFieldsOption } from "../_shared/sensitive-fields.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
@@ -101,6 +102,8 @@ export interface CcbOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
   /**
    * Whether results may carry {@link CCB_SENSITIVE_FIELDS}: allergies,
    * giving numbers and dates, envelope ids, statement dates, attendance
@@ -139,6 +142,7 @@ const CCB_OPTIONS = optionsOf<CcbOptions>()({
     "readOnly",
     "sensitiveFields",
   ),
+  members: MEMBERS,
   callAdmission: CALL_ADMISSION,
 });
 

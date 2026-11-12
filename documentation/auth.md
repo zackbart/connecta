@@ -804,6 +804,7 @@ never reach it; a deployment's own connectors still cannot read the caller.
 
 Access is read from one place, deployment code. Top-level
 `maintainers` lists the people who receive the whole catalog at plain `/mcp`
+(less any connector whose [`members`](#connector-members) omit them)
 with the deployment's `readOnly`, and who reach the operator routes. A
 non-maintainer person listed in exactly one pool receives that pool at plain
 `/mcp` exactly as `/mcp/<pool>` serves it: its `tools`, `readOnly`, `surface`,
@@ -826,7 +827,8 @@ A member reference is one of:
   Frontend API URL, or `"cloudflare-access"`);
 - `{ namespace, id }`, required when a deployment has zero or several
   interactive providers, or when the id contains `:`;
-- `"agent:<name>"`, naming an agent declared in `agents` (pool `members` only).
+- `"agent:<name>"`, naming an agent declared in `agents` (pool and connector
+  `members` only, never `maintainers`).
 
 A person matches when the admitted principal equals the reference exactly; an
 agent matches by `identity.agent`, which only built-in agent credential adapters set.
@@ -853,6 +855,9 @@ connector when any of its tools is in the pool — `docs.read` permits the
 connector that does not exist. A tool outside the pool fails exactly like one
 the connector never had: `unknown_tool`, with no hint that it exists. That is
 the whole security claim, in one place on purpose.
+
+A connector's own `members` narrow this view further for that connector
+alone, in the same place; see [connector members](#connector-members).
 
 `identity.connectorAccess`, including guarded
 `{ tool, requireReadOnly: true }` grants, the top-level `grant`, and pool
@@ -918,6 +923,59 @@ use this fallback. The expired deadline cannot authorize auth recovery.
 Personal OAuth ownership and credential administration are separate from
 endpoint access; writes follow the endpoint's `readOnly` setting and client
 approval.
+
+### Connector members
+
+A connector may list who sees it. `members` takes the same references as a
+pool's `members`, and narrows every endpoint that serves the connector without
+ever widening one:
+
+```ts
+createConnecta({
+  auth: clerkAuth({ publishableKey, secretKey }),
+  readOnly: false,
+  maintainers: ["user_alice", "user_bob"],
+  agents: ["assistant"],
+  pools: {
+    team: { tools: ["crm", "tickets", "notes_alice", "notes_bob"], members: ["user_alice", "user_bob", "user_carol"] },
+    "assistant-alice": { tools: ["crm", "notes_alice"], members: ["agent:assistant"] },
+  },
+  connectors: [
+    crm,
+    tickets,
+    // Alice's own account, held as shared auth: Alice and her assistant pool only.
+    remoteMcp("notes_alice", {
+      url: "https://notes.example.com/mcp",
+      auth: { type: "oauth" },
+      members: ["user_alice", "agent:assistant"],
+    }),
+    remoteMcp("notes_bob", { url: "https://notes.example.com/mcp", auth: { type: "oauth" }, members: ["user_bob"] }),
+  ],
+  executor,
+});
+```
+
+Every person in `team` reaches `crm` and `tickets` through one pool, and so
+one plain `/mcp`; only Alice also sees `notes_alice` and only Bob
+`notes_bob`. Carol sees neither.
+
+| Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Options      | `members` is optional on `remoteMcp()`, `api()`, every maintained provider, and a custom `Connector` object. Omitted, the connector is visible to everyone its endpoints admit, as before.                                                                                                                                                                                                                       |
+| People       | A person sees the connector only when listed, matched on the admitted, resolved `{ namespace, id }` exactly as pool membership is. Being in a pool that lists the connector is still required; `members` grants no pool.                                                                                                                                                                                         |
+| Maintainers  | No bypass on MCP endpoints: a maintainer the list omits does not see the connector at plain `/mcp` or in any pool. Maintainers keep the operator catalog (`/ui/data`, `/ui/connectors/<id>`, the matrix) and shared credential and OAuth administration for every connector, so they can connect a shared account someone else uses. Their `permissions.use` reads `false` for a connector the list omits.       |
+| Agents       | An agent sees the connector only when `"agent:<name>"` is listed, and still only in pools that list both. A list of people alone hides it from every agent. `authScope: "personal"` connectors never reach agents; listing an agent on one fails construction.                                                                                                                                                   |
+| Absence      | A caller the list omits meets a connector that does not exist, on every surface: `search_tools`, `connecta.search`, `connecta.describe`, `skills`, endpoint facts and instructions, `call_tool`, `call_destructive_tool`, `execute_code` and `execute_read_code` (a guessed address fails `unknown_address`), native pool tool lists and calls, `authorize_connector` ("Unknown connector"), and resource reads. |
+| Management   | A personal connector's own account is managed only by a person the list admits (maintainer or pool member), on their own partition. A pool member it omits gets the unknown-connector 404 from `/ui/oauth/<id>` and `/ui/credentials/<id>`; a maintainer it omits gets 403. Connect links and callbacks re-check the same rule.                                                                                  |
+| Member page  | `/ui/api/config` for a pool member omits a connector the list omits, including from each pool's `tools`.                                                                                                                                                                                                                                                                                                         |
+| Activity     | Activity is use, so a maintainer the list omits reads none of the connector's rows, timeline and last-call overlay alike, including operations that touched it.                                                                                                                                                                                                                                                  |
+| Construction | `createConnecta` resolves every list against `auth` and `agents` and throws a `ConfigError` naming `Connector("<id>").members` on a non-array or empty list, a malformed, ambiguous, repeated or unknown reference, and an agent on a personal connector. The factories refuse a non-array or empty list too. A list may mix people and agents.                                                                  |
+| Description  | `describeConfig()` lists each connector's resolved `members` in declaration order, omitted when unset.                                                                                                                                                                                                                                                                                                           |
+
+Enforcement is the scoped registry view's, beside pool `tools` and the
+Workspace owner rule, so every surface reads one decision. Listing a person
+in `members` does not give them the connector's tools in a pool that omits
+them, and a pool's `readOnly` still applies.
 
 ## Migrating static bearer clients
 
@@ -2178,17 +2236,17 @@ anything, so SDK hook order cannot mix servers or cross a reset.
 
 ## Management permissions
 
-Management follows `maintainers` and pool `members`; no resolver configures it. The former `identity.credentialAdministration`,
+Management follows `maintainers`, pool `members` and [connector members](#connector-members); no resolver configures it. The former `identity.credentialAdministration`,
 `identity.personalConnection`, `identity.accessTokenManagement`, and
 `identity.activityAccess` fail construction as unknown options under `identity`,
 including an empty `identity` section.
 
-| Action                                    | Who may                                                                                                                                        |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shared credentials and OAuth grants       | An interactive maintainer                                                                                                                      |
-| A personal connector's own account        | An interactive person with a stable principal who is a maintainer, or a member of a pool containing that connector; always their own partition |
-| Agent tokens: list, issue, rotate, revoke | An interactive maintainer                                                                                                                      |
-| Activity reads                            | A maintainer principal, interactive or not, within the optional `readGate`                                                                     |
+| Action                                    | Who may                                                                                                                                                                                  |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shared credentials and OAuth grants       | An interactive maintainer                                                                                                                                                                |
+| A personal connector's own account        | An interactive person with a stable principal who is a maintainer, or a member of a pool containing that connector, and whom the connector's `members` admit; always their own partition |
+| Agent tokens: list, issue, rotate, revoke | An interactive maintainer                                                                                                                                                                |
+| Activity reads                            | A maintainer principal, interactive or not, within the optional `readGate`                                                                                                               |
 
 Agents and other machine credentials manage nothing. Shared auth is
 deployment-wide, so every step on a shared connector takes an interactive
@@ -2202,7 +2260,9 @@ callback, which are bound to the principal that requested them, and
 `/ui/oauth/<id>` and `/ui/credentials/<id>`, which resolve only their pools'
 connectors and refuse a shared one with 403. A person who is neither gets the
 private 404 every operator route gives. A maintainer also manages their own
-personal connectors, which plain `/mcp` includes, in their own partition. A
+personal connectors, which plain `/mcp` includes, in their own partition.
+Connector `members` narrow both: a person the list omits manages no
+personal account on that connector. A
 maintainer's link continues in the operator UI; a member's link starts the
 authorization directly, as it does on a deployment without the UI. A member's
 operator contract names, per personal connector, the actions their permission,
@@ -2226,7 +2286,8 @@ without a provable owner are withheld. Non-interactive reads return typed
 actors without directory labels. Old rows without a pool remain subject to
 connector, tool and owner checks. A maintainer sees rows from plain `/mcp` and
 from every declared pool within that pool's tools; rows from a pool no longer
-declared are withheld. Agent token lifecycle routes require an interactive
+declared are withheld, and so are rows of a connector whose `members` omit
+the reader. Agent token lifecycle routes require an interactive
 maintainer with a stable principal; they issue, rotate, and revoke declared
 agents' tokens, and never create, rename, or bind one.
 

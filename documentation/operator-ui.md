@@ -116,7 +116,10 @@ code is on. These are read-only facts from deployment configuration; change
 Plain `/mcp` is routed by sign-in: the `/mcp` row and matrix column show the
 whole catalog maintainers receive, and a pool row shows what its people
 receive at both `/mcp/<pool>` and, when they belong to no other pool, plain
-`/mcp`. A note above the rows says so. People in several pools appear in
+`/mcp`. A note above the rows says so. A connector with
+[`members`](./auth.md#connector-members) still appears in every row that
+serves it; a personal cell counts only the people those members admit, and
+`permissions.use` is `false` for a maintainer they omit. People in several pools appear in
 `config.peopleInSeveralPools`; plain `/mcp` refuses them.
 
 One row each for `/mcp` and every pool: the path, a read-only pill on a

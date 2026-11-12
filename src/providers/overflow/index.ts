@@ -3,6 +3,7 @@ import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { defineApiProvider } from "../../http/provider.js";
+import type { ProviderOptions } from "../../provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   authenticate,
@@ -87,6 +88,8 @@ export interface OverflowOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
   /** Default page size for page-numbered list tools. Defaults to 25; Overflow caps it at 100. */
   defaultPageSize?: number;
   /**

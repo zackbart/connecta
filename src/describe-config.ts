@@ -18,7 +18,7 @@ import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { ConnectaConfig, ResolvedConfig } from "./config.js";
 import { describedEndpoint, describedHref, describedOrigin, describedTools, describedUrl } from "./described.js";
 import { connectorGuideRequired, connectorGuideSummary } from "./skills.js";
-import { peopleInSeveralPools, type ResolvedPool } from "./membership.js";
+import { peopleInSeveralPools, type Member, type ResolvedPool } from "./membership.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -49,6 +49,8 @@ export interface DescribedConnector {
   title?: string;
   description?: string;
   authScope: "shared" | "personal";
+  /** Resolved connector `members` in declaration order; omitted when unset. */
+  members?: DescribedMember[];
   source: ConnectorDescription["source"];
   endpoint?: DescribedEndpoint;
   auth?: ConnectorAuthDescription;
@@ -302,6 +304,11 @@ function ownDescription(connector: Connector): ConnectorDescription {
   };
 }
 
+const describedMember = (member: Member): DescribedMember =>
+  member.kind === "agent"
+    ? { kind: "agent", name: member.name }
+    : { kind: "human", namespace: member.namespace, id: member.id };
+
 function describeConnector(
   connector: Connector,
   deploymentCap: number,
@@ -312,12 +319,14 @@ function describeConnector(
   const admission = connector.callAdmission;
   const guideSummary = connectorGuideSummary(connector);
   const guided = connector.usageGuide !== undefined;
+  const members = registry.connectorMembers(connector.id);
   return {
     ...(connector.readOnly === true ? { readOnly: true } : {}),
     id: connector.id,
     ...(str(connector.title) !== undefined ? { title: connector.title! } : {}),
     ...(str(connector.description) !== undefined ? { description: connector.description! } : {}),
     authScope: connector.authScope === "personal" ? "personal" : "shared",
+    ...(members ? { members: members.map(describedMember) } : {}),
     ...own,
     ...(credential && typeof credential === "object"
       ? {
@@ -457,11 +466,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       name,
       path: `/mcp/${name}`,
       tools: pool.tools.map(String),
-      members: (input.pools.get(name)?.members ?? []).map((member): DescribedMember =>
-        member.kind === "agent"
-          ? { kind: "agent", name: member.name }
-          : { kind: "human", namespace: member.namespace, id: member.id },
-      ),
+      members: (input.pools.get(name)?.members ?? []).map(describedMember),
       owner: input.pools.get(name)?.owner ?? null,
       description: input.pools.get(name)?.description ?? null,
     })),

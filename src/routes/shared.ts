@@ -737,8 +737,9 @@ export function agentPool(
 }
 
 /**
- * The connectors of every pool this identity is a member of: what a
- * pool member may ever manage, and only their personal ones among these.
+ * The connectors of every pool this identity is a member of that their
+ * connector members also admit: what a pool member may ever manage, and only
+ * their personal ones among these.
  */
 export function memberConnectors(
   opts: ServerOptions,
@@ -749,7 +750,7 @@ export function memberConnectors(
     const pool = memberPool(opts, name, identity);
     if (!pool) continue;
     if (pool.access.connectorIds === "all") return "all";
-    for (const id of pool.access.connectorIds) ids.add(id);
+    for (const id of pool.access.connectorIds) if (opts.registry.connectorAdmits(id, identity)) ids.add(id);
   }
   return ids;
 }
@@ -760,8 +761,8 @@ export function memberConnectors(
  * credential manages nothing. Shared auth is deployment-wide, so it takes a
  * maintainer. A personal connector takes a stable principal that is a
  * maintainer, whose plain `/mcp` includes it, or a member of a pool that
- * contains it; either way it is always the caller's own partition, which
- * callers bind by principal. Every path that issues a link, starts,
+ * contains it, and either way one the connector's `members` admit; it is
+ * always the caller's own partition, which callers bind by principal. Every path that issues a link, starts,
  * completes, or disconnects auth, or writes a credential, asks this.
  */
 export function mayManageConnector(
@@ -771,8 +772,9 @@ export function mayManageConnector(
 ): boolean {
   const identity = authz.identity;
   if (!identity.interactive || identity.agent !== undefined || !identity.principal) return false;
+  if (connector.authScope !== "personal") return isMaintainer(opts.maintainers, identity);
+  if (!opts.registry.connectorAdmits(connector.id, identity)) return false;
   if (isMaintainer(opts.maintainers, identity)) return true;
-  if (connector.authScope !== "personal") return false;
   const pools = memberConnectors(opts, identity);
   return pools === "all" || pools.has(connector.id);
 }

@@ -51,7 +51,8 @@
  */
 import { keys, optionsOf } from "../../../config-schema.js";
 import { callerOf } from "../../../connector-caller.js";
-import { CALL_ADMISSION } from "../../../connectors/option-shapes.js";
+import { CALL_ADMISSION, MEMBERS } from "../../../connectors/option-shapes.js";
+import type { ProviderOptions } from "../../../provider.js";
 import { ConnectorCallError } from "../../../errors.js";
 import type { AuthenticatedIdentity, ConnectorCallAdmissionPolicy, ConnectorContext } from "../../../types.js";
 import { isWorkspaceAddress } from "../../../workspace-address.js";
@@ -113,6 +114,8 @@ export interface GoogleWorkspaceOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
   /** API base override for a proxy or test double. */
   baseUrl?: string;
 }
@@ -122,6 +125,7 @@ export const GOOGLE_WORKSPACE_OPTIONS = optionsOf<GoogleWorkspaceOptions>()({
   ...keys("purpose", "subject", "title", "instructions", "maxResultBytes", "baseUrl", "readOnly"),
   // A string is the key's JSON; only the object form has keys to check.
   serviceAccount: optionsOf<GoogleServiceAccount>()(keys("clientEmail", "privateKey", "clientId")),
+  members: MEMBERS,
   callAdmission: CALL_ADMISSION,
 });
 

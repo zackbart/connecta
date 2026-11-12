@@ -1,7 +1,7 @@
 import { readOnlyNotice } from "../_shared/guide.js";
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { defineApiProvider } from "../../http/provider.js";
-import type { ProviderGuideInput } from "../../provider.js";
+import { MEMBERS, type ProviderGuideInput, type ProviderOptions } from "../../provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   authenticate,
@@ -36,6 +36,8 @@ interface StripeCommonOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
 }
 
 /**
@@ -84,7 +86,10 @@ const STRIPE_ADMISSION: Readonly<Record<StripeMode, ConnectorCallAdmissionPolicy
   },
 };
 
-const COMMON = keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly");
+const COMMON = {
+  ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly"),
+  members: MEMBERS,
+};
 
 /** The closed options stripe() accepts, selected by `auth.type`; see `assertKnownOptions`. */
 const STRIPE_OPTIONS = variants(

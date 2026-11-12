@@ -404,7 +404,7 @@ function connectedPeople(
               )
             : false;
         } else if (cachedMode(context)) {
-          const registry = opts.registry.scoped({ connectorIds: [connector.id], principalKey });
+          const registry = opts.registry.scoped({ connectorIds: [connector.id], principalKey, viewer: "management" });
           const observe = storedAuthObservation(connector);
           ok = observe
             ? yield* bounded(
@@ -414,7 +414,7 @@ function connectedPeople(
               )
             : false;
         } else {
-          const registry = opts.registry.scoped({ connectorIds: [connector.id], principalKey });
+          const registry = opts.registry.scoped({ connectorIds: [connector.id], principalKey, viewer: "management" });
           const scope = {};
           ok = yield* probe(
             context,
@@ -456,7 +456,11 @@ function matrixFor(
             .filter(([, pool]) => servesConnector(pool, connector.id))
             .map(([pool, resolved]) => ({ pool, resolved })),
         ];
-        const humans = (resolved: ResolvedPool | undefined) => (resolved ? humansOf(resolved) : [...opts.maintainers]);
+        // Only the people the connector's members admit reach it from a cell.
+        const humans = (resolved: ResolvedPool | undefined) =>
+          (resolved ? humansOf(resolved) : [...opts.maintainers]).filter((principal) =>
+            opts.registry.connectorAdmits(connector.id, { actor: { kind: "person" }, principal, interactive: true }),
+          );
         const workspace = workspaceSubjectOf(connector);
         let runsAs: (resolved: ResolvedPool | undefined, humansHere: IdentityReference[]) => OperatorRunsAs;
         if (workspace?.kind === "fixed") {
@@ -503,7 +507,7 @@ function matrixFor(
 function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect<Response, Answer> {
   const { opts } = context;
   return Effect.gen(function* () {
-    const registry = opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0));
+    const registry = opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, "all", undefined, "management"));
     const selected = context.url.searchParams.get("connector");
     const visible = registry.listConnectors().filter((connector) => selected === null || connector.id === selected);
     if (selected !== null && visible.length === 0) return yield* refuse("unknown connector", 404);
@@ -789,7 +793,12 @@ function memberRead(
 ): Effect.Effect<Response, Answer> {
   const { opts } = context;
   return Effect.gen(function* () {
-    const allIds = opts.registry.listConnectors().map((c) => c.id);
+    // A connector whose members omit this person is absent from the page,
+    // its pool tool lists included, as it is from their endpoints.
+    const allIds = opts.registry
+      .listConnectors()
+      .map((c) => c.id)
+      .filter((id) => opts.registry.connectorAdmits(id, authz.identity));
     const ids = new Set(allIds.filter((id) => pools.some(([, pool]) => servesConnector(pool, id))));
     const registry = opts.registry.scoped(
       scopeFor(authz, opts.config.auth.length > 0, [...ids], pools.length === 1 ? pools[0]![0] : undefined),

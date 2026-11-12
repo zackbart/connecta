@@ -1,5 +1,6 @@
 import { keys, optionsOf } from "../../config-schema.js";
 import { defineApiProvider } from "../../http/provider.js";
+import { MEMBERS, type ProviderOptions } from "../../provider.js";
 import { GranolaApi, authenticate, binding, errors, index, pages, probe, result, safety, verdicts } from "./api.js";
 import { granolaTools } from "./tools.js";
 import { skill } from "./skill.generated.js";
@@ -12,13 +13,18 @@ export interface GranolaOptions {
   maxResultBytes?: number;
   /** Common connector restriction; no value enables unreviewed operations or writes. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
 }
 
 export const granola = defineApiProvider<GranolaOptions>({
   name: "granola",
   title: "Granola",
   readme: "Granola",
-  options: optionsOf<GranolaOptions>()(keys("purpose", "title", "instructions", "maxResultBytes", "readOnly")),
+  options: optionsOf<GranolaOptions>()({
+    ...keys("purpose", "title", "instructions", "maxResultBytes", "readOnly"),
+    members: MEMBERS,
+  }),
   skill,
   // The guide and vendor call meeting records notes.
   searchSynonyms: [["meeting", "note"]],
