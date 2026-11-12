@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-12: Google OAuth account restrictions (#1381, #1383) add the generic account-verification hook, RS256 ID-token checks, principal-resolved person rules and the kept-grant reconnect to the root. CI at d5647128, on main at c8e440b2, measures the root at 445,235 B and examples/worker at 829,795 B, up from main's caps of 443,100 B and 827,000 B. Owner-approved: the caps move to 445,600 B and 830,150 B, leaving 365 B and 355 B.",
     "2026-11-12: Releasing unused hinted catalog chunks before request close (#1382 review fix) adds request-scoped tracking. CI at 1eb13729 measures the root at 442,719 B and examples/worker at 826,632 B, 32 B past the 826,600 B cap. Owner-approved: the caps move to 443,100 B and 827,000 B, leaving 381 B and 368 B.",
     "2026-11-12: Warm catalog revision hints (#1220, #1382) read a warm remote MCP catalog's chunks in the same D1 round trip as its manifest, taking warm catalog resolution from 3 to 2 D1 round trips (local injected 100 ms per round trip: catalog 319 to 220 ms on Node, 336 to 226 ms on workerd). CI for #1382 measures the root at 442,468 B and examples/worker at 826,248 B, over their 442,100 B and 825,800 B caps; ./ui stays within its unchanged 346,000 B cap at 343,986 B. Approved by the owner for this measured performance gain: the root cap moves 442,100 to 442,800 B and examples/worker 825,800 to 826,600 B, leaving 332 B and 352 B of CI headroom. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-12: Connector members (#1377, #1379) add member resolution, the scoped-view check, and the member-page, management and activity filters. A same-toolchain local comparison against origin/main c2c0b5c6 (Node 26.13.0, system zlib) measured +497 B root, +477 B examples/worker and +127 B ./ui. CI for #1379 measures the root at 441,553 B, examples/worker at 825,310 B and ./ui at 343,925 B (within its unchanged 346,000 B cap). Approved by the owner, the caps also cover #1378 (Google offline defaults, CI-measured +140 B root and +114 B examples/worker on main) landing too, about 441,693 B and 825,424 B together: the root cap moves 441,350 to 442,100 B and examples/worker 824,800 to 825,800 B, leaving about 407 B and 376 B of CI headroom. ./ui, baselineGzip and every other cap are unchanged.",
@@ -89,7 +90,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 443100
+      "maxGzip": 445600
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -172,7 +173,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 827000
+      "maxGzip": 830150
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
