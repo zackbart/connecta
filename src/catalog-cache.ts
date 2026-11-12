@@ -744,9 +744,8 @@ const chunkHints = new Map<string, ChunkHint>();
 const CHUNK_HINTS = 256;
 const chunkHintKey = (storage: KVStorage, connectorId: string, configHash: string, digest: string) =>
   JSON.stringify([storeIdentityOf(storage), connectorId, configHash, digest]);
-function rememberChunkHint(key: string, hint: ChunkHint | undefined): void {
+function rememberChunkHint(key: string, hint: ChunkHint): void {
   chunkHints.delete(key);
-  if (!hint) return;
   if (chunkHints.size >= CHUNK_HINTS) chunkHints.delete(chunkHints.keys().next().value!);
   chunkHints.set(key, hint);
 }
@@ -1313,10 +1312,6 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                     cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
                   ])) as string | null),
             );
-            if (!m) {
-              const hint = hintKey(root, operation.generation.value!);
-              if (hint) rememberChunkHint(hint, undefined);
-            }
             if (
               stopped() ||
               !m ||
