@@ -175,6 +175,12 @@ agree for several consecutive rounds:
 - With Access service-token headers, `/health` returns 200 and `/ui/api/config`
   returns 403 `Cloudflare Access human identity required`. That 403 shows the
   Worker received `ctx.access`; a 401 there means it did not.
+- The Worker has no Cron Triggers: its dashboard settings list none, and `GET /accounts/{account_id}/workers/scripts/connecta/schedules`
+  returns an empty `schedules` list. connecta needs no schedule and this
+  example exports no `scheduled()` handler, so a leftover trigger fails on
+  every tick with `Handler does not export a scheduled() function`. Neither
+  this check nor `connecta doctor`, which works over HTTP, would otherwise
+  show it.
 
 Service-token checks and `connecta doctor` need a service token that the
 Worker-level application admits. Create one with
@@ -281,10 +287,16 @@ applications keep their AUD and Managed OAuth client registrations:
    (`cf zero-trust access applications list`).
 4. Declare every existing secret and var in `env`, with the same values. The
    first Alchemy deploy deletes any binding the stack does not declare.
-5. Run `npx alchemy plan --stage production`, compare it with the live
+5. Remove any Cron Trigger the Worker still has, such as one that ran
+   `pruneActivity`. Alchemy changes a Worker's crons only when the stack
+   declares some or once did, so it never removes one that Wrangler or the
+   dashboard created. Delete it in the Worker's dashboard settings, or deploy
+   once more with Wrangler and `"triggers": { "crons": [] }` in
+   `wrangler.jsonc`.
+6. Run `npx alchemy plan --stage production`, compare it with the live
    resources, then deploy and repeat
    [Verify after deploying](#verify-after-deploying).
-6. Remove the `adopt(true)` pipe and both `applicationId` values afterwards;
+7. Remove the `adopt(true)` pipe and both `applicationId` values afterwards;
    the state now records them.
 
 Adopting D1 by name and taking Access applications over by `applicationId`
@@ -582,7 +594,11 @@ Each shape moves to the one `CONNECTA_DB` binding:
   `database_id`, replace the copied `d1-storage.ts` / `d1-activity.ts` imports
   with `@zackbart/connecta/d1`, and delete those files. A deployment that
   called `pruneActivity` from a cron drops that call: retention is
-  `d1ActivityStore(db, { retentionDays })`. A binding rename
+  `d1ActivityStore(db, { retentionDays })`. Remove its `scheduled()` export
+  and its Cron Trigger together: set `"triggers": { "crons": [] }` in
+  `wrangler.jsonc`. A configuration without a `triggers` key leaves the
+  deployed trigger in place, and every tick then fails with
+  `Handler does not export a scheduled() function`. A binding rename
   changes only the name the Worker sees; the database and its rows stay. An
   existing `tool_call_activity` table missing `actor_namespace`, `friction`,
   `approval`, `client_name`, `client_version`, or `package_version` gets nullable
