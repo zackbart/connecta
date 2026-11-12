@@ -50,10 +50,25 @@ let isolateCold = true;
 const lookupSettled = () => {
   lookups--;
 };
+// getIdentity() is a JS RPC call to Access's binding Worker. workerd holds
+// that call open until the caller disposes its result, so dispose every
+// result once it settles, a late one included. Its plain identity fields stay
+// readable, and a failed disposer never changes the auth outcome.
+const disposeIdentity = (identity: unknown) => {
+  if (typeof identity === "object" && identity !== null) {
+    try {
+      const dispose = Reflect.get(identity, Symbol.dispose);
+      if (typeof dispose === "function") dispose.call(identity);
+    } catch {
+      /* The identity read does not depend on disposal. */
+    }
+  }
+  return identity;
+};
 function lookupIdentity(access: NonNullable<InboundAuthRuntimeContext["access"]>) {
   lookups++;
   try {
-    return Promise.resolve(access.getIdentity()).finally(lookupSettled);
+    return Promise.resolve(access.getIdentity()).then(disposeIdentity).finally(lookupSettled);
   } catch (error) {
     lookups--;
     throw error;
