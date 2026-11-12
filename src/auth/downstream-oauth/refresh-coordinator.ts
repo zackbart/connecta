@@ -22,7 +22,10 @@ import {
 } from "../native.js";
 import {
   isOAuthCredentialRequest,
+  isOversizedTokenResponse,
   isRefreshTokenRequest,
+  MAX_TOKEN_RESPONSE_BYTES,
+  OAuthResponseTooLargeError,
   refreshResponseOutcome,
   sdkSafeTokenResponse,
   tokenGrantType,
@@ -315,14 +318,22 @@ export class OAuthRefreshCoordinator {
             : authCall(dispatch, [])) as Response;
           if (!tokenRequest) return response;
           // A code exchange's failure is the SDK's to log as well.
-          const forSdk = (yield authCall(sdkSafeTokenResponse, [
-            response,
-            exchange
-              ? authMethod((tokens: OAuthTokens) => {
-                  return authInvoke(provider, "recordCodeExchangeTokens", [tokens]) as Effect.Effect<void, unknown>;
-                })
-              : undefined,
-          ])) as Response;
+          let forSdk: Response;
+          try {
+            forSdk = (yield authCall(sdkSafeTokenResponse, [
+              response,
+              exchange
+                ? authMethod((tokens: OAuthTokens) => {
+                    return authInvoke(provider, "recordCodeExchangeTokens", [tokens]) as Effect.Effect<void, unknown>;
+                  })
+                : undefined,
+            ])) as Response;
+          } catch (error) {
+            // A code exchange has claimed its consent, so its code is never sent again.
+            if (isOversizedTokenResponse(error))
+              throw new OAuthResponseTooLargeError(provider.connectorId, "token request", MAX_TOKEN_RESPONSE_BYTES);
+            throw error;
+          }
           if (exchange && forSdk !== response) provider.recordCodeExchangeRefusal(forSdk);
           return forSdk;
         }.bind(this),

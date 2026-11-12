@@ -1,5 +1,5 @@
-// Downstream MCP response bodies, bounded as they stream: nothing past a bound
-// is read, so no answer is ever buffered whole before it is measured.
+// Downstream MCP and OAuth response bodies, bounded as they stream: nothing
+// past a bound is read, so no answer is ever buffered whole before it is measured.
 
 /** An HTTP error or 202 body is only ever quoted or discarded: keep this much. */
 const UNPARSED_BYTES = 65_536;
@@ -14,6 +14,11 @@ export interface BodyBound {
   exceeded: () => Error;
   /** Each SSE event id the stream carries, for a resumption to find its call. */
   onEventId?: ((id: string) => void) | undefined;
+  /**
+   * False bounds an event stream as one body, for a reader that parses the
+   * whole answer (an OAuth step's): its Content-Type cannot widen the bound.
+   */
+  events?: boolean;
 }
 
 /**
@@ -25,14 +30,17 @@ export interface BodyBound {
  * stream passes events on as they arrive and bounds each one to `limit`; past
  * it, the source is cancelled and, when `rpcId` is known, the stream ends with
  * a JSON-RPC error answering it, because the SDK settles a request only from
- * an answer, never from a broken body.
+ * an answer, never from a broken body. With `events: false`, every successful
+ * body is bounded whole, as JSON is.
  */
 export function boundedMcpBody(response: Response, bound: BodyBound): Response {
   const source = response.body;
   if (!source) return response;
   const parsed = response.ok && response.status !== 202 && response.status !== 204;
   const sse =
-    parsed && response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
+    parsed &&
+    bound.events !== false &&
+    response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
   if (parsed && !sse && Number(response.headers.get("content-length")) > bound.limit) {
     void source.cancel().catch(() => {});
     throw bound.exceeded();

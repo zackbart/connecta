@@ -16,6 +16,7 @@ import type { FetchLike, Transport } from "@modelcontextprotocol/client";
 import { Effect } from "effect";
 import { authorizingContext, EarlyRenewals, KvOAuthProvider } from "../../auth/downstream-oauth.js";
 import { byteReadResponse } from "../../byte-read-response.js";
+import { MAX_TOKEN_RESPONSE_BYTES, OAuthResponseTooLargeError } from "../../auth/oauth-token-response.js";
 import { requestSentSecrets, sentSecretsFor } from "../../sent-secrets.js";
 import { ConnectorCallError, resendAdvice, WithheldTextError } from "../../errors.js";
 import { attachFailureFacts, carryFailureFacts, OAUTH_ERROR_CODES } from "../../operator-record.js";
@@ -34,10 +35,26 @@ import {
   withheldAs,
 } from "./errors.js";
 import { RemoteMcpDestinationError, learnedUrlSafeFetch } from "./transport.js";
+import { boundedMcpBody } from "./bounded-body.js";
 import type { ConnectionState } from "./connection.js";
 
 /** An OAuth step, named by the shape the pinned SDK gives its request. */
 export type OAuthStep = "discovery" | "client registration" | "token request";
+
+/**
+ * Each step's response byte bound, read as the body streams. Discovery
+ * documents (protected-resource and authorization-server metadata) are a few
+ * KiB even for providers listing every algorithm, yet may carry a long
+ * `scopes_supported`, and a registration echoes the client metadata it was
+ * sent, the scope drawn from that list included: 128 KiB holds thousands of
+ * scopes. A token response carries a few tokens; its 64 KiB is the bound the
+ * refresh coordinator reads every token response with.
+ */
+const OAUTH_RESPONSE_BYTES: Readonly<Record<OAuthStep, number>> = {
+  discovery: 131_072,
+  "client registration": 131_072,
+  "token request": MAX_TOKEN_RESPONSE_BYTES,
+};
 
 /**
  * Where one OAuth flow last went, kept so that a failure whose text is
@@ -49,17 +66,25 @@ interface OAuthTrail {
   last?: { step: OAuthStep; host: string; httpStatus?: number; retryAfterMs?: number } | undefined;
   /** The origin a client registration was last sent to. */
   registration?: string;
+  /**
+   * The answer that passed its step's byte bound. The flow fails with it and
+   * sends nothing more: the SDK swallows some discovery failures and would
+   * otherwise go on without what it could not read.
+   */
+  exceeded?: OAuthResponseTooLargeError;
 }
 
 /**
- * Record each OAuth request on `trail` before sending it. Pinned against
+ * Record each OAuth request on `trail` before sending it, and bound its answer
+ * to its step's byte limit as it streams. Pinned against
  * `@modelcontextprotocol/client` 2.3.1: every request the SDK sends anywhere
  * but the MCP endpoint is a discovery GET, a token request (a form carrying
  * `grant_type`), or the JSON POST of dynamic client registration.
  */
-function tracedOAuthFetch(trail: OAuthTrail, endpoint: URL, baseFetch: FetchLike): FetchLike {
+function tracedOAuthFetch(connectorId: string, trail: OAuthTrail, endpoint: URL, baseFetch: FetchLike): FetchLike {
   return authMethod((input: string | URL, init: RequestInit | undefined) =>
     authFlow<Response>(function* () {
+      if (trail.exceeded) throw trail.exceeded;
       const url = new URL(input);
       if (url.href === endpoint.href) {
         trail.last = undefined;
@@ -76,13 +101,29 @@ function tracedOAuthFetch(trail: OAuthTrail, endpoint: URL, baseFetch: FetchLike
         if (step === "client registration") trail.registration = url.origin;
       }
       const leg = trail.last;
-      const response = (yield authCall(baseFetch, [input, init])) as Response;
-      if (leg) {
-        leg.httpStatus = response.status;
-        const wait = retryAfterMs(response.headers);
-        if (wait !== undefined) leg.retryAfterMs = wait;
+      let response: Response;
+      try {
+        response = (yield authCall(baseFetch, [input, init])) as Response;
+      } catch (error) {
+        // The refresh coordinator bounds a token response's read itself.
+        if (error instanceof OAuthResponseTooLargeError) trail.exceeded = error;
+        throw error;
       }
-      return byteReadResponse(response);
+      if (!leg) return byteReadResponse(response);
+      leg.httpStatus = response.status;
+      const wait = retryAfterMs(response.headers);
+      if (wait !== undefined) leg.retryAfterMs = wait;
+      // An error body stays a prefix, for the SDK to discard or quote; a
+      // successful one is parsed whole, so past the bound its step fails.
+      const limit = OAUTH_RESPONSE_BYTES[leg.step];
+      return byteReadResponse(
+        boundedMcpBody(response, {
+          limit,
+          rpcId: undefined,
+          events: false,
+          exceeded: () => (trail.exceeded = new OAuthResponseTooLargeError(connectorId, leg.step, limit)),
+        }),
+      );
     }),
   );
 }
@@ -251,9 +292,10 @@ export function remoteMcpOAuth(
         authFlow<T>(function* () {
           const trail: OAuthTrail = {};
           try {
-            return (yield authCall(start, [
+            const result = (yield authCall(start, [
               (fetchFn: FetchLike) =>
                 tracedOAuthFetch(
+                  id,
                   trail,
                   endpoint,
                   authMethod((input: string | URL, init: RequestInit | undefined) =>
@@ -272,8 +314,15 @@ export function remoteMcpOAuth(
                   ),
                 ),
             ])) as Awaited<T>;
+            if (trail.exceeded) throw trail.exceeded;
+            return result;
           } catch (err) {
-            throw (yield authCall(withoutAuthorizationServerText, [ctx, err, trail, [...signals, signal]])) as unknown;
+            throw (yield authCall(withoutAuthorizationServerText, [
+              ctx,
+              trail.exceeded ?? err,
+              trail,
+              [...signals, signal],
+            ])) as unknown;
           }
         }),
     );
@@ -499,7 +548,7 @@ export function remoteMcpOAuth(
               const internals = t as unknown as {
                 _fetchWithInit?: FetchLike;
               };
-              const traced = tracedOAuthFetch(trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
+              const traced = tracedOAuthFetch(id, trail, new URL(opts.url), internals._fetchWithInit ?? fetch);
               const exchange = new Proxy(t, {
                 get: (target: StreamableHTTPClientTransport, key: string | symbol) =>
                   key === "_fetchWithInit" ? traced : Reflect.get(target, key, target),
@@ -508,11 +557,12 @@ export function remoteMcpOAuth(
               });
               try {
                 (yield authInvoke(exchange, "finishAuth", [callbackParams])) as void;
+                if (trail.exceeded) throw trail.exceeded;
                 rt.closeHalf(state);
               } catch (err) {
                 throw (yield authCall(withoutAuthorizationServerText, [
                   ctx,
-                  err,
+                  trail.exceeded ?? err,
                   trail,
                   [signal, ctx.signal],
                 ])) as unknown;

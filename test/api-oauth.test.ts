@@ -950,6 +950,51 @@ describe("api() oauth callback exchange", () => {
     expect((await connector.status!(registry.contextFor("ccb", BASE))).state).toBe("ok");
   });
 
+  it.each(["declared", "streamed"] as const)(
+    "fails a %s oversized code exchange answer as a typed refusal, reading none past its bound (#1373)",
+    async (shape) => {
+      const provider = fakeProvider();
+      let pulled = 0;
+      let cancelled = false;
+      vi.stubGlobal("fetch", async (input: string | URL, init: RequestInit = {}) => {
+        if (String(input) !== TOKEN) return provider.fetchStub(input, init);
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            pulled++;
+            controller.enqueue(new TextEncoder().encode(`{"access_token":"${"x".repeat(4096)}`));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        });
+        return new Response(body, shape === "declared" ? { headers: { "content-length": "10000000" } } : {});
+      });
+      const connector = api("ccb", { oauth: OAUTH, tools: [] });
+      const registry = makeRegistry([connector]);
+      const started = await connector.startAuth!(registry.contextFor("ccb", BASE));
+      const authorizationUrl = new URL(started.authorizationUrl!);
+      const code = provider.consent(authorizationUrl.href);
+      const state = authorizationUrl.searchParams.get("state")!;
+      const callback = registry.contextFor("ccb", BASE);
+      expect(await connector.verifyState!(state, callback)).toBe(true);
+      const { error, classified } = await failure(
+        connector.finishAuth!(code, callback, new URLSearchParams({ code, state })),
+      );
+
+      expect(error).toMatchObject({ name: "OAuthResponseTooLargeError" });
+      expect(classified).toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+        message: expect.stringContaining('Connector "ccb" OAuth token request answered with more than 65536 bytes'),
+      });
+      expect(classified.message).not.toContain("xxxx");
+      expect(cancelled).toBe(true);
+      // The exchange's own body relay may pull a chunk ahead of the bound's refusal.
+      expect(pulled).toBeLessThanOrEqual(shape === "declared" ? 2 : 18);
+      expect((await connector.status!(registry.contextFor("ccb", BASE))).state).toBe("auth_required");
+    },
+  );
+
   it.each([
     ["an OAuth error whose description echoes the request", "json", "invalid_grant"],
     ["a non-JSON body echoing the request", "text", "server_error"],
