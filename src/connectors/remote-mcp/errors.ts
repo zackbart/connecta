@@ -328,7 +328,9 @@ const MAX_ERROR_BODY_BYTES = 16_384;
 export function recordWireErrors(transport: Transport, catalogChanged: () => void): void {
   const seen = new Set<string>();
   wireErrors.set(transport, seen);
-  transport.onmessage = (message) => {
+  const previous = transport.onmessage;
+  transport.onmessage = (message, extra) => {
+    previous?.(message, extra);
     // The public transport observer runs before SDK 2.3.1's delete-based
     // eviction. Ordinary opposite-scope cleanup never rotates this fence.
     if (

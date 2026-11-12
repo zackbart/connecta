@@ -528,6 +528,7 @@ export type FailureEvent =
   | "credential test threw"
   | "credential verification record failed"
   | "session termination refused or failed; the downstream session may remain until its provider timeout"
+  | "downstream standing stream passed its byte bound and is closed for this connection"
   | "activity record failed"
   | "catalog drift record failed"
   | "activity read failed"

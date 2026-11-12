@@ -44,6 +44,7 @@ import {
   ContinuationBinding,
   OperationCredentials,
   ContinuationStorage,
+  DownstreamResponseBytes,
   operationView,
   setViewService,
   duringViewEffect,
@@ -865,6 +866,11 @@ export class Registry implements RegistryView {
     );
     setViewService(context, OperationCredentials, credentialProgram);
     setViewService(context, ContinuationStorage, this.opts.rootStorage ?? this.opts.storage);
+    setViewService(
+      context,
+      DownstreamResponseBytes,
+      Math.max(this.opts.results?.maxStashBytes ?? 0, CONFIG_DEFAULTS.results.maxStashBytes),
+    );
     const owner = this.opts.credentialOwner ?? null;
     setViewService(context, ContinuationBinding, {
       connection: id,

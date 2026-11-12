@@ -151,7 +151,11 @@ const calls = {
 };
 
 const results = {
-  /** Stored bytes, including the paging envelope. Default 8 MiB. Zero disables stashing. */
+  /**
+   * Stored bytes, including the paging envelope. Default 8 MiB. Zero disables
+   * stashing. A remote MCP tool answer is bounded to the larger of this and
+   * 8 MiB on the wire.
+   */
   maxStashBytes: whole({ min: 0, default: D.results.maxStashBytes }),
   /** Stored or in-flight entries. Default 64. Zero disables stashing. */
   maxStashEntries: whole({ min: 0, default: D.results.maxStashEntries }),
