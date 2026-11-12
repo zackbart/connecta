@@ -1611,8 +1611,8 @@ describe("stale catalog listing", () => {
       );
       const id = `hinted_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
       // workerd shares one database across this file; leave no rows behind
-      // for suites that scan every row.
-      closers.push(async () => {
+      // for suites that scan every row. Runs before node:sqlite closes.
+      closers.unshift(async () => {
         const store = open();
         for (const key of await store.list("")) if (key.includes(id)) await store.delete(key);
       });
