@@ -97,6 +97,8 @@ export type AuthDenialReason =
   | "access_context_unavailable"
   | "access_audience_invalid"
   | "access_identity_unavailable"
+  | "access_assertion_invalid"
+  | "access_keys_unavailable"
   | "access_authorization_header_rejected"
   | "authorization_header_invalid"
   | "token_type_mismatch"
@@ -129,6 +131,8 @@ const AUTH_DENIAL_REASONS: ReadonlySet<AuthDenialReason> = new Set([
   "access_context_unavailable",
   "access_audience_invalid",
   "access_identity_unavailable",
+  "access_assertion_invalid",
+  "access_keys_unavailable",
   "access_authorization_header_rejected",
   "authorization_header_invalid",
   "token_type_mismatch",

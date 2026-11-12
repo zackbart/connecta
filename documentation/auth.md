@@ -411,7 +411,10 @@ before a verifier. Downstream OAuth exchanges and display-label reads are
 separate operations, with their existing limits; this bound covers the inbound
 authentication that admits their caller. Cloudflare Access edge authentication
 runs before the Worker; its in-Worker identity lookup is covered. Access uses
-only the trusted runtime binding, with no JWT/JWKS fetch. That native binding
+the trusted runtime binding, with no JWT/JWKS fetch, except when
+[assertion verification](#verify-the-assertion-when-access-context-is-missing)
+reads Access's signing keys for a request that arrived without that binding;
+that read shares the same five-second deadline. That native binding
 and token storage expose no cancellation API. Both answer promptly on caller
 cancellation or their five-second deadline and keep the unfinished operation
 in active or abandoned accounting until it settles. The five-second agent
@@ -2253,7 +2256,7 @@ import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access"
 createConnecta({ auth: cloudflareAccessAuth(), connectors, executor, readOnly: false });
 ```
 
-The adapter trusts only `ctx.access`, which Cloudflare attaches after validating
+The adapter trusts `ctx.access`, which Cloudflare attaches after validating
 the token against the Worker-level Access application's AUD. A nonempty trusted
 `ctx.access.aud` is required; a caller cannot supply this context through HTTP.
 `ctx.access.getIdentity()` supplies `user_uuid`, with `email` as fallback, in the
@@ -2262,12 +2265,14 @@ identity, or unusable user ids refuse. Access service credentials can admit the
 request at the edge, but connecta requires a `cta_` token at `/agent/<pool>`
 for machine identity.
 
-It never parses or verifies `Cf-Access-Jwt-Assertion`, fetches signing keys, or
-accepts a caller's JWT. The assertion header's presence is only an untrusted
-hint that Access context was expected: without `ctx.access`, that request
-returns retryable 503 with `problem: "access_context_unavailable"`, including
-the first request on a fresh instance. It grants no identity and never falls
-back to another provider. Missing context without an assertion still returns 401. An unusable trusted AUD returns retryable 503 with
+Cloudflare sometimes omits `ctx.access` from the first request on a fresh
+Worker isolate, although Access admitted that request and forwarded its
+`Cf-Access-Jwt-Assertion`. By default the assertion header's presence is only
+an untrusted hint that Access context was expected: without `ctx.access`, that
+request returns retryable 503 with `problem: "access_context_unavailable"`. It
+grants no identity and never falls back to another provider. To admit those
+requests, [verify the assertion](#verify-the-assertion-when-access-context-is-missing).
+Missing context without an assertion still returns 401. An unusable trusted AUD returns retryable 503 with
 `problem: "access_audience_invalid"`; it never proceeds to identity lookup.
 A rejected human identity, including a service identity or an unusable user
 id, returns 403. A thrown identity lookup gets one retry after 100–250 ms of
@@ -2290,7 +2295,10 @@ identifies the generic route fallthrough, `authorization_header_invalid` a
 malformed header, and `authentication_failed` an unclassified provider refusal.
 Access verification 503s emit `[connecta] Cloudflare Access verification unavailable`
 with the same facts and `access_context_unavailable`, `access_audience_invalid`,
-or `access_identity_unavailable`. Identity lookup failures additionally carry
+`access_identity_unavailable`, `access_assertion_invalid`, or
+`access_keys_unavailable`; the last two come only from
+[assertion verification](#verify-the-assertion-when-access-context-is-missing).
+Identity lookup failures additionally carry
 checked `identityLookup` facts: `outcome` (`timeout` or `rejected`), `durationMs`,
 `cold` (whether this was the isolate's first identity lookup), and `inFlight`
 (the isolate's lookup attempts still pending when the failure was recorded; this
@@ -2344,6 +2352,72 @@ paths, such as `connecta doctor` reading `/health`, use a
 through `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Custom public
 webhooks live outside connecta and need their own Access routing policy. The
 [Worker example](../examples/worker/) carries the whole deployment shape.
+
+### Verify the assertion when Access context is missing
+
+Give the adapter the Access team domain and the Worker-level application's
+Application Audience (AUD) tag. Neither is a secret:
+
+```ts
+cloudflareAccessAuth({
+  assertion: {
+    teamDomain: "example.cloudflareaccess.com",
+    audience: "<the Worker-level Access application's AUD tag>",
+  },
+});
+```
+
+`teamDomain` is `<team>.cloudflareaccess.com`, with or without `https://`.
+Construction throws a `TypeError` that does not echo the values for any other
+option, an `assertion` without exactly these two fields, any other team domain,
+or an AUD outside 1–256 printable ASCII characters. Without `assertion`,
+behavior is unchanged.
+
+With it, the adapter verifies the assertion itself only when `ctx.access` is
+absent and the request has no Authorization header. When `ctx.access` is
+present, the header is never read. Verification shares the native
+five-second deadline and requires:
+
+- an RS256 signature by the key whose `kid` the header names, read from
+  `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`; no other
+  algorithm and no `crit` header;
+- `iss` exactly `https://<team>.cloudflareaccess.com`, an `aud` that is or
+  contains the configured tag, and `type: "app"`;
+- `exp` and `iat`, and `nbf` when present, within 30 seconds of clock skew.
+
+A verified human assertion admits its `sub`, with `email` as fallback, in the
+same `cloudflare-access` principal namespace. Cloudflare describes both the
+assertion's `sub` and `getIdentity()`'s `user_uuid` as the Access user's id,
+but does not state that they are equal. After enabling the setting, confirm in
+activity that a person admitted on a fresh isolate has the same actor id as on
+other requests. A service-token assertion (a
+`common_name`, or an empty `sub`) returns the same 403 as its trusted identity.
+
+Every other outcome returns the same retryable 503,
+`problem: "access_context_unavailable"`, and admits nothing:
+
+- a malformed, unsigned or wrongly signed assertion;
+- another team's or application's token;
+- an expired token or one not yet valid;
+- an unknown key;
+- a key set that cannot be read.
+
+The verification log names `access_assertion_invalid` when the assertion
+failed a check. If that persists, check `teamDomain` and `audience`.
+`access_keys_unavailable` means the keys could not be read in time.
+
+Keys are cached per adapter for five minutes. Access rotates its signing key
+every six weeks and serves the new key beside the previous one, so an unknown
+`kid` refreshes the set, at most once every 30 seconds. A failed read blocks
+further reads for 30 seconds, at most two reads run at once, the body is capped
+at 64 KiB, and redirects are refused.
+
+A verified assertion proves that Access issued it for this application and
+person and that it has not expired. Unlike `ctx.access`, it does not prove that
+Access evaluated this request. It therefore admits whoever presents it until it
+expires, wherever the Worker can be reached without Access. Keep every human
+path behind the Worker-level application, and never add an Access bypass for
+one. Like the rest of the adapter, this is supported only on Workers.
 
 ## Clerk OAuth tokens and operator sessions
 
