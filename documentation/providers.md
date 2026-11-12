@@ -1154,8 +1154,9 @@ mappings and pool owners do not apply. A read answered 401 renews once and is
 replayed once; a write answered 401 is never resent, its outcome is unknown, and
 it returns the authorization handoff unless the renewal succeeded. Disconnect
 removes only Connecta's grant. No revocation endpoint is configured, because
-revoking at Google ends every grant the person gave the client, other
-connectors' included; a person removes access in their Google Account instead.
+revoking at Google ends every grant the person gave the Google Cloud project,
+including its other OAuth clients and other connectors; a person removes access
+in their Google Account instead.
 If a person declines a requested permission on Google's consent screen, calls
 needing it fail `provider_permission_denied` until they reconnect and allow it.
 

@@ -368,8 +368,9 @@ const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 /**
  * OAuth mode's downstream grant: the product's exact scopes, its API origins
  * and nothing else; undefined in delegation mode. No revocation endpoint:
- * revoking at Google ends every grant the person gave this client, other
- * connectors' included, so Disconnect removes only Connecta's own grant.
+ * revoking at Google ends every grant the person gave the Google Cloud project,
+ * including its other OAuth clients and other connectors, so Disconnect
+ * removes only Connecta's own grant.
  */
 export function googleOAuth(
   product: GoogleProduct,

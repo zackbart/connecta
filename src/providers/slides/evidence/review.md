@@ -68,8 +68,9 @@ web-server authorization-code flow
 `https://oauth2.googleapis.com/token` with the client credentials in the request
 body, S256 PKCE, and exactly the product's delegation scopes. The access token
 is sent only to the product's API origin. No revocation endpoint is configured:
-Google's revocation ends every grant the person gave the OAuth client, so
-revoking one connector's token would also end other connectors' grants. A read
+Google's revocation ends every grant the person gave the Google Cloud project,
+including its other OAuth clients, so revoking one connector's token would also
+end other connectors' and other clients' grants. A read
 answered 401 renews once and replays once; a write answered 401 is never resent
 and keeps the downstream authorization handoff. Google's granular consent lets
 a person decline a requested scope; the resulting `insufficientPermissions`

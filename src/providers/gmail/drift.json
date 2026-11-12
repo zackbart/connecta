@@ -137,7 +137,7 @@
         "revocationEndpoint": "not configured: https://oauth2.googleapis.com/revoke",
         "revocationSource": "https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke"
       },
-      "reason": "OAuth mode's authorization-code grant against Google's web-server flow has no machine-readable contract. Compare the authorization and token endpoints, body client authentication, S256 PKCE support and the requested scopes with the page; confirm revocation still ends every grant the person gave the client, which is why no revocation endpoint is configured.",
+      "reason": "OAuth mode's authorization-code grant against Google's web-server flow has no machine-readable contract. Compare the authorization and token endpoints, body client authentication, S256 PKCE support and the requested scopes with the page; confirm revocation still ends every grant the person gave the Google Cloud project, including its other OAuth clients, which is why no revocation endpoint is configured.",
       "lastVerified": "2026-11-12"
     }
   ]

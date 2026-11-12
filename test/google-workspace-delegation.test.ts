@@ -2915,7 +2915,8 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       expect(exchange.get("code_verifier")).toBeTruthy();
       expect((await connector.status!(ctx())).state).toBe("ok");
       // Disconnect removes only Connecta's grant: revoking at Google would end
-      // every grant the person gave this client, other connectors' included.
+      // every grant the person gave the Google Cloud project, including its
+      // other OAuth clients and other connectors.
       const before = google.tokenRequests.length;
       await connector.disconnectAuth!(ctx());
       expect(google.tokenRequests).toHaveLength(before);
