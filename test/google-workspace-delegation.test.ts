@@ -80,7 +80,7 @@ import { GOOGLE_JWKS_URL } from "../src/providers/_shared/google/account.js";
 import { providerCallFailure, settleWrite, classifyWriteOutcome } from "../src/write-outcome.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
-import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
+import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
@@ -2791,6 +2791,12 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     jwks: Record<string, unknown>[];
     jwksReads: number;
     minted: number;
+    /** Answers the next refresh, and lets a test act the moment it is redeemed. */
+    refreshGate?: (() => "ok" | "invalid_grant") | undefined;
+    /** The access token the latest code exchange issued. */
+    codeAccess?: string;
+    /** `expires_in` of the next tokens issued; 3599 by default. */
+    expiresIn?: number | undefined;
   };
   beforeEach(() => {
     google = {
@@ -2824,15 +2830,21 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
               ? google.refresh.get(form.get("refresh_token") ?? "")
               : undefined;
         if (!owner) return Response.json({ error: "invalid_grant" }, { status: 400 });
+        const gate = grant === "refresh_token" ? google.refreshGate : undefined;
+        if (gate) {
+          google.refreshGate = undefined;
+          if (gate() === "invalid_grant") return Response.json({ error: "invalid_grant" }, { status: 400 });
+        }
         google.minted += 1;
         const access = `ya29.${owner}-${google.minted}`;
         google.access.set(access, owner);
         const refresh = grant === "authorization_code" ? `1//${owner}` : undefined;
         if (refresh) google.refresh.set(refresh, owner);
         const idToken = grant === "authorization_code" ? google.idTokens.get(owner) : undefined;
+        if (grant === "authorization_code") google.codeAccess = access;
         return Response.json({
           access_token: access,
-          expires_in: 3599,
+          expires_in: google.expiresIn ?? 3599,
           token_type: "Bearer",
           ...(refresh ? { refresh_token: refresh } : {}),
           ...(idToken ? { id_token: idToken } : {}),
@@ -3361,6 +3373,122 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       await signsInAs("alice", "alice@org.example");
       await connect(connector, alice, "alice");
       expect((await connector.status!(alice())).account).toBe("alice@org.example");
+    });
+
+    describe("an admitted reconnect commits under a new epoch", () => {
+      /** Start a kept-grant reconnect and register the code its callback will carry. */
+      const reconnectOf = (connector: Connector, ctx: () => ConnectorContext) => ({
+        start: async () => {
+          const started = await connector.startAuth!(ctx(), { force: true });
+          expect(started.state).toBe("auth_required");
+          const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
+          const code = `4/code-alice-${google.codes.size}`;
+          google.codes.set(code, "alice");
+          return { state, code };
+        },
+        finish: async ({ state, code }: { state: string; code: string }) => {
+          expect(await connector.verifyState!(state, ctx())).toBe(true);
+          await connector.finishAuth!(code, ctx(), new URLSearchParams({ code, state }));
+        },
+      });
+      /**
+       * Another isolate's store: one store underneath, but its next grant
+       * compare-and-set after `arm()` waits until `release()`, as a slow write
+       * from an isolate that redeemed the refresh token before a reconnect.
+       */
+      const slowGrantWrites = (inner: KVStorage) => {
+        let armed = false;
+        let held!: () => void;
+        let release!: () => void;
+        const holding = new Promise<void>((resolve) => (held = resolve));
+        const released = new Promise<void>((resolve) => (release = resolve));
+        const store = new Proxy(inner, {
+          get(target, key) {
+            if (key === "compareAndSet")
+              return async (...args: Parameters<KVStorage["compareAndSet"]>) => {
+                if (armed && args[0].endsWith(":oauth:grant")) {
+                  armed = false;
+                  held();
+                  await released;
+                }
+                return target.compareAndSet(...args);
+              };
+            const value = Reflect.get(target, key, target) as unknown;
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+        return { store, arm: () => (armed = true), holding, release };
+      };
+
+      it.each(["ok", "invalid_grant"] as const)(
+        "an old refresh answered %s after an admitted reconnect cannot touch the new grant",
+        NODE,
+        async (answer) => {
+          // Two isolates of one deployment: separate connector instances, and
+          // so separate refresh coordinators, over one store.
+          const storage = memoryStorage();
+          const slow = slowGrantWrites(storage);
+          const accounts = { alice: ["alice@org.example", "alice@alt.example"] };
+          const connector = restricted({ accounts });
+          const elsewhere = restricted({ accounts });
+          const alice = await asPerson(makeRegistry([connector], { storage }), "alice");
+          const aliceElsewhere = await asPerson(makeRegistry([elsewhere], { storage: slow.store }), "alice");
+          await signsInAs("alice", "alice@org.example");
+          // The grant's token is within a minute of expiry, so a call renews it first.
+          google.expiresIn = 30;
+          await connect(connector, alice, "alice");
+          google.expiresIn = undefined;
+          const reconnect = reconnectOf(connector, alice);
+
+          // In the other isolate, a read renews the token before sending it; its
+          // grant write (the renewal, or dropping the refused grant) is slow to land.
+          google.refreshGate = () => {
+            slow.arm();
+            return answer;
+          };
+          const stale = labels(elsewhere, aliceElsewhere()).catch((error: unknown) => error);
+          await slow.holding;
+
+          // Meanwhile the person reconnects, and Google hands back the same refresh token.
+          await signsInAs("alice", "alice@alt.example");
+          await reconnect.finish(await reconnect.start());
+          const admitted = google.codeAccess!;
+          expect(await connector.status!(alice())).toEqual({ state: "ok", account: "alice@alt.example" });
+
+          // The old write lands late: it neither restores the old tokens nor deletes the new grant.
+          slow.release();
+          await stale;
+          expect(await connector.status!(alice())).toEqual({ state: "ok", account: "alice@alt.example" });
+          expect(JSON.stringify(await labels(connector, alice()))).toContain("alice label");
+          expect(google.api.at(-1)!.authorization).toBe(`Bearer ${admitted}`);
+        },
+      );
+
+      it("refresh, reconnect with the same refresh token, then refresh again keeps the grant", NODE, async () => {
+        const connector = restricted({ accounts: { alice: ["alice@org.example", "alice@alt.example"] } });
+        const registry = makeRegistry([connector]);
+        const alice = await asPerson(registry, "alice");
+        await signsInAs("alice", "alice@org.example");
+        await connect(connector, alice, "alice");
+        const reconnect = reconnectOf(connector, alice);
+        const refreshes = () => google.tokenRequests.filter((form) => form.get("grant_type") === "refresh_token");
+
+        google.replies.push(unauthorized);
+        await labels(connector, alice());
+        expect(refreshes()).toHaveLength(1);
+
+        await signsInAs("alice", "alice@alt.example");
+        await reconnect.finish(await reconnect.start());
+        expect(google.tokenRequests.at(-1)!.get("grant_type")).toBe("authorization_code");
+
+        // The same refresh token, redeemed again under the reconnected grant,
+        // reaches Google and renews: nothing refuses it locally.
+        google.replies.push(unauthorized);
+        expect(JSON.stringify(await labels(connector, alice()))).toContain("alice label");
+        expect(refreshes()).toHaveLength(2);
+        expect(refreshes().at(-1)!.get("refresh_token")).toBe("1//alice");
+        expect(await connector.status!(alice())).toEqual({ state: "ok", account: "alice@alt.example" });
+      });
     });
 
     it("restricts a shared connection to its one account", NODE, async () => {

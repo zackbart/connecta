@@ -117,6 +117,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   exchangeAccount: string | null | undefined;
   /**
+   * @internal This flow's code exchange commits its tokens under a new epoch,
+   * in the same compare-and-set, fencing everything begun under the old one.
+   */
+  exchangeNewEpoch = false;
+  /**
    * The client and tokens as this flow last saw them. An invalidation removes
    * only these, never a value another flow wrote meanwhile.
    */

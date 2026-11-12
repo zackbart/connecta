@@ -1389,7 +1389,12 @@ export function staticOAuth(
           (yield authInvoke(provider, "bindFlow", [])) as void;
           // A reconnect may run beside a working grant (startAuth's keepGrant):
           // a refused code must not invalidate the tokens this exchange replaces.
-          if (restriction) provider.seen = { ...provider.seen, tokens: undefined };
+          if (restriction) {
+            provider.seen = { ...provider.seen, tokens: undefined };
+            // An admitted account replaces any grant it ran beside under a new
+            // epoch, so no refresh, lease or refusal of the old one reaches it.
+            provider.exchangeNewEpoch = true;
+          }
           const result = (yield authCall(runAuth, [
             provider,
             ctx,

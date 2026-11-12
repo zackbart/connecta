@@ -49,10 +49,15 @@ The Google kit supplies `identify` and exposes `allow` as its `accounts` option.
   Restart elsewhere replaces the epoch before consent. Here a refused account
   would leave the person with no grant, and so would a reconnect they abandoned.
   For a live, unrefused grant, a forced start therefore begins consent in the
-  current epoch with the tokens hidden from the SDK. The exchange's ordinary
-  compare-and-set then replaces tokens and label together. A Disconnect still
-  replaces the epoch, so the pending consent cannot complete or resurrect
-  anything. This is scoped to `api()` OAuth with `oauth.account`. `remoteMcp()`
+  current epoch with the tokens hidden from the SDK. An admitted exchange
+  commits under a new epoch, with the tokens and label, in the same single-key
+  compare-and-set on both storage drivers. Google may return the same reusable
+  refresh token on reconsent. Within one epoch, a delayed refresh or refusal
+  from the old grant could not be told apart from the new one: it restored the
+  old tokens, deleted the new grant, or tripped the epoch's spent-token check.
+  The epoch checks those paths already make now fence all three. The new grant
+  starts its own refresh generation. A Disconnect still replaces the epoch, so
+  the pending consent cannot complete or resurrect anything. This is scoped to `api()` OAuth with `oauth.account`. `remoteMcp()`
   restarts must refetch discovery and re-register (DCR/CIMD), and fence older
   consents, so they keep the replace-first behavior. Older consent links in the
   same epoch stay claimable during a kept-grant reconnect; each is still

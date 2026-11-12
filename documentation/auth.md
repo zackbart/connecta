@@ -3271,7 +3271,12 @@ Reconnect on a connector that checks accounts does not remove the grant it
 replaces. Unlike [Restart elsewhere](#starting-restarting-and-disconnecting),
 a forced start on a live, unrefused grant starts consent in the grant's current
 epoch and leaves its tokens and label in place. Only an exchange whose account
-is admitted replaces them, by compare-and-set. A refused, failed or abandoned
+is admitted replaces them. Every account-checked exchange commits its tokens,
+its label and a new epoch in one compare-and-set on the grant record. A
+refresh, lease or refusal begun under the replaced epoch is fenced by its epoch
+check, even if Google returned the same reusable refresh token, so it cannot
+restore the old tokens or delete the new grant. The new grant starts its own
+refresh generation. A refused, failed or abandoned
 reconnect leaves the grant working, and a refused code never invalidates the
 tokens it would have replaced. A Disconnect while that consent is pending
 replaces the epoch and deletes the consent, so the callback cannot complete and
