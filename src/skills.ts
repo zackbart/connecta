@@ -356,7 +356,10 @@ function boundedSummary(summary: string): string | undefined {
  * paragraph, joined across physical lines, with headings and the connector
  * description as fallbacks when the guide opens with markup alone.
  */
-function summarizeGuide(connector: Connector, guide: string): string {
+/** Where an undecorated guide summary came from. */
+type GuideSummarySource = "configured" | "paragraph" | "heading" | "fallback";
+
+function summarizeGuide(connector: Connector, guide: string): { summary: string; source: GuideSummarySource } {
   const lines = withoutFrontmatter(guide.split("\n"));
   let inFence = false;
   let inComment = false;
@@ -416,15 +419,21 @@ function summarizeGuide(connector: Connector, guide: string): string {
       index++;
       if (paragraph.join(" ").length > GUIDE_SUMMARY_LENGTH) break;
     }
-    return boundedSummary(paragraph.join(" ")) ?? line;
+    return { summary: boundedSummary(paragraph.join(" ")) ?? line, source: "paragraph" };
   }
-  if (headingFallback) return headingFallback;
+  if (headingFallback) return { summary: headingFallback, source: "heading" };
   const fallback = connector.description ?? `Usage guide for "${connector.id}".`;
-  return boundedSummary(fallback) ?? `Usage guide for "${connector.id}".`;
+  return { summary: boundedSummary(fallback) ?? `Usage guide for "${connector.id}".`, source: "fallback" };
 }
 
-/** Bounded, decision-useful discovery summary for a connector guide. */
-export function connectorGuideSummary(connector: Connector): string | undefined {
+/**
+ * A guide's summary before read-only decoration, and where it came from: the
+ * configured `usageGuide.summary`, the guide's first paragraph, or, when the
+ * guide has no paragraph, its first heading or a generic fallback.
+ */
+export function undecoratedGuideSummary(
+  connector: Connector,
+): { summary: string; source: GuideSummarySource } | undefined {
   const guide = connectorGuide(connector);
   if (!guide) return undefined;
   const configured =
@@ -433,8 +442,15 @@ export function connectorGuideSummary(connector: Connector): string | undefined 
         // normalization here so direct Connector callers see the same text.
         boundedSummary(connector.usageGuide.summary ?? "")
       : undefined;
+  if (configured !== undefined) return { summary: configured, source: "configured" };
   const original = typeof connector.usageGuide === "string" ? connector.usageGuide : connector.usageGuide?.content;
-  const summary = configured ?? summarizeGuide(connector, original ?? guide);
+  return summarizeGuide(connector, original ?? guide);
+}
+
+/** Bounded, decision-useful discovery summary for a connector guide. */
+export function connectorGuideSummary(connector: Connector): string | undefined {
+  const summary = undecoratedGuideSummary(connector)?.summary;
+  if (summary === undefined) return undefined;
   return connector.readOnly === true ? boundedSummary(`Read-only. ${summary}`) : summary;
 }
 

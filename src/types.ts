@@ -877,8 +877,10 @@ export interface ConnectaTheme {
    */
   radius?: string | number;
   /**
-   * Body font stack. A plain CSS font-family list. Defaults to Hanken
-   * Grotesk, served with the operator UI, then a system stack.
+   * Body font stack. A plain CSS font-family list: names in any script,
+   * bare or quoted, using letters, digits, spaces, `.`, `_` and `-`.
+   * Defaults to Hanken Grotesk, served with the operator UI, then a system
+   * stack.
    */
   fontFamily?: string;
   /**

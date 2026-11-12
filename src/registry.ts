@@ -68,7 +68,7 @@ import {
   storageList,
 } from "./runtime/storage.js";
 import { redactCatalog, sentSecretsFor, sentSecretsForRequest } from "./sent-secrets.js";
-import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary, connectorGuide, connectorGuideSummary } from "./skills.js";
+import { GUIDE_SUMMARY_LENGTH, normalizeGuideSummary, connectorGuide, undecoratedGuideSummary } from "./skills.js";
 import {
   jsonCodec,
   OAUTH_HANDOFF_TTL_SECONDS,
@@ -99,6 +99,30 @@ import { isWorkspaceAddress } from "./workspace-address.js";
 import { workspaceSubjectOf } from "./workspace-subject.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
+
+/** A task verb or operation noun: what makes a summary say when to load a guide. */
+const GUIDE_TASK_RE =
+  /\b(load|use|when|read|reads|write|writes|search|query|inspect|resolve|list|review|edit|create|update|deploy|paging|reconciliation|accounting)\b/i;
+
+/** Credential and scope vocabulary: what a summary that only states access facts uses. */
+const GUIDE_ACCESS_RE =
+  /\b(key|keys|token|tokens|credential|credentials|secret|secrets|scope|scopes|scoped|configured|authenticated|authorized|access|permission|permissions|oauth)\b/i;
+
+/**
+ * Advisory heuristic for a guide summary that cannot tell an agent when to
+ * load the guide: one derived from a guide with no paragraph (its heading or a
+ * generic fallback), or, by English vocabulary, one that states only
+ * credential or scope facts. Read-only decoration is ignored. A capability
+ * description without a task verb is not flagged; non-English prose can still
+ * produce a false positive.
+ */
+function weakGuideSummary(connector: Connector): boolean {
+  const derived = undecoratedGuideSummary(connector);
+  if (!derived) return false;
+  if (derived.source === "heading" || derived.source === "fallback") return true;
+  return GUIDE_ACCESS_RE.test(derived.summary) && !GUIDE_TASK_RE.test(derived.summary);
+}
+
 const DEFAULT_MAX_RESULT_BYTES = CONFIG_DEFAULTS.calls.maxResultBytes;
 const encoder = new TextEncoder();
 
@@ -517,9 +541,12 @@ export class Registry implements RegistryView {
   private readonly catalogObservedAt = new Map<string, number>();
   /** Last payload-free agent catalog access in this runtime. */
   private readonly catalogAccess = new Map<string, CatalogAccessObservation>();
-  /** Bounded tokens isolating count-only observations by catalog identity. */
-  private readonly catalogObservationPartitions = new Map<string, object>();
-  private readonly overrideWarningCatalogs = new WeakMap<object, string>();
+  /**
+   * The override warnings each connector's runtime catalog last produced in
+   * this runtime, shared with every personal registry, so one catalog change
+   * logs once however many callers and principals read it.
+   */
+  private overrideReports = new Map<string, string>();
   private readonly observedOutputSchemas: ObservedOutputSchemas;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
@@ -568,15 +595,10 @@ export class Registry implements RegistryView {
             "Shorten it or omit it to derive one.",
         );
       }
-      // Advisory English-language heuristic: a task verb or operation noun
-      // distinguishes actionable guidance from credential/scope facts. Never
-      // log guide text, which may contain deployment-private information.
-      if (
-        connectorGuide(c) !== undefined &&
-        !/\b(load|use|when|read|reads|write|writes|search|query|inspect|resolve|list|review|edit|create|update|deploy|paging|reconciliation|accounting)\b/i.test(
-          connectorGuideSummary(c) ?? "",
-        )
-      ) {
+      // Advisory, once per deployment: personal registries repeat the root's
+      // connectors. Never log guide text, which may contain deployment-private
+      // information.
+      if (opts.constructionChecks !== false && connectorGuide(c) !== undefined && weakGuideSummary(c)) {
         opts.logger.warn(
           `Connector "${c.id}" guide needs an actionable summary; say when to load it with usageGuide.summary.`,
         );
@@ -652,6 +674,7 @@ export class Registry implements RegistryView {
         constructionChecks: false,
       },
     );
+    registry.overrideReports = this.overrideReports;
     if (this.callAdmissionClosed) registry.closeCallAdmission();
     this.personalRegistries.set(principalKey, registry);
     return registry;
@@ -928,24 +951,6 @@ export class Registry implements RegistryView {
     ]);
   }
 
-  /** Bounded, in-memory tokens; no principal or catalog data is persisted. */
-  private catalogObservationPartition(
-    id: string,
-    baseUrl: string,
-    scope?: RegistryScope,
-    create = false,
-  ): object | undefined {
-    const key = JSON.stringify([id, this.catalogPartition(scope), baseUrl, this.opts.publicUrl ?? null]);
-    let partition = this.catalogObservationPartitions.get(key);
-    if (!partition && create) {
-      partition = {};
-      this.catalogObservationPartitions.set(key, partition);
-      if (this.catalogObservationPartitions.size > 1024)
-        this.catalogObservationPartitions.delete(this.catalogObservationPartitions.keys().next().value!);
-    }
-    return partition;
-  }
-
   /** Reject queued/future downstream admission; active permits release safely. */
   closeCallAdmission(): void {
     this.callAdmissionClosed = true;
@@ -1212,7 +1217,7 @@ export class Registry implements RegistryView {
       if (!connector) throw new Error(`Unknown connector "${id}"`);
       const accepted = this.acceptToolNames(tools);
       const overrides = this.classification[id];
-      this.validateClassification(id, accepted, overrides, this.catalogObservationPartition(id, baseUrl, scope, true));
+      this.validateClassification(id, accepted, overrides, true);
       const visible = accepted.filter((tool) => overrides?.[tool.name] !== "hidden");
       const served = visible.map((tool) => this.publishTool(id, tool));
       return carryCatalogFreshness(tools, served);
@@ -1253,16 +1258,12 @@ export class Registry implements RegistryView {
     id: string,
     tools: readonly ToolDef[],
     overrides?: Readonly<Record<string, ClassificationOverride>>,
-    partition?: object,
+    runtime = false,
   ): void {
     if (!overrides) return;
-    if (partition) {
-      const catalog = JSON.stringify(tools);
-      if (this.overrideWarningCatalogs.get(partition) === catalog) return;
-      this.overrideWarningCatalogs.set(partition, catalog);
-    }
     const known = new Map(tools.map((tool) => [tool.name, tool]));
     const staticCatalog = this.connectors.get(id)?.staticTools !== undefined;
+    const warnings: string[] = [];
     for (const [name, override] of Object.entries(overrides ?? {})) {
       const tool = known.get(name);
       if (!tool && staticCatalog) {
@@ -1276,18 +1277,24 @@ export class Registry implements RegistryView {
       );
       if (tool) {
         // A static catalog cannot change, so the deployment's construction reports it once.
-        const reports = staticCatalog ? partition === undefined && this.opts.constructionChecks !== false : true;
+        const reports = staticCatalog ? !runtime && this.opts.constructionChecks !== false : true;
         if (override === "read" && reports && sourceDeclaresWrite(tool)) {
-          this.opts.logger.warn(
+          warnings.push(
             `classification override ${quoted} to "read" is not applied because the connector declares this tool a write; it stays a write. "read-repeatable" serves it as a read and accepts that hosts may repeat it`,
           );
         }
         continue;
       }
-      this.opts.logger.warn(
-        `classification override ${quoted} is dormant because the runtime catalog lists no such tool`,
-      );
+      warnings.push(`classification override ${quoted} is dormant because the runtime catalog lists no such tool`);
     }
+    if (runtime) {
+      // Report what changed, not every read: callers, principals and refreshes
+      // that observe the same overrides' state log nothing new.
+      const report = warnings.join("\n");
+      if (this.overrideReports.get(id) === report) return;
+      this.overrideReports.set(id, report);
+    }
+    for (const warning of warnings) this.opts.logger.warn(warning);
   }
 
   peekCatalog(

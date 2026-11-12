@@ -993,6 +993,10 @@ describe("classification and pool endpoints (#706)", () => {
       expect(await registry.getTools("notes", BASE, {})).toEqual([]);
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('"notes.returning" is dormant'));
       await registry.getTools("notes", BASE, {});
+      // Other callers reading the same catalog in this runtime add nothing.
+      for (const subjectKey of ["alice", "bob"]) {
+        await registry.scoped({ connectorIds: "all", subjectKey }).getTools("notes", BASE, {});
+      }
       expect(logger.warn.mock.calls.filter(([message]) => message.includes("is dormant"))).toHaveLength(1);
       present = true;
       const tools = await registry.getTools("notes", BASE, {});
@@ -1002,6 +1006,19 @@ describe("classification and pool endpoints (#706)", () => {
       await registry.getTools("notes", BASE, {});
       expect(logger.warn.mock.calls.filter(([message]) => message.includes("is dormant"))).toHaveLength(2);
     }
+    // Each principal's registry shares the deployment's report.
+    const logger = { ...silentLogger, warn: vi.fn() };
+    const personal: Connector = {
+      id: "mine",
+      authScope: "personal",
+      listTools: async () => [],
+      callTool: async () => null,
+    };
+    const registry = makeRegistry([personal], { classification: { mine: { gone: "read" } }, logger });
+    for (const principalKey of ["alice", "bob", "alice"]) {
+      await registry.scoped({ connectorIds: "all", principalKey }).getTools("mine", BASE, {});
+    }
+    expect(logger.warn.mock.calls.filter(([message]) => message.includes("is dormant"))).toHaveLength(1);
   });
 
   it("INV-1 INV-3: publishes isolated verdicts without persisting or trusting a downstream verdict", async () => {

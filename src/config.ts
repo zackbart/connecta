@@ -77,9 +77,19 @@ function normalizeAuth(auth: readonly InboundAuth[]): readonly InboundAuth[] {
   return Object.freeze([...auth].sort((a, b) => rank(a) - rank(b)));
 }
 
+const LOG_PREFIX = "[connecta]";
+
+/**
+ * Prefix one console line with `[connecta]` exactly once. Many lines already
+ * carry it so that a deployment's own logger shows their origin too.
+ */
+function prefixed(args: unknown[]): unknown[] {
+  return typeof args[0] === "string" && args[0].startsWith(LOG_PREFIX) ? args : [LOG_PREFIX, ...args];
+}
+
 /**
  * Resolve `logger`. `"silent"` discards every line; an omitted logger writes
- * to the console with the `[connecta]` prefix.
+ * to the console with one `[connecta]` prefix.
  */
 function resolveLogger(logger: Logger | "silent" | undefined): Logger {
   if (logger === "silent") {
@@ -87,10 +97,10 @@ function resolveLogger(logger: Logger | "silent" | undefined): Logger {
   }
   return (
     logger ?? {
-      debug: (...a) => console.debug("[connecta]", ...a),
-      info: (...a) => console.info("[connecta]", ...a),
-      warn: (...a) => console.warn("[connecta]", ...a),
-      error: (...a) => console.error("[connecta]", ...a),
+      debug: (...a) => console.debug(...prefixed(a)),
+      info: (...a) => console.info(...prefixed(a)),
+      warn: (...a) => console.warn(...prefixed(a)),
+      error: (...a) => console.error(...prefixed(a)),
     }
   );
 }
