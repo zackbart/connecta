@@ -147,15 +147,16 @@ export function workerExecutor(options: WorkerExecutorOptions): AdmittingExecuto
         settleUpstream = undefined;
         settle?.();
       };
-      const dispose = (resource: object) =>
-        Effect.sync(() => {
-          try {
-            const method = Reflect.get(resource, Symbol.dispose);
-            if (typeof method === "function") method.call(resource);
-          } catch {
-            /* A failed RPC disposer cannot skip the Loader cleanup. */
-          }
-        });
+      const disposeNow = (resource: unknown) => {
+        if (typeof resource !== "object" || resource === null) return;
+        try {
+          const method = Reflect.get(resource, Symbol.dispose);
+          if (typeof method === "function") method.call(resource);
+        } catch {
+          /* A failed RPC disposer cannot skip the Loader cleanup. */
+        }
+      };
+      const dispose = (resource: object) => Effect.sync(() => disposeNow(resource));
       let executableCode: string | undefined;
       let guestProgram: ReturnType<typeof isolateGuestProgram>;
       let normalizationLines = 0;
@@ -461,12 +462,21 @@ const {
                 );
                 yield* open();
                 return yield* Effect.tryPromise({
+                  // The RPC result owns any stubs the guest returned. Dispose it
+                  // on the native fulfillment itself, so a result that settles
+                  // after release or cancellation is disposed too, exactly once.
+                  // The plain fields the run reads stay intact.
                   try: () =>
-                    Reflect.apply(
-                      Reflect.get(entrypoint, "evaluate"),
-                      entrypoint,
-                      args ?? [],
-                    ) as Promise<WorkerRunResult>,
+                    Promise.resolve(
+                      Reflect.apply(
+                        Reflect.get(entrypoint, "evaluate"),
+                        entrypoint,
+                        args ?? [],
+                      ) as Promise<WorkerRunResult>,
+                    ).then((result) => {
+                      disposeNow(result);
+                      return result;
+                    }),
                   catch: (error) => error,
                 });
               }).pipe(Scope.provide(resources), Effect.ensuring(Effect.sync(endUpstream)));
