@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-12: Allowed Google accounts (#1381) add core's OAuth account check: allowlist parsing and matching, the pre-save check in the static OAuth grant, the account label in the grant body and status, three callback outcomes, and the label on the member page and connection tab. A same-toolchain local comparison against origin/main a3c49fd2 (Node 26, system zlib) measured +1,929 B root, +1,641 B examples/worker and +112 B ./ui. Projected onto #1379's CI sizes (441,693 B and 825,424 B), the caps move 442,100 to 444,050 B and 825,800 to 827,450 B, leaving about 430 B and 385 B of headroom. ./ui stays within its unchanged 346,000 B cap. Pending owner approval.",
     "2026-11-12: Connector members (#1377, #1379) add member resolution, the scoped-view check, and the member-page, management and activity filters. A same-toolchain local comparison against origin/main c2c0b5c6 (Node 26.13.0, system zlib) measured +497 B root, +477 B examples/worker and +127 B ./ui. CI for #1379 measures the root at 441,553 B, examples/worker at 825,310 B and ./ui at 343,925 B (within its unchanged 346,000 B cap). Approved by the owner, the caps also cover #1378 (Google offline defaults, CI-measured +140 B root and +114 B examples/worker on main) landing too, about 441,693 B and 825,424 B together: the root cap moves 441,350 to 442,100 B and examples/worker 824,800 to 825,800 B, leaving about 407 B and 376 B of CI headroom. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-12: The log-review batch has landed (#1366, #1367, #1368, #1370, #1371), so its temporary headroom ends. CI at 480ffb06, identical to main at 3c31b8ac, measures the root at 441,014 B and examples/worker at 824,415 B. The caps move from 443,000 B and 826,000 B to 441,350 B and 824,800 B, leaving 336 B and 385 B.",
     "2026-11-12: Temporary headroom for the production log-review batch: the remote MCP response byte cap (#1366), the minimum dispatch budget (#1368), log-noise fixes (#1367) and the Cloudflare Access assertion fallback, which otherwise collide on these caps one PR at a time. CI measured #1366 at 439,819 B and 822,445 B and #1368 at 439,232 B on the root, against main's 439,150 B and 821,900 B caps. The root cap moves to 443,000 B and the examples/worker cap to 826,000 B. Each PR's size change still shows in the CI bundle table, and these caps get tightened to measured sizes plus normal headroom when the batch lands.",
@@ -87,7 +88,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 442100
+      "maxGzip": 444050
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -170,7 +171,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 825800
+      "maxGzip": 827450
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
