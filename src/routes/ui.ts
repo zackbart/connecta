@@ -257,7 +257,8 @@ function summary(context: RouteContext): Effect.Effect<Response, Answer> {
         toolCount: 0,
         tools: [],
         oauth: Boolean(c.startAuth && c.disconnectAuth),
-        ...(accountRestrictionOf(c) ? { reconnectKeepsGrant: true as const } : {}),
+        // Only for someone who may reconnect it; others see no reconnect at all.
+        ...(mayManage(c.id) && accountRestrictionOf(c) ? { reconnectKeepsGrant: true as const } : {}),
         permissions: permissions(c),
       })),
     });

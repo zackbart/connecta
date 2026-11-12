@@ -526,7 +526,8 @@ configured, `clear` when a value is stored in the member's partition, and
 matching test hook; an unreadable partition offers `save` alone, so the page
 reads stored-ness from `actions`. OAuth `manage` includes optional `reconnectKeepsGrant: true` only for
 account-checked `api()` OAuth connectors. The maintainer `GET /ui/data`
-connector row carries the same optional field (also on its detail response).
+connector row carries the same optional field (also on its detail response),
+only when the maintainer may manage that connector.
 For these connectors, Reconnect says the current connection keeps working
 until the new sign-in is accepted. Other OAuth connectors omit the field and
 warn that the connection stops working until sign-in finishes.

@@ -414,7 +414,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
             ? { authorizationUrl: yield* attempt(() => options.oauthConnectUrl!(c.id)) }
             : {}),
           oauth: Boolean(c.startAuth && c.disconnectAuth),
-          ...(accountRestrictionOf(c) ? { reconnectKeepsGrant: true as const } : {}),
+          ...(options.mayManage?.(c.id) && accountRestrictionOf(c) ? { reconnectKeepsGrant: true as const } : {}),
           ...(status.registrationPath ? { registrationPath: status.registrationPath } : {}),
           ...(status.state === "ok" && status.account !== undefined ? { account: status.account } : {}),
           ...(verification ? { verification } : {}),
@@ -434,7 +434,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
           status: "error",
           problem,
           oauth: Boolean(c.startAuth && c.disconnectAuth),
-          ...(accountRestrictionOf(c) ? { reconnectKeepsGrant: true as const } : {}),
+          ...(options.mayManage?.(c.id) && accountRestrictionOf(c) ? { reconnectKeepsGrant: true as const } : {}),
           toolCount: 0,
           tools: [],
           overlay: {
