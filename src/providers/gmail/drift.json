@@ -121,6 +121,24 @@
       },
       "reason": "Review attachment part identity and body encoding alongside the pinned messages.get and messages.attachments.get endpoints. Google documents partId as immutable, attachmentId as an external retrieval id without an immutability guarantee, size as decoded bytes, and data as base64url. Resolve immutable partId against a fresh message, use its current attachmentId, and read inline data when no attachmentId is present. Rotation is a caller-reported Gmail behavior covered by fixtures, not a documented stability promise.",
       "lastVerified": "2026-10-12"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/identity/protocols/oauth2/web-server",
+      "evidence": {
+        "authorizationEndpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "tokenEndpoint": "https://oauth2.googleapis.com/token",
+        "tokenEndpointAuthMethod": "client_secret_post",
+        "pkce": "S256",
+        "scopes": [
+          "https://www.googleapis.com/auth/gmail.readonly",
+          "https://www.googleapis.com/auth/gmail.compose"
+        ],
+        "revocationEndpoint": "not configured: https://oauth2.googleapis.com/revoke",
+        "revocationSource": "https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke"
+      },
+      "reason": "OAuth mode's authorization-code grant against Google's web-server flow has no machine-readable contract. Compare the authorization and token endpoints, body client authentication, S256 PKCE support and the requested scopes with the page; confirm revocation still ends every grant the person gave the client, which is why no revocation endpoint is configured.",
+      "lastVerified": "2026-11-12"
     }
   ]
 }

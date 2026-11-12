@@ -67,3 +67,22 @@ for leading-write-verb queries such as `delete file permanently` (#1018).
 The reference contains no raw argument, and no out-of-repository preload was
 used. Its refreshed hash is disclosed separately from the paid snapshot. No
 prompt, fake, grader or paid outcome changed.
+
+## OAuth mode (#1375)
+
+Besides domain-wide delegation, a connection may select OAuth mode with
+`{ oauth: { clientId, clientSecret }, authScope }`. The grant follows Google's
+web-server authorization-code flow
+(https://developers.google.com/identity/protocols/oauth2/web-server): consent at
+`https://accounts.google.com/o/oauth2/v2/auth`, code exchange and refresh at
+`https://oauth2.googleapis.com/token` with the client credentials in the request
+body, S256 PKCE, and exactly the product's delegation scopes. The access token
+is sent only to the product's API origin. No revocation endpoint is configured:
+Google's revocation ends every grant the person gave the OAuth client, so
+revoking one connector's token would also end other connectors' grants. A read
+answered 401 renews once and replays once; a write answered 401 is never resent
+and keeps the downstream authorization handoff. Google's granular consent lets
+a person decline a requested scope; the resulting `insufficientPermissions`
+refusal tells them to reconnect and allow every requested permission. Tool
+classification, value safety, confinement and the operation index are the same
+in both modes; only the token source and error advice differ.

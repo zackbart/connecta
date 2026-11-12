@@ -24,8 +24,8 @@ in its own `data`. In operation details, presentations.get names its path
 parameter `presentationsId`; pages and batch updates use `presentationId`. Spell
 colons literally and encode other reserved characters within one id segment.
 
-`get_slide_thumbnail` returns a link that opens as the delegated person: keep it
-private. Generic thumbnail and preview operations are refused.
+`get_slide_thumbnail` returns a link that opens as the connection's Google
+account: keep it private. Generic thumbnail and preview operations are refused.
 
 `commentId` names a thread; its posts have their own `postId`. Speaker-note
 comments belong to the notes page. A view-only account may be refused; that is not

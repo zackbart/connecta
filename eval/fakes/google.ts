@@ -1,5 +1,5 @@
 /** Frozen Workspace universe. Only owned in-memory routes; never a real Google account. */
-import { generateKeyPairSync, randomBytes, verify } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import { routeFakeVendor } from "./transport.js";
 import type { ConnectorSpec } from "./world.js";
@@ -34,7 +34,12 @@ export interface GoogleOptions {
   task: number;
   fault?: "500" | "network" | "body";
   boundary?: "split" | "base64" | "binary" | "cursor" | "decision";
+  /** Serve `product` alone in OAuth mode: each person connects their own account. */
+  oauth?: "personal";
 }
+
+/** Google's OAuth 2.0 web-server endpoints, as the fake answers them. */
+const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 
 function paragraph(text: string, startIndex = 1): Row {
   return {
@@ -483,6 +488,10 @@ export function googleState() {
   return {
     accounts: { [ALICE]: account(ALICE), [BOB]: account(BOB) },
     mints: [] as { subject: string; scopes: string[] }[],
+    /** Authorization-code consents, exchanges and refreshes, by the account that consented. */
+    oauth: [] as { kind: "consent" | "exchange" | "refresh"; subject: string; scopes: string[] }[],
+    /** API requests answered 401 because their OAuth access token expired. */
+    expiredRejections: 0,
     faulted: false,
     stale: false,
   };
@@ -496,6 +505,18 @@ export class FakeGoogle {
   private publicKey!: ReturnType<typeof generateKeyPairSync>["publicKey"];
   private catalogBytes = "";
   private readonly grants = new Map<string, { subject: string; scopes: string[] }>();
+  /** This world's OAuth client, so concurrent Google worlds route apart. */
+  readonly oauthClient = {
+    clientId: `${randomBytes(8).toString("hex")}.apps.googleusercontent.com`,
+    clientSecret: `GOCSPX-${randomBytes(12).toString("hex")}`,
+  };
+  private readonly codes = new Map<
+    string,
+    { subject: string; scopes: string[]; redirectUri: string; challenge: string }
+  >();
+  private readonly refreshTokens = new Map<string, { subject: string; scopes: string[] }>();
+  private readonly oauthAccess = new Set<string>();
+  private readonly expired = new Set<string>();
   private release: (() => void) | undefined;
   constructor(
     readonly ledger: Ledger,
@@ -559,7 +580,12 @@ export class FakeGoogle {
     const issuer = `iss:${this.serviceAccount.clientEmail}`;
     this.release = routeFakeVendor({
       hosts: [...HOSTS],
-      owns: (credential) => credential === issuer || this.grants.has(credential),
+      owns: (credential) =>
+        credential === issuer ||
+        this.grants.has(credential) ||
+        credential === this.oauthClient.clientId ||
+        this.refreshTokens.has(credential) ||
+        this.expired.has(credential),
       target: (request) => this.vendor(request),
     });
   }
@@ -573,6 +599,8 @@ export class FakeGoogle {
     const url = new URL(request.url);
     if (url.href === "https://oauth2.googleapis.com/token") {
       const parameters = new URLSearchParams(await request.text());
+      if (request.method === "POST" && parameters.get("client_id") === this.oauthClient.clientId)
+        return this.exchange(parameters);
       if (request.method !== "POST" || parameters.get("grant_type") !== "urn:ietf:params:oauth:grant-type:jwt-bearer")
         throw new Error("Unregistered Google token method or grant");
       const assertion = parameters.get("assertion") ?? "";
@@ -585,9 +613,108 @@ export class FakeGoogle {
       if (claims.iss !== this.serviceAccount.clientEmail) throw new Error("Unregistered Google issuer");
       return this.mint(assertion, claims);
     }
-    const grant = this.grants.get(request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "");
+    const bearer = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
+    if (this.expired.has(bearer)) {
+      this.state.expiredRejections += 1;
+      return Response.json(
+        { error: { code: 401, message: "Request had invalid authentication credentials.", status: "UNAUTHENTICATED" } },
+        { status: 401 },
+      );
+    }
+    const grant = this.grants.get(bearer);
     if (!grant) throw new Error("Unregistered Google bearer identity");
     return this.handle(request, grant.subject, grant.scopes);
+  }
+
+  /**
+   * The person's browser at Google's consent screen: check the request the
+   * connector built, approve it as `subject`, and return the callback URL
+   * Google would redirect to.
+   */
+  consent(authorizationUrl: string, subject: string): URL {
+    const url = new URL(authorizationUrl);
+    const scopes = (url.searchParams.get("scope") ?? "").split(" ").sort();
+    const product = SCOPES[this.options.product].map((s) => `https://www.googleapis.com/auth/${s}`).sort();
+    if (
+      `${url.origin}${url.pathname}` !== GOOGLE_AUTHORIZATION_ENDPOINT ||
+      url.searchParams.get("client_id") !== this.oauthClient.clientId ||
+      url.searchParams.get("response_type") !== "code" ||
+      url.searchParams.get("code_challenge_method") !== "S256" ||
+      !url.searchParams.get("code_challenge") ||
+      !url.searchParams.get("state") ||
+      JSON.stringify(scopes) !== JSON.stringify(product) ||
+      url.href.includes(this.oauthClient.clientSecret) ||
+      ![ALICE, BOB].includes(subject)
+    )
+      throw new Error("Unregistered Google consent request");
+    const code = `4/${randomBytes(16).toString("base64url")}`;
+    const redirectUri = url.searchParams.get("redirect_uri")!;
+    this.codes.set(code, { subject, scopes, redirectUri, challenge: url.searchParams.get("code_challenge")! });
+    this.state.oauth.push({ kind: "consent", subject, scopes });
+    const callback = new URL(redirectUri);
+    callback.searchParams.set("code", code);
+    callback.searchParams.set("state", url.searchParams.get("state")!);
+    callback.searchParams.set("scope", scopes.join(" "));
+    return callback;
+  }
+
+  /** Authorization-code exchange and refresh for this world's OAuth client, credentials in the body. */
+  private exchange(parameters: URLSearchParams): Response {
+    if (parameters.get("client_secret") !== this.oauthClient.clientSecret)
+      return Response.json({ error: "invalid_client" }, { status: 401 });
+    const grantType = parameters.get("grant_type");
+    let grant: { subject: string; scopes: string[] } | undefined;
+    let refreshToken: string | undefined;
+    if (grantType === "authorization_code") {
+      const code = this.codes.get(parameters.get("code") ?? "");
+      this.codes.delete(parameters.get("code") ?? "");
+      const verifier = parameters.get("code_verifier") ?? "";
+      if (
+        !code ||
+        code.redirectUri !== parameters.get("redirect_uri") ||
+        createHash("sha256").update(verifier).digest("base64url") !== code.challenge
+      )
+        return Response.json({ error: "invalid_grant" }, { status: 400 });
+      grant = { subject: code.subject, scopes: code.scopes };
+      refreshToken = `1//${randomBytes(24).toString("base64url")}`;
+      this.refreshTokens.set(refreshToken, grant);
+    } else if (grantType === "refresh_token") {
+      grant = this.refreshTokens.get(parameters.get("refresh_token") ?? "");
+      if (!grant) return Response.json({ error: "invalid_grant" }, { status: 400 });
+    } else return Response.json({ error: "unsupported_grant_type" }, { status: 400 });
+    this.state.oauth.push({ kind: grantType === "refresh_token" ? "refresh" : "exchange", ...grant });
+    const token = this.freshToken();
+    this.grants.set(token, grant);
+    this.oauthAccess.add(token);
+    return Response.json({
+      access_token: token,
+      expires_in: 3599,
+      token_type: "Bearer",
+      scope: grant.scopes.join(" "),
+      ...(refreshToken ? { refresh_token: refreshToken } : {}),
+    });
+  }
+
+  /** An hour passing: every OAuth access token now answers 401 until refreshed. */
+  expireOAuthAccess(): void {
+    for (const token of this.oauthAccess) {
+      this.grants.delete(token);
+      this.expired.add(token);
+    }
+    this.oauthAccess.clear();
+  }
+
+  /** A token no catalog or source text contains, so sent-secret redaction never touches fixtures. */
+  private freshToken(): string {
+    let token: string;
+    do {
+      token = randomBytes(32).toString("base64url");
+    } while (
+      Array.from({ length: token.length - 7 }, (_, i) => token.slice(i, i + 8)).some((part) =>
+        this.catalogBytes.includes(part),
+      )
+    );
+    return token;
   }
 
   private mint(assertion: string, claims: Row): Response {
@@ -609,20 +736,26 @@ export class FakeGoogle {
       claims.exp <= Date.now() / 1000
     )
       throw new Error("Invalid delegated Google identity, signature or scopes");
-    let token: string;
-    do {
-      token = randomBytes(32).toString("base64url");
-    } while (
-      Array.from({ length: token.length - 7 }, (_, i) => token.slice(i, i + 8)).some((part) =>
-        this.catalogBytes.includes(part),
-      )
-    );
+    const token = this.freshToken();
     this.grants.set(token, { subject: claims.sub, scopes });
     this.state.mints.push({ subject: claims.sub, scopes });
     return Response.json({ access_token: token, expires_in: 3599, token_type: "Bearer" });
   }
 
   specs(): ConnectorSpec[] {
+    if (this.options.oauth)
+      return [
+        {
+          id: this.options.product,
+          title: this.options.product,
+          description: `Review ${this.options.product} records in each person's own connected Google account`,
+          url: "https://unused.example",
+          google: {
+            product: this.options.product,
+            oauth: { ...this.oauthClient, authScope: this.options.oauth },
+          },
+        },
+      ];
     return GOOGLE_PRODUCTS.map((product) => ({
       id: product,
       title: product,
@@ -636,6 +769,10 @@ export class FakeGoogle {
     this.release?.();
     this.release = undefined;
     this.grants.clear();
+    this.codes.clear();
+    this.refreshTokens.clear();
+    this.oauthAccess.clear();
+    this.expired.clear();
   }
 
   async handle(request: Request, subject: string, scopes: string[]): Promise<Response> {

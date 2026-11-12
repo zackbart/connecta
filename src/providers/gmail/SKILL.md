@@ -33,8 +33,8 @@ Use indexed reads for unprojected RFC headers, MIME parts, mailbox profile
 and mail history. Paths are relative to the configured mailbox: replace `{id}`
 in `/messages/{id}` with a message id obtained from an earlier read.
 The index also shows refused operations and named alternatives. A discovered
-operation is executable only when its verdict says read. Delegation never
-lets arguments choose a different mailbox.
+operation is executable only when its verdict says read. No argument
+chooses a different mailbox.
 
 ## Attachment identity and bytes
 

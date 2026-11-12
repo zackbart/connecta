@@ -1118,6 +1118,47 @@ policy. `gmail.compose` technically permits sending; this provider admits no
 send route. Drafts are written only through `create_draft` and `update_draft`.
 Gmail is the documented three-hatch exception to the four-hatch default.
 
+**OAuth mode.** Every Google product (`gmail`, `drive`, `docs`, `sheets`,
+`slides`, `forms`) alternatively connects Google accounts through Connecta's
+downstream OAuth grant. It needs no Workspace administrator and also serves
+consumer Google accounts:
+
+```ts
+gmail("mail", {
+  purpose: "Read mail and prepare reply drafts",
+  oauth: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET },
+  authScope: "personal",
+});
+```
+
+Options take exactly one mode: `{ serviceAccount, subject }` (delegation) or
+`{ oauth, authScope }`. Construction refuses both, neither, an empty client id
+or secret, and OAuth mode without `authScope: "personal"` or `"shared"`, and
+never quotes a value. In Google Cloud console, enable each product's API in the
+OAuth client's project, configure the Google Auth Platform consent screen
+(Internal for one Workspace; External otherwise, where Google may require
+verification for these scopes and expires a Testing app's refresh tokens after
+seven days), and create a **Web application** OAuth client. Register the
+deployment's exact `<publicUrl>/oauth/callback/<connector id>` as an authorized
+redirect URI for every Google connector the client serves. One client may serve
+all of them; keep its id and secret in deployment secrets.
+
+The grant requests exactly the product's scopes listed in its section, sends the
+client credentials in the token request body, uses S256 PKCE, and sends the
+access token only to the product's API origin. `authScope: "personal"` stores a
+grant per signed-in person: each connects their own account from the
+`authorize_connector` handoff or the member Connect page, and agents never see
+the connection. `"shared"` stores one grant a maintainer connects, such as a
+shared mailbox, for every caller of the pools that list the connector. `subject`
+mappings and pool owners do not apply. A read answered 401 renews once and is
+replayed once; a write answered 401 is never resent, its outcome is unknown, and
+it returns the authorization handoff unless the renewal succeeded. Disconnect
+removes only Connecta's grant. No revocation endpoint is configured, because
+revoking at Google ends every grant the person gave the client, other
+connectors' included; a person removes access in their Google Account instead.
+If a person declines a requested permission on Google's consent screen, calls
+needing it fail `provider_permission_denied` until they reconnect and allow it.
+
 Named reads return projected records or `{ items, page }`; `fields` narrows a
 record or each list item. Size cuts appear in `truncated`. The pinned index
 contains 79 methods and admits eleven reads. Settings, forwarding,
@@ -1169,6 +1210,9 @@ Configure inbound auth and map admitted identities to Workspace addresses.
 Each call acts as that user and reaches documents shared with them in Drive.
 An unmapped caller is refused. A fixed `subject: "alice@example.com"` instead
 shares one Workspace account across callers. See [Workspace delegation](./auth.md#pool-owners-for-google-workspace).
+[OAuth mode](#gmail) instead takes `{ oauth, authScope }` and requests exactly
+`https://www.googleapis.com/auth/documents`; enable Google Docs API in the OAuth
+client's project.
 `readOnly: true` omits and refuses all writes. Optional `instructions` append
 connection-specific guidance; `baseUrl` is an operator-controlled API root.
 There is no configurable sensitive-field set: document text is requested data.
@@ -1238,6 +1282,9 @@ existing client's scopes instead of replacing them. A grant can take up to
 24 hours to propagate. Supply the key through the deployment's secret store;
 there is no operator credential slot or per-user consent flow. If organization
 policy disables key creation, a Workspace administrator must authorize it.
+[OAuth mode](#gmail) instead takes `{ oauth, authScope }` and requests exactly
+`https://www.googleapis.com/auth/spreadsheets`; enable Google Sheets API in the
+OAuth client's project.
 
 **Options and boundaries.** `subject` is a fixed Workspace address or a
 function mapping admitted identities. Unmapped callers fail `auth_required`;
@@ -1300,7 +1347,9 @@ data control → API controls → Manage Domain Wide Delegation, with exactly
 `https://www.googleapis.com/auth/forms.body,https://www.googleapis.com/auth/forms.responses.readonly`.
 A grant can take up to 24 hours to apply. If key creation is disabled by
 `iam.disableServiceAccountKeyCreation`, an organization policy administrator
-must permit it for the project.
+must permit it for the project. [OAuth mode](#gmail) instead takes
+`{ oauth, authScope }` and requests exactly those two scopes; enable the Google
+Forms API in the OAuth client's project.
 
 Configure inbound authentication. `subject` may be one fixed Workspace
 address or a function mapping the admitted identity to an address. Calls
@@ -1344,6 +1393,9 @@ Delegation, with `https://www.googleapis.com/auth/presentations`. The grant
 can take up to 24 hours to apply. If key creation is blocked by
 `iam.disableServiceAccountKeyCreation`, an organization policy administrator
 can allow it for that project. Store the key in a deployment secret.
+[OAuth mode](#gmail) instead takes `{ oauth, authScope }` and requests exactly
+`https://www.googleapis.com/auth/presentations`; enable the Google Slides API in
+the OAuth client's project.
 
 Configure inbound authentication and a subject mapping for admitted callers.
 A fixed `subject: "alice@example.com"` acts as one shared account; a function
@@ -1379,6 +1431,9 @@ and retain its JSON private key in a deployment secret. As a Workspace super
 admin, authorize the service account's numeric client id for exactly
 `https://www.googleapis.com/auth/drive`. Delegation changes can take 24 hours.
 No Google Cloud IAM role grants access to a person's Drive.
+[OAuth mode](#gmail) instead takes `{ oauth, authScope }` and requests exactly
+`https://www.googleapis.com/auth/drive`; enable Google Drive API in the OAuth
+client's project. Uploads use the same person's grant on the upload host.
 
 ```ts
 drive("files", {
@@ -1393,8 +1448,8 @@ identity; an ownerless pool has no delegated account unless `subject` is a fixed
 Workspace address. Anonymous requests cannot invoke a subject function. The
 scope reaches everything that user can open, including shared drives. The
 provider's reviewed surface confines the available actions. Options are the
-shared Workspace `purpose`, `instructions`, `serviceAccount`, `subject` and
-optional `baseUrl`; there is no caller-selected account or sensitive-data mode.
+shared Workspace `purpose`, `instructions`, `serviceAccount` and `subject` (or
+`oauth` and `authScope`) and optional `baseUrl`; there is no caller-selected account or sensitive-data mode.
 
 The 17 named workflows remain available. `drive_api_search` and
 `drive_api_details` discover the frozen 64-method inventory; `drive_api_read`

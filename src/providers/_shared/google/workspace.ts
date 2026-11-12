@@ -1,5 +1,14 @@
 /**
- * Google Workspace access as the person calling, with no per-user consent:
+ * Google Workspace access in one of two modes, chosen per connection.
+ *
+ * OAuth mode (`oauth` + `authScope`) is the ordinary downstream OAuth grant:
+ * each signed-in person connects their own Google account (`"personal"`), or
+ * a maintainer connects one account for the pools that list the connection
+ * (`"shared"`). Core owns the grant, its storage, renewal and consent; this
+ * module only validates the client and names Google's endpoints.
+ *
+ * Delegation mode (`serviceAccount` + `subject`) is Google Workspace access as
+ * the person calling, with no per-user consent:
  * a service account with domain-wide delegation mints a token *as* the user
  * the deployment maps the admitted caller to. The foundation each Workspace
  * product provider builds on; never its own export.
@@ -88,18 +97,18 @@ export interface GoogleSubjectContext {
   readonly signal?: AbortSignal;
 }
 
-/** Options every Workspace product provider shares. */
-export interface GoogleWorkspaceOptions {
+/** The Google OAuth client a deployment registered, from its secrets. */
+export interface GoogleOAuthClient {
+  /** The OAuth client ID from Google Cloud console → Google Auth Platform → Clients. */
+  clientId: string;
+  /** Its client secret, from deployment secrets, never a literal in source. */
+  clientSecret: string;
+}
+
+/** Options every Workspace product provider shares, whichever mode. */
+interface GoogleWorkspaceCommonOptions {
   /** What this connection is for, appended to the maintained guide. */
   purpose: string;
-  /**
-   * The delegated service account: `{ clientEmail, privateKey }` from its
-   * JSON key, or the key file's whole JSON text. From deployment secrets,
-   * never a literal in source. One key serves every Workspace connector.
-   */
-  serviceAccount: GoogleServiceAccount | string;
-  /** Whose account each call acts as; see {@link GoogleWorkspaceSubject}. */
-  subject: GoogleWorkspaceSubject;
   /** Human-readable display name. */
   title?: string;
   /** Organization-specific conventions appended to the maintained guide. */
@@ -117,25 +126,89 @@ export interface GoogleWorkspaceOptions {
   baseUrl?: string;
 }
 
+/** Delegation mode: a service account acting as each caller's mapped Workspace address. */
+export interface GoogleServiceAccountOptions extends GoogleWorkspaceCommonOptions {
+  /**
+   * The delegated service account: `{ clientEmail, privateKey }` from its
+   * JSON key, or the key file's whole JSON text. From deployment secrets,
+   * never a literal in source. One key serves every Workspace connector.
+   */
+  serviceAccount: GoogleServiceAccount | string;
+  /** Whose account each call acts as; see {@link GoogleWorkspaceSubject}. */
+  subject: GoogleWorkspaceSubject;
+  oauth?: never;
+  authScope?: never;
+}
+
+/** OAuth mode: the downstream OAuth grant of a connected Google account. */
+interface GoogleOAuthOptions extends GoogleWorkspaceCommonOptions {
+  /** The deployment's Google OAuth client. */
+  oauth: GoogleOAuthClient;
+  /**
+   * Whose Google account the grant is: `"personal"` gives each signed-in
+   * person their own (agents never see the connection), `"shared"` is one
+   * account a maintainer connects for every caller the pools admit.
+   */
+  authScope: "personal" | "shared";
+  serviceAccount?: never;
+  subject?: never;
+}
+
+/** Every Workspace product provider's options: exactly one mode. */
+export type GoogleWorkspaceOptions = GoogleServiceAccountOptions | GoogleOAuthOptions;
+
 /** The closed options every Workspace provider accepts; see `assertKnownOptions`. */
 export const GOOGLE_WORKSPACE_OPTIONS = optionsOf<GoogleWorkspaceOptions>()({
-  ...keys("purpose", "subject", "title", "instructions", "maxResultBytes", "baseUrl", "readOnly"),
+  ...keys("purpose", "subject", "title", "instructions", "maxResultBytes", "baseUrl", "readOnly", "authScope"),
   // A string is the key's JSON; only the object form has keys to check.
   serviceAccount: optionsOf<GoogleServiceAccount>()(keys("clientEmail", "privateKey", "clientId")),
+  oauth: optionsOf<GoogleOAuthClient>()(keys("clientId", "clientSecret")),
   callAdmission: CALL_ADMISSION,
 });
 
-/** The checked, construction-time half of {@link GoogleWorkspaceOptions}. */
+/** The checked, construction-time half of {@link GoogleServiceAccountOptions}. */
 export interface WorkspaceConnection {
+  readonly mode?: "delegation";
   purpose: string;
   account: ServiceAccountKey;
   subject: GoogleWorkspaceSubject;
 }
 
+/** The checked, construction-time half of {@link GoogleOAuthOptions}. */
+export interface WorkspaceOAuthConnection {
+  readonly mode: "oauth";
+  purpose: string;
+  client: Readonly<GoogleOAuthClient>;
+  authScope: "personal" | "shared";
+}
+
+/** Whichever mode a connection's options select. */
+export type GoogleConnectionMode = WorkspaceConnection | WorkspaceOAuthConnection;
+
+/** True when this connection's options select OAuth mode. */
+export function isOAuthMode(connection: GoogleConnectionMode): connection is WorkspaceOAuthConnection {
+  return connection.mode === "oauth";
+}
+
 /** Validate the shared options at construction; throws on a structural mistake. */
-export function workspaceConnection(factory: string, options: GoogleWorkspaceOptions): WorkspaceConnection {
+export function workspaceConnection(factory: string, options: GoogleServiceAccountOptions): WorkspaceConnection;
+export function workspaceConnection(factory: string, options: GoogleWorkspaceOptions): GoogleConnectionMode;
+export function workspaceConnection(factory: string, options: GoogleWorkspaceOptions): GoogleConnectionMode {
   const purpose = options?.purpose?.trim();
   if (!purpose) throw new Error(`${factory}() requires a non-empty purpose.`);
+  const oauthMode = options.oauth !== undefined || options.authScope !== undefined;
+  const delegationMode = options.serviceAccount !== undefined || options.subject !== undefined;
+  if (oauthMode && delegationMode) {
+    throw new Error(
+      `${factory}() takes either { serviceAccount, subject } (domain-wide delegation) or { oauth, authScope } (each connected Google account's own grant), never both.`,
+    );
+  }
+  if (oauthMode) return { mode: "oauth", purpose, ...oauthClient(factory, options as GoogleOAuthOptions) };
+  if (!delegationMode) {
+    throw new Error(
+      `${factory}() requires one access mode: { oauth, authScope } (each connected Google account's own grant) or { serviceAccount, subject } (domain-wide delegation).`,
+    );
+  }
   const account = parseServiceAccount(`${factory}()`, options.serviceAccount);
   const subject = options.subject;
   if (typeof subject === "string") {
@@ -150,6 +223,39 @@ export function workspaceConnection(factory: string, options: GoogleWorkspaceOpt
     );
   }
   return { purpose, account, subject };
+}
+
+/** Validate OAuth mode's client and grant ownership; never quotes a value. */
+function oauthClient(
+  factory: string,
+  options: GoogleOAuthOptions,
+): Pick<WorkspaceOAuthConnection, "client" | "authScope"> {
+  const client = options.oauth as unknown;
+  if (client === null || typeof client !== "object" || Array.isArray(client)) {
+    throw new Error(
+      `${factory}() OAuth mode requires oauth: { clientId, clientSecret }, the deployment's Google OAuth client from its secrets.`,
+    );
+  }
+  const { clientId, clientSecret } = client as Partial<GoogleOAuthClient>;
+  for (const [name, value] of [
+    ["clientId", clientId],
+    ["clientSecret", clientSecret],
+  ] as const) {
+    if (typeof value !== "string" || !value.trim()) {
+      throw new Error(
+        `${factory}() oauth.${name} must be a non-empty string; an unset environment variable or Worker secret reads as empty.`,
+      );
+    }
+  }
+  if (options.authScope !== "personal" && options.authScope !== "shared") {
+    throw new Error(
+      `${factory}() OAuth mode requires authScope: "personal" (each signed-in person connects their own Google account) or "shared" (a maintainer connects one account for the pools that list this connection).`,
+    );
+  }
+  return {
+    client: Object.freeze({ clientId: clientId!.trim(), clientSecret: clientSecret! }),
+    authScope: options.authScope,
+  };
 }
 
 /**

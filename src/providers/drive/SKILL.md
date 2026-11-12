@@ -9,7 +9,7 @@ Use file ids from reads, Drive URLs or the person: an id they give works as is.
 The same id identifies a Google Doc, Sheet, Slides deck or Form in its product
 connector. Shared-drive ids identify
 membership and the root folder; folder parents determine inherited access.
-A missing file and a file the delegated user cannot see fail alike.
+A missing file and a file the connection's account cannot see fail alike.
 
 Drive query values use single quotes: `name contains 'budget'`,
 `mimeType = 'application/pdf'`, `'folder_123' in parents`, or

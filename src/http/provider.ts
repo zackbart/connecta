@@ -64,7 +64,7 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
   readonly displayTitle?: (options: Readonly<O>) => string;
   readonly description?: (options: Readonly<O>) => string;
   /** Deployment mode fixes grant ownership; tool arguments cannot select it. */
-  readonly authScope?: (options: Readonly<O>) => "shared" | "personal";
+  readonly authScope?: (options: Readonly<O>) => "shared" | "personal" | undefined;
   readonly vendor: Vendor;
   readonly baseUrl: (options: Readonly<O>) => string;
   readonly maxResponseBytes: number;
@@ -84,13 +84,22 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
    */
   readonly idempotencyKey?: boolean;
   readonly credential?: ConnectorCredentialConfig | ((options: Readonly<O>) => ConnectorCredentialConfig);
-  readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig;
+  /**
+   * Static OAuth for a connection. A provider that also declares `grant`
+   * answers `undefined` for a connection whose options select the machine
+   * grant; a connection never selects both.
+   */
+  readonly oauth?: (options: Readonly<O>) => ApiOAuthConfig | undefined;
   /** Preserve the static OAuth grant's write-401 diagnostic. */
   readonly oauthWrite401?: "grant";
-  /** Renewable machine login, constructed outside every caller context. Exclusive with static OAuth. */
+  /**
+   * Renewable machine login, constructed outside every caller context. A
+   * provider that also declares `oauth` answers `undefined` for a connection
+   * whose options select static OAuth.
+   */
   readonly grant?: (
     options: Readonly<O>,
-  ) => Effect.Effect<Context.Service.Shape<typeof Grant>, HttpFailure, CallServices>;
+  ) => Effect.Effect<Context.Service.Shape<typeof Grant>, HttpFailure, CallServices> | undefined;
   /** Opt-in machine-grant renewal modes (see GrantRenewal); defaults renew as B.2 describes. */
   readonly grantRenewal?: GrantRenewal;
   readonly authenticate:
@@ -102,6 +111,12 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
    */
   readonly publicIdentifierHeaders?: GuardedOptions["publicIdentifierHeaders"];
   readonly errors: VendorErrors<any>;
+  /**
+   * Connection-specific wording of `errors`, such as advice that depends on
+   * the connection's authentication mode. It must keep `errors`' provider and
+   * meanings, which the generated conventions state for every connection.
+   */
+  readonly connectionErrors?: (options: Readonly<O>) => VendorErrors<any>;
   readonly safety: (options: Readonly<O>) => SafetyOptions;
   readonly result?: ConnectOptions["result"];
   readonly inBandRefusals?: ConnectOptions["inBandRefusals"];
@@ -137,7 +152,13 @@ interface ApiProviderDefinition<O extends ProviderOptions> extends Omit<Provider
     readonly binding?: (kit: { connection: Connection; options: Readonly<O> }) => HatchBinding;
     readonly notes?: (options: Readonly<O>) => { readonly read?: string; readonly write?: string };
   };
-  readonly tools: (kit: { connection: Connection; pageSize: number; options: Readonly<O> }) => ApiTool[];
+  readonly tools: (kit: {
+    /** The connector id, for a secondary connection's own wording. */
+    id: string;
+    connection: Connection;
+    pageSize: number;
+    options: Readonly<O>;
+  }) => ApiTool[];
   /**
    * Record construction facts about the built connector, such as whose
    * Workspace account it acts as. Runs once, before anything can serve it;
@@ -161,8 +182,11 @@ function hatchDeclaration<O extends ProviderOptions>(
   };
 }
 
-/** Bind the Promise OAuth facade belonging to this call, never a connection-wide grant. */
-const callGrant = Effect.gen(function* () {
+/**
+ * Bind the Promise OAuth facade belonging to this call, never a connection-wide
+ * grant. Exported for a provider's secondary connection to the same API.
+ */
+export const callGrant = Effect.gen(function* () {
   // Operation is bridge metadata, not a service a provider program supplies.
   const operation = yield* Effect.serviceOption(Operation);
   const oauth = Option.isSome(operation) ? (operation.value as ApiHandlerContext | undefined)?.oauth : undefined;
@@ -178,6 +202,31 @@ const missingGrant: Context.Service.Shape<typeof Grant> = {
   refresh: () => noGrant,
   rejected: noGrant,
 };
+
+/**
+ * The static OAuth grant's write-401 diagnostic for connector `id`: a write a
+ * renewal did not rescue keeps the downstream authorization handoff. Exported
+ * for a provider's secondary connection to the same API.
+ */
+export function oauthGrantRenewal(id: string): NonNullable<Parameters<typeof refreshOnce>[1]> {
+  return {
+    challengeMaxBytes: OAUTH_CHALLENGE_MAX_BYTES,
+    writeUnauthorized: (renewal, routes) =>
+      unsentAfterUnauthorized(
+        `Connector "${id}"'s API`,
+        renewal._tag === "Renewed"
+          ? undefined
+          : renewal._tag === "Failed"
+            ? renewal.failure
+            : // Configured with the connection, worded during the call it refuses.
+              new ConnectorCallError(
+                "downstream_oauth_required",
+                `Connector "${id}" requires authorization — ${routePhrases(routes).authorizeAndOpen(id)}.`,
+              ),
+        "downstream_oauth_required",
+      ),
+  };
+}
 
 /** An ordinary Promise connector factory; Effect remains inside the kit. */
 export function defineApiProvider<O extends ProviderOptions>(definition: ApiProviderDefinition<O>): ProviderFactory<O> {
@@ -203,6 +252,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     authenticate,
     publicIdentifierHeaders,
     errors,
+    connectionErrors,
     safety,
     result,
     inBandRefusals,
@@ -238,7 +288,6 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
     throw new Error(`${metadata.title} declares both credential and oauth; declare one authentication method.`);
   }
   if (oauthWrite401 && !oauth) throw new Error("oauthWrite401 requires a static OAuth declaration.");
-  if (grant && oauth) throw new Error("A provider declares either a machine grant or static OAuth, never both.");
   if (grantRenewal && !grant) throw new Error("grantRenewal requires a machine grant declaration.");
   const renewalModes = grantRenewal ? { ...grantRenewal } : undefined;
   if (!Number.isInteger(maxResponseBytes) || maxResponseBytes < 1) {
@@ -299,12 +348,27 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       }
       const configured = transport?.(options);
       const machineGrant = grant?.(options);
+      const connectionBaseUrl = baseUrl(options);
+      // Each connection selects one authentication; the options decide which.
+      const oauthConfig = oauth?.(options);
+      if (machineGrant && oauthConfig)
+        throw new Error(
+          `${metadata.title} connection "${id}" selects both a machine grant and static OAuth; its options must choose one.`,
+        );
+      const oauthWrite401Diagnostic = oauthConfig !== undefined && oauthWrite401 !== undefined;
+      const vendorErrors = connectionErrors ? connectionErrors(options) : errors;
+      if (
+        vendorErrors !== errors &&
+        (vendorErrors.provider !== errors.provider ||
+          JSON.stringify(errorMeanings(vendorErrors)) !== JSON.stringify(meanings))
+      )
+        throw new Error(`${metadata.title} connectionErrors must keep the provider name and meanings of errors.`);
       const guarded = guardedClient({
-        provider: errors.provider,
-        baseUrl: baseUrl(options),
+        provider: vendorErrors.provider,
+        baseUrl: connectionBaseUrl,
         maxResponseBytes,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
-        ...(oauthWrite401 ? { maxUnauthorizedResponseBytes: OAUTH_CHALLENGE_MAX_BYTES } : {}),
+        ...(oauthWrite401Diagnostic ? { maxUnauthorizedResponseBytes: OAUTH_CHALLENGE_MAX_BYTES } : {}),
         ...(headers === undefined ? {} : { headers }),
         ...(admit === undefined ? {} : { admit }),
         authenticate: typeof authenticate === "function" ? authenticate(options) : authenticate,
@@ -313,32 +377,14 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
       });
       const connected = connect(
         vendor,
-        oauth || machineGrant
+        oauthConfig || machineGrant
           ? refreshOnce(
               guarded,
-              oauthWrite401
-                ? {
-                    challengeMaxBytes: OAUTH_CHALLENGE_MAX_BYTES,
-                    writeUnauthorized: (renewal, routes) =>
-                      unsentAfterUnauthorized(
-                        `Connector "${id}"'s API`,
-                        renewal._tag === "Renewed"
-                          ? undefined
-                          : renewal._tag === "Failed"
-                            ? renewal.failure
-                            : // Configured with the connection, worded during the call it refuses.
-                              new ConnectorCallError(
-                                "downstream_oauth_required",
-                                `Connector "${id}" requires authorization — ${routePhrases(routes).authorizeAndOpen(id)}.`,
-                              ),
-                        "downstream_oauth_required",
-                      ),
-                  }
-                : renewalModes,
+              oauthConfig ? (oauthWrite401Diagnostic ? oauthGrantRenewal(id) : undefined) : renewalModes,
             )
           : guarded,
         {
-          errors,
+          errors: vendorErrors,
           safety: resultSafety(safety(options)),
           ...(inBandRefusals ? { inBandRefusals } : {}),
           ...(result ? { result } : {}),
@@ -348,7 +394,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         work: Effect.Effect<A, HttpFailure, CallServices | Grant>,
       ): Effect.Effect<A, HttpFailure, CallServices> =>
         work.pipe(
-          Effect.provideServiceEffect(Grant, machineGrant ?? (oauth ? callGrant : Effect.succeed(missingGrant))),
+          Effect.provideServiceEffect(Grant, machineGrant ?? (oauthConfig ? callGrant : Effect.succeed(missingGrant))),
         );
       const connection: Connection = {
         ...connected,
@@ -399,7 +445,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
             ),
             Effect.catch((failure) =>
               Effect.sync(() => {
-                const error = toConnectorCallError(failure, errors, map);
+                const error = toConnectorCallError(failure, vendorErrors, map);
                 const described = probe.failure?.(error, options);
                 // A provider's own verdict wins; a failure it leaves
                 // unclassified takes the class of the typed error behind it.
@@ -419,6 +465,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         );
       };
       const builtTools = tools({
+        id,
         connection,
         options,
         get pageSize() {
@@ -435,6 +482,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           `${metadata.title} declares idempotencyKey: ${idempotencyKey}, but its write tools ${idempotencyKey ? "send no" : "send an"} idempotency key.`,
         );
       const renderedGuide = provider.usageGuide(guide(options));
+      const connectionScope = authScope?.(options);
       const connector = tracksEveryRequest(
         api(id, {
           ...(defaultCallAdmission
@@ -444,7 +492,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
               }
             : {}),
           ...provider.connectorOptions,
-          ...(authScope ? { authScope: authScope(options) } : {}),
+          ...(connectionScope ? { authScope: connectionScope } : {}),
           title: options.title ?? displayTitle?.(options) ?? metadata.title,
           ...(description ? { description: description(options) } : {}),
           usageGuide: transformGuide ? transformGuide(renderedGuide, options) : renderedGuide,
@@ -455,7 +503,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
                 testCredentials: (values, ctx) => test(values, ctx),
               }
             : {}),
-          ...(oauth ? { oauth: oauth(options) } : {}),
+          ...(oauthConfig ? { oauth: oauthConfig } : {}),
           tools: [...builtTools, ...hatchTools],
         }),
       );

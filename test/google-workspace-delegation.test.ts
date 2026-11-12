@@ -62,6 +62,13 @@ import { failureRecord } from "../src/operator-record.js";
 import { readRequest, isKnownProviderFailure } from "../src/provider-call.js";
 import { errors as gmailErrors } from "../src/providers/gmail/api.js";
 import { GMAIL_SCOPES, gmail } from "../src/providers/gmail/index.js";
+import { DRIVE_SCOPES } from "../src/providers/drive/index.js";
+import { DOCS_SCOPES } from "../src/providers/docs/index.js";
+import { SHEETS_SCOPES } from "../src/providers/sheets/index.js";
+import { SLIDES_SCOPES } from "../src/providers/slides/index.js";
+import { FORMS_SCOPES } from "../src/providers/forms/index.js";
+import { identityStorageKey } from "../src/identity.js";
+import { workspaceSubjectOf } from "../src/workspace-subject.js";
 import { providerCallFailure, settleWrite, classifyWriteOutcome } from "../src/write-outcome.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
@@ -2741,6 +2748,322 @@ describe("the shared client reads bytes and text for the products that need them
         writeOutcome: "unknown",
       });
       expect(apiCalls).toHaveLength(1);
+    }
+  });
+});
+
+// --- OAuth mode ----------------------------------------------------------------------
+
+describe("OAuth mode: each connected Google account's own grant (#1375)", () => {
+  const CLIENT = { clientId: "client-1.apps.googleusercontent.com", clientSecret: "client-secret-do-not-print" };
+  const BASE = "https://connecta.example";
+  const PRODUCTS = [
+    ["gmail", gmail, GMAIL_SCOPES, "https://gmail.googleapis.com"],
+    ["drive", drive, DRIVE_SCOPES, "https://www.googleapis.com"],
+    ["docs", docs, DOCS_SCOPES, "https://docs.googleapis.com"],
+    ["sheets", sheets, SHEETS_SCOPES, "https://sheets.googleapis.com"],
+    ["slides", slides, SLIDES_SCOPES, "https://slides.googleapis.com"],
+    ["forms", forms, FORMS_SCOPES, "https://forms.googleapis.com"],
+  ] as const;
+  const unauthorized = () =>
+    Response.json({ error: { code: 401, message: "Invalid Credentials", status: "UNAUTHENTICATED" } }, { status: 401 });
+
+  /** Google's token endpoint and APIs for authorization-code grants, keyed by owner. */
+  let google: {
+    tokenRequests: URLSearchParams[];
+    api: { url: string; method: string; authorization: string }[];
+    replies: Reply[];
+    codes: Map<string, string>;
+    access: Map<string, string>;
+    refresh: Map<string, string>;
+    minted: number;
+  };
+  beforeEach(() => {
+    google = {
+      tokenRequests: [],
+      api: [],
+      replies: [],
+      codes: new Map(),
+      access: new Map(),
+      refresh: new Map(),
+      minted: 0,
+    };
+    globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.href === TOKEN_URL) {
+        const form = new URLSearchParams(String(init.body));
+        google.tokenRequests.push(form);
+        if (form.get("client_id") !== CLIENT.clientId || form.get("client_secret") !== CLIENT.clientSecret)
+          return Response.json({ error: "invalid_client" }, { status: 401 });
+        const grant = form.get("grant_type");
+        const owner =
+          grant === "authorization_code"
+            ? google.codes.get(form.get("code") ?? "")
+            : grant === "refresh_token"
+              ? google.refresh.get(form.get("refresh_token") ?? "")
+              : undefined;
+        if (!owner) return Response.json({ error: "invalid_grant" }, { status: 400 });
+        google.minted += 1;
+        const access = `ya29.${owner}-${google.minted}`;
+        google.access.set(access, owner);
+        const refresh = grant === "authorization_code" ? `1//${owner}` : undefined;
+        if (refresh) google.refresh.set(refresh, owner);
+        return Response.json({
+          access_token: access,
+          expires_in: 3599,
+          token_type: "Bearer",
+          ...(refresh ? { refresh_token: refresh } : {}),
+        });
+      }
+      if (url.hostname === "oauth2.googleapis.com") throw new Error(`unexpected Google OAuth request ${url.href}`);
+      const authorization = new Headers(init.headers).get("authorization") ?? "";
+      google.api.push({ url: url.href, method: init.method ?? "GET", authorization });
+      const reply = google.replies.shift();
+      if (reply) return await reply();
+      const owner = google.access.get(authorization.replace(/^Bearer /, ""));
+      if (!owner) return unauthorized();
+      return Response.json(
+        url.pathname.endsWith("/labels")
+          ? { labels: [{ id: "Label_1", name: `${owner} label`, type: "user" }] }
+          : url.pathname.endsWith("/drafts")
+            ? { id: "d1", message: { id: "m1", threadId: "t1" } }
+            : { id: "f1", name: `${owner} file`, mimeType: "text/plain" },
+      );
+    }) as unknown as typeof fetch;
+  });
+
+  beforeEach(() => {
+    installOwnedTransport();
+  });
+
+  const personal = (overrides: Record<string, unknown> = {}) =>
+    gmail("mail", { purpose: "Personal mail", oauth: CLIENT, authScope: "personal", ...overrides } as Parameters<
+      typeof gmail
+    >[1]);
+
+  /** Start, consent as `owner`, and finish one grant through the connector's own hooks. */
+  async function connect(connector: Connector, ctx: () => ConnectorContext, owner: string): Promise<URL> {
+    const started = await connector.startAuth!(ctx());
+    expect(started.state).toBe("auth_required");
+    const url = new URL(started.authorizationUrl!);
+    const code = `4/code-${owner}-${google.codes.size}`;
+    google.codes.set(code, owner);
+    const state = url.searchParams.get("state")!;
+    expect(await connector.verifyState!(state, ctx())).toBe(true);
+    await connector.finishAuth!(code, ctx(), new URLSearchParams({ code, state }));
+    return url;
+  }
+
+  describe("construction refuses a structural mistake", () => {
+    const build = (overrides: Record<string, unknown>) => () =>
+      gmail("mail", {
+        purpose: "Personal mail",
+        oauth: CLIENT,
+        authScope: "personal",
+        ...overrides,
+      } as Parameters<typeof gmail>[1]);
+
+    it.each([
+      ["both modes", { serviceAccount: account() }, /either \{ serviceAccount, subject \}.*never both/],
+      ["a subject beside OAuth", { subject: "alice@org.example" }, /never both/],
+      ["no mode", { oauth: undefined, authScope: undefined }, /requires one access mode/],
+      ["no authScope", { authScope: undefined }, /requires authScope: "personal".*or "shared"/],
+      ["an unknown authScope", { authScope: "team" }, /requires authScope/],
+      ["no client", { oauth: undefined }, /requires oauth: \{ clientId, clientSecret \}/],
+      ["a client that is not an object", { oauth: "client" }, /requires oauth: \{ clientId, clientSecret \}/],
+      ["an empty client id", { oauth: { ...CLIENT, clientId: " " } }, /oauth\.clientId.*non-empty string/],
+      ["an unset secret", { oauth: { ...CLIENT, clientSecret: "" } }, /oauth\.clientSecret.*non-empty string/],
+      ["an unknown client key", { oauth: { ...CLIENT, revoke: true } }, /oauth\.revoke/],
+    ])("%s", NODE, (_name, overrides, message) => {
+      expect(build(overrides)).toThrow(message);
+      try {
+        build(overrides)();
+      } catch (error) {
+        expect(String(error)).not.toContain(CLIENT.clientSecret);
+      }
+    });
+  });
+
+  it.each(PRODUCTS)(
+    "%s requests Google's consent for exactly its scopes, keeps no subject tag and configures no revocation",
+    NODE,
+    async (name, factory, scopes, origin) => {
+      const connector = factory(name, {
+        purpose: "Personal work",
+        oauth: CLIENT,
+        authScope: "personal",
+      } as never) as Connector;
+      expect(connector.authScope).toBe("personal");
+      expect(workspaceSubjectOf(connector)).toBeUndefined();
+      expect(connector.description).toContain("each person's own connected Google account");
+      expect(JSON.stringify(connector.usageGuide)).toContain("Google account they connected themselves");
+      expect(JSON.stringify(connector.usageGuide)).not.toContain("delegation is");
+      const registry = makeRegistry([connector]);
+      const key = await identityStorageKey({ namespace: "synthetic", id: "alice" });
+      const ctx = () => registry.scoped({ connectorIds: "all", principalKey: key }).contextFor(name, BASE);
+      const url = await connect(connector, ctx, "alice");
+      expect(`${url.origin}${url.pathname}`).toBe("https://accounts.google.com/o/oauth2/v2/auth");
+      expect(url.searchParams.get("client_id")).toBe(CLIENT.clientId);
+      expect(url.searchParams.get("scope")).toBe(scopes.join(" "));
+      expect(url.searchParams.get("code_challenge_method")).toBe("S256");
+      expect(url.searchParams.get("redirect_uri")).toBe(`${BASE}/oauth/callback/${name}`);
+      expect(url.href).not.toContain(CLIENT.clientSecret);
+      // Google documents the client credentials in the token request body.
+      const exchange = google.tokenRequests.at(-1)!;
+      expect(exchange.get("grant_type")).toBe("authorization_code");
+      expect(exchange.get("client_secret")).toBe(CLIENT.clientSecret);
+      expect(exchange.get("code_verifier")).toBeTruthy();
+      expect((await connector.status!(ctx())).state).toBe("ok");
+      // Disconnect removes only Connecta's grant: revoking at Google would end
+      // every grant the person gave this client, other connectors' included.
+      const before = google.tokenRequests.length;
+      await connector.disconnectAuth!(ctx());
+      expect(google.tokenRequests).toHaveLength(before);
+      expect(google.api.some((call) => call.url.includes("revoke"))).toBe(false);
+      expect((await connector.status!(ctx())).state).toBe("auth_required");
+      expect(origin).toMatch(/^https:\/\/[a-z]+\.googleapis\.com$/);
+    },
+  );
+
+  it(
+    "INV-3 INV-9: a personal grant reads as its own account, renews a read once, and never resends a write",
+    NODE,
+    async () => {
+      installOwnedTransport();
+      const connector = personal();
+      const registry = makeRegistry([connector]);
+      const keys = await Promise.all(["alice", "bob"].map((id) => identityStorageKey({ namespace: "synthetic", id })));
+      const as = (owner: number) => () =>
+        registry.scoped({ connectorIds: "all", principalKey: keys[owner]! }).contextFor("mail", BASE);
+
+      // Before consent, a read hands back authorization and sends nothing.
+      const unconnected = await labels(connector, as(0)()).catch((error: unknown) => error);
+      expect(classifyCallError(unconnected).code).toBe("downstream_oauth_required");
+      expect(google.api).toEqual([]);
+
+      await connect(connector, as(0), "alice");
+      await connect(connector, as(1), "bob");
+      expect(JSON.stringify(await labels(connector, as(0)()))).toContain("alice label");
+      expect(JSON.stringify(await labels(connector, as(1)()))).toContain("bob label");
+      expect(google.api.map((call) => call.authorization)).toEqual(["Bearer ya29.alice-1", "Bearer ya29.bob-2"]);
+      expect(google.api.every((call) => call.url.startsWith("https://gmail.googleapis.com/gmail/v1/users/me/"))).toBe(
+        true,
+      );
+
+      // A read answered 401 renews once and is replayed once, with the fresh token.
+      google.replies.push(unauthorized);
+      expect(JSON.stringify(await labels(connector, as(0)()))).toContain("alice label");
+      const refresh = google.tokenRequests.at(-1)!;
+      expect(refresh.get("grant_type")).toBe("refresh_token");
+      expect(refresh.get("refresh_token")).toBe("1//alice");
+      expect(google.api.slice(-2).map((call) => call.authorization)).toEqual([
+        "Bearer ya29.alice-1",
+        "Bearer ya29.alice-3",
+      ]);
+
+      // A replay answered 401 again is the grant's own refusal: no third request.
+      const sent = google.api.length;
+      google.replies.push(unauthorized, unauthorized);
+      const twice = await labels(connector, as(0)()).catch((error: unknown) => error);
+      expect(classifyCallError(twice).code).toBe("downstream_oauth_required");
+      expect(google.api).toHaveLength(sent + 2);
+
+      // A write answered 401 is never sent again; its outcome is unknown.
+      const writes = () => google.api.filter((call) => call.method === "POST").length;
+      google.replies.push(unauthorized);
+      const failure = await connector
+        .callTool("create_draft", { body: "Draft text" }, as(1)())
+        .catch((error: unknown) => error);
+      expect(classifyCallError(failure)).toMatchObject({ retryable: false, writeOutcome: "unknown" });
+      expect(writes()).toBe(1);
+      // The renewed grant serves the next deliberate call.
+      expect(JSON.stringify(await labels(connector, as(1)()))).toContain("bob label");
+      expect(google.api.at(-1)!.authorization).toMatch(/^Bearer ya29\.bob-\d+$/);
+      expect(google.api.at(-1)!.authorization).not.toBe("Bearer ya29.bob-2");
+    },
+  );
+
+  it("a shared grant is one connected account for every caller", NODE, async () => {
+    const connector = personal({ authScope: "shared" });
+    expect(connector.authScope).toBe("shared");
+    expect(connector.description).toContain("one connected Google account");
+    expect(JSON.stringify(connector.usageGuide)).toContain("one Google account a maintainer connected");
+    const registry = makeRegistry([connector]);
+    await connect(connector, () => registry.contextFor("mail", BASE), "inbox");
+    for (const id of ["alice", "bob"]) {
+      const key = await identityStorageKey({ namespace: "synthetic", id });
+      const ctx = registry.scoped({ connectorIds: "all", principalKey: key }).contextFor("mail", BASE);
+      expect(JSON.stringify(await labels(connector, ctx))).toContain("inbox label");
+    }
+    expect(new Set(google.api.map((call) => call.authorization))).toEqual(new Set(["Bearer ya29.inbox-1"]));
+  });
+
+  it("words a declined scope for reconnection, not delegation", NODE, async () => {
+    const connector = personal();
+    const registry = makeRegistry([connector]);
+    const key = await identityStorageKey({ namespace: "synthetic", id: "alice" });
+    const ctx = () => registry.scoped({ connectorIds: "all", principalKey: key }).contextFor("mail", BASE);
+    await connect(connector, ctx, "alice");
+    google.replies.push(() =>
+      Response.json(
+        {
+          error: {
+            code: 403,
+            message: "Request had insufficient authentication scopes.",
+            status: "PERMISSION_DENIED",
+            details: [{ reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT" }],
+          },
+        },
+        { status: 403 },
+      ),
+    );
+    const failure = classifyCallError(await labels(connector, ctx()).catch((error: unknown) => error));
+    expect(failure.code).toBe("provider_permission_denied");
+    expect(failure.message).toContain("Connect the account again and allow every requested permission");
+    expect(failure.message).not.toContain("domain-wide delegation");
+  });
+
+  it("Drive's upload host uses the same person's OAuth grant", NODE, async () => {
+    installOwnedTransport();
+    const connector = drive("files", { purpose: "Files", oauth: CLIENT, authScope: "personal" });
+    const registry = makeRegistry([connector]);
+    const key = await identityStorageKey({ namespace: "synthetic", id: "alice" });
+    const ctx = () => registry.scoped({ connectorIds: "all", principalKey: key }).contextFor("files", BASE);
+    await connect(connector, ctx, "alice");
+    await connector.callTool("create_file", { name: "Notes", content: "Hello" }, ctx());
+    expect(google.api.map((call) => `${call.method} ${new URL(call.url).pathname} ${call.authorization}`)).toEqual([
+      "POST /upload/drive/v3/files Bearer ya29.alice-1",
+    ]);
+  });
+
+  it("INV-3: agents never see a personal Google connection", NODE, async () => {
+    const storage = memoryStorage();
+    const connecta = createTestConnecta({
+      connectors: [personal()],
+      agents: ["assistant"],
+      storage,
+      accessTokens: accessTokens(storage),
+      pools: { team: { tools: ["mail"], members: ["agent:assistant"] } },
+      logger: silentLogger,
+    });
+    try {
+      const token = await issueAgentToken(storage, "assistant");
+      const listed = await readJsonRpc(await connecta.fetch(mcpRpc("tools/list", {}, { token, agentPool: "team" })));
+      const call = await readJsonRpc(
+        await connecta.fetch(
+          mcpRpc(
+            "tools/call",
+            { name: "call_tool", arguments: { address: "mail.list_labels", args: {} } },
+            { token, agentPool: "team" },
+          ),
+        ),
+      );
+      expect(JSON.stringify(listed)).not.toContain("mail");
+      expect(call.result.isError).toBe(true);
+      expect(google.api).toEqual([]);
+      expect(google.tokenRequests).toEqual([]);
+    } finally {
+      await connecta.close();
     }
   });
 });

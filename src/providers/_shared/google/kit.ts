@@ -26,7 +26,15 @@ import { callMemo, Operation } from "../../../runtime/call.js";
 import type { ConnectorContext } from "../../../types.js";
 import { providerFailureMessage } from "../../../write-outcome.js";
 import { delegatedToken, forgetDelegatedToken, type DelegatedTokenRequest } from "./service-account.js";
-import { subjectFor, workspaceConnection, type GoogleWorkspaceOptions, type WorkspaceConnection } from "./workspace.js";
+import {
+  isOAuthMode,
+  subjectFor,
+  workspaceConnection,
+  type GoogleConnectionMode,
+  type GoogleWorkspaceOptions,
+  type WorkspaceConnection,
+} from "./workspace.js";
+import type { ApiOAuthConfig } from "../../../connectors/api-connector.js";
 import { tagWorkspaceSubject } from "../../../workspace-subject.js";
 import { googleNamedOperation, requireGoogleIndex } from "./hatch.js";
 import type { OperationIndex } from "../rest/operation-index.js";
@@ -84,9 +92,15 @@ const REASONS = {
  */
 export function googleErrors(
   product: GoogleProduct,
-  options: { readonly standard?: boolean; readonly revisionConflicts?: boolean } = {},
+  options: {
+    readonly standard?: boolean;
+    readonly revisionConflicts?: boolean;
+    /** Which access mode the advice describes; delegation unless OAuth mode says otherwise. */
+    readonly auth?: "delegation" | "oauth";
+  } = {},
 ): VendorErrors<GoogleFacts> {
   const { provider, api, scopes, notFound } = product;
+  const oauth = options.auth === "oauth";
   const has = (facts: GoogleFacts, names: readonly string[]) => names.some((name) => facts.reasons.includes(name));
   return {
     provider,
@@ -121,7 +135,9 @@ export function googleErrors(
           ? {
               code: "auth_required",
               words: (detail) =>
-                `${detail} Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.`,
+                oauth
+                  ? `${detail} Google rejected the connected account's token. The person may have removed this app's access in their Google Account; connect the account again.`
+                  : `${detail} Google rejected a freshly minted delegated token. The domain-wide delegation grant or the service account may have been revoked.`,
             }
           : undefined,
       ({ facts }) =>
@@ -130,7 +146,7 @@ export function googleErrors(
               code: "connector_call_failed",
               retryable: false,
               words: (detail) =>
-                `${detail} The ${api} is not enabled in the service account's Google Cloud project; an operator enables it there.`,
+                `${detail} The ${api} is not enabled in the ${oauth ? "OAuth client's" : "service account's"} Google Cloud project; an operator enables it there.`,
             }
           : undefined,
       ({ status, facts, retryAfterMs }) =>
@@ -147,7 +163,9 @@ export function googleErrors(
           ? {
               code: "provider_permission_denied",
               words: (detail) =>
-                `${detail} The delegated token lacks a scope this call needs. The Admin console's domain-wide delegation entry must list exactly: ${scopes.join(",")}.`,
+                oauth
+                  ? `${detail} The connected Google account did not grant a scope this call needs. Connect the account again and allow every requested permission; the OAuth client must request: ${scopes.join(" ")}.`
+                  : `${detail} The delegated token lacks a scope this call needs. The Admin console's domain-wide delegation entry must list exactly: ${scopes.join(",")}.`,
             }
           : undefined,
       ({ facts }) =>
@@ -312,20 +330,111 @@ export function googleSafety(provider: string, operations: readonly VendorOperat
 
 // --- The delegated grant -----------------------------------------------------------
 
-const connections = new WeakMap<object, WorkspaceConnection>();
+const connections = new WeakMap<object, GoogleConnectionMode>();
 
 /**
  * The checked shared options, parsed once per construction: every definition
  * callback receives the same validated options object, and the key is
  * decoded and checked only the first time.
  */
-export function workspaceOf(factory: string, options: Readonly<GoogleWorkspaceOptions>): WorkspaceConnection {
+function workspaceOf(factory: string, options: Readonly<GoogleWorkspaceOptions>): GoogleConnectionMode {
   let connection = connections.get(options);
   if (!connection) {
     connection = workspaceConnection(factory, options as GoogleWorkspaceOptions);
     connections.set(options, connection);
   }
   return connection;
+}
+
+/** True when this connection's options select OAuth mode; validates them on first use. */
+function googleOAuthMode(factory: string, options: Readonly<GoogleWorkspaceOptions>): boolean {
+  return isOAuthMode(workspaceOf(factory, options));
+}
+
+/** The delegated machine grant in delegation mode; undefined in OAuth mode, whose grant core owns. */
+export function googleDelegatedGrant(
+  product: GoogleProduct,
+  factory: string,
+  options: Readonly<GoogleWorkspaceOptions>,
+) {
+  const connection = workspaceOf(factory, options);
+  return isOAuthMode(connection) ? undefined : googleGrant(product, connection);
+}
+
+/** Google's OAuth 2.0 endpoints for web-server applications. */
+const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+
+/**
+ * OAuth mode's downstream grant: the product's exact scopes, its API origins
+ * and nothing else; undefined in delegation mode. No revocation endpoint:
+ * revoking at Google ends every grant the person gave this client, other
+ * connectors' included, so Disconnect removes only Connecta's own grant.
+ */
+export function googleOAuth(
+  product: GoogleProduct,
+  factory: string,
+  options: Readonly<GoogleWorkspaceOptions>,
+  baseUrls: readonly string[],
+): ApiOAuthConfig | undefined {
+  const connection = workspaceOf(factory, options);
+  if (!isOAuthMode(connection)) return undefined;
+  return {
+    authorizationEndpoint: GOOGLE_AUTHORIZATION_ENDPOINT,
+    tokenEndpoint: GOOGLE_TOKEN_ENDPOINT,
+    clientId: connection.client.clientId,
+    clientSecret: connection.client.clientSecret,
+    // Google documents client credentials in the token request body.
+    tokenEndpointAuthMethod: "client_secret_post",
+    scope: product.scopes.join(" "),
+    apiOrigins: [...new Set(baseUrls.map((url) => new URL(url).origin))],
+  };
+}
+
+/** Grant ownership in OAuth mode; delegation leaves the connector's default. */
+export function googleAuthScope(factory: string) {
+  return (options: Readonly<GoogleWorkspaceOptions>): "personal" | "shared" | undefined => {
+    const connection = workspaceOf(factory, options);
+    return isOAuthMode(connection) ? connection.authScope : undefined;
+  };
+}
+
+/** Whose account a connection's description names, by access mode. */
+export function googleActor(factory: string, options: Readonly<GoogleWorkspaceOptions>): string {
+  const connection = workspaceOf(factory, options);
+  if (!isOAuthMode(connection)) return "the signed-in Workspace user";
+  return connection.authScope === "personal"
+    ? "each person's own connected Google account"
+    : "one connected Google account";
+}
+
+/**
+ * OAuth mode's connection context line: whose Google account every call uses.
+ * Undefined in delegation mode, whose products keep their own wording.
+ */
+export function googleOAuthContext(factory: string, options: Readonly<GoogleWorkspaceOptions>): string | undefined {
+  const connection = workspaceOf(factory, options);
+  if (!isOAuthMode(connection)) return undefined;
+  return connection.authScope === "personal"
+    ? "Each signed-in person uses the Google account they connected themselves; agents cannot use this connection. No argument selects an account. A person who has not connected yet gets an authorization link from the failed call."
+    : "Every caller uses the one Google account a maintainer connected for this connection. No argument selects an account. After an authorization failure, a maintainer reconnects it.";
+}
+
+/**
+ * A product's failure table worded for this connection's access mode. The
+ * product's own table (its meanings included) stands in delegation mode; OAuth
+ * mode keeps everything but the advice that names delegation.
+ */
+export function googleConnectionErrors(
+  product: GoogleProduct,
+  factory: string,
+  errors: VendorErrors<GoogleFacts>,
+  flags: { readonly revisionConflicts?: boolean } = {},
+) {
+  const oauth = googleErrors(product, { standard: true, ...flags, auth: "oauth" });
+  const worded: VendorErrors<GoogleFacts> = { ...errors, classify: oauth.classify ?? [] };
+  return (options: Readonly<GoogleWorkspaceOptions>): VendorErrors<GoogleFacts> =>
+    googleOAuthMode(factory, options) ? worded : errors;
 }
 
 /**
@@ -401,10 +510,14 @@ export function googleGrant(product: GoogleProduct, connection: WorkspaceConnect
  */
 export const GOOGLE_GRANT_RENEWAL: GrantRenewal = { replayRejection: "answer", writeRenewal: "discard" };
 
-/** Tag the built connector with whose account it acts as (#837, decisions/0006). */
+/**
+ * Tag the built connector with whose account it acts as (#837, decisions/0006).
+ * OAuth mode has no subject: core's grant ownership decides whose account.
+ */
 export function tagWorkspace(factory: string) {
   return (connector: object, options: Readonly<GoogleWorkspaceOptions>): void => {
-    tagWorkspaceSubject(connector, workspaceOf(factory, options).subject);
+    const connection = workspaceOf(factory, options);
+    if (!isOAuthMode(connection)) tagWorkspaceSubject(connector, connection.subject);
   };
 }
 
