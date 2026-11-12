@@ -952,9 +952,10 @@ can mint a native URI.
 Data-only `{ format, data }` results and paged handles fail `invalid_args`:
 the message explains that native content is absent or not inline. Return a
 data value, or read a paged handle with `connecta.result` and reduce it first.
-An emit refusal for a retained write result includes its result ID and a
+Either refusal for a retained write result includes its result ID and a
 `connecta.result` paging call usable in a new program, including when the guest
-received inline data through automatic transfer. Do not repeat the write for
+received inline data through automatic transfer. (The separate refusal for an
+unforwardable `contentResult` only says to page `result.contentResult`.) Do not repeat the write for
 output. Retention still follows `R4a`, including its refusal note when sealing
 cannot publish the bytes.
 
