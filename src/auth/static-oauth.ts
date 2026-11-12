@@ -330,6 +330,12 @@ class StaticOAuthProvider extends KvOAuthProvider {
    * checks accounts: learns and admits the account before any token is saved.
    */
   accountCheck: ((tokens: { access_token: string; id_token?: string }) => Promise<string>) | undefined;
+  /**
+   * @internal A reconnect that keeps the live grant: the SDK is shown no
+   * tokens, so it starts consent in the current epoch instead of reporting
+   * the grant healthy, and the grant is replaced only by a verified exchange.
+   */
+  consentOnly = false;
 
   constructor(
     connectorId: string,
@@ -439,9 +445,13 @@ class StaticOAuthProvider extends KvOAuthProvider {
    * throws before anything is written, so its tokens are never stored.
    */
   declare saveTokens: KvOAuthProvider["saveTokens"];
+  declare tokens: KvOAuthProvider["tokens"];
 
   static {
     authMethods(StaticOAuthProvider.prototype, {
+      tokens: function (this: StaticOAuthProvider, ...args: Parameters<KvOAuthProvider["tokens"]>) {
+        return this.consentOnly ? Effect.succeed(undefined) : authCall(KvOAuthProvider.prototype.tokens, args, this);
+      },
       saveTokens: function (this: StaticOAuthProvider, ...args: Parameters<KvOAuthProvider["saveTokens"]>) {
         return authFlow<void>(
           function* (this: StaticOAuthProvider) {
@@ -1208,7 +1218,21 @@ export function staticOAuth(
           ReturnType<StaticOAuthProvider["peekGrant"]>
         >;
         const refused = observed.observation?.outcome === "refused";
-        if (opts?.force || disconnected || refused || rejectedScopes.has(scopeOf(original))) {
+        // A connector that checks accounts reconnects without removing the
+        // grant it holds: consent starts in the live epoch, and only an exchange
+        // whose account is admitted replaces the tokens and label. A refused or
+        // abandoned reconnect leaves the working grant as it was; a Disconnect
+        // meanwhile replaces the epoch, and the pending consent cannot complete.
+        const keepGrant =
+          opts?.force === true &&
+          settings.account !== undefined &&
+          observed.tokens !== undefined &&
+          observed.issuer === settings.identity &&
+          !refused &&
+          !rejectedScopes.has(scopeOf(original)) &&
+          !provider.isOperatorDisconnectedEpoch(observed.epoch);
+        if (keepGrant) provider.consentOnly = true;
+        else if (opts?.force || disconnected || refused || rejectedScopes.has(scopeOf(original))) {
           const fence =
             !opts?.force && !disconnected && refused
               ? { epoch: observed.epoch, revision: observed.observation!.revision }
@@ -1232,7 +1256,8 @@ export function staticOAuth(
         try {
           // A grant from a since-repointed token endpoint reads as absent here,
           // and the consent this start begins replaces it.
-          (yield authInvoke(provider, "beginFlow", [])) as string;
+          // Kept, the grant's epoch must still be the one peeked above.
+          (yield authInvoke(provider, "beginFlow", keepGrant ? [observed.epoch] : [])) as string;
           if (
             (yield authInvoke(provider, "tokens", [issuerContext])) as
               | {
@@ -1362,6 +1387,9 @@ export function staticOAuth(
             };
           }
           (yield authInvoke(provider, "bindFlow", [])) as void;
+          // A reconnect may run beside a working grant (startAuth's keepGrant):
+          // a refused code must not invalidate the tokens this exchange replaces.
+          if (restriction) provider.seen = { ...provider.seen, tokens: undefined };
           const result = (yield authCall(runAuth, [
             provider,
             ctx,

@@ -36,12 +36,27 @@ The Google kit supplies `identify` and exposes `allow` as its `accounts` option.
   verifier already serves Access and Vercel. An address rule needs
   `email_verified`. A domain rule matches only `hd`, because a consumer account
   can carry a verified address at any domain.
-- **Person keys are bare principal ids, checked at construction.** Object keys
-  cannot hold `{ namespace, id }`. Bare ids resolve as pool members do, in the
-  deployment's one interactive namespace. `createConnecta` refuses them
-  otherwise, so the callback can match on `principal.id`. The callback's browser
-  identity is always interactive. `"*"` covers everyone else, and a person's own
-  entry replaces it.
+- **People resolve to `{ namespace, id }` and match on both.** A map key is a
+  bare principal id. A list of `{ person, accounts }` also takes
+  `{ namespace, id }`, the forms pool members use. `createConnecta` resolves bare
+  ids in the deployment's one interactive namespace, as it resolves members.
+  The callback compares namespace and id. Matching on the id alone would let a
+  provider that admits the same id in another namespace inherit someone else's
+  rules and see their expected account. Before resolution, a bare id matches
+  nobody. A connector resolved differently by a second deployment is refused.
+  `"*"` covers everyone else, and a person's own entry replaces it.
+- **Reconnect keeps the working grant until an admitted exchange replaces it.**
+  Restart elsewhere replaces the epoch before consent. Here a refused account
+  would leave the person with no grant, and so would a reconnect they abandoned.
+  For a live, unrefused grant, a forced start therefore begins consent in the
+  current epoch with the tokens hidden from the SDK. The exchange's ordinary
+  compare-and-set then replaces tokens and label together. A Disconnect still
+  replaces the epoch, so the pending consent cannot complete or resurrect
+  anything. This is scoped to `api()` OAuth with `oauth.account`. `remoteMcp()`
+  restarts must refetch discovery and re-register (DCR/CIMD), and fence older
+  consents, so they keep the replace-first behavior. Older consent links in the
+  same epoch stay claimable during a kept-grant reconnect; each is still
+  account-checked.
 - **The page names the expected account, never the actual one.** The expected
   account is deployment config shown only to the person the callback already
   verified. Echoing the account used would show a stranger's address on a

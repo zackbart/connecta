@@ -1181,15 +1181,24 @@ gmail("inbox", { purpose: "The shared support inbox", oauth, authScope: "shared"
 
 A rule is an address or `{ domain }`; a list allows any one of its rules. For
 `authScope: "shared"`, `accounts` is the one account's rules. For `"personal"`
-it is rules for everyone (`accounts: { domain: "example.com" }`), or a map from
-person to rules. A key is a bare principal id, as pool `members` name people,
-resolved in the namespace of the deployment's one interactive auth provider;
-`"*"` covers everyone without their own entry. A person's own entry replaces
-`"*"` for them, and a person with no entry and no `"*"` cannot connect.
-Construction refuses a malformed address or domain, an empty map or list, an
-`agent:` or namespaced key, a person map on a shared connection, `accounts` in
-delegation mode, and, at `createConnecta`, person keys without exactly one
-interactive auth provider.
+it is rules for everyone (`accounts: { domain: "example.com" }`), a map from
+person to rules, or a list of `{ person, accounts }`. A map key is a bare
+principal id, resolved like a pool member in the namespace of the deployment's
+one interactive auth provider. A list's `person` also takes
+`{ namespace, id }`, as pool `members` do. `"*"` covers everyone without their
+own entry. A person matches on namespace and id both: the same id admitted in
+another namespace is someone else, and gets `"*"` or nothing. A person's own
+entry replaces `"*"` for them, and a person with no entry and no `"*"` cannot
+connect. Construction refuses:
+
+- a malformed address or domain;
+- an empty map or list;
+- an `agent:` key or a `:` in a map key;
+- a list that mixes rules with `{ person, accounts }`;
+- a repeated person;
+- a person map on a shared connection;
+- `accounts` in delegation mode;
+- at `createConnecta`, a bare id without exactly one interactive auth provider.
 
 With `accounts` set, consent also requests `openid email` and sends
 `prompt=select_account consent`, so a person signed in to several Google
@@ -1204,7 +1213,11 @@ verified address at that domain does not match. An account that does not match
 stores no grant and revokes nothing at Google. The callback page tells the person which
 account(s) to use, never which one they used, and a person with no entry is told
 to ask an operator. A token that cannot be verified also stores nothing. Every
-reconnect is checked again. The verified address is kept with the grant and
+reconnect is checked again. Reconnect keeps the working grant while consent is
+pending, and only an admitted account replaces it. A refused or abandoned
+reconnect leaves the grant and its label as they were. A Disconnect meanwhile
+still ends the grant, and the pending consent can no longer complete. The
+verified address is kept with the grant and
 shown as the connected account on the member page and the connector's
 Connection tab (`ConnectorStatus.account`); activity never records it.
 

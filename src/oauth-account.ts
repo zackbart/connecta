@@ -26,12 +26,27 @@ export type OAuthAccountRule = string | { readonly domain: string };
 export type OAuthAccountRules = OAuthAccountRule | readonly OAuthAccountRule[];
 
 /**
- * Personal grants: rules for everyone, or a map from a person to their rules.
- * A key is a bare principal id, resolved in the namespace of the deployment's
- * one interactive auth provider exactly as a pool member is; `"*"` is everyone
- * without their own entry. A person with no entry and no `"*"` cannot connect.
+ * One person's entry in the list form: `person` is a principal reference as
+ * pool members name people (a bare principal id, or `{ namespace, id }`), or
+ * `"*"` for everyone without their own entry.
  */
-export type OAuthPersonalAccounts = OAuthAccountRules | Readonly<Record<string, OAuthAccountRules>>;
+export interface OAuthPersonAccounts {
+  readonly person: string | Readonly<{ namespace: string; id: string }>;
+  readonly accounts: OAuthAccountRules;
+}
+
+/**
+ * Personal grants: rules for everyone, a map from person to rules, or a list
+ * of `{ person, accounts }`. A map key is a bare principal id, resolved in the
+ * namespace of the deployment's one interactive auth provider exactly as a
+ * pool member is; the list form also takes `{ namespace, id }`. `"*"` is
+ * everyone without their own entry. A person matches on namespace and id
+ * both; one with no entry and no `"*"` cannot connect.
+ */
+export type OAuthPersonalAccounts =
+  | OAuthAccountRules
+  | Readonly<Record<string, OAuthAccountRules>>
+  | readonly OAuthPersonAccounts[];
 
 /** What the downstream attests about the account a code exchange signed into. */
 export interface OAuthAccount {
@@ -76,8 +91,14 @@ export interface AccountRestriction {
   readonly identify: ApiOAuthAccountCheck["identify"];
   /** Rules for everyone (shared, or personal without per-person entries, or `"*"`). */
   readonly everyone?: readonly ParsedRule[];
-  /** Personal per-person rules, by bare principal id. */
-  readonly people?: ReadonlyMap<string, readonly ParsedRule[]>;
+  /** Personal per-person rules, as configured; resolved by `createConnecta`. */
+  readonly people?: readonly PersonRules[];
+}
+
+/** One person's rules: a bare id (needing the deployment's namespace) or an explicit reference. */
+interface PersonRules {
+  readonly person: string | { readonly namespace: string; readonly id: string };
+  readonly rules: readonly ParsedRule[];
 }
 
 const EVERYONE = "*";
@@ -95,8 +116,41 @@ function isDomainRule(value: unknown): value is { domain: unknown } {
   return isPlainRecord(value) && Object.keys(value).length === 1 && Object.hasOwn(value, "domain");
 }
 
+/** `{ person, accounts }` and nothing else. */
+function isPersonEntry(value: unknown): value is { person: unknown; accounts: unknown } {
+  return (
+    isPlainRecord(value) &&
+    Object.keys(value).length === 2 &&
+    Object.hasOwn(value, "person") &&
+    Object.hasOwn(value, "accounts")
+  );
+}
+
 function isRules(value: unknown): boolean {
-  return typeof value === "string" || Array.isArray(value) || isDomainRule(value);
+  return typeof value === "string" || (Array.isArray(value) && !value.some(isPersonEntry)) || isDomainRule(value);
+}
+
+/** A person reference as pool members take it, with `"*"`; never an agent. */
+function parsePerson(value: unknown, at: string): PersonRules["person"] {
+  if (typeof value === "string") {
+    if (value === EVERYONE) return value;
+    if (value.startsWith("agent:"))
+      throw new ConfigError(`${at} names an agent; agents never use a personal connection.`);
+    if (value.includes(":") || !validIdentityReference({ namespace: "x", id: value })) {
+      throw new ConfigError(`${at} must be a bare principal id without ":", { namespace, id }, or "*".`);
+    }
+    return value;
+  }
+  if (
+    isPlainRecord(value) &&
+    Object.keys(value).length === 2 &&
+    typeof value.namespace === "string" &&
+    typeof value.id === "string" &&
+    validIdentityReference({ namespace: value.namespace, id: value.id })
+  ) {
+    return Object.freeze({ namespace: value.namespace, id: value.id });
+  }
+  throw new ConfigError(`${at} must be a bare principal id without ":", { namespace, id }, or "*".`);
 }
 
 function parseRule(value: unknown, path: string): ParsedRule {
@@ -152,57 +206,103 @@ export function allowedAccounts(
   if (authScope === "shared") {
     throw new ConfigError(`${at} for a shared connection is the one account's rules, not a map from person.`);
   }
-  if (!isPlainRecord(allow)) throw new ConfigError(`${at} must be rules or a map from person to rules.`);
-  const keys = Object.keys(allow);
-  if (keys.length === 0) throw new ConfigError(`${at} is empty; list at least one person or "*".`);
+  const entries: Array<[unknown, unknown, string]> = [];
+  if (Array.isArray(allow)) {
+    if (!allow.every(isPersonEntry)) {
+      throw new ConfigError(`${at} must list either rules or { person, accounts } entries, not both.`);
+    }
+    allow.forEach((entry, index) => entries.push([entry.person, entry.accounts, `${at}[${index}]`]));
+  } else if (isPlainRecord(allow)) {
+    for (const key of Object.keys(allow)) entries.push([key, allow[key], `${at}.${key}`]);
+  } else {
+    throw new ConfigError(`${at} must be rules, a map from person to rules, or a list of { person, accounts }.`);
+  }
+  if (entries.length === 0) throw new ConfigError(`${at} is empty; list at least one person or "*".`);
   let everyone: readonly ParsedRule[] | undefined;
-  const people = new Map<string, readonly ParsedRule[]>();
-  for (const key of keys) {
-    const rules = parseRules(allow[key], `${at}.${key}`);
-    if (key === EVERYONE) {
-      everyone = rules;
-      continue;
-    }
-    if (key.startsWith("agent:")) {
-      throw new ConfigError(`${at}.${key} names an agent; agents never use a personal connection.`);
-    }
-    if (key.includes(":") || !validIdentityReference({ namespace: "x", id: key })) {
-      throw new ConfigError(`${at} keys must be bare principal ids without ":", or "*".`);
-    }
-    people.set(key, rules);
+  const people: PersonRules[] = [];
+  const seen = new Set<string>();
+  for (const [ref, accounts, path] of entries) {
+    const person = parsePerson(ref, Array.isArray(allow) ? `${path}.person` : path);
+    const rules = parseRules(accounts, Array.isArray(allow) ? `${path}.accounts` : path);
+    const key = typeof person === "string" ? `bare\n${person}` : `ref\n${person.namespace}\n${person.id}`;
+    if (seen.has(key)) throw new ConfigError(`${path} repeats an earlier person.`);
+    seen.add(key);
+    if (person === EVERYONE) everyone = rules;
+    else people.push(Object.freeze({ person, rules }));
   }
   return {
     ...(everyone ? { everyone } : {}),
-    ...(people.size ? { people } : {}),
+    ...(people.length ? { people: Object.freeze(people) } : {}),
   };
 }
 
+const principalKey = (namespace: string, id: string) => `${namespace}\n${id}`;
+
+/** Each restriction's people by `{ namespace, id }`, once `createConnecta` resolved them. */
+const resolutions = new WeakMap<AccountRestriction, ReadonlyMap<string, readonly ParsedRule[]>>();
+
 /**
- * Bare person keys resolve in the namespace of the deployment's one
- * interactive auth provider, as pool members do. Called by `createConnecta`
- * with the deployment's interactive namespaces; throws when they cannot.
+ * Resolve person keys to `{ namespace, id }`, as pool members resolve: a bare
+ * id in the namespace of the deployment's one interactive auth provider. Called
+ * by `createConnecta`; throws when a bare id cannot resolve, when two entries
+ * name one person, or when the same connector was resolved differently for
+ * another deployment.
  */
-export function assertAccountPeopleResolve(
+export function resolveAccountPeople(
   restriction: AccountRestriction,
   interactiveNamespaces: ReadonlyArray<string | undefined>,
   path: string,
 ): void {
   if (!restriction.people) return;
-  if (interactiveNamespaces.length !== 1 || interactiveNamespaces[0] === undefined) {
+  const resolved = new Map<string, readonly ParsedRule[]>();
+  for (const { person, rules } of restriction.people) {
+    let key: string;
+    if (typeof person === "string") {
+      if (interactiveNamespaces.length !== 1 || interactiveNamespaces[0] === undefined) {
+        throw new ConfigError(
+          `${path} names a person by bare principal id, which needs exactly one interactive auth provider with an activityActorNamespace; write { namespace, id }.`,
+        );
+      }
+      key = principalKey(interactiveNamespaces[0], person);
+    } else key = principalKey(person.namespace, person.id);
+    if (resolved.has(key)) throw new ConfigError(`${path} names one person twice.`);
+    resolved.set(key, rules);
+  }
+  const earlier = resolutions.get(restriction);
+  if (earlier && [...resolved].some(([key, rules]) => earlier.get(key) !== rules)) {
     throw new ConfigError(
-      `${path} names people by bare principal id, which needs exactly one interactive auth provider with an activityActorNamespace.`,
+      `${path} resolves differently in another deployment; give each deployment its own connector.`,
     );
   }
+  resolutions.set(restriction, resolved);
 }
 
-/** The rules that apply to the person connecting, or undefined when none do. */
+/**
+ * The people a restriction names. Before `createConnecta` resolves it, only
+ * explicit `{ namespace, id }` entries count: a bare id matches nobody.
+ */
+function peopleOf(restriction: AccountRestriction): ReadonlyMap<string, readonly ParsedRule[]> {
+  const resolved = resolutions.get(restriction);
+  if (resolved) return resolved;
+  const explicit = new Map<string, readonly ParsedRule[]>();
+  for (const { person, rules } of restriction.people ?? [])
+    if (typeof person !== "string") explicit.set(principalKey(person.namespace, person.id), rules);
+  return explicit;
+}
+
+/**
+ * The rules that apply to the person connecting, or undefined when none do.
+ * A person matches on namespace and id both: the same id in another namespace
+ * is someone else, who gets `"*"` or nothing.
+ */
 function rulesFor(
   restriction: AccountRestriction,
   identity: Readonly<AuthenticatedIdentity> | undefined,
 ): readonly ParsedRule[] | undefined {
   if (!restriction.people) return restriction.everyone;
   const principal = identity?.agent === undefined ? identity?.principal : undefined;
-  return (principal && restriction.people.get(principal.id)) ?? restriction.everyone;
+  const own = principal ? peopleOf(restriction).get(principalKey(principal.namespace, principal.id)) : undefined;
+  return own ?? restriction.everyone;
 }
 
 /** Whether one verified account satisfies one rule; case-insensitive. */

@@ -69,7 +69,13 @@ import { SLIDES_SCOPES } from "../src/providers/slides/index.js";
 import { FORMS_SCOPES } from "../src/providers/forms/index.js";
 import { identityStorageKey } from "../src/identity.js";
 import { workspaceSubjectOf } from "../src/workspace-subject.js";
-import { accountRefusalOf, OAuthAccountRefusedError, OAuthAccountUnverifiedError } from "../src/oauth-account.js";
+import {
+  accountRefusalOf,
+  accountRestrictionOf,
+  OAuthAccountRefusedError,
+  OAuthAccountUnverifiedError,
+  resolveAccountPeople,
+} from "../src/oauth-account.js";
 import { GOOGLE_JWKS_URL } from "../src/providers/_shared/google/account.js";
 import { providerCallFailure, settleWrite, classifyWriteOutcome } from "../src/write-outcome.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -3086,6 +3092,13 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
   });
 
   describe("accounts: which Google account an OAuth connection may bind (#1381)", () => {
+    /** A personal connection whose bare person keys resolve in "synthetic", as createConnecta resolves them. */
+    const restricted = (overrides: Record<string, unknown> = {}) => {
+      const connector = personal(overrides);
+      const restriction = accountRestrictionOf(connector);
+      if (restriction) resolveAccountPeople(restriction, ["synthetic"], "test");
+      return connector;
+    };
     const encoder = new TextEncoder();
     const b64url = (bytes: Uint8Array | string) =>
       btoa(String.fromCharCode(...(typeof bytes === "string" ? encoder.encode(bytes) : bytes)))
@@ -3159,7 +3172,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     };
 
     it("binds an allowed account, keeps it as the grant's label, and adds only openid and email", NODE, async () => {
-      const connector = personal({ accounts: { alice: "Alice@Org.Example" } });
+      const connector = restricted({ accounts: { alice: "Alice@Org.Example" } });
       const registry = makeRegistry([connector]);
       const alice = await asPerson(registry, "alice");
       await signsInAs("alice", "alice@ORG.example");
@@ -3175,7 +3188,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       expect(google.tokenRequests.at(-1)!.get("grant_type")).toBe("refresh_token");
       expect((await connector.status!(alice())).account).toBe("alice@org.example");
       // Without accounts, consent asks for the product's scopes alone and keeps no label.
-      const open = personal();
+      const open = restricted();
       const openRegistry = makeRegistry([open]);
       const bob = await asPerson(openRegistry, "bob");
       await signsInAs("bob", "bob@org.example");
@@ -3186,7 +3199,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     });
 
     it("refuses another account, stores nothing, and names only the expected one", NODE, async () => {
-      const connector = personal({ accounts: { alice: ["alice@org.example", { domain: "alt.example" }] } });
+      const connector = restricted({ accounts: { alice: ["alice@org.example", { domain: "alt.example" }] } });
       const registry = makeRegistry([connector]);
       const alice = await asPerson(registry, "alice");
       await signsInAs("alice", "mallory@org.example", { hd: "org.example" });
@@ -3203,7 +3216,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     });
 
     it('refuses a person with no entry, and "*" covers everyone without one', NODE, async () => {
-      const listed = personal({ accounts: { alice: "alice@org.example" } });
+      const listed = restricted({ accounts: { alice: "alice@org.example" } });
       const registry = makeRegistry([listed]);
       const bob = await asPerson(registry, "bob");
       await signsInAs("bob", "alice@org.example");
@@ -3212,7 +3225,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       expect((refusal as OAuthAccountRefusedError).expected).toBeUndefined();
       expect((await listed.status!(bob())).state).toBe("auth_required");
 
-      const everyone = personal({ accounts: { alice: "alice@org.example", "*": { domain: "org.example" } } });
+      const everyone = restricted({ accounts: { alice: "alice@org.example", "*": { domain: "org.example" } } });
       const everyoneRegistry = makeRegistry([everyone]);
       const carol = await asPerson(everyoneRegistry, "carol");
       await signsInAs("carol", "Carol@Org.Example", { hd: "ORG.example" });
@@ -3225,7 +3238,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     });
 
     it("matches a domain rule on Google's hosted-domain claim, never the address alone", NODE, async () => {
-      const connector = personal({ accounts: { domain: "org.example" } });
+      const connector = restricted({ accounts: { domain: "org.example" } });
       const registry = makeRegistry([connector]);
       const dave = await asPerson(registry, "dave");
       // A consumer account with a verified address at the domain has no hd.
@@ -3253,7 +3266,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       ["an expired token", async () => signed(claimsFor("alice@org.example", { exp: now() - 600, iat: now() - 4000 }))],
       ["an unverified address", async () => signed(claimsFor("alice@org.example", { email_verified: false }))],
     ])("refuses %s and stores nothing", NODE, async (_name, token) => {
-      const connector = personal({ accounts: { alice: "alice@org.example" } });
+      const connector = restricted({ accounts: { alice: "alice@org.example" } });
       const registry = makeRegistry([connector]);
       const alice = await asPerson(registry, "alice");
       const idToken = await token();
@@ -3264,31 +3277,94 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       expect(google.api).toEqual([]);
     });
 
-    it("re-checks on reconnect and replaces the label", NODE, async () => {
-      const connector = personal({ accounts: { alice: ["alice@org.example", "alice@alt.example"] } });
+    it("re-checks a reconnect, which replaces the grant only once its account is admitted", NODE, async () => {
+      const connector = restricted({ accounts: { alice: ["alice@org.example", "alice@alt.example"] } });
       const registry = makeRegistry([connector]);
       const alice = await asPerson(registry, "alice");
       await signsInAs("alice", "alice@org.example");
       await connect(connector, alice, "alice");
-      const reconnect = async () => {
+      const startReconnect = async () => {
         const started = await connector.startAuth!(alice(), { force: true });
-        const url = new URL(started.authorizationUrl!);
+        expect(started.state).toBe("auth_required");
+        const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
         const code = `4/code-alice-${google.codes.size}`;
         google.codes.set(code, "alice");
-        const state = url.searchParams.get("state")!;
+        return { state, code };
+      };
+      const finish = async ({ state, code }: { state: string; code: string }) => {
         expect(await connector.verifyState!(state, alice())).toBe(true);
         await connector.finishAuth!(code, alice(), new URLSearchParams({ code, state }));
       };
-      await signsInAs("alice", "alice@alt.example");
-      await reconnect();
-      expect((await connector.status!(alice())).account).toBe("alice@alt.example");
+      const bound = { state: "ok", account: "alice@org.example" };
+
+      // Pending and abandoned: the working grant and its label stay.
+      await startReconnect();
+      expect(await connector.status!(alice())).toEqual(bound);
+      expect(JSON.stringify(await labels(connector, alice()))).toContain("alice label");
+
+      // Refused: nothing replaces the grant, which still serves calls with its own token.
       await signsInAs("alice", "mallory@org.example");
-      expect(await refusalOf(reconnect())).toBeInstanceOf(OAuthAccountRefusedError);
+      expect(await refusalOf(finish(await startReconnect()))).toBeInstanceOf(OAuthAccountRefusedError);
+      expect(await connector.status!(alice())).toEqual(bound);
+      await labels(connector, alice());
+      expect(google.api.at(-1)!.authorization).toBe("Bearer ya29.alice-1");
+
+      // Admitted: the exchange replaces the tokens and the label together.
+      await signsInAs("alice", "alice@alt.example");
+      await finish(await startReconnect());
+      expect(await connector.status!(alice())).toEqual({ state: "ok", account: "alice@alt.example" });
+      await labels(connector, alice());
+      expect(google.api.at(-1)!.authorization).not.toBe("Bearer ya29.alice-1");
+
+      // A Disconnect while a reconnect is pending wins: its consent cannot complete.
+      const pending = await startReconnect();
+      await connector.disconnectAuth!(alice());
+      expect(await connector.verifyState!(pending.state, alice())).toBe(false);
+      await connector.finishAuth!(
+        pending.code,
+        alice(),
+        new URLSearchParams({ code: pending.code, state: pending.state }),
+      ).catch(() => undefined);
       expect((await connector.status!(alice())).state).toBe("auth_required");
+      expect(await connector.status!(alice())).not.toHaveProperty("account");
+    });
+
+    it("matches a person on namespace and id both", NODE, async () => {
+      const connector = restricted({
+        accounts: [{ person: { namespace: "synthetic", id: "alice" }, accounts: "alice@org.example" }],
+      });
+      const registry = makeRegistry([connector]);
+      // The same id in another namespace is someone else, with no entry.
+      const principalKey = await identityStorageKey({ namespace: "elsewhere", id: "alice" });
+      const impostor = () =>
+        registry
+          .scoped({
+            connectorIds: "all",
+            principalKey,
+            caller: {
+              identity: {
+                actor: { kind: "test", id: "alice", namespace: "elsewhere" },
+                principal: { namespace: "elsewhere", id: "alice" },
+                interactive: true,
+              },
+              authenticated: true,
+            },
+          })
+          .contextFor("mail", BASE);
+      await signsInAs("impostor", "alice@org.example");
+      const refusal = await refusalOf(connect(connector, impostor, "impostor"));
+      expect(refusal).toBeInstanceOf(OAuthAccountRefusedError);
+      expect((refusal as OAuthAccountRefusedError).expected).toBeUndefined();
+      expect((await connector.status!(impostor())).state).toBe("auth_required");
+      // The explicit reference admits its own person.
+      const alice = await asPerson(registry, "alice");
+      await signsInAs("alice", "alice@org.example");
+      await connect(connector, alice, "alice");
+      expect((await connector.status!(alice())).account).toBe("alice@org.example");
     });
 
     it("restricts a shared connection to its one account", NODE, async () => {
-      const connector = personal({ authScope: "shared", accounts: "inbox@org.example" });
+      const connector = restricted({ authScope: "shared", accounts: "inbox@org.example" });
       const registry = makeRegistry([connector]);
       await signsInAs("inbox", "other@org.example");
       expect(await refusalOf(connect(connector, () => registry.contextFor("mail", BASE), "inbox"))).toBeInstanceOf(
@@ -3309,7 +3385,22 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
         ["a bad domain", { accounts: { domain: "@org.example" } }, /accounts\.domain to be a domain name/],
         ["an empty list", { accounts: { alice: [] } }, /accounts\.alice is empty/],
         ["an agent", { accounts: { "agent:bot": "bot@org.example" } }, /agents never use a personal connection/],
-        ["a namespaced key", { accounts: { "ns:alice": "alice@org.example" } }, /bare principal ids/],
+        ["a namespaced map key", { accounts: { "ns:alice": "alice@org.example" } }, /bare principal id/],
+        [
+          "a list mixing rules and people",
+          { accounts: ["alice@org.example", { person: "bob", accounts: "bob@org.example" }] },
+          /either rules or \{ person, accounts \} entries/,
+        ],
+        [
+          "a repeated person",
+          {
+            accounts: [
+              { person: { namespace: "synthetic", id: "alice" }, accounts: "a@org.example" },
+              { person: { namespace: "synthetic", id: "alice" }, accounts: "b@org.example" },
+            ],
+          },
+          /repeats an earlier person/,
+        ],
         [
           "a person map on a shared connection",
           { authScope: "shared", accounts: { alice: "alice@org.example" } },
@@ -3327,7 +3418,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           /accounts restricts which Google account an OAuth-mode connection may bind/,
         ],
       ])("%s", NODE, (_name, overrides, message) => {
-        expect(() => personal(overrides)).toThrow(message);
+        expect(() => restricted(overrides)).toThrow(message);
       });
 
       it("refuses bare person keys without exactly one interactive auth provider", NODE, () => {
@@ -3336,7 +3427,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
             connectors: [personal({ accounts: { alice: "alice@org.example" } })],
             logger: silentLogger,
           }),
-        ).toThrow(/names people by bare principal id/);
+        ).toThrow(/names a person by bare principal id/);
       });
     });
 
@@ -3350,7 +3441,15 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           uiAuth: { kind: "clerk", frontendApiUrl: "https://identity.test", publishableKey: "pk_test_fake" },
           activityActorNamespace: "https://identity.test",
           authorize(request) {
-            const user = /^Bearer (alice|bob)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
+            const user = /^Bearer (alice|bob|impostor)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
+            // A provider may admit a principal in another namespace: the same id, someone else.
+            if (user === "impostor")
+              return {
+                ok: true,
+                userId: "bob",
+                subjectId: user,
+                principal: { namespace: "https://elsewhere.test", id: "bob" },
+              };
             return user
               ? { ok: true, userId: user, subjectId: user }
               : { ok: false, response: Response.json({ error: "unauthorized" }, { status: 401 }) };
@@ -3362,35 +3461,46 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           connectors: [personal({ accounts: { bob: "bob@org.example" } })],
           auth: users,
           maintainers: ["alice"],
-          pools: { team: { tools: ["mail"], members: ["bob"] } },
+          pools: {
+            team: { tools: ["mail"], members: ["bob"] },
+            elsewhere: { tools: ["mail"], members: [{ namespace: "https://elsewhere.test", id: "bob" }] },
+          },
           storage,
           vault: encryptedCredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))),
           publicUrl: BASE,
           logger: { ...silentLogger, warn: (message: string) => warnings.push(String(message)) },
         });
-        const as = (path: string, init: RequestInit = {}) =>
+        const as = (path: string, init: RequestInit = {}, token = "bob") =>
           connecta.fetch(
-            new Request(`${BASE}${path}`, { ...init, headers: { Authorization: "Bearer bob", ...init.headers } }),
+            new Request(`${BASE}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...init.headers } }),
           );
-        const consent = async () => {
+        const consent = async (token = "bob", pool = "team") => {
           const handoff = await readJsonRpc(
             await connecta.fetch(
               mcpRpc(
                 "tools/call",
                 { name: "authorize_connector", arguments: { connector: "mail", force: true } },
-                { token: "bob", pool: "team", baseUrl: BASE },
+                { token, pool, baseUrl: BASE },
               ),
             ),
           );
           const link = new URL(JSON.parse(handoff.result.content[0].text).authorizationUrl);
-          const started = await as(link.pathname + link.search);
+          const started = await as(link.pathname + link.search, {}, token);
           expect(started.status).toBe(302);
           const state = new URL(started.headers.get("Location")!).searchParams.get("state")!;
-          const code = `4/code-bob-${google.codes.size}`;
-          google.codes.set(code, "bob");
-          return as(`/oauth/callback/mail?code=${encodeURIComponent(code)}&state=${state}`);
+          const code = `4/code-${token}-${google.codes.size}`;
+          google.codes.set(code, token);
+          return as(`/oauth/callback/mail?code=${encodeURIComponent(code)}&state=${state}`, {}, token);
         };
         try {
+          // Bob's id in another namespace is not bob: no entry, so no rules and no disclosure.
+          await signsInAs("impostor", "bob@org.example");
+          const impostor = await consent("impostor", "elsewhere");
+          const impostorPage = await impostor.text();
+          expect(impostor.status).toBe(403);
+          expect(impostorPage).toContain('data-oauth-callback="account_not_listed"');
+          expect(impostorPage).not.toContain("bob@org.example");
+
           await signsInAs("bob", "mallory@org.example");
           const refused = await consent();
           const page = await refused.text();

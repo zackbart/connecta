@@ -18,7 +18,7 @@ import {
   type MemberContext,
   type ResolvedPool,
 } from "./membership.js";
-import { accountRestrictionOf, assertAccountPeopleResolve } from "./oauth-account.js";
+import { accountRestrictionOf, resolveAccountPeople } from "./oauth-account.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls, droppedThemeTokens, droppedUiAuthUrls } from "./branding.js";
 import { readConfig, type ConnectaConfig, type ResolvedConfig } from "./config.js";
@@ -332,7 +332,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   for (const connector of resolved.connectors) {
     const restriction = accountRestrictionOf(connector);
     if (restriction)
-      assertAccountPeopleResolve(
+      resolveAccountPeople(
         restriction,
         members.interactiveNamespaces,
         `Connector "${connector.id}" oauth.account.allow`,
@@ -476,6 +476,7 @@ export type {
   OAuthAccountRule,
   OAuthAccountRules,
   OAuthExchangedTokens,
+  OAuthPersonAccounts,
   OAuthPersonalAccounts,
 } from "./oauth-account.js";
 export type {

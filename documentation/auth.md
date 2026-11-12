@@ -3236,14 +3236,18 @@ providers supply `identify` and take the rules as `accounts`
 
 `allow` takes rules: an address, `{ domain }`, or a list of them. Any one rule
 allows the account. A shared connector takes the one account's rules. A
-personal connector takes rules for everyone, or a map from person to rules. A
-key is a bare principal id, resolved like a pool member in the namespace of the
-deployment's one interactive auth provider. `"*"` covers everyone without an
-entry, and a person's own entry replaces it. A person with neither cannot
-connect. Construction refuses malformed rules, empty maps or lists, `agent:`
-and namespaced keys, and a person map on a shared connector. `createConnecta`
-refuses person keys unless exactly one interactive auth provider declares an
-`activityActorNamespace`.
+personal connector takes rules for everyone, a map from person to rules, or a
+list of `{ person, accounts }`. A map key is a bare principal id. A list's
+`person` is a bare id or `{ namespace, id }`, as pool `members` take them.
+`createConnecta` resolves bare ids like pool members, in the namespace of the
+deployment's one interactive auth provider. It refuses them unless exactly one
+such provider declares an `activityActorNamespace`, and it refuses one person
+named twice. A person matches on namespace and id both. The same id admitted
+in another namespace is someone else, and gets `"*"` or nothing. `"*"` covers
+everyone without an entry, and a person's own entry replaces it. A person with
+neither cannot connect. Construction refuses malformed rules, empty maps or
+lists, `agent:` references, a `:` in a map key, a list mixing rules with
+people, and a person map on a shared connector.
 
 The check runs in the OAuth callback after the code exchange and before the
 SDK saves tokens. For a personal connector, the person is the signed-in browser
@@ -3261,7 +3265,21 @@ compare without regard to case. A domain rule matches only the attested
 The page never names the account actually used, and the operator log names
 neither account. The label is non-secret grant metadata in the sealed grant
 body. A refresh keeps it. Removing the tokens removes it, and each code exchange
-replaces it, so every reconnect is checked again. Status reports it as
+replaces it, so every reconnect is checked again.
+
+Reconnect on a connector that checks accounts does not remove the grant it
+replaces. Unlike [Restart elsewhere](#starting-restarting-and-disconnecting),
+a forced start on a live, unrefused grant starts consent in the grant's current
+epoch and leaves its tokens and label in place. Only an exchange whose account
+is admitted replaces them, by compare-and-set. A refused, failed or abandoned
+reconnect leaves the grant working, and a refused code never invalidates the
+tokens it would have replaced. A Disconnect while that consent is pending
+replaces the epoch and deletes the consent, so the callback cannot complete and
+nothing is restored. A grant that is disconnected, refused by the API, or held
+under another token endpoint restarts as before. `remoteMcp()` and `api()`
+OAuth without `oauth.account` keep the documented Restart behavior.
+
+Status reports it as
 `ConnectorStatus.account` while the grant is `ok`. The member page and connector
 Connection tab show it ([operator UI](./operator-ui.md#use-the-member-page)).
 Activity never records it.
