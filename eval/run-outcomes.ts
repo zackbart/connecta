@@ -38,6 +38,8 @@ import { deliveredReducedCount, deliveredValues } from "./tasks/correctness.js";
 import { previewResult } from "../src/result-preview.js";
 import { NO_CODE_CAPABILITY_MISMATCHES, taskForSurface } from "./tasks/surface.js";
 import { INJECTED_SECRET } from "./fakes/services.js";
+import { ALICE } from "./fakes/google.js";
+import { GMAIL_SCOPES } from "@zackbart/connecta/providers/gmail";
 import { noCodeDecisionLines, WORKER_COMPARISON } from "./worker-comparison-plan.js";
 import type { Surface } from "./agent/surface.js";
 import { PROVIDER_EVALS } from "./tasks/providers.generated.js";
@@ -593,6 +595,64 @@ async function run() {
     record(
       `control: accept before the visit lands completes ${flow}, every link works, ${forcedStarts} forced`,
       completed && world.oauth.visits === 2 && world.oauth.forcedStarts === forcedStarts,
+      detail,
+    );
+  }
+
+  // A person connects their own Google account through the member Connect
+  // link, reads it through a personal OAuth Gmail connection, and the expired
+  // token renews once (#1375). Graded on the vendor's consent, exchange and
+  // refresh records, the account each physical read reached, and the facts the
+  // person was handed.
+  {
+    const world = new World({ google: { product: "gmail", task: 2, oauth: "personal" }, oauth: true });
+    await world.start();
+    const deployment = await startNodeDeployment(world.connectorSpecs(), {}, world.oauth);
+    const session = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+    const cookie = { Cookie: `__session=${world.oauth.token}` };
+    const profile = () => session.call("call_tool", { address: "gmail.gmail_api_read", args: { path: "/profile" } });
+    let detail = "";
+    let pass = false;
+    try {
+      const unconnected = await profile();
+      const link = /https?:\/\/[^"\s)\\]*\/connect\/gmail\?[^"\s)\\]*/.exec(unconnected.text)?.[0];
+      if (!unconnected.isError || !link) throw new Error(`no Connect link: ${unconnected.text.slice(0, 300)}`);
+      const start = new URL(link);
+      start.searchParams.set("start", "1");
+      const visit = await fetch(start, { headers: cookie, redirect: "manual" });
+      await visit.body?.cancel();
+      const consent = visit.headers.get("location");
+      if (visit.status !== 302 || !consent) throw new Error(`Connect visit answered ${visit.status}`);
+      const landed = await fetch(world.google.consent(consent, ALICE), { headers: cookie, redirect: "manual" });
+      await landed.body?.cancel();
+      const read = await profile();
+      world.google.expireOAuthAccess();
+      const renewed = await profile();
+      const reads = world.ledger.calls.filter((call) => call.service === "gmail" && call.tool === "GET /profile");
+      const oauth = world.google.state.oauth.map((entry) => `${entry.kind}:${entry.subject}`);
+      detail = `${landed.status}; ${oauth.join(", ")}; ${reads.map((call) => call.args.subject).join(", ")}`;
+      pass =
+        landed.status < 400 &&
+        !read.isError &&
+        !renewed.isError &&
+        [read.text, renewed.text].every((text) => text.includes(ALICE)) &&
+        // Consent, one exchange, then exactly one refresh after the expired token's 401.
+        isDeepStrictEqual(oauth, [`consent:${ALICE}`, `exchange:${ALICE}`, `refresh:${ALICE}`]) &&
+        world.google.state.oauth.every((entry) => entry.scopes.join(" ") === [...GMAIL_SCOPES].sort().join(" ")) &&
+        // The expired token's read was refused once; the first read and its one replay reached Alice's mailbox.
+        world.google.state.expiredRejections === 1 &&
+        reads.length === 2 &&
+        reads.every((call) => call.args.subject === ALICE) &&
+        // No service account is configured, so nothing minted a delegated token.
+        world.google.state.mints.length === 0;
+    } catch (error) {
+      detail = error instanceof Error ? error.message : String(error);
+    } finally {
+      await Promise.allSettled([session.close(), deployment.close(), world.stop()]);
+    }
+    record(
+      "control: a person connects their own Google account and reads it through personal OAuth Gmail",
+      pass,
       detail,
     );
   }

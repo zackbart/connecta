@@ -119,8 +119,9 @@ and the [Eve helper's approval setup](https://github.com/zackbart/connecta/blob/
 ## When accounts or audiences differ
 
 Personal connections belong to a signed-in person and are absent for agents.
-Google Workspace has an explicit exception: an operator can assign a pool
-owner whose account the agent will use. See
+Google Workspace delegation has an explicit exception: an operator can assign
+a pool owner whose account the agent will use. Google connections in OAuth
+mode follow the ordinary rule: a personal one is absent for agents. See
 [Workspace pool owners](../documentation/auth.md#pool-owners-for-google-workspace)
 before connecting an agent to someone's account.
 

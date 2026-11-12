@@ -839,14 +839,16 @@ function multipart(
 }
 // --- Tools ------------------------------------------------------------------------
 export function driveTools({
+  id,
   connection,
   options,
 }: {
+  id: string;
   connection: Connection;
   options: Readonly<DriveOptions>;
 }): ApiTool[] {
   const client = driveClient(connection);
-  const uploadConnection = driveUploadConnection(options);
+  const uploadConnection = driveUploadConnection(options, id);
   const upload = driveClient(uploadConnection);
   const readOnly = { readOnlyHint: true } as const;
   // Additive: creates something new that discloses nothing, and changes

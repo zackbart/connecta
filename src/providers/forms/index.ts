@@ -5,7 +5,7 @@ import { skill } from "./skill.generated.js";
  * batchUpdate. Hand-written against the Forms API v1 reference
  * (https://developers.google.com/workspace/forms/api/reference/rest).
  *
- * Whose forms. Access is a service account with domain-wide delegation
+ * Whose forms. In delegation mode, access is a service account with domain-wide delegation
  * (`src/providers/_shared/google/`): deployment config maps the admitted
  * identity to a Workspace address, and each call mints, or reuses, a token as
  * that user. The Forms API has no per-user path to confine beneath — a form id
@@ -20,6 +20,10 @@ import { skill } from "./skill.generated.js";
  * are out of scope entirely. Responses are read-only: `forms.responses.readonly`
  * is the only response scope requested.
  *
+ * OAuth mode (`{ oauth, authScope }`) instead uses the downstream OAuth grant
+ * of each connected Google account, or one shared account, with the same
+ * scopes and tool surface (`src/providers/_shared/google/kit.ts`).
+ *
  * Drift. Google publishes a credential-free Discovery document per API.
  * `src/providers/forms/drift.json` records the five methods the tools
  * call, and `pnpm run providers:check --provider forms` reports a touched
@@ -28,7 +32,16 @@ import { skill } from "./skill.generated.js";
 import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
 import { FORMS_HATCH, formsBinding } from "./lib/hatch.js";
-import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
+import {
+  GOOGLE_GRANT_RENEWAL,
+  googleActor,
+  googleAuthScope,
+  googleOAuthContext,
+  tagWorkspace,
+  googleConnectionErrors,
+  googleDelegatedGrant,
+  googleOAuth,
+} from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import { errors, FORMS, FormsApi, probe, safety } from "./api.js";
 import { FORMS_API_BASE_URL, FORMS_MAX_RESPONSE_BYTES } from "./lib/constants.js";
@@ -95,14 +108,18 @@ export const forms = defineApiProvider<FormsOptions>({
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   description: (options) =>
-    `Google Forms as the signed-in Workspace user: read and edit forms, read responses — ${options.purpose}`,
+    `Google Forms as ${googleActor("forms", options)}: read and edit forms, read responses — ${options.purpose}`,
   vendor: FormsApi,
   baseUrl: (options) => options.baseUrl?.trim() || FORMS_API_BASE_URL,
   maxResponseBytes: FORMS_MAX_RESPONSE_BYTES,
   // The delegated token: the subject resolves per call, and the service
   // account mints as that user. The key was checked at construction.
-  grant: (options) => googleGrant(FORMS, workspaceOf("forms", options)),
+  grant: (options) => googleDelegatedGrant(FORMS, "forms", options),
   grantRenewal: GOOGLE_GRANT_RENEWAL,
+  oauth: (options) => googleOAuth(FORMS, "forms", options, [options.baseUrl?.trim() || FORMS_API_BASE_URL]),
+  oauthWrite401: "grant",
+  authScope: googleAuthScope("forms"),
+  connectionErrors: googleConnectionErrors(FORMS, "forms", errors, { revisionConflicts: true }),
   authenticate: bearer,
   errors,
   safety: () => safety,
@@ -111,7 +128,10 @@ export const forms = defineApiProvider<FormsOptions>({
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,
-      "Workspace delegation is configured by the deployment. Each call acts as the mapped Workspace user; no argument chooses a subject. Responses, respondent email and quiz answers are user data; no configurable sensitive-field set is declared.",
+      `${
+        googleOAuthContext("forms", options) ??
+        "Workspace delegation is configured by the deployment. Each call acts as the mapped Workspace user; no argument chooses a subject."
+      } Responses, respondent email and quiz answers are user data; no configurable sensitive-field set is declared.`,
       ...(options.readOnly ? ["This connection is read-only."] : []),
     ],
     instructions: options.instructions,

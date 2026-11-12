@@ -8,7 +8,7 @@ import { skill } from "./skill.generated.js";
  * (https://developers.google.com/workspace/slides/api/reference/rest) and its
  * comments guide (https://developers.google.com/workspace/slides/api/guides/comments).
  *
- * Whose decks. Access is a service account with domain-wide delegation
+ * Whose decks. In delegation mode, access is a service account with domain-wide delegation
  * (`src/providers/_shared/google/workspace.ts`): deployment config maps the admitted
  * identity to a Workspace address, and each call mints, or reuses, a token as
  * that user. Slides has no `users/me` to confine beneath — a presentation id
@@ -38,6 +38,10 @@ import { skill } from "./skill.generated.js";
  * comment request says so in a declared field rather than calling the batch
  * all or none, and tells the caller to re-read, not repeat.
  *
+ * OAuth mode (`{ oauth, authScope }`) instead uses the downstream OAuth grant
+ * of each connected Google account, or one shared account, with the same
+ * scopes and tool surface (`src/providers/_shared/google/kit.ts`).
+ *
  * Drift. Google publishes a credential-free Discovery document per API.
  * `src/providers/slides/drift.json` records the five methods the tools
  * call, and `pnpm run providers:check --provider slides` reports a touched
@@ -45,7 +49,16 @@ import { skill } from "./skill.generated.js";
  */
 import { bearer } from "../../http/oauth.js";
 import { defineApiProvider } from "../../http/provider.js";
-import { GOOGLE_GRANT_RENEWAL, googleGrant, tagWorkspace, workspaceOf } from "../_shared/google/kit.js";
+import {
+  GOOGLE_GRANT_RENEWAL,
+  googleActor,
+  googleAuthScope,
+  googleOAuthContext,
+  tagWorkspace,
+  googleConnectionErrors,
+  googleDelegatedGrant,
+  googleOAuth,
+} from "../_shared/google/kit.js";
 import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_shared/google/workspace.js";
 import {
   errors,
@@ -120,12 +133,16 @@ export const slides = defineApiProvider<SlidesOptions>({
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   description: (options) =>
-    `Google Slides as the signed-in Workspace user: read decks slide by slide, create them, edit their text, and comment — ${options.purpose}`,
+    `Google Slides as ${googleActor("slides", options)}: read decks slide by slide, create them, edit their text, and comment — ${options.purpose}`,
   vendor: SlidesApi,
   baseUrl: (options) => options.baseUrl?.trim() || SLIDES_API_BASE_URL,
   maxResponseBytes: SLIDES_MAX_RESPONSE_BYTES,
-  grant: (options) => googleGrant(SLIDES, workspaceOf("slides", options)),
+  grant: (options) => googleDelegatedGrant(SLIDES, "slides", options),
   grantRenewal: GOOGLE_GRANT_RENEWAL,
+  oauth: (options) => googleOAuth(SLIDES, "slides", options, [options.baseUrl?.trim() || SLIDES_API_BASE_URL]),
+  oauthWrite401: "grant",
+  authScope: googleAuthScope("slides"),
+  connectionErrors: googleConnectionErrors(SLIDES, "slides", errors, { revisionConflicts: true }),
   authenticate: bearer,
   errors,
   safety: () => safety,
@@ -146,7 +163,8 @@ export const slides = defineApiProvider<SlidesOptions>({
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,
-      "Workspace delegation is configured. Each call acts as the account deployment code maps the caller to; an agent uses its pool owner unless one shared account is configured. No argument selects a subject.",
+      googleOAuthContext("slides", options) ??
+        "Workspace delegation is configured. Each call acts as the account deployment code maps the caller to; an agent uses its pool owner unless one shared account is configured. No argument selects a subject.",
       "The generic batch retains only the 49 shipped request kinds.",
       ...(options.readOnly ? ["This connection is read-only; writes are refused."] : []),
     ],

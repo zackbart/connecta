@@ -66,8 +66,11 @@ export interface ConnectorSpec {
   quickbooks?: { clientId: string };
   google?: {
     product: import("./google.js").GoogleProduct;
-    serviceAccount: { clientEmail: string; privateKey: string };
-    subject: "mapped" | "fixed";
+    /** Delegation mode: the world's service account and how the subject resolves. */
+    serviceAccount?: { clientEmail: string; privateKey: string };
+    subject?: "mapped" | "fixed";
+    /** OAuth mode: the world's own client, so concurrent Google worlds route apart. */
+    oauth?: { clientId: string; clientSecret: string; authScope: "personal" | "shared" };
   };
   rest?: RestVendor | "tithely" | "breeze" | "ccb" | "planning-center" | "overflow" | "github";
   githubApp?: { appId: string; privateKey: string };
