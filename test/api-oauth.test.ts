@@ -475,6 +475,9 @@ describe("api() oauth authorization start", () => {
       code_challenge_method: "S256",
       prompt: "login",
     });
+    // Google's offline defaults stay off every other authorization server.
+    expect(url.searchParams.has("access_type")).toBe(false);
+    expect(url.searchParams.getAll("prompt")).toEqual(["login"]);
     expect(url.searchParams.get("state")).toMatch(/^[0-9a-f]{64}$/);
     expect(url.searchParams.get("code_challenge")).toBeTruthy();
     // No discovery, no registration, no resource indicator, no secret.
@@ -489,6 +492,30 @@ describe("api() oauth authorization start", () => {
     // A restart starts a fresh flow.
     const restarted = await connector.startAuth!(registry.contextFor("ccb", BASE), { force: true });
     expect(restarted.authorizationUrl).not.toBe(started.authorizationUrl);
+  });
+
+  it.each([
+    [undefined, { access_type: "offline", prompt: "consent" }],
+    [{ prompt: "select_account" }, { access_type: "offline", prompt: "select_account" }],
+    [{ access_type: "online" }, { access_type: "online", prompt: "consent" }],
+  ])("defaults a Google consent URL to offline access unless the operator sets %j", async (params, expected) => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 599 })),
+    );
+    const connector = api("google", {
+      oauth: {
+        ...OAUTH,
+        authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
+        tokenEndpoint: "https://oauth2.googleapis.com/token",
+        ...(params ? { authorizationParams: params } : {}),
+      },
+      tools: [],
+    });
+    const registry = makeRegistry([connector]);
+    const url = new URL((await connector.startAuth!(registry.contextFor("google", BASE))).authorizationUrl!);
+    expect(url.searchParams.getAll("access_type")).toEqual([expected.access_type]);
+    expect(url.searchParams.getAll("prompt")).toEqual([expected.prompt]);
   });
 
   it("hands a pending consent back when a vault seals it", async () => {

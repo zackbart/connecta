@@ -18,6 +18,7 @@ import { createTestConnecta, fetchTestUiDetails } from "./helpers.js";
 
 const BASE = "https://connecta.example";
 const ISSUER = "https://auth.example";
+const GOOGLE = "https://accounts.google.com";
 const MCP = "https://mcp.example/mcp";
 const DOCUMENT = `${BASE}/oauth/client-metadata/svc`;
 const SECRET = "STATIC_CLIENT_SECRET_SENTINEL";
@@ -43,12 +44,17 @@ function setup(
     registeredClientSecret?: string;
     clientMethod?: "client_secret_basic" | "client_secret_post";
     echo?: string;
+    /** Authorization server issuer; `https://accounts.google.com` exercises Google's defaults. */
+    issuer?: string;
+    /** Like Google, answer a refresh token only for a consent URL that carried `access_type=offline`. */
+    refreshTokenOnlyOffline?: boolean;
   } = {},
 ) {
   const sent: Array<{ url: string; init: RequestInit; form: URLSearchParams }> = [];
   const registrations: Record<string, unknown>[] = [];
-  let issuer = ISSUER;
+  let issuer = options.issuer ?? ISSUER;
   let refreshRequired = false;
+  let offlineConsent = false;
   const lines: unknown[] = [];
   const logger = {
     debug: (...args: unknown[]) => {
@@ -119,7 +125,7 @@ function setup(
       return Response.json({
         access_token:
           form.get("grant_type") === "refresh_token" ? "ROTATED_ACCESS_TOKEN_SENTINEL" : "ACCESS_TOKEN_SENTINEL",
-        refresh_token: "REFRESH_TOKEN_SENTINEL",
+        ...(!options.refreshTokenOnlyOffline || offlineConsent ? { refresh_token: "REFRESH_TOKEN_SENTINEL" } : {}),
         token_type: "Bearer",
       });
     if (url === `${issuer}/revoke`) {
@@ -172,8 +178,11 @@ function setup(
   const ctx = () => app.registry.contextFor("svc", options.publicUrl ?? BASE);
   const start = async () => {
     const status = await connector.startAuth!(ctx());
-    if (status.authorizationUrl)
-      await bindCallback(app, "svc", new URL(status.authorizationUrl).searchParams.get("state")!);
+    if (status.authorizationUrl) {
+      const url = new URL(status.authorizationUrl);
+      offlineConsent = url.searchParams.get("access_type") === "offline";
+      await bindCallback(app, "svc", url.searchParams.get("state")!);
+    }
     return status;
   };
   const callback = (url: string, params: Record<string, string> = { code: "CODE_SENTINEL" }) => {
@@ -398,6 +407,78 @@ describe("downstream OAuth best practice", () => {
       expect(request.form.has("prompt")).toBe(false);
     }
     expect(JSON.stringify(flow.lines)).not.toMatch(/SENTINEL/);
+  });
+
+  it("INV-5: defaults Google consent to offline access so the grant receives and uses a refresh token", async () => {
+    const flow = setup({
+      issuer: GOOGLE,
+      refreshTokenOnlyOffline: true,
+      echo: "ok",
+      auth: {
+        type: "oauth",
+        scope: "https://www.googleapis.com/auth/bigquery",
+        client: {
+          issuer: GOOGLE,
+          clientId: "static-client",
+          clientSecret: SECRET,
+          tokenEndpointAuthMethod: "client_secret_post",
+        },
+      },
+    });
+    const status = await flow.start();
+    const url = new URL(status.authorizationUrl!);
+    expect(url.origin).toBe(GOOGLE);
+    expect(url.searchParams.getAll("access_type")).toEqual(["offline"]);
+    expect(url.searchParams.getAll("prompt")).toEqual(["consent"]);
+    expect((await flow.callback(status.authorizationUrl!, { code: "CODE_SENTINEL", iss: GOOGLE })).status).toBe(200);
+    flow.requireRefresh();
+    const result = await createMetaTools(flow.app.registry, BASE).callTool({ address: "svc.read" });
+    expect(result.isError).not.toBe(true);
+    const refreshes = flow.sent.filter((request) => request.form.get("grant_type") === "refresh_token");
+    expect(refreshes).toHaveLength(1);
+    expect(refreshes[0]!.form.get("refresh_token")).toBe("REFRESH_TOKEN_SENTINEL");
+    // Browser-only: never sent to the token endpoint, metadata or the MCP server.
+    for (const request of flow.sent) {
+      expect(new URL(request.url).searchParams.has("access_type")).toBe(false);
+      expect(request.form.has("access_type")).toBe(false);
+      expect(request.form.has("prompt")).toBe(false);
+    }
+  });
+
+  it("INV-5: an operator's Google authorization parameter wins over the offline default", async () => {
+    const flow = setup({
+      issuer: GOOGLE,
+      auth: {
+        type: "oauth",
+        authorizationParams: { prompt: "select_account" },
+        client: { issuer: GOOGLE, clientId: "static-client", clientSecret: SECRET },
+      },
+    });
+    const url = new URL((await flow.start()).authorizationUrl!);
+    expect(url.searchParams.getAll("prompt")).toEqual(["select_account"]);
+    expect(url.searchParams.getAll("access_type")).toEqual(["offline"]);
+    const online = setup({
+      issuer: GOOGLE,
+      auth: {
+        type: "oauth",
+        authorizationParams: { access_type: "online" },
+        client: { issuer: GOOGLE, clientId: "static-client", clientSecret: SECRET },
+      },
+    });
+    const onlineUrl = new URL((await online.start()).authorizationUrl!);
+    expect(onlineUrl.searchParams.getAll("access_type")).toEqual(["online"]);
+    expect(onlineUrl.searchParams.getAll("prompt")).toEqual(["consent"]);
+  });
+
+  it.each([
+    ["static", { type: "oauth", client: { issuer: ISSUER, clientId: "static-client", clientSecret: SECRET } }],
+    ["dcr", { type: "oauth", scope: "read" }],
+  ] as const)("INV-5: adds no Google defaults to a non-Google %s consent", async (_path, auth) => {
+    const flow = setup({ auth: auth as RemoteMcpAuth });
+    const url = new URL((await flow.start()).authorizationUrl!);
+    expect(url.origin).toBe(ISSUER);
+    expect(url.searchParams.has("access_type")).toBe(false);
+    expect(url.searchParams.has("prompt")).toBe(false);
   });
 
   it("INV-5 INV-6: refuses revocation when the AS does not support a static client's default Basic method", async () => {
