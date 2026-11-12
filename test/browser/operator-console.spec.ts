@@ -242,3 +242,43 @@ test("member OAuth controls connect, reconnect and confirm disconnect", async ({
     "DELETE /ui/oauth/slack",
   ]);
 });
+
+for (const keepsGrant of [false, true]) {
+  const question = keepsGrant
+    ? "Reconnect Slack? Your current connection keeps working until the new sign-in is accepted."
+    : "Reconnect Slack? It stops working until you finish in the new tab.";
+
+  test(`member reconnect explains whether the grant is kept: ${keepsGrant} (#1385)`, async ({ page }) => {
+    const contract = structuredClone(OPERATOR_V2_MEMBER);
+    const slack = contract.connectors.find((c) => c.id === "slack")!;
+    slack.manage = {
+      kind: "oauth",
+      actions: ["connect", "restart", "disconnect"],
+      ...(keepsGrant ? { reconnectKeepsGrant: true as const } : {}),
+    };
+    await install(page, contract);
+    await page.goto(VISUAL_ORIGIN + "/");
+    await page.getByRole("button", { name: "Reconnect Slack", exact: true }).click();
+    await expect(page.getByRole("group", { name: question, exact: true })).toBeVisible();
+    await noCsp(page);
+  });
+
+  test(`maintainer reconnect explains whether the grant is kept: ${keepsGrant} (#1385)`, async ({ page }) => {
+    const connector = data.connectors.find((c) => c.id === "slack")!;
+    const row = {
+      ...connector,
+      status: "ok" as const,
+      oauth: true,
+      ...(keepsGrant ? { reconnectKeepsGrant: true as const } : {}),
+    };
+    await install(page, crowdedMaintainer(), ({ path }) =>
+      path.startsWith("/ui/connectors/slack")
+        ? { json: { ...row, viewerKey: crowdedMaintainer().you.viewerKey } }
+        : undefined,
+    );
+    await page.goto(VISUAL_ORIGIN + "/connectors/slack#connection");
+    await page.locator("#reconnect-slack").click();
+    await expect(page.getByRole("group", { name: question, exact: true })).toBeVisible();
+    await noCsp(page);
+  });
+}

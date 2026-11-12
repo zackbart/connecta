@@ -105,8 +105,9 @@ export interface OperatorMemberConnector {
 
 export type OperatorMemberManage =
   | { kind: "none" }
+  // reconnectKeepsGrant is present only for account-checked api() OAuth.
   // connect: POST /ui/oauth/<id>?mode=continue; restart: POST ?mode=restart; disconnect: DELETE
-  | { kind: "oauth"; actions: Array<"connect" | "restart" | "disconnect"> }
+  | { kind: "oauth"; reconnectKeepsGrant?: true; actions: Array<"connect" | "restart" | "disconnect"> }
   | {
       /** /ui/credentials/<id>, the member's own partition. */
       kind: "credential";

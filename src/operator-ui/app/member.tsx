@@ -136,7 +136,11 @@ function AccountRow({ account, state, hue }: { account: MemberAccount; state: Op
       {confirming ? (
         <ConfirmBar
           id={id}
-          {...memberConfirmCopy(confirming, title)}
+          {...memberConfirmCopy(
+            confirming,
+            title,
+            account.manage.kind === "oauth" && account.manage.reconnectKeepsGrant,
+          )}
           onConfirm={() => {
             if (confirming === "oauth_restart") void startOAuth(id, "restart");
             else if (confirming === "oauth_disconnect") void disconnectOAuth(id);

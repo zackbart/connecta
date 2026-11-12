@@ -152,9 +152,15 @@ export function toolCountLabel(count: number): string {
 export function memberConfirmCopy(
   action: "oauth_restart" | "oauth_disconnect" | "credential_remove",
   name: string,
+  reconnectKeepsGrant = false,
 ): { question: string; confirm: string } {
   if (action === "oauth_restart") {
-    return { question: `Reconnect ${name}? It stops working until you finish in the new tab.`, confirm: "Reconnect" };
+    return {
+      question: reconnectKeepsGrant
+        ? `Reconnect ${name}? Your current connection keeps working until the new sign-in is accepted.`
+        : `Reconnect ${name}? It stops working until you finish in the new tab.`,
+      confirm: "Reconnect",
+    };
   }
   if (action === "oauth_disconnect") {
     return { question: `Disconnect your ${name} account? Its tools stop working for you.`, confirm: "Disconnect" };
