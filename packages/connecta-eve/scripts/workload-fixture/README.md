@@ -17,7 +17,7 @@ pnpm run check
 ```
 
 The output directory must not exist. The command packs the built packages,
-installs those archives with real Eve 1.0.0-rc.4, `@vercel/oidc` 4.0.3 and
+installs those archives with real Eve 1.0.0-rc.10, `@vercel/oidc` 4.0.3 and
 `@vercel/functions` 3.10.3, and applies a Zod 4.6.6 override for
 `@vercel/cli-config` 0.3.3's older pin. Audit the generated consumer
 with `pnpm audit --audit-level moderate` before approving a live deployment. Preserve
