@@ -42,9 +42,12 @@ export function createFetchHandler(
     // report: either the executor's own pool or the fallback controller
     // wrapped around it at construction.
     const codeAdmission = isAdmittingExecutor(opts.executor) ? opts.executor.admissionSnapshot?.() : undefined;
+    // Unauthenticated: a connector with members is neither counted nor
+    // aggregated, so its existence and use stay with the people it lists.
+    const unrestricted = (id: string) => registry.connectorMembers(id) === undefined;
     return Response.json({
       status: "ok",
-      connectors: registry.listConnectors().length,
+      connectors: registry.listConnectors().filter((connector) => unrestricted(connector.id)).length,
       server: opts.config.serverInfo,
       // Which sandbox, not how it is tuned: `connecta doctor` reports the
       // executor it just exercised rather than assuming one, and a
@@ -58,7 +61,11 @@ export function createFetchHandler(
         code: codeAdmission ?? { managedByExecutor: true },
         downstreamCalls: {
           policy: "connector-partitioned-per-runtime",
-          aggregate: aggregateCallAdmissionSnapshots(Object.values(registry.callAdmissionSnapshot())),
+          aggregate: aggregateCallAdmissionSnapshots(
+            Object.entries(registry.callAdmissionSnapshot()).flatMap(([id, snapshot]) =>
+              unrestricted(id) ? [snapshot] : [],
+            ),
+          ),
         },
         reservedRoutes: [
           "/health",

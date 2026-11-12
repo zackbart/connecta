@@ -8,6 +8,7 @@ import { identityStorageKey } from "../src/identity.js";
 import { createConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
 import type { ToolCallActivityEvent } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { operatorUi } from "../src/ui.js";
 import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
 import { readJsonRpc } from "./fixtures/http.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
@@ -783,6 +784,212 @@ describe("pool members connect their own personal connectors", () => {
   });
 });
 
+describe("connector members narrow visibility (#1377)", () => {
+  async function membersDeployment() {
+    const storage = memoryStorage();
+    const events: ToolCallActivityEvent[] = [];
+    let reads = 0;
+    let target = "journal";
+    const journal = api("journal", {
+      description: "Personal journal",
+      members: ["bob"],
+      callAdmission: { rules: [{ maxConcurrency: 4 }] },
+      usageGuide: { content: "Journal guide.", summary: "Load before reading the journal." },
+      tools: [
+        {
+          name: "read",
+          description: "Read journal entries",
+          annotations: { readOnlyHint: true },
+          handler: async () => {
+            reads++;
+            return { entries: 1 };
+          },
+        },
+      ],
+    });
+    const c = createTestConnecta({
+      connectors: [...teamConnectors(), journal, { ...personalOAuth("mailbox"), members: ["bob"] }],
+      auth: users(),
+      maintainers: ["alice"],
+      storage,
+      vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
+      publicUrl: BASE,
+      logger: silentLogger,
+      activity: (await import("../src/activity.js")).activityHistory({
+        store: {
+          record: async (event) => void events.push(event as ToolCallActivityEvent),
+          list: async () => ({ events: [...events] as any }),
+        },
+      }),
+      executor: scriptedExecutor(async (fns) => {
+        const outcome = async (work: Promise<unknown>) =>
+          work.then(
+            (value) => ({ value }),
+            (error: Error) => ({ error: error.message }),
+          );
+        return {
+          call: await outcome(fns.call!(`${target}.read`, {})),
+          describe: await outcome(fns.describe!(`${target}.read`)),
+        };
+      }),
+      pools: {
+        team: { tools: ["notes.search", "journal", "mailbox"], members: ["bob", "carol"] },
+        nat: { tools: ["journal", "wiki"], members: ["bob", "carol"], surface: "native" },
+      },
+    });
+    return { c, events, reads: () => reads, setTarget: (id: string) => (target = id) };
+  }
+
+  /** Same text once the hidden connector's name is replaced by one that never existed. */
+  const asUnknown = (hidden: unknown, absent: unknown, name: string) => {
+    const timeless = (value: unknown) =>
+      JSON.stringify(value).replace(/(\\?"durationMs\\?":)\d+/g, (_, key: string) => `${key}0`);
+    expect(timeless(hidden).replaceAll(name, "ghost")).toBe(timeless(absent));
+  };
+
+  it("INV-4: a non-member meets an unknown connector on every MCP surface, maintainers at plain /mcp included", async () => {
+    const { c, reads, setTarget } = await membersDeployment();
+    for (const [path, user] of [
+      ["/mcp/team", "carol"],
+      ["/mcp", "alice"],
+    ] as const) {
+      // Endpoint facts, instructions, discovery and search name nothing of it.
+      const initialized = await readJsonRpc(
+        await c.fetch(
+          request(path, user, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "initialize",
+              params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+            }),
+          }),
+        ),
+      );
+      expect(JSON.stringify(initialized)).toContain("notes");
+      expect(JSON.stringify(initialized)).not.toMatch(/journal|mailbox/);
+      const search = await rpc(c, path, user, "search_tools", { query: "read entries", limit: 20 });
+      expect(JSON.stringify(search), `${path} ${user}`).not.toContain("journal");
+      asUnknown(
+        await rpc(c, path, user, "search_tools", { connector: "journal", query: "", limit: 20 }),
+        await rpc(c, path, user, "search_tools", { connector: "ghost", query: "", limit: 20 }),
+        "journal",
+      );
+      expect(JSON.stringify(await rpc(c, path, user, "skills", {}))).not.toContain("journal");
+      // Direct calls, both tools, and authorization.
+      for (const tool of ["call_tool", "call_destructive_tool"])
+        asUnknown(
+          await rpc(c, path, user, tool, { address: "journal.read", args: {} }),
+          await rpc(c, path, user, tool, { address: "ghost.read", args: {} }),
+          "journal",
+        );
+      for (const hidden of ["journal", "mailbox"])
+        asUnknown(
+          await rpc(c, path, user, "authorize_connector", { connector: hidden }),
+          await rpc(c, path, user, "authorize_connector", { connector: "ghost" }),
+          hidden,
+        );
+      // Programs, including a guessed address, through both program tools.
+      for (const tool of ["execute_code", "execute_read_code"]) {
+        setTarget("journal");
+        const hidden = await rpc(c, path, user, tool, { code: "return 1" });
+        setTarget("ghost");
+        asUnknown(hidden, await rpc(c, path, user, tool, { code: "return 1" }), "journal");
+      }
+    }
+    // A native pool lists none of its tools for a non-member.
+    const native = async (user: string) =>
+      readJsonRpc(
+        await c.fetch(
+          request("/mcp/nat", user, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+            body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+          }),
+        ),
+      ) as Promise<any>;
+    const carolNative = JSON.stringify(await native("carol"));
+    expect(carolNative).toContain("wiki");
+    expect(carolNative).not.toContain("journal");
+    expect(JSON.stringify(await native("bob"))).toContain("journal");
+    expect(reads()).toBe(0);
+    // The listed member reaches it on the same endpoints.
+    expect(
+      JSON.stringify(await rpc(c, "/mcp/team", "bob", "search_tools", { query: "read entries", limit: 20 })),
+    ).toContain("journal.read");
+    expect(
+      (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "journal.read", args: {} })).result.isError,
+    ).toBeFalsy();
+    setTarget("journal");
+    expect(JSON.stringify(await rpc(c, "/mcp/team", "bob", "execute_read_code", { code: "return 1" }))).toContain(
+      "entries",
+    );
+    expect(reads()).toBe(2);
+    await c.close();
+  });
+
+  it("INV-4: the member page, management permissions, connect flows, and activity follow connector members", async () => {
+    const { c } = await membersDeployment();
+    const get = async (path: string, user: string) => c.fetch(request(path, user, { headers: { Origin: BASE } }));
+    // A member page names neither the connectors nor their pool grants.
+    const carol = await (await get("/ui/api/config", "carol")).text();
+    expect(carol).toContain("notes");
+    expect(carol).not.toMatch(/journal|mailbox/);
+    expect(await (await get("/ui/api/config", "bob")).text()).toMatch(/journal[\s\S]*mailbox|mailbox[\s\S]*journal/);
+    // Personal auth management: a non-member gets the unknown-connector refusal.
+    const manage = (user: string, id: string) =>
+      c.fetch(request(`/ui/oauth/${id}`, user, { method: "POST", headers: { Origin: BASE } }));
+    const hidden = await manage("carol", "mailbox");
+    const absent = await manage("carol", "ghost");
+    expect(hidden.status).toBe(404);
+    expect(await hidden.text()).toBe(await absent.text());
+    expect((await manage("bob", "mailbox")).status).toBe(200);
+    // Maintainers keep the operator catalog and shared administration, but
+    // not someone else's personal connection, and their own /mcp lacks both.
+    expect((await manage("alice", "mailbox")).status).toBe(403);
+    const data = (await (await get("/ui/data", "alice")).json()) as any;
+    const permissions = (id: string) =>
+      data.connectors.find((connector: { id: string }) => connector.id === id).permissions;
+    expect(permissions("journal")).toEqual({ use: false, manageSharedAuth: true, connectPersonal: false });
+    expect(permissions("mailbox")).toEqual({ use: false, manageSharedAuth: false, connectPersonal: false });
+    expect(permissions("notes")).toMatchObject({ use: true });
+    // The member's own connect link starts; nobody else can open a flow for it.
+    const link = JSON.parse(
+      (await rpc(c, "/mcp/team", "bob", "authorize_connector", { connector: "mailbox" })).result.content[0].text,
+    ).authorizationUrl as string;
+    expect((await c.fetch(new Request(link, { headers: { Authorization: "Bearer bob" } }))).status).toBe(302);
+    // Public health neither counts the restricted connectors nor moves when a member uses one.
+    const health = async () => (await (await c.fetch(new Request(`${BASE}/health`))).json()) as any;
+    const before = await health();
+    expect(before.connectors).toBe(3);
+    // Activity is use: a maintainer the members omit reads none of it.
+    expect(
+      (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "journal.read", args: {} })).result.isError,
+    ).toBeFalsy();
+    expect(
+      (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "notes.search", args: {} })).result.isError,
+    ).toBeFalsy();
+    expect((await health()).admission.downstreamCalls).toEqual(before.admission.downstreamCalls);
+    const activity = (await (await get("/ui/activity", "alice")).json()) as any;
+    const connectors = activity.events.map((event: { connectorId: string }) => event.connectorId);
+    expect(connectors).toContain("notes");
+    expect(connectors).not.toContain("journal");
+    await c.close();
+  });
+
+  it("INV-11: describeConfig lists resolved connector members", async () => {
+    const { c } = await membersDeployment();
+    const described = c.describeConfig().connectors;
+    expect(described.find((connector) => connector.id === "journal")?.members).toEqual([
+      { kind: "human", namespace: NAMESPACE, id: "bob" },
+    ]);
+    expect(described.find((connector) => connector.id === "notes")).not.toHaveProperty("members");
+    await c.close();
+  });
+});
+
 describe("pools serve exactly their tools", () => {
   it("keeps an exact pool grant across catalog drift, including a read-to-write change", async () => {
     let tools: ToolDef[] = [{ name: "read", annotations: { readOnlyHint: true } }];
@@ -863,6 +1070,71 @@ describe("member references at construction", () => {
       },
     })();
     await c.close();
+  });
+
+  it.each([
+    [[], "is empty"],
+    ["bob", "must be an array"],
+    [["agent:ghost"], 'names agent "ghost"'],
+    [["bob", { namespace: NAMESPACE, id: "bob" }], "repeats an earlier member"],
+    [["bob:1"], 'contains ":"'],
+  ])("INV-11: refuses connector members %j (#1377)", (members, message) => {
+    const attempt = build({
+      auth: users(),
+      maintainers: ["alice"],
+      agents: ["assistant"],
+      connectors: [...teamConnectors(), { ...teamConnectors()[1]!, id: "diary", members } as Connector],
+    });
+    expect(attempt).toThrow(ConfigError);
+    expect(attempt).toThrow(`Connector("diary").members`);
+    expect(attempt).toThrow(message);
+  });
+
+  it("INV-11: refuses a shared OAuth connector whose members list no maintainer when no operator UI can connect it (#1377)", async () => {
+    const restricted = (members: string[], ui: boolean) =>
+      build({
+        auth: users(),
+        maintainers: ["alice"],
+        connectors: [{ ...sharedOAuth(), members }],
+        ...(ui ? { ui: operatorUi() } : {}),
+      });
+    expect(restricted(["bob"], false)).toThrow(
+      'Connector("shared").members lists no maintainer and ui is unset, so no one can connect it.',
+    );
+    await restricted(["alice", "bob"], false)().close();
+    // With the operator UI, the maintainer the list omits still connects it there.
+    const storage = memoryStorage();
+    const c = createTestConnecta({
+      connectors: [{ ...sharedOAuth(), members: ["bob"] }],
+      auth: users(),
+      maintainers: ["alice"],
+      pools: { team: { tools: ["shared"], members: ["bob"] } },
+      vault: encryptedCredentialVault(storage, ENCRYPTION_KEY),
+      storage,
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    const started = await c.fetch(request("/ui/oauth/shared", "alice", { method: "POST", headers: { Origin: BASE } }));
+    expect(started.status).toBe(200);
+    expect(await started.json()).toMatchObject({ state: "auth_required", authorizationUrl: expect.any(String) });
+    await c.close();
+  });
+
+  it("INV-11: refuses an agent on a personal connector's members and a bare id with no interactive provider (#1377)", () => {
+    expect(
+      build({
+        auth: users(),
+        maintainers: ["alice"],
+        agents: ["assistant"],
+        connectors: [{ ...personalOAuth("mailbox"), members: ["bob", "agent:assistant"] }],
+      }),
+    ).toThrow('Connector("mailbox").members[1] is an agent; personal connectors never reach agents.');
+    expect(
+      build({
+        agents: ["assistant"],
+        connectors: [...teamConnectors(), { ...teamConnectors()[1]!, id: "diary", members: ["bob"] } as Connector],
+      }),
+    ).toThrow("resolves only when exactly one interactive auth provider is configured");
   });
 
   it.each([

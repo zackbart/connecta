@@ -169,6 +169,8 @@ async function connect(context: RouteContext): Promise<Response> {
     return withSessionCookies(authPage(), authz.sessionCookies);
   const registry = opts.registry.scoped({
     connectorIds: [id],
+    // mayManageConnector above already applied connector members.
+    viewer: "management",
     principalKey: authz.principalKey,
     ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
   });

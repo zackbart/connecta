@@ -7,7 +7,7 @@ import { shortSecretWarning } from "../../sent-secrets.js";
 import { assertKnownOptions, keys, optionsOf, strings } from "../../config-schema.js";
 import type { PrincipalForwarding, RequestToken } from "../../request-token.js";
 import { type GuardedTransport } from "../../guarded-transport.js";
-import { READ_ONLY, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "../option-shapes.js";
+import { READ_ONLY, MEMBERS, CALL_ADMISSION, REMOTE_MCP_AUTH, USAGE_GUIDE } from "../option-shapes.js";
 import type { FetchLike } from "@modelcontextprotocol/client";
 import type { ConnectorCredentialConfig } from "../../types.js";
 import type { RemoteMcpAuth, RemoteMcpOptions } from "../remote-mcp.js";
@@ -36,6 +36,7 @@ const REMOTE_MCP_OPTIONS = optionsOf<RemoteMcpOptions>()({
     "skills",
   ),
   readOnly: READ_ONLY,
+  members: MEMBERS,
   callAdmission: CALL_ADMISSION,
   usageGuide: USAGE_GUIDE,
   auth: REMOTE_MCP_AUTH,
@@ -160,6 +161,7 @@ export interface RemoteMcpConfig {
 export function remoteMcpConfig(id: string, opts: RemoteMcpOptions): RemoteMcpConfig {
   opts = assertKnownOptions(opts, `remoteMcp(${JSON.stringify(id)})`, REMOTE_MCP_OPTIONS);
   if (opts.readOnly !== undefined) READ_ONLY.parse(opts.readOnly, `Connector(${JSON.stringify(id)}).readOnly`);
+  if (opts.members !== undefined) MEMBERS.parse(opts.members, `remoteMcp(${JSON.stringify(id)}).members`);
   if (opts.callAdmission !== undefined)
     CALL_ADMISSION.parse(opts.callAdmission, `remoteMcp(${JSON.stringify(id)}).callAdmission`);
   const extraHeaders = extraResourceHeaders(id, opts);

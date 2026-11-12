@@ -19,8 +19,10 @@ function activityToolVisible(access: ConnectorAccess, event: ActivityPage["event
  * including request IDs, client name/version, and actor kind/id/namespace, on
  * plain /mcp and in every declared pool, within the tools that pool declares.
  * Interactive reads may add directory actor labels; machine reads do not.
- * Personal history requires a matching principal owner. A row recorded in a
- * pool that is no longer declared is withheld.
+ * Personal history requires a matching principal owner. History of a
+ * connector whose `members` omit the reader is withheld: members narrow use,
+ * and activity is use. A row recorded in a pool that is no longer declared is
+ * withheld.
  */
 export function activityEventVisible(
   context: RouteContext,
@@ -31,6 +33,7 @@ export function activityEventVisible(
   const pool = event.pool !== undefined ? context.opts.pools.get(event.pool) : undefined;
   if (event.pool !== undefined && !pool) return false;
   const access: ConnectorAccess = pool ? pool.access : { connectorIds: "all" };
+  const admitted = (id: string) => context.opts.registry.connectorAdmits(id, authz.identity);
   if (event.kind === "operation") {
     const operation = checkedActivityOperation(event.operation);
     if (
@@ -56,12 +59,13 @@ export function activityEventVisible(
     return operation.connectors.every(
       (id) =>
         registry.canReadConnectorSkills(id) &&
+        admitted(id) &&
         (access.connectorIds === "all" || access.connectorIds.includes(id)) &&
         !access.toolAccess?.has(id),
     );
   }
   const connector = registry.getConnector(event.connectorId);
-  if (!connector) return false;
+  if (!connector || !admitted(connector.id)) return false;
   if (connector.authScope === "personal" || (event.kind === "catalog_drift" && event.actorBasis === "principal")) {
     const owner = authz.identity.principal;
     if (

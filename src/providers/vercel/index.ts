@@ -1,6 +1,6 @@
 import { keys, optionsOf, variants } from "../../config-schema.js";
 import { defineApiProvider } from "../../http/provider.js";
-import { CALL_ADMISSION } from "../../provider.js";
+import { CALL_ADMISSION, MEMBERS, type ProviderOptions } from "../../provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   authenticate,
@@ -38,6 +38,8 @@ interface VercelCommonOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
 }
 
 /**
@@ -62,6 +64,7 @@ export type VercelOptions = VercelTokenOptions;
 
 const COMMON = {
   ...keys("title", "authScope", "purpose", "instructions", "maxResultBytes", "readOnly"),
+  members: MEMBERS,
   callAdmission: CALL_ADMISSION,
 };
 

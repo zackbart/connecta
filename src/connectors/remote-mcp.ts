@@ -148,6 +148,8 @@ export interface RemoteMcpOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<Connector["members"]>;
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /**
@@ -461,6 +463,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }),
     ...(opts.description !== undefined ? { description: opts.description } : {}),
     ...(opts.readOnly !== undefined ? { readOnly: opts.readOnly } : {}),
+    ...(opts.members !== undefined ? { members: Object.freeze([...opts.members]) } : {}),
     ...(opts.authScope !== undefined ? { authScope: opts.authScope } : {}),
     ...(opts.maxResultBytes !== undefined ? { maxResultBytes: opts.maxResultBytes } : {}),
     ...(opts.callAdmission !== undefined ? { callAdmission: opts.callAdmission } : {}),

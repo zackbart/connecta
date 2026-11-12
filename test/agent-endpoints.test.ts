@@ -196,6 +196,54 @@ describe("agent endpoint admission", () => {
     await c.close();
   });
 
+  it("INV-4: hides a connector whose members omit the agent exactly as an unknown one, and serves a listed agent (#1377)", async () => {
+    const storage = memoryStorage();
+    const [notes, wiki, docs] = connectors();
+    const c = deployment({
+      storage,
+      // Listed in the same agent pool: people-only members hide "wiki"; an
+      // explicit agent reference keeps "docs" for that agent alone.
+      connectors: [notes!, { ...wiki!, members: ["bob"] }, { ...docs!, members: ["bob", "agent:bot"] }],
+      pools: {
+        team: { tools: ["wiki", "docs", "notes.search"], members: ["agent:bot", "agent:other"] },
+        humans: { tools: ["wiki"], members: ["bob"] },
+      },
+    });
+    const bot = await issueAgentToken(storage, "bot");
+    const other = await issueAgentToken(storage, "other");
+    const timeless = (value: unknown) =>
+      JSON.stringify(value).replace(/(\\?"durationMs\\?":)\d+/g, (_, key: string) => `${key}0`);
+    const botText = await searchText(c, "/agent/team", bot);
+    expect(botText).toContain("docs.read");
+    expect(botText).toContain("notes.search");
+    expect(botText).not.toContain("wiki");
+    expect(await searchText(c, "/agent/team", other)).not.toMatch(/wiki|docs/);
+    for (const [token, hidden] of [
+      [bot, "wiki"],
+      [other, "docs"],
+    ] as const) {
+      const call = (connector: string) =>
+        rpc(c, "/agent/team", token, "call_tool", { address: `${connector}.read`, args: {} });
+      expect(timeless(await call(hidden)).replaceAll(hidden, "ghost")).toBe(timeless(await call("ghost")));
+    }
+    expect(
+      (await rpc(c, "/agent/team", bot, "call_tool", { address: "docs.read", args: {} })).result.isError,
+    ).toBeFalsy();
+    // The listed person still reaches "wiki" through their own pool.
+    const person = await readJsonRpc(
+      await c.fetch(
+        post("/mcp/humans", "bob", {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "call_tool", arguments: { address: "wiki.read", args: {} } },
+        }),
+      ),
+    );
+    expect((person as any).result.isError).toBeFalsy();
+    await c.close();
+  });
+
   it("INV-4: answers a non-member agent, an undeclared pool, and a human-only pool with one identical 404 after auth", async () => {
     const storage = memoryStorage();
     const warn = vi.fn();

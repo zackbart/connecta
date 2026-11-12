@@ -1075,6 +1075,8 @@ export function createMcpRoute(opts: ServerOptions): {
           try {
             scopedRegistry = opts.registry.scoped({
               connectorIds: access.connectorIds,
+              // Connector members narrow every endpoint, plain /mcp for maintainers included.
+              viewer: authz.identity,
               ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
               ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
               ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
@@ -1106,6 +1108,7 @@ export function createMcpRoute(opts: ServerOptions): {
                       ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
                       ...(current.principalKey ? { principalKey: current.principalKey } : {}),
                       caller: callerFor(current.identity, currentScope),
+                      viewer: current.identity,
                     });
                     if (classification === "write" && currentReadOnly) return false;
                     // Both admission and catalogs belong to this pass only. A second

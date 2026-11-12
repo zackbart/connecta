@@ -84,6 +84,11 @@ registry enforcement, caller grants, result bounds, and activity paths. There
 is no runtime installation or registration. Keep connector IDs unique and
 stable because they prefix canonical `<connectorId>.<toolName>` addresses.
 
+`members` is optional on `remoteMcp()`, `api()`, every maintained provider,
+and custom connectors. It narrows who sees the connector, people and agents,
+on every endpoint, maintainers' plain `/mcp` included; see
+[connector members](./auth.md#connector-members).
+
 `callAdmission` is optional on `remoteMcp()`, `api()`, custom connectors, and
 provider variants that expose an override. Only omission or `undefined` uses
 the connector's documented default, which may be no admission. Every defined

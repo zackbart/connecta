@@ -271,6 +271,39 @@ describe("downstream OAuth best practice", () => {
     expect(flow.sent).toHaveLength(0);
   });
 
+  it("INV-4 INV-11: refuses a self-hosted client document on a connector with members; its path reads as unknown (#1377)", async () => {
+    const build = (auth: RemoteMcpAuth) =>
+      createTestConnecta({
+        connectors: [
+          remoteMcp("private", { url: MCP, auth, members: [{ namespace: "https://identity.test", id: "bob" }] }),
+        ],
+        publicUrl: BASE,
+        storage: memoryStorage(),
+      });
+    for (const publicUrl of [BASE, undefined])
+      expect(() =>
+        createTestConnecta({
+          connectors: [
+            remoteMcp("private", {
+              url: MCP,
+              auth: { type: "oauth" },
+              members: [{ namespace: "https://identity.test", id: "bob" }],
+            }),
+          ],
+          ...(publicUrl ? { publicUrl } : {}),
+          storage: memoryStorage(),
+        }),
+      ).toThrow('Connector("private").members needs auth.client or auth.clientMetadataUrl');
+    expect(() => build({ type: "oauth" })).toThrow("a self-hosted client document is public.");
+    const app = build({ type: "oauth", client: { issuer: ISSUER, clientId: "static-client", clientSecret: SECRET } });
+    apps.push(app);
+    const read = async (id: string) => {
+      const response = await app.fetch(new Request(`${BASE}/oauth/client-metadata/${id}`));
+      return { status: response.status, headers: [...response.headers].sort(), body: await response.text() };
+    };
+    expect(await read("private")).toEqual(await read("unknown"));
+  });
+
   it("INV-5 INV-6: uses an issuer-bound static client without registration or stored client secrets", async () => {
     const flow = setup({
       cimd: true,

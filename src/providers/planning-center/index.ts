@@ -2,6 +2,7 @@ import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { defineApiProvider } from "../../http/provider.js";
+import type { ProviderOptions } from "../../provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import {
   PlanningCenterApi,
@@ -44,6 +45,8 @@ export interface PlanningCenterOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
   /**
    * The `User-Agent` Planning Center sees. It asks integrations to identify
    * themselves and refuses a request without one; name your deployment and a

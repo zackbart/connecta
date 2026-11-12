@@ -22,7 +22,7 @@ import { skill } from "./skill.generated.js";
 import { keys, optionsOf } from "../../config-schema.js";
 import { PROVIDER_COMMON } from "../../connectors/option-shapes.js";
 import { defineApiProvider } from "../../http/provider.js";
-import type { ProviderGuideInput } from "../../provider.js";
+import type { ProviderGuideInput, ProviderOptions } from "../../provider.js";
 import type { ConnectorCallAdmissionPolicy } from "../../types.js";
 import { sensitiveFieldsOption } from "../_shared/sensitive-fields.js";
 import {
@@ -87,6 +87,8 @@ export interface TithelyOptions {
   maxResultBytes?: number;
   /** Serve only read-classified tools on every endpoint. Defaults to false. */
   readOnly?: boolean;
+  /** Who may see this connector; see `Connector.members`. Omit for everyone its endpoints admit. */
+  members?: NonNullable<ProviderOptions["members"]>;
   /** Default page size for list tools. Defaults to 25; this connector's cap is 99. */
   defaultPageSize?: number;
   /** API base override for a proxy or test double; replaces the environment's endpoint. */

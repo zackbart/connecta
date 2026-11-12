@@ -360,6 +360,15 @@ export interface Connector {
    * authenticated human principal. Defaults to `shared`.
    */
   authScope?: "shared" | "personal";
+  /**
+   * Who may see this connector, in the reference forms pool `members` use: a
+   * bare principal id, `{ namespace, id }`, or `"agent:<name>"`. It narrows
+   * every endpoint that serves the connector, plain `/mcp` for maintainers
+   * included; it never widens a pool. Omit it to keep the connector visible
+   * to everyone its endpoints admit. Agents see it only when listed, and never
+   * on a personal connector. Resolved and validated by `createConnecta`.
+   */
+  members?: ReadonlyArray<string | Readonly<IdentityReference>>;
   /** Human-readable display name; the stable `id` remains the tool-address prefix. */
   title?: string;
   /** How call_tool wraps results. "mcp" passes the content array through; anything else is JSON-wrapped. */
