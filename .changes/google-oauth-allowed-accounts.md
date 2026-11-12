@@ -1,0 +1,5 @@
+---
+type: added
+---
+
+OAuth-mode Google connections (`gmail`, `drive`, `docs`, `sheets`, `slides`, `forms`) take `accounts`, which predefines the Google accounts that may be connected. A shared connection takes one account's addresses or `{ domain }` rules. A personal connection takes rules for everyone, or a map from person (a bare principal id, with `"*"` for everyone else) to rules; a person with no entry cannot connect. At the OAuth callback, before anything is stored, the account comes from Google's ID token, checked against Google's signing keys, issuer, audience and lifetime. An address rule needs a verified email, and a domain rule matches only Google's hosted domain. A refused account stores and revokes nothing, and the page names the expected account, never the one used. The verified address is kept with the grant and shown on the member page and the connector's Connection tab (`ConnectorStatus.account`). Consent adds `openid email` and the account chooser only when `accounts` is set. The check is generic on `api()` OAuth as `oauth.account: { identify, allow }`. (#1381)

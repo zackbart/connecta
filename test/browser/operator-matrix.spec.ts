@@ -96,6 +96,24 @@ async function noCsp(page: Page) {
 /** The operator navigation's links, empty when it renders none. */
 const navLinks = (page: Page) => page.getByRole("navigation", { name: "Operator pages" }).getByRole("link");
 
+test("a member sees which account a verified personal grant is bound to (#1381)", async ({ page }) => {
+  const contract = {
+    ...OPERATOR_V2_MEMBER,
+    connectors: OPERATOR_V2_MEMBER.connectors.map((connector) =>
+      connector.id === "slack"
+        ? { ...connector, connection: { state: "ok" as const, account: "lin@example.com" } }
+        : connector,
+    ),
+  };
+  await install(page, contract, PRIVATE_404);
+  await page.goto(VISUAL_ORIGIN + "/");
+  const slack = page.locator(".account-row", { has: page.getByRole("heading", { name: "Slack", exact: true }) });
+  await expect(slack.locator("[data-connected-account]")).toContainText("lin@example.com");
+  // Only a grant whose account was verified carries one.
+  await expect(page.locator("[data-connected-account]")).toHaveCount(1);
+  await noCsp(page);
+});
+
 test("INV-4 INV-6: a member gets their own page on every path and never asks for maintainer data", async ({ page }) => {
   const requested = await install(page, OPERATOR_V2_MEMBER, PRIVATE_404);
   const served = page.waitForResponse((response) => new URL(response.url()).pathname === "/ui/api/config");

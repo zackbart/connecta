@@ -18,6 +18,7 @@ import {
   type MemberContext,
   type ResolvedPool,
 } from "./membership.js";
+import { accountRestrictionOf, assertAccountPeopleResolve } from "./oauth-account.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls, droppedThemeTokens, droppedUiAuthUrls } from "./branding.js";
 import { readConfig, type ConnectaConfig, type ResolvedConfig } from "./config.js";
@@ -328,6 +329,15 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   );
   assertConnectorMembersManageable(resolved, connectorMembers, maintainers);
   const pools = resolvePools(resolved.pools, resolved.readOnly, registry, members);
+  for (const connector of resolved.connectors) {
+    const restriction = accountRestrictionOf(connector);
+    if (restriction)
+      assertAccountPeopleResolve(
+        restriction,
+        members.interactiveNamespaces,
+        `Connector "${connector.id}" oauth.account.allow`,
+      );
+  }
   for (const person of peopleInSeveralPools(pools, maintainers)) {
     logger.warn("[connecta] Plain /mcp refuses a person in several pools", person);
   }
@@ -460,6 +470,14 @@ export type {
   ApiOptions,
   ApiTool,
 } from "./connectors/api.js";
+export type {
+  ApiOAuthAccountCheck,
+  OAuthAccount,
+  OAuthAccountRule,
+  OAuthAccountRules,
+  OAuthExchangedTokens,
+  OAuthPersonalAccounts,
+} from "./oauth-account.js";
 export type {
   ConnectaBranding,
   ConnectaTheme,

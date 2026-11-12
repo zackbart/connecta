@@ -20,7 +20,10 @@ export type OAuthCallbackReason =
   | "provider_error"
   | "invalid_callback"
   | "handoff_failed"
-  | "exchange_failed";
+  | "exchange_failed"
+  | "account_not_allowed"
+  | "account_not_listed"
+  | "account_unverified";
 
 /**
  * How a page reads at a glance: `ok` for a stored grant, `declined` for a
@@ -37,7 +40,11 @@ interface OAuthCallbackOutcome {
    * only in outcomes that set `namesConnector`.
    */
   heading: string;
-  /** `{product}` is the deployment's product name. */
+  /**
+   * `{product}` is the deployment's product name; `{expected}` the account(s)
+   * the deployment allows this person, from its configuration, and never the
+   * account the person actually signed in with.
+   */
   message: string;
   /** Absent only for success, which has nothing to fix. */
   fix?: FixPromptSpec;
@@ -131,6 +138,39 @@ const OUTCOMES: Readonly<Record<OAuthCallbackReason, OAuthCallbackOutcome>> = {
       ],
     },
   },
+  account_not_allowed: {
+    status: 403,
+    tone: "problem",
+    heading: "{name} was not connected",
+    message: "That account is not allowed here. Sign in as {expected} and connect again. Nothing was stored.",
+    namesConnector: true,
+    fix: {
+      problem: "A consent signed in as an account the connector's allowed accounts do not list; nothing was stored.",
+      steps: ["Connect again as the expected account, or add this one to the connector's allowed accounts."],
+    },
+  },
+  account_unverified: {
+    status: 502,
+    tone: "problem",
+    heading: "{name} could not be connected",
+    message: "The signed-in account could not be verified, so nothing was stored. Try again shortly.",
+    namesConnector: true,
+    fix: {
+      problem: "The connector could not verify the signed-in account (no valid signed ID token, or no signing keys).",
+      steps: ["Retry once, then check the OAuth client requests openid and email and is the one that issued consent."],
+    },
+  },
+  account_not_listed: {
+    status: 403,
+    tone: "problem",
+    heading: "{name} was not connected",
+    message: "No account is allowed for you here yet, so nothing was stored. Ask whoever runs {product} to add one.",
+    namesConnector: true,
+    fix: {
+      problem: "The connector's allowed accounts list no account for this person; nothing was stored.",
+      steps: ["Add the person's principal id, or \"*\", to the connector's allowed accounts."],
+    },
+  },
 };
 
 /**
@@ -166,6 +206,7 @@ export function oauthCallbackOutcome(
   reason: OAuthCallbackReason,
   connector?: { id: string; title?: string | undefined },
   productName = "Connecta",
+  expected = "the expected account",
 ): RenderedCallbackOutcome {
   const outcome = OUTCOMES[reason];
   const named = outcome.namesConnector ? connector : undefined;
@@ -175,7 +216,7 @@ export function oauthCallbackOutcome(
     status: outcome.status,
     tone: outcome.tone,
     heading: outcome.heading.replace("{name}", () => name),
-    message: outcome.message.replace("{product}", () => productName),
+    message: outcome.message.replace("{product}", () => productName).replace("{expected}", () => expected),
     ...(outcome.fix ? { fixPrompt: renderFixPrompt(outcome.fix, named?.id) } : {}),
   };
 }

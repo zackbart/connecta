@@ -399,6 +399,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
             tools,
             ...(problem ? { problem } : {}),
             ...(status.registrationPath ? { auth: { registrationPath: status.registrationPath } } : {}),
+            ...(status.state === "ok" && status.account !== undefined ? { account: status.account } : {}),
             catalogAgeMs: registry.catalogAgeMs(c.id),
             lastCall: null,
             ...(observedAgeMs !== undefined ? { observedAgeMs } : {}),
@@ -413,6 +414,7 @@ export function uiData(registry: RegistryView, baseUrl: string, options: UiDataO
             : {}),
           oauth: Boolean(c.startAuth && c.disconnectAuth),
           ...(status.registrationPath ? { registrationPath: status.registrationPath } : {}),
+          ...(status.state === "ok" && status.account !== undefined ? { account: status.account } : {}),
           ...(verification ? { verification } : {}),
           ...(credential ? { credential } : {}),
         } satisfies UiConnector;

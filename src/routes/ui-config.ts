@@ -190,6 +190,7 @@ function observe(
             id,
             status: status.state,
             ...(status.registrationPath ? { auth: { registrationPath: status.registrationPath } } : {}),
+            ...(status.state === "ok" && status.account !== undefined ? { account: status.account } : {}),
             ...(problem ? { problem } : {}),
             // Catalog metadata is allowed for authenticated maintainers. Only the
             // name and its derived address are withheld when they fail the record grammar.
@@ -748,7 +749,14 @@ function memberConnector(
               observed(context, registry, connector, scope, signal),
               ({ status, drift, tools, catalogFailed }) => {
                 const problem = uiProblemFor(connector, status.state, { credentialDrift: drift, catalogFailed });
-                return { connection: { state: status.state, ...(problem ? { problem } : {}) }, tools };
+                return {
+                  connection: {
+                    state: status.state,
+                    ...(problem ? { problem } : {}),
+                    ...(status.state === "ok" && status.account !== undefined ? { account: status.account } : {}),
+                  },
+                  tools,
+                };
               },
             )
           : attempt(() => registry.getTools(id, baseUrl, scope, { signal, ...(defer ? { defer } : {}) })).pipe(

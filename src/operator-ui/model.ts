@@ -115,6 +115,8 @@ export interface UiConnector {
   oauth?: boolean;
   /** Selected downstream client identity mechanism; never a client ID or secret. */
   registrationPath?: "cimd" | "dcr" | "static";
+  /** The connected downstream account a verified sign-in bound; only when `ok` and the connector checks accounts. */
+  account?: string;
   credential?: UiCredential;
   /**
    * The stored last verification of this connector's operator-managed

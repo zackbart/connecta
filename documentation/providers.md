@@ -1160,6 +1160,54 @@ in their Google Account instead.
 If a person declines a requested permission on Google's consent screen, calls
 needing it fail `provider_permission_denied` until they reconnect and allow it.
 
+**Allowed accounts.** Without `accounts`, any Google account may be connected.
+Set `accounts` on an OAuth-mode connection to predefine which accounts may be
+connected:
+
+```ts
+const oauth = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET };
+gmail("mail", {
+  purpose: "Read mail and prepare reply drafts",
+  oauth,
+  authScope: "personal",
+  accounts: {
+    alice: "alice@example.com",
+    bob: ["bob@example.com", "bob@example.org"],
+    "*": { domain: "example.com" },
+  },
+});
+gmail("inbox", { purpose: "The shared support inbox", oauth, authScope: "shared", accounts: "support@example.com" });
+```
+
+A rule is an address or `{ domain }`; a list allows any one of its rules. For
+`authScope: "shared"`, `accounts` is the one account's rules. For `"personal"`
+it is rules for everyone (`accounts: { domain: "example.com" }`), or a map from
+person to rules. A key is a bare principal id, as pool `members` name people,
+resolved in the namespace of the deployment's one interactive auth provider;
+`"*"` covers everyone without their own entry. A person's own entry replaces
+`"*"` for them, and a person with no entry and no `"*"` cannot connect.
+Construction refuses a malformed address or domain, an empty map or list, an
+`agent:` or namespaced key, a person map on a shared connection, `accounts` in
+delegation mode, and, at `createConnecta`, person keys without exactly one
+interactive auth provider.
+
+With `accounts` set, consent also requests `openid email` and sends
+`prompt=select_account consent`, so a person signed in to several Google
+accounts chooses one. Product scopes are unchanged. When the person returns,
+after the code exchange and before anything is stored, Connecta verifies the
+ID token in Google's token response: an RS256 signature by a key from Google's
+published JWKS, issuer `accounts.google.com`, this OAuth client as audience,
+and a current lifetime. An address rule matches the verified `email`, without
+regard to case. A domain rule matches only Google's hosted-domain claim
+(`hd`), which only Google Workspace accounts carry. A consumer account with a
+verified address at that domain does not match. An account that does not match
+stores no grant and revokes nothing at Google. The callback page tells the person which
+account(s) to use, never which one they used, and a person with no entry is told
+to ask an operator. A token that cannot be verified also stores nothing. Every
+reconnect is checked again. The verified address is kept with the grant and
+shown as the connected account on the member page and the connector's
+Connection tab (`ConnectorStatus.account`); activity never records it.
+
 Named reads return projected records or `{ items, page }`; `fields` narrows a
 record or each list item. Size cuts appear in `truncated`. The pinned index
 contains 79 methods and admits eleven reads. Settings, forwarding,

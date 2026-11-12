@@ -107,7 +107,7 @@ export function epochOf(raw: string | null): string {
 /** Nothing here trusts stored bytes: keep only what has the expected shape. */
 function grantBody(value: unknown): GrantBody {
   if (!plainObject(value)) return {};
-  const { issuer, client, tokens, expiresAt, discovery, refreshConsent } = value;
+  const { issuer, client, tokens, expiresAt, account, discovery, refreshConsent } = value;
   const hasTokens = plainObject(tokens) && typeof tokens.access_token === "string";
   return {
     ...(typeof issuer === "string" ? { issuer } : {}),
@@ -128,6 +128,7 @@ function grantBody(value: unknown): GrantBody {
     ...(hasTokens ? { tokens: tokens as unknown as OAuthTokens } : {}),
     // Meaningful only beside the tokens it describes.
     ...(hasTokens && typeof expiresAt === "number" && Number.isFinite(expiresAt) ? { expiresAt } : {}),
+    ...(hasTokens && typeof account === "string" ? { account } : {}),
     ...(discoveryIssuer(discovery) !== undefined ? { discovery: discovery as unknown as OAuthDiscoveryState } : {}),
     ...(plainObject(refreshConsent) &&
     typeof refreshConsent.digest === "string" &&
@@ -262,7 +263,13 @@ export const grantStoreMethods = {
     ).pipe(Effect.catch(() => Effect.succeed(false)));
   },
   peekGrant: function (this: KvOAuthProvider) {
-    return authFlow<{ epoch: string; tokens?: OAuthTokens; issuer?: string; observation?: GrantObservation }>(
+    return authFlow<{
+      epoch: string;
+      tokens?: OAuthTokens;
+      issuer?: string;
+      account?: string;
+      observation?: GrantObservation;
+    }>(
       function* (this: KvOAuthProvider) {
         const raw = (yield authInvoke(this, "wait", [
           authMethod(() => authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>),
@@ -272,6 +279,7 @@ export const grantStoreMethods = {
           epoch: grant.epoch,
           ...(grant.body.tokens ? { tokens: grant.body.tokens } : {}),
           ...(grant.body.issuer !== undefined ? { issuer: grant.body.issuer } : {}),
+          ...(grant.body.account !== undefined ? { account: grant.body.account } : {}),
           ...(grant.observation ? { observation: grant.observation } : {}),
         };
       }.bind(this),
@@ -424,6 +432,12 @@ export const grantStoreMethods = {
               body.tokens = tokens;
               delete body.expiresAt;
               if (expiresAt !== undefined) body.expiresAt = expiresAt;
+              // A code exchange states its account, or that it has none; a
+              // refresh, which states nothing, keeps the label it renewed.
+              if (this.exchangeAccount !== undefined) {
+                delete body.account;
+                if (this.exchangeAccount !== null) body.account = this.exchangeAccount;
+              }
               delete body.refreshConsent;
               if (refreshConsent) body.refreshConsent = refreshConsent;
             }

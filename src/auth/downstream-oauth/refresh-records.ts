@@ -511,7 +511,7 @@ export const refreshRecordMethods = {
           (yield authInvoke(this, "updateGrant", [
             (grant: Grant) => {
               if (grant.body.tokens?.refresh_token !== refreshToken) return undefined;
-              const { tokens: _refused, expiresAt: _expiry, ...body } = grant.body;
+              const { tokens: _refused, expiresAt: _expiry, account: _account, ...body } = grant.body;
               return { ...grant, body };
             },
             {

@@ -161,6 +161,9 @@ export function ConnectorAuth({ connector, state }: { connector: UiConnector; st
                   },
                 ]
               : []),
+            ...(connector.account
+              ? [{ label: "Account", value: <span data-connected-account>{connector.account}</span> }]
+              : []),
             ...(connector.verification
               ? [
                   {

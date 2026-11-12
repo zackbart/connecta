@@ -91,6 +91,12 @@ function AccountRow({ account, state, hue }: { account: MemberAccount; state: Op
           <p className="meta">
             {toolCountLabel(account.toolCount)}
             {account.summary ? <span className="account-note"> · {account.summary}</span> : null}
+            {account.account ? (
+              <span className="account-note" data-connected-account>
+                {" "}
+                · {account.account}
+              </span>
+            ) : null}
           </p>
         </div>
         <div className="account-status">

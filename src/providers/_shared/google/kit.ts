@@ -37,6 +37,7 @@ import {
 import type { ApiOAuthConfig } from "../../../connectors/api-connector.js";
 import { tagWorkspaceSubject } from "../../../workspace-subject.js";
 import { googleNamedOperation, requireGoogleIndex } from "./hatch.js";
+import { GOOGLE_ACCOUNT_SCOPES, googleAccountIdentity } from "./account.js";
 import type { OperationIndex } from "../rest/operation-index.js";
 
 // --- Errors ------------------------------------------------------------------------
@@ -380,6 +381,7 @@ export function googleOAuth(
 ): ApiOAuthConfig | undefined {
   const connection = workspaceOf(factory, options);
   if (!isOAuthMode(connection)) return undefined;
+  const { accounts } = connection;
   return {
     authorizationEndpoint: GOOGLE_AUTHORIZATION_ENDPOINT,
     tokenEndpoint: GOOGLE_TOKEN_ENDPOINT,
@@ -387,8 +389,18 @@ export function googleOAuth(
     clientSecret: connection.client.clientSecret,
     // Google documents client credentials in the token request body.
     tokenEndpointAuthMethod: "client_secret_post",
-    scope: product.scopes.join(" "),
+    // The account check reads a verified ID token, which needs openid and
+    // email; nothing else is added to the product's own scopes.
+    scope: [...product.scopes, ...(accounts !== undefined ? GOOGLE_ACCOUNT_SCOPES : [])].join(" "),
     apiOrigins: [...new Set(baseUrls.map((url) => new URL(url).origin))],
+    ...(accounts !== undefined
+      ? {
+          // Offer Google's account chooser, so a person signed in to several
+          // accounts picks the allowed one, and keep consent for offline access.
+          authorizationParams: { prompt: "select_account consent" },
+          account: { identify: googleAccountIdentity(connection.client.clientId), allow: accounts },
+        }
+      : {}),
   };
 }
 

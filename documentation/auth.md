@@ -3125,6 +3125,7 @@ No discovery or registration occurs; all URLs are configuration, so the
 | `revocationRequestFormat`    | `"form"` by default; `"json"` sends JSON without `token_type_hint`. Requires `revocationEndpoint` when set.                                                                                                                                                                                                                                                                                                                    |
 | `tokenRequestHeaders`        | Adds code-exchange and every refresh's headers; cannot set `Authorization`, `Content-Type`, `Content-Length`, `Cookie`, or `Host`.                                                                                                                                                                                                                                                                                             |
 | `tokenEndpointAuthMethod`    | Defaults to `client_secret_basic` with a secret, `none` without; mismatched pairings refuse construction.                                                                                                                                                                                                                                                                                                                      |
+| `account`                    | Optional `{ identify, allow }` restricting which downstream account a consent may bind; see [Allowed accounts](#allowed-accounts-on-api-oauth).                                                                                                                                                                                                                                                                                |
 | Issuer/resource              | No advertised issuer means no required RFC 9207 `iss` or sent RFC 8707 `resource`. The grant binds to the token endpoint; after it changes, old tokens are never sent and the next consent replaces them.                                                                                                                                                                                                                      |
 | Client                       | One deployment-config identity, never written or sealed to storage; no owner vault slot. Store leaks contain no client secret; Disconnect deletes none and Restart carries none. Read from environment or Worker secrets; empty strings refuse construction without quoting values.                                                                                                                                            |
 
@@ -3210,6 +3211,60 @@ a concurrently recovered grant is preserved. An observation
 storage failure does not replace the already received API response. `oauth` and
 `credential` are exclusive per connector, giving `auth_required` one recovery.
 For providers offering both, deployment config chooses; handlers check `ctx.oauth`.
+
+### Allowed accounts on `api()` OAuth
+
+`oauth.account` predefines which downstream account a consent may bind:
+
+```ts
+oauth: {
+  ...client,
+  account: {
+    identify: async ({ accessToken, idToken }, { signal }) => verifiedAccount(idToken, signal),
+    allow: { alice: "alice@example.com", "*": { domain: "example.com" } },
+  },
+},
+```
+
+`identify` learns the signed-in account from a verified source and returns
+`{ address, domain? }`. Use a signature-checked ID token, or the provider's
+account endpoint called with the fresh access token; never use an unverified
+claim. `domain` is an organization domain the provider attests, such as
+Google's `hd`. Throw when the account cannot be learned. The maintained Google
+providers supply `identify` and take the rules as `accounts`
+([Google allowed accounts](./providers.md#gmail)).
+
+`allow` takes rules: an address, `{ domain }`, or a list of them. Any one rule
+allows the account. A shared connector takes the one account's rules. A
+personal connector takes rules for everyone, or a map from person to rules. A
+key is a bare principal id, resolved like a pool member in the namespace of the
+deployment's one interactive auth provider. `"*"` covers everyone without an
+entry, and a person's own entry replaces it. A person with neither cannot
+connect. Construction refuses malformed rules, empty maps or lists, `agent:`
+and namespaced keys, and a person map on a shared connector. `createConnecta`
+refuses person keys unless exactly one interactive auth provider declares an
+`activityActorNamespace`.
+
+The check runs in the OAuth callback after the code exchange and before the
+SDK saves tokens. For a personal connector, the person is the signed-in browser
+identity, which the callback already checked as the grant's owner. Addresses
+compare without regard to case. A domain rule matches only the attested
+`domain`, never the address's suffix.
+
+| Outcome                  | Stored                                            | Callback page                                                  |
+| ------------------------ | ------------------------------------------------- | -------------------------------------------------------------- |
+| Allowed                  | The grant, with the verified address as its label | `connected`                                                    |
+| Another account          | Nothing; nothing revoked                          | 403 `account_not_allowed`, naming the expected account(s) only |
+| No entry for this person | Nothing; nothing revoked                          | 403 `account_not_listed`, asking for an operator               |
+| `identify` threw         | Nothing; nothing revoked                          | 502 `account_unverified`                                       |
+
+The page never names the account actually used, and the operator log names
+neither account. The label is non-secret grant metadata in the sealed grant
+body. A refresh keeps it. Removing the tokens removes it, and each code exchange
+replaces it, so every reconnect is checked again. Status reports it as
+`ConnectorStatus.account` while the grant is `ok`. The member page and connector
+Connection tab show it ([operator UI](./operator-ui.md#use-the-member-page)).
+Activity never records it.
 
 ## Request-local downstream Bearer tokens
 

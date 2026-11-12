@@ -37,6 +37,8 @@ export interface MemberAccount {
   badge: { label: string; tone: Tone } | null;
   /** A short note beside the badge, or null when the badge says it all. */
   summary: string | null;
+  /** The downstream account the member's grant is bound to, when known. */
+  account: string | null;
   manage: OperatorMemberManage;
   controls: AccountControl[];
 }
@@ -126,6 +128,7 @@ export function memberPage(contract: OperatorUiContractV2 | null): MemberPageMod
               }
             : null,
           summary: summaryFor(connector.manage, connection),
+          account: connection.state === "ok" ? (connection.account ?? null) : null,
           manage: connector.manage,
           controls: controlsFor(connector.manage, connection),
         };

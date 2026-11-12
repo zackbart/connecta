@@ -605,6 +605,7 @@ interface OwnStatus {
   readonly resourceTemplateRefusals?: ConnectorStatus["resourceTemplateRefusals"];
   readonly message?: string;
   readonly registrationPath?: ConnectorStatus["registrationPath"];
+  readonly account?: string;
   readonly failure?: unknown;
 }
 
@@ -617,6 +618,7 @@ function snapshot(status: ConnectorStatus, failure?: unknown): OwnStatus {
     ...(["cimd", "dcr", "static"].includes(status.registrationPath ?? "")
       ? { registrationPath: status.registrationPath }
       : {}),
+    ...(typeof status.account === "string" ? { account: status.account } : {}),
     ...(status.resourceTemplateRefusals
       ? {
           resourceTemplateRefusals: [
@@ -661,6 +663,7 @@ export function boundedStatus(status: ConnectorStatus): ConnectorStatus {
       ...(own.resourceTemplateRefusals ? { resourceTemplateRefusals: [...own.resourceTemplateRefusals] } : {}),
       ...(own.message === undefined ? {} : { message: own.message }),
       ...(own.registrationPath === undefined ? {} : { registrationPath: own.registrationPath }),
+      ...(own.account === undefined ? {} : { account: own.account }),
     };
     ownStatuses.set(rebuilt, own);
     return rebuilt;

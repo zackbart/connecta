@@ -7,6 +7,8 @@ import { failureRecord, logFailure } from "../operator-record.js";
 import { oauthFlowKeys } from "../storage/keys.js";
 import type { ConnectorContext } from "../types.js";
 import { escapeHtml, renderPage, resolveBranding, STATUS_ICONS } from "../branding.js";
+import { attachCaller } from "../connector-caller.js";
+import { accountRefusalOf, accountRestrictionOf, OAuthAccountUnverifiedError } from "../oauth-account.js";
 import { oauthCallbackOutcome, providerErrorReason, type OAuthCallbackReason } from "../oauth-callback-outcome.js";
 import {
   authorizeUiIdentity,
@@ -40,9 +42,10 @@ function html(
   reason: OAuthCallbackReason,
   opts: Pick<RouteContext["opts"], "config">,
   connector?: { id: string; title?: string | undefined },
+  expected?: string,
 ): Response {
   const brand = resolveBranding(opts.config.ui?.branding);
-  const outcome = oauthCallbackOutcome(reason, connector, brand.productName);
+  const outcome = oauthCallbackOutcome(reason, connector, brand.productName, expected);
   const mark = TONE_MARKS[outcome.tone];
   const uiMounted = Boolean(opts.config.ui);
   const home = uiMounted
@@ -291,6 +294,11 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
       }
       return withSessionCookies(html(providerErrorReason(error), opts), browserIdentity.sessionCookies);
     }
+    // A connector that restricts accounts checks the person connecting: the
+    // browser identity verified above, the grant's owner. No other connector
+    // reads it here.
+    if (accountRestrictionOf(connector))
+      attachCaller(connectorContext, { identity: browserIdentity.identity, authenticated: true });
     try {
       await connector.finishAuth(code!, connectorContext, url.searchParams);
       await callbackRegistry!.invalidateStored(id);
@@ -306,6 +314,23 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
             "claimed its state. No authorization code was exchanged.",
         );
         return refused();
+      }
+      // The deployment's own rules refused the signed-in account. The page
+      // names the account(s) expected for this person, from configuration;
+      // neither it nor the log names the account actually used.
+      const refusal = accountRefusalOf(err);
+      if (refusal) {
+        const expected = refusal instanceof OAuthAccountUnverifiedError ? undefined : refusal.expected;
+        const reason =
+          refusal instanceof OAuthAccountUnverifiedError
+            ? "account_unverified"
+            : expected === undefined
+              ? "account_not_listed"
+              : "account_not_allowed";
+        opts.config.logger.warn(
+          `[connecta] refused an OAuth callback for connector ${loggableValue(id)}: ${reason}. Nothing was stored.`,
+        );
+        return withSessionCookies(html(reason, opts, connector, expected), browserIdentity.sessionCookies);
       }
       // Neither the page nor the log repeats what the exchange threw: the SDK
       // quotes the token endpoint's error_description or raw body, and a

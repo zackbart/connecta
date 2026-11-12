@@ -2,6 +2,7 @@ import { staticOAuth } from "../auth/static-oauth.js";
 import type { Connector } from "../types.js";
 import { assertKnownOptions } from "../config-schema.js";
 import { API_OPTIONS, apiConnector } from "./api-connector.js";
+import { tagAccountRestriction } from "../oauth-account.js";
 import type { ApiOptions } from "./api-connector.js";
 
 export type {
@@ -28,5 +29,7 @@ export function api(id: string, opts: ApiOptions): Connector {
         "both lets the deployment choose which one to pass.",
     );
   }
-  return apiConnector(id, opts, opts.oauth !== undefined ? staticOAuth(id, opts.oauth) : undefined);
+  const grant = opts.oauth !== undefined ? staticOAuth(id, opts.oauth, opts.authScope ?? "shared") : undefined;
+  const connector = apiConnector(id, opts, grant);
+  return grant?.account ? tagAccountRestriction(connector, grant.account) : connector;
 }

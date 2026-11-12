@@ -146,6 +146,33 @@
       },
       "reason": "OAuth mode's authorization-code grant against Google's web-server flow has no machine-readable contract. Compare the authorization and token endpoints, body client authentication, S256 PKCE support and the requested scopes with the page; confirm revocation still ends every grant the person gave the Google Cloud project, including its other OAuth clients, which is why no revocation endpoint is configured.",
       "lastVerified": "2026-11-12"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/identity/openid-connect/openid-connect",
+      "evidence": {
+        "scopes": [
+          "openid",
+          "email"
+        ],
+        "jwks": "https://www.googleapis.com/oauth2/v3/certs",
+        "issuers": [
+          "https://accounts.google.com",
+          "accounts.google.com"
+        ],
+        "audience": "the OAuth client id",
+        "signature": "RS256",
+        "claims": [
+          "email",
+          "email_verified",
+          "hd"
+        ],
+        "authorizationParams": {
+          "prompt": "select_account consent"
+        }
+      },
+      "reason": "OAuth mode's accounts restriction reads the signed-in account from the ID token in Google's token response, and Google publishes that contract only as prose. Compare the JWKS URL, the two issuer spellings, aud as the client id, RS256 signing, email_verified, and hd as the claim that attests a Google Workspace domain (absent for consumer accounts), and confirm prompt still accepts space-delimited select_account and consent.",
+      "lastVerified": "2026-11-12"
     }
   ]
 }

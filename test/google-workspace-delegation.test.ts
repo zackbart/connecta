@@ -15,7 +15,7 @@ import { slides } from "../src/providers/slides/index.js";
 // subject comes from deployment config applied to the admitted identity, and
 // from nothing a call, a header, or a program sends (#678).
 import { AsyncLocalStorage } from "node:async_hooks";
-import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { attachCaller, type ConnectorCaller } from "../src/connector-caller.js";
 import { callClassification, attachCallClassification } from "../src/call-classification.js";
@@ -69,8 +69,11 @@ import { SLIDES_SCOPES } from "../src/providers/slides/index.js";
 import { FORMS_SCOPES } from "../src/providers/forms/index.js";
 import { identityStorageKey } from "../src/identity.js";
 import { workspaceSubjectOf } from "../src/workspace-subject.js";
+import { accountRefusalOf, OAuthAccountRefusedError, OAuthAccountUnverifiedError } from "../src/oauth-account.js";
+import { GOOGLE_JWKS_URL } from "../src/providers/_shared/google/account.js";
 import { providerCallFailure, settleWrite, classifyWriteOutcome } from "../src/write-outcome.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth } from "../src/types.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
@@ -2776,6 +2779,11 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     codes: Map<string, string>;
     access: Map<string, string>;
     refresh: Map<string, string>;
+    /** The ID token each owner's code exchange answers with, if any. */
+    idTokens: Map<string, string>;
+    /** The signing keys Google publishes. */
+    jwks: Record<string, unknown>[];
+    jwksReads: number;
     minted: number;
   };
   beforeEach(() => {
@@ -2786,10 +2794,17 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       codes: new Map(),
       access: new Map(),
       refresh: new Map(),
+      idTokens: new Map(),
+      jwks: [],
+      jwksReads: 0,
       minted: 0,
     };
     globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
+      if (url.href === GOOGLE_JWKS_URL) {
+        google.jwksReads += 1;
+        return Response.json({ keys: google.jwks });
+      }
       if (url.href === TOKEN_URL) {
         const form = new URLSearchParams(String(init.body));
         google.tokenRequests.push(form);
@@ -2808,11 +2823,13 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
         google.access.set(access, owner);
         const refresh = grant === "authorization_code" ? `1//${owner}` : undefined;
         if (refresh) google.refresh.set(refresh, owner);
+        const idToken = grant === "authorization_code" ? google.idTokens.get(owner) : undefined;
         return Response.json({
           access_token: access,
           expires_in: 3599,
           token_type: "Bearer",
           ...(refresh ? { refresh_token: refresh } : {}),
+          ...(idToken ? { id_token: idToken } : {}),
         });
       }
       if (url.hostname === "oauth2.googleapis.com") throw new Error(`unexpected Google OAuth request ${url.href}`);
@@ -3066,5 +3083,341 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     } finally {
       await connecta.close();
     }
+  });
+
+  describe("accounts: which Google account an OAuth connection may bind (#1381)", () => {
+    const encoder = new TextEncoder();
+    const b64url = (bytes: Uint8Array | string) =>
+      btoa(String.fromCharCode(...(typeof bytes === "string" ? encoder.encode(bytes) : bytes)))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+    type Keys = { privateKey: CryptoKey; jwk: Record<string, unknown> };
+    let signer: Keys;
+    let forger: Keys;
+    const keyPair = async (kid: string): Promise<Keys> => {
+      const pair = (await crypto.subtle.generateKey(
+        { name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+        true,
+        ["sign", "verify"],
+      )) as CryptoKeyPair;
+      const jwk = (await crypto.subtle.exportKey("jwk", pair.publicKey)) as JsonWebKey;
+      return { privateKey: pair.privateKey, jwk: { kty: "RSA", n: jwk.n, e: jwk.e, kid, alg: "RS256", use: "sig" } };
+    };
+    beforeAll(async () => {
+      signer = await keyPair("google-key-1");
+      // Same kid, another key: a token Google never signed.
+      forger = await keyPair("google-key-1");
+    });
+    beforeEach(() => {
+      google.jwks = [signer.jwk];
+    });
+
+    const now = () => Math.floor(Date.now() / 1000);
+    const claimsFor = (email: string, extra: Record<string, unknown> = {}) => ({
+      iss: "https://accounts.google.com",
+      aud: CLIENT.clientId,
+      azp: CLIENT.clientId,
+      sub: `sub-${email}`,
+      email,
+      email_verified: true,
+      iat: now(),
+      exp: now() + 3600,
+      ...extra,
+    });
+    const signed = async (claims: Record<string, unknown>, keys: Keys = signer, header: object = {}) => {
+      const input = `${b64url(JSON.stringify({ alg: "RS256", kid: "google-key-1", typ: "JWT", ...header }))}.${b64url(JSON.stringify(claims))}`;
+      const signature = new Uint8Array(
+        await crypto.subtle.sign("RSASSA-PKCS1-v1_5", keys.privateKey, encoder.encode(input)),
+      );
+      return `${input}.${b64url(signature)}`;
+    };
+    /** The Google account `owner`'s next consent signs into. */
+    const signsInAs = async (owner: string, email: string, extra: Record<string, unknown> = {}) =>
+      google.idTokens.set(owner, await signed(claimsFor(email, extra)));
+
+    const caller = (id: string): ConnectorCaller => ({
+      identity: {
+        actor: { kind: "test", id, namespace: "synthetic" },
+        principal: { namespace: "synthetic", id },
+        interactive: true,
+      },
+      authenticated: true,
+    });
+    /** A person's view of a personal connector, as the callback route builds it. */
+    const asPerson = async (registry: ReturnType<typeof makeRegistry>, id: string) => {
+      const principalKey = await identityStorageKey({ namespace: "synthetic", id });
+      return () => registry.scoped({ connectorIds: "all", principalKey, caller: caller(id) }).contextFor("mail", BASE);
+    };
+    const refusalOf = async (work: Promise<unknown>) => {
+      const error = await work.then(
+        () => undefined,
+        (failure: unknown) => failure,
+      );
+      expect(error).toBeDefined();
+      return accountRefusalOf(error);
+    };
+
+    it("binds an allowed account, keeps it as the grant's label, and adds only openid and email", NODE, async () => {
+      const connector = personal({ accounts: { alice: "Alice@Org.Example" } });
+      const registry = makeRegistry([connector]);
+      const alice = await asPerson(registry, "alice");
+      await signsInAs("alice", "alice@ORG.example");
+      const url = await connect(connector, alice, "alice");
+      expect(url.searchParams.get("scope")).toBe([...GMAIL_SCOPES, "openid", "email"].join(" "));
+      expect(url.searchParams.get("prompt")).toBe("select_account consent");
+      expect(url.searchParams.get("access_type")).toBe("offline");
+      expect(await connector.status!(alice())).toEqual({ state: "ok", account: "alice@org.example" });
+      expect(JSON.stringify(await labels(connector, alice()))).toContain("alice label");
+      // A refresh keeps the label it renewed.
+      google.replies.push(unauthorized);
+      await labels(connector, alice());
+      expect(google.tokenRequests.at(-1)!.get("grant_type")).toBe("refresh_token");
+      expect((await connector.status!(alice())).account).toBe("alice@org.example");
+      // Without accounts, consent asks for the product's scopes alone and keeps no label.
+      const open = personal();
+      const openRegistry = makeRegistry([open]);
+      const bob = await asPerson(openRegistry, "bob");
+      await signsInAs("bob", "bob@org.example");
+      const plain = await connect(open, bob, "bob");
+      expect(plain.searchParams.get("scope")).toBe(GMAIL_SCOPES.join(" "));
+      expect(plain.searchParams.get("prompt")).toBe("consent");
+      expect(await open.status!(bob())).toEqual({ state: "ok" });
+    });
+
+    it("refuses another account, stores nothing, and names only the expected one", NODE, async () => {
+      const connector = personal({ accounts: { alice: ["alice@org.example", { domain: "alt.example" }] } });
+      const registry = makeRegistry([connector]);
+      const alice = await asPerson(registry, "alice");
+      await signsInAs("alice", "mallory@org.example", { hd: "org.example" });
+      const refusal = await refusalOf(connect(connector, alice, "alice"));
+      expect(refusal).toBeInstanceOf(OAuthAccountRefusedError);
+      expect((refusal as OAuthAccountRefusedError).expected).toBe("alice@org.example or an account in alt.example");
+      expect(String(refusal)).not.toContain("mallory");
+      expect((await connector.status!(alice())).state).toBe("auth_required");
+      const unconnected = await labels(connector, alice()).catch((error: unknown) => error);
+      expect(classifyCallError(unconnected).code).toBe("downstream_oauth_required");
+      // Nothing reached Google's APIs, and nothing was revoked.
+      expect(google.api).toEqual([]);
+      expect(google.tokenRequests.map((form) => form.get("grant_type"))).toEqual(["authorization_code"]);
+    });
+
+    it('refuses a person with no entry, and "*" covers everyone without one', NODE, async () => {
+      const listed = personal({ accounts: { alice: "alice@org.example" } });
+      const registry = makeRegistry([listed]);
+      const bob = await asPerson(registry, "bob");
+      await signsInAs("bob", "alice@org.example");
+      const refusal = await refusalOf(connect(listed, bob, "bob"));
+      expect(refusal).toBeInstanceOf(OAuthAccountRefusedError);
+      expect((refusal as OAuthAccountRefusedError).expected).toBeUndefined();
+      expect((await listed.status!(bob())).state).toBe("auth_required");
+
+      const everyone = personal({ accounts: { alice: "alice@org.example", "*": { domain: "org.example" } } });
+      const everyoneRegistry = makeRegistry([everyone]);
+      const carol = await asPerson(everyoneRegistry, "carol");
+      await signsInAs("carol", "Carol@Org.Example", { hd: "ORG.example" });
+      await connect(everyone, carol, "carol");
+      expect((await everyone.status!(carol())).account).toBe("carol@org.example");
+      // A person's own entry replaces "*" for them.
+      const alice = await asPerson(everyoneRegistry, "alice");
+      await signsInAs("alice", "alice2@org.example", { hd: "org.example" });
+      expect(await refusalOf(connect(everyone, alice, "alice"))).toBeInstanceOf(OAuthAccountRefusedError);
+    });
+
+    it("matches a domain rule on Google's hosted-domain claim, never the address alone", NODE, async () => {
+      const connector = personal({ accounts: { domain: "org.example" } });
+      const registry = makeRegistry([connector]);
+      const dave = await asPerson(registry, "dave");
+      // A consumer account with a verified address at the domain has no hd.
+      await signsInAs("dave", "dave@org.example");
+      const refusal = await refusalOf(connect(connector, dave, "dave"));
+      expect((refusal as OAuthAccountRefusedError).expected).toBe("an account in org.example");
+      await signsInAs("dave", "dave@org.example", { hd: "org.example" });
+      await connect(connector, dave, "dave");
+      expect((await connector.status!(dave())).account).toBe("dave@org.example");
+    });
+
+    it.each([
+      ["no ID token", async () => undefined],
+      ["an unsigned token", async () => signed(claimsFor("alice@org.example"), signer, { alg: "none" })],
+      ["a token signed by another key", async () => signed(claimsFor("alice@org.example"), forger)],
+      [
+        "a tampered payload",
+        async () => {
+          const [header, , signature] = (await signed(claimsFor("mallory@org.example"))).split(".");
+          return `${header}.${b64url(JSON.stringify(claimsFor("alice@org.example")))}.${signature}`;
+        },
+      ],
+      ["another audience", async () => signed(claimsFor("alice@org.example", { aud: "other-client" }))],
+      ["another issuer", async () => signed(claimsFor("alice@org.example", { iss: "https://issuer.example" }))],
+      ["an expired token", async () => signed(claimsFor("alice@org.example", { exp: now() - 600, iat: now() - 4000 }))],
+      ["an unverified address", async () => signed(claimsFor("alice@org.example", { email_verified: false }))],
+    ])("refuses %s and stores nothing", NODE, async (_name, token) => {
+      const connector = personal({ accounts: { alice: "alice@org.example" } });
+      const registry = makeRegistry([connector]);
+      const alice = await asPerson(registry, "alice");
+      const idToken = await token();
+      if (idToken) google.idTokens.set("alice", idToken);
+      const refusal = await refusalOf(connect(connector, alice, "alice"));
+      expect(refusal).toBeInstanceOf(OAuthAccountUnverifiedError);
+      expect((await connector.status!(alice())).state).toBe("auth_required");
+      expect(google.api).toEqual([]);
+    });
+
+    it("re-checks on reconnect and replaces the label", NODE, async () => {
+      const connector = personal({ accounts: { alice: ["alice@org.example", "alice@alt.example"] } });
+      const registry = makeRegistry([connector]);
+      const alice = await asPerson(registry, "alice");
+      await signsInAs("alice", "alice@org.example");
+      await connect(connector, alice, "alice");
+      const reconnect = async () => {
+        const started = await connector.startAuth!(alice(), { force: true });
+        const url = new URL(started.authorizationUrl!);
+        const code = `4/code-alice-${google.codes.size}`;
+        google.codes.set(code, "alice");
+        const state = url.searchParams.get("state")!;
+        expect(await connector.verifyState!(state, alice())).toBe(true);
+        await connector.finishAuth!(code, alice(), new URLSearchParams({ code, state }));
+      };
+      await signsInAs("alice", "alice@alt.example");
+      await reconnect();
+      expect((await connector.status!(alice())).account).toBe("alice@alt.example");
+      await signsInAs("alice", "mallory@org.example");
+      expect(await refusalOf(reconnect())).toBeInstanceOf(OAuthAccountRefusedError);
+      expect((await connector.status!(alice())).state).toBe("auth_required");
+    });
+
+    it("restricts a shared connection to its one account", NODE, async () => {
+      const connector = personal({ authScope: "shared", accounts: "inbox@org.example" });
+      const registry = makeRegistry([connector]);
+      await signsInAs("inbox", "other@org.example");
+      expect(await refusalOf(connect(connector, () => registry.contextFor("mail", BASE), "inbox"))).toBeInstanceOf(
+        OAuthAccountRefusedError,
+      );
+      await signsInAs("inbox", "INBOX@org.example");
+      await connect(connector, () => registry.contextFor("mail", BASE), "inbox");
+      expect(await connector.status!(registry.contextFor("mail", BASE))).toEqual({
+        state: "ok",
+        account: "inbox@org.example",
+      });
+    });
+
+    describe("construction refuses a malformed restriction", () => {
+      it.each([
+        ["an empty map", { accounts: {} }, /accounts is empty/],
+        ["a bad address", { accounts: { alice: "not an address" } }, /accounts\.alice to be an email address/],
+        ["a bad domain", { accounts: { domain: "@org.example" } }, /accounts\.domain to be a domain name/],
+        ["an empty list", { accounts: { alice: [] } }, /accounts\.alice is empty/],
+        ["an agent", { accounts: { "agent:bot": "bot@org.example" } }, /agents never use a personal connection/],
+        ["a namespaced key", { accounts: { "ns:alice": "alice@org.example" } }, /bare principal ids/],
+        [
+          "a person map on a shared connection",
+          { authScope: "shared", accounts: { alice: "alice@org.example" } },
+          /shared connection is the one account/,
+        ],
+        [
+          "accounts in delegation mode",
+          {
+            oauth: undefined,
+            authScope: undefined,
+            serviceAccount: account(),
+            subject: "a@org.example",
+            accounts: "a@org.example",
+          },
+          /accounts restricts which Google account an OAuth-mode connection may bind/,
+        ],
+      ])("%s", NODE, (_name, overrides, message) => {
+        expect(() => personal(overrides)).toThrow(message);
+      });
+
+      it("refuses bare person keys without exactly one interactive auth provider", NODE, () => {
+        expect(() =>
+          createTestConnecta({
+            connectors: [personal({ accounts: { alice: "alice@org.example" } })],
+            logger: silentLogger,
+          }),
+        ).toThrow(/names people by bare principal id/);
+      });
+    });
+
+    it(
+      "refuses over the callback route naming only the expected account, then shows the label to the member",
+      NODE,
+      async () => {
+        const users: InboundAuth = {
+          kind: "test-users",
+          interactiveOperator: true,
+          uiAuth: { kind: "clerk", frontendApiUrl: "https://identity.test", publishableKey: "pk_test_fake" },
+          activityActorNamespace: "https://identity.test",
+          authorize(request) {
+            const user = /^Bearer (alice|bob)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
+            return user
+              ? { ok: true, userId: user, subjectId: user }
+              : { ok: false, response: Response.json({ error: "unauthorized" }, { status: 401 }) };
+          },
+        };
+        const storage = memoryStorage();
+        const warnings: string[] = [];
+        const connecta = createTestConnecta({
+          connectors: [personal({ accounts: { bob: "bob@org.example" } })],
+          auth: users,
+          maintainers: ["alice"],
+          pools: { team: { tools: ["mail"], members: ["bob"] } },
+          storage,
+          vault: encryptedCredentialVault(storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(7)))),
+          publicUrl: BASE,
+          logger: { ...silentLogger, warn: (message: string) => warnings.push(String(message)) },
+        });
+        const as = (path: string, init: RequestInit = {}) =>
+          connecta.fetch(
+            new Request(`${BASE}${path}`, { ...init, headers: { Authorization: "Bearer bob", ...init.headers } }),
+          );
+        const consent = async () => {
+          const handoff = await readJsonRpc(
+            await connecta.fetch(
+              mcpRpc(
+                "tools/call",
+                { name: "authorize_connector", arguments: { connector: "mail", force: true } },
+                { token: "bob", pool: "team", baseUrl: BASE },
+              ),
+            ),
+          );
+          const link = new URL(JSON.parse(handoff.result.content[0].text).authorizationUrl);
+          const started = await as(link.pathname + link.search);
+          expect(started.status).toBe(302);
+          const state = new URL(started.headers.get("Location")!).searchParams.get("state")!;
+          const code = `4/code-bob-${google.codes.size}`;
+          google.codes.set(code, "bob");
+          return as(`/oauth/callback/mail?code=${encodeURIComponent(code)}&state=${state}`);
+        };
+        try {
+          await signsInAs("bob", "mallory@org.example");
+          const refused = await consent();
+          const page = await refused.text();
+          expect(refused.status).toBe(403);
+          expect(page).toContain('data-oauth-callback="account_not_allowed"');
+          expect(page).toContain("bob@org.example");
+          expect(page).not.toContain("mallory");
+          expect(warnings.join("\n")).not.toContain("mallory");
+          const config = async () =>
+            (await (await as("/ui/api/config", { headers: { Origin: BASE } })).json()) as {
+              connectors: Array<{ id: string; connection: { state: string; account?: string } | null }>;
+            };
+          const unbound = (await config()).connectors.find((c) => c.id === "mail")!.connection!;
+          expect(unbound.state).toBe("auth_required");
+          expect(unbound).not.toHaveProperty("account");
+
+          await signsInAs("bob", "bob@org.example");
+          const connected = await consent();
+          expect(connected.status).toBe(200);
+          expect((await config()).connectors.find((c) => c.id === "mail")!.connection).toEqual({
+            state: "ok",
+            account: "bob@org.example",
+          });
+        } finally {
+          await connecta.close();
+        }
+      },
+    );
   });
 });
