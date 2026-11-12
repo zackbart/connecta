@@ -22,7 +22,7 @@ import { ConnectorCallError } from "../../errors.js";
 import { attachFailureFacts, failureRecord, labelErrorClass, logFailure } from "../../operator-record.js";
 import { learnedUrlRefusal } from "../../url-safety.js";
 import { RequestScope } from "../../runtime/request-scope.js";
-import { boundedToolCallResponse } from "./bounded-body.js";
+import { boundedMcpBody } from "./bounded-body.js";
 import { Context } from "effect";
 import { downstreamWriteContinuation } from "../../downstream-input-context.js";
 import type { RequestPrincipal } from "../../request-token.js";
@@ -286,23 +286,21 @@ function resendRefused(dispatch: CallDispatch): ConnectorCallError {
 }
 
 /**
- * A `tools/call` answer past the response byte bound, stopped at the bound.
- * The request was sent and answered, so a write's outcome is unknown.
+ * An MCP answer past its byte bound, never read further. A `tools/call` was
+ * sent and answered, so a write's outcome is unknown.
  */
 class DownstreamResponseTooLargeError extends ConnectorCallError {
-  constructor(connectorId: string, tool: string, limit: number, write: boolean) {
+  constructor(connectorId: string, answered: string, limit: number, call: "read" | "write" | undefined) {
     super(
       "connector_call_failed",
-      `Connector "${connectorId}"'s MCP server answered "${tool}" with more than ${limit} bytes, ` +
-        "so connecta stopped reading the answer there. " +
-        (write
-          ? "This write was sent and answered, so whether it took effect is unknown: check the target " +
-            "before repeating it, and never repeat it to see its output."
-          : "Ask for less: narrow the call with the tool's filters, field selection, pagination or a " +
-            "smaller range, then call again."),
-      { retryable: false, ...(write ? { writeOutcome: "unknown" as const } : {}) },
+      `Connector "${connectorId}"'s MCP server answered ${answered} with more than ${limit} bytes; connecta stopped reading.` +
+        (call === "write"
+          ? " The write was sent, so whether it took effect is unknown: check the target before repeating it."
+          : call
+            ? " Narrow the call (filters, fields, pagination or a smaller range) and call again."
+            : ""),
+      { retryable: false, ...(call === "write" ? { writeOutcome: "unknown" as const } : {}) },
     );
-    this.name = "DownstreamResponseTooLargeError";
   }
 }
 labelErrorClass(DownstreamResponseTooLargeError, "DownstreamResponseTooLargeError");
@@ -422,6 +420,9 @@ export function remoteMcpTransport(
     };
     // This transport's calls on the wire, by JSON-RPC id, while each is sent.
     const flights = new Map<string | number, CallDispatch>();
+    // A tool call's answer stream by its SSE event ids, so the SDK's GET
+    // resumption with `Last-Event-ID` is bounded and answered as that call.
+    const resumes = new Map<string, { rpcId: string | number; tool: string; flight: CallDispatch | undefined }>();
     const era: EraRefusal = {};
     const trackedFetch: FetchLike = authMethod((input: string | URL, init: RequestInit | undefined) =>
       authFlow<Response>(function* () {
@@ -500,7 +501,7 @@ export function remoteMcpTransport(
         // Attach retained settlement facts at the physical Promise leaf.
         // Cancellation may end the native waiter before it resumes; neither
         // the status nor a 401 verdict may disappear with that live authority.
-        const response = (yield authValue(() => {
+        let response = (yield authValue(() => {
           const pending = credentialPost
             ? sendCredentialPost(input, init ?? {}, dispatch)
             : sender
@@ -530,6 +531,52 @@ export function remoteMcpTransport(
             return response;
           });
         })) as Response;
+        // Every transport answer is bounded as it streams (#1364): an HTTP error
+        // or 202 body to a prefix, a tool's answer to the result store, a
+        // listing to the catalog ceiling. A resumed stream answers its call.
+        const resumed =
+          init?.method === "GET" ? resumes.get(new Headers(init.headers).get("last-event-id") ?? "") : undefined;
+        if (
+          !credentialPost &&
+          new Headers(init?.headers).get("accept")?.includes("text/event-stream") &&
+          !(skillsEnabled && skillObject(rpc) && (rpc.method === "skills/list" || rpc.method === "resources/read"))
+        ) {
+          const method = skillObject(rpc) && typeof rpc.method === "string" ? rpc.method : "";
+          const call =
+            resumed ??
+            (toolCall && (typeof toolCall.id === "string" || typeof toolCall.id === "number")
+              ? {
+                  rpcId: toolCall.id,
+                  tool: skillObject(toolCall.params) ? String(toolCall.params.name) : "",
+                  flight,
+                }
+              : undefined);
+          const limit = method.endsWith("/list")
+            ? Math.max(responseBytes, MAX_SERIALIZED_CATALOG_BYTES)
+            : responseBytes;
+          response = boundedMcpBody(response, {
+            limit,
+            rpcId:
+              call?.rpcId ?? (skillObject(rpc) && typeof rpc.id !== "object" ? (rpc.id as string | number) : undefined),
+            exceeded: () => {
+              const error = new DownstreamResponseTooLargeError(
+                id,
+                call ? `"${call.tool}"` : method || "a stream",
+                limit,
+                call && (call.flight?.write ? "write" : "read"),
+              );
+              if (call?.flight) call.flight.tooLarge = error;
+              return error;
+            },
+            onEventId:
+              call &&
+              ((eventId) => {
+                resumes.delete(eventId);
+                resumes.set(eventId, call);
+                if (resumes.size > 64) resumes.delete(resumes.keys().next().value!);
+              }),
+          });
+        }
         const refused = response.status === 400 ? era.refused : undefined;
         if (
           (flight?.write || refused) &&
@@ -612,29 +659,6 @@ export function remoteMcpTransport(
             rpc.method === "skills/list" ? MAX_SERIALIZED_CATALOG_BYTES : MAX_SKILL_READ_RPC_BYTES,
             rpc.id,
             init?.signal,
-          ])) as Response;
-        }
-        // A tool's answer is bounded as it streams: one past the result store
-        // can never be read whole, and buffering it can exhaust the isolate.
-        if (
-          toolCall &&
-          (typeof toolCall.id === "string" || typeof toolCall.id === "number") &&
-          response.ok &&
-          response.status !== 202 &&
-          response.status !== 204
-        ) {
-          const tool =
-            skillObject(toolCall.params) && typeof toolCall.params.name === "string" ? toolCall.params.name : "";
-          return (yield authCall(boundedToolCallResponse, [
-            response,
-            responseBytes,
-            toolCall.id,
-            init?.signal,
-            () => {
-              const error = new DownstreamResponseTooLargeError(id, tool, responseBytes, flight?.write === true);
-              if (flight) flight.tooLarge = error;
-              return error;
-            },
           ])) as Response;
         }
         return response;

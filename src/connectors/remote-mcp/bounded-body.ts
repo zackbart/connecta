@@ -1,204 +1,113 @@
-// Downstream MCP response bodies, bounded while they stream: a body past its
-// bound is cancelled at the bound, never buffered whole first.
+// Downstream MCP response bodies, bounded as they stream: nothing past a bound
+// is read, so no answer is ever buffered whole before it is measured.
 
-const BLOCK_BYTES = 65_536;
+/** An HTTP error or 202 body is only ever quoted or discarded: keep this much. */
+const UNPARSED_BYTES = 65_536;
 
-/**
- * Bytes retained in owned fixed-size blocks. Network chunk count and
- * backing-buffer size are untrusted, so a body is never kept as one object per
- * incoming chunk, nor as a view that pins a larger buffer.
- */
-export class OwnedBlocks {
-  private blocks: Uint8Array[] = [];
-  private current: Uint8Array | undefined;
-  private used = 0;
-  /** Bytes held now. */
-  bytes = 0;
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
 
-  push(chunk: Uint8Array): void {
-    for (let offset = 0; offset < chunk.byteLength;) {
-      this.current ??= new Uint8Array(BLOCK_BYTES);
-      const size = Math.min(BLOCK_BYTES - this.used, chunk.byteLength - offset);
-      this.current.set(chunk.subarray(offset, offset + size), this.used);
-      offset += size;
-      this.used += size;
-      if (this.used === BLOCK_BYTES) {
-        this.blocks.push(this.current);
-        this.current = undefined;
-        this.used = 0;
-      }
-    }
-    this.bytes += chunk.byteLength;
-  }
-
-  /** Every held block in order, leaving nothing held. */
-  take(): Uint8Array[] {
-    const blocks = this.blocks;
-    if (this.current && this.used) blocks.push(this.current.subarray(0, this.used));
-    this.blocks = [];
-    this.current = undefined;
-    this.used = 0;
-    this.bytes = 0;
-    return blocks;
-  }
-}
-
-/** A response like `response` whose body yields `blocks`, releasing each as it is read. */
-export function blocksResponse(blocks: Uint8Array[], response: Response, headers = response.headers): Response {
-  return new Response(
-    new ReadableStream<Uint8Array>({
-      pull(controller) {
-        const block = blocks.shift();
-        if (block) controller.enqueue(block);
-        else controller.close();
-      },
-    }),
-    { status: response.status, statusText: response.statusText, headers },
-  );
-}
-
-function isEventStream(response: Response): boolean {
-  return response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
+export interface BodyBound {
+  limit: number;
+  /** The JSON-RPC request an event stream answers, when known. */
+  rpcId: string | number | undefined;
+  exceeded: () => Error;
+  /** Each SSE event id the stream carries, for a resumption to find its call. */
+  onEventId?: ((id: string) => void) | undefined;
 }
 
 /**
- * Bound a `tools/call` response body to `limit` bytes.
+ * Bound one MCP transport response, whatever its status.
  *
- * Any body but an event stream is read here, before the SDK sees it: past
- * `limit` (declared or counted) it is cancelled and `exceeded()` is thrown.
- *
- * An event stream stays a stream, because the SDK acts on its progress
- * notifications and server requests as they arrive. Each complete event is
- * passed on whole; no one event may exceed `limit`. When one does, the source
- * is cancelled and the stream ends with a JSON-RPC error answering `rpcId`,
- * after `exceeded()` records the failure. The SDK settles a request only from
- * an answer, not from a broken body, so ending the stream any other way would
- * leave the call waiting for its deadline.
+ * An HTTP error or 202 keeps its status, so authentication recovery and write
+ * outcomes are unchanged, and its body ends after its first 64 KiB. A JSON
+ * body past `limit`, declared or counted, fails with `exceeded()`. An event
+ * stream passes events on as they arrive and bounds each one to `limit`; past
+ * it, the source is cancelled and, when `rpcId` is known, the stream ends with
+ * a JSON-RPC error answering it, because the SDK settles a request only from
+ * an answer, never from a broken body.
  */
-export async function boundedToolCallResponse(
-  response: Response,
-  limit: number,
-  rpcId: string | number,
-  signal: AbortSignal | null | undefined,
-  exceeded: () => Error,
-): Promise<Response> {
-  if (!response.body) return response;
-  if (isEventStream(response)) return boundedEventStream(response, limit, rpcId, signal, exceeded);
-  const declared = response.headers.get("content-length");
-  if (declared !== null && Number(declared) > limit) {
-    await response.body.cancel().catch(() => {});
-    throw exceeded();
+export function boundedMcpBody(response: Response, bound: BodyBound): Response {
+  const source = response.body;
+  if (!source) return response;
+  const parsed = response.ok && response.status !== 202 && response.status !== 204;
+  const sse =
+    parsed && response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() === "text/event-stream";
+  if (parsed && !sse && Number(response.headers.get("content-length")) > bound.limit) {
+    void source.cancel().catch(() => {});
+    throw bound.exceeded();
   }
-  const reader = response.body.getReader();
-  const abort = () => {
-    void reader.cancel().catch(() => {});
-  };
-  signal?.addEventListener("abort", abort, { once: true });
-  const held = new OwnedBlocks();
-  try {
-    while (true) {
-      if (signal?.aborted) throw signal.reason;
-      const chunk = await reader.read();
-      if (signal?.aborted) throw signal.reason;
-      if (chunk.done) break;
-      if (held.bytes + chunk.value.byteLength > limit) throw exceeded();
-      held.push(chunk.value);
-    }
-    return blocksResponse(held.take(), response);
-  } catch (error) {
-    held.take();
-    await reader.cancel().catch(() => {});
-    throw error;
-  } finally {
-    signal?.removeEventListener("abort", abort);
-    reader.releaseLock();
-  }
-}
-
-function boundedEventStream(
-  response: Response,
-  limit: number,
-  rpcId: string | number,
-  signal: AbortSignal | null | undefined,
-  exceeded: () => Error,
-): Response {
-  const reader = response.body!.getReader();
-  const abort = () => {
-    void reader.cancel().catch(() => {});
-  };
-  signal?.addEventListener("abort", abort, { once: true });
+  const reader = source.getReader();
+  // Every way out releases the source, so nothing holds its lock afterwards.
   const release = () => {
-    signal?.removeEventListener("abort", abort);
     try {
       reader.releaseLock();
     } catch {}
   };
-  // The bytes of the event not yet ended by a blank line.
-  const event = new OwnedBlocks();
-  // Whether the last byte ended a line (the stream starts at a line start),
-  // and whether it was a CR whose LF, if next, belongs to the same line end.
+  const stop = () => reader.cancel().then(release, release);
+  // Bytes so far: of the body, or of the SSE event not yet ended by a blank line.
+  let total = 0;
+  // SSE scanning: at a line start, after a CR, and this line's bytes while it may be `id:`.
   let lineStart = true;
   let afterCr = false;
-  const stream = new ReadableStream<Uint8Array>({
+  let line: number[] | undefined = [];
+  const body = new ReadableStream<Uint8Array>({
     async pull(controller) {
-      try {
-        while (true) {
-          const chunk = await reader.read();
-          if (chunk.done) {
-            for (const block of event.take()) controller.enqueue(block);
-            controller.close();
-            release();
-            return;
-          }
-          const bytes = chunk.value;
-          let start = 0;
-          let forwarded = false;
-          for (let index = 0; index < bytes.length; index++) {
-            const byte = bytes[index]!;
-            if (afterCr) {
-              afterCr = false;
-              if (byte === 10) continue;
-            }
-            if (byte !== 10 && byte !== 13) {
-              lineStart = false;
-              continue;
-            }
-            afterCr = byte === 13;
-            if (!lineStart) {
-              lineStart = true;
-              continue;
-            }
-            // A blank line: the event ends with this byte.
-            if (event.bytes + index + 1 - start > limit) return overflow(controller);
-            for (const block of event.take()) controller.enqueue(block);
-            controller.enqueue(bytes.subarray(start, index + 1));
-            start = index + 1;
-            forwarded = true;
-          }
-          if (event.bytes + bytes.length - start > limit) return overflow(controller);
-          event.push(bytes.subarray(start));
-          if (forwarded) return;
-        }
-      } catch (error) {
-        event.take();
+      const { done, value } = await reader.read().catch((error: unknown) => {
         release();
         throw error;
+      });
+      if (done) {
+        release();
+        return controller.close();
       }
+      if (!parsed) {
+        const keep = UNPARSED_BYTES - total;
+        total += value.byteLength;
+        if (value.byteLength <= keep) return controller.enqueue(value);
+        controller.enqueue(value.subarray(0, keep));
+        controller.close();
+        return void (await stop());
+      }
+      if (!sse) {
+        total += value.byteLength;
+        if (total <= bound.limit) return controller.enqueue(value);
+        await stop();
+        return controller.error(bound.exceeded());
+      }
+      for (let index = 0; index < value.length; index++) {
+        const byte = value[index]!;
+        if (afterCr && byte === 10) {
+          afterCr = false;
+          continue;
+        }
+        afterCr = byte === 13;
+        if (byte !== 10 && byte !== 13) {
+          lineStart = false;
+          if (line) line = line.length < 512 ? (line.push(byte), line) : undefined;
+          if (++total > bound.limit) {
+            await stop();
+            const error = bound.exceeded();
+            // End the partial event, then answer the request.
+            const answer =
+              bound.rpcId === undefined
+                ? ""
+                : `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: bound.rpcId, error: { code: -32603, message: error.message } })}\n\n`;
+            controller.enqueue(value.subarray(0, index));
+            controller.enqueue(encoder.encode(`\n\n${answer}`));
+            return controller.close();
+          }
+          continue;
+        }
+        if (line?.[0] === 105 && line[1] === 100 && line[2] === 58)
+          bound.onEventId?.(decoder.decode(new Uint8Array(line.slice(line[3] === 32 ? 4 : 3))));
+        line = [];
+        if (lineStart) total = 0;
+        lineStart = true;
+      }
+      controller.enqueue(value);
     },
-    async cancel(reason) {
-      event.take();
-      await reader.cancel(reason).catch(() => {});
-      release();
-    },
+    cancel: (reason) => reader.cancel(reason).then(release, release),
   });
-  const overflow = async (controller: ReadableStreamDefaultController<Uint8Array>) => {
-    event.take();
-    await reader.cancel().catch(() => {});
-    release();
-    const error = exceeded();
-    const answer = JSON.stringify({ jsonrpc: "2.0", id: rpcId, error: { code: -32603, message: error.message } });
-    controller.enqueue(new TextEncoder().encode(`event: message\ndata: ${answer}\n\n`));
-    controller.close();
-  };
-  return new Response(stream, { status: response.status, statusText: response.statusText, headers: response.headers });
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
 }

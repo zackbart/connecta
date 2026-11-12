@@ -63,14 +63,16 @@ type Answer =
   | "isErrorLong"
   | "huge-json"
   | "huge-declared"
-  | "huge-sse";
+  | "huge-sse"
+  | "huge-500"
+  | "huge-resume";
 
 /** The text a `huge-*` answer carries: past the 8 MiB default response bound. */
 const HUGE_TEXT_BYTES = 12 * 1024 * 1024;
 const HUGE_CHUNK = new TextEncoder().encode("a".repeat(65_536));
 
 /**
- * A 200 answer to `id` whose text is generated as it is read, so the test sees
+ * An answer to `id` whose text is generated as it is read, so the test sees
  * how far connecta read. `sse` answers as an event stream with CRLF line ends,
  * a notification event first, then the result.
  */
@@ -79,6 +81,8 @@ function hugeAnswer(
   sse: boolean,
   stats: { pulled: number; cancelled: boolean },
   declared = false,
+  status = 200,
+  textBytes = HUGE_TEXT_BYTES,
 ): Response {
   const enc = new TextEncoder();
   const answer = (text: string) =>
@@ -99,8 +103,8 @@ function hugeAnswer(
       pull(controller) {
         const part =
           parts.shift() ??
-          (sent < HUGE_TEXT_BYTES ? ((sent += HUGE_CHUNK.length), HUGE_CHUNK) : undefined) ??
-          (sent === HUGE_TEXT_BYTES ? ((sent += 1), enc.encode(tail + (sse ? "\r\n\r\n" : ""))) : undefined);
+          (sent < textBytes ? ((sent += HUGE_CHUNK.length), HUGE_CHUNK) : undefined) ??
+          (sent === textBytes ? ((sent += 1), enc.encode(tail + (sse ? "\r\n\r\n" : ""))) : undefined);
         if (!part) return controller.close();
         stats.pulled += part.length;
         controller.enqueue(part);
@@ -110,9 +114,10 @@ function hugeAnswer(
       },
     }),
     {
+      status,
       headers: {
         "content-type": sse ? "text/event-stream" : "application/json",
-        ...(declared ? { "content-length": String(HUGE_TEXT_BYTES + 100) } : {}),
+        ...(declared ? { "content-length": String(textBytes + 100) } : {}),
       },
     },
   );
@@ -140,6 +145,8 @@ function setup(
     /** What an `isErrorLong` answer says instead of the default long error. */
     toolError?: string;
     maxStashBytes?: number;
+    /** tools/list, or the initialized notification's 202, answers past the bounds. */
+    huge?: "tools/list" | "notifications/initialized";
   } = {},
 ) {
   const huge = { pulled: 0, cancelled: false };
@@ -177,12 +184,14 @@ function setup(
   /** The Last-Event-ID of each resumed stream, and the answer it carries. */
   const resumed: string[] = [];
   let pendingAnswer: string | undefined;
+  let hugeResume: unknown;
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input instanceof Request ? input.url : input);
     requests.push({ url, headers: new Headers(init?.headers) });
     const lastEventId = init?.method === "GET" ? new Headers(init.headers).get("last-event-id") : null;
     if (lastEventId) {
       resumed.push(lastEventId);
+      if (hugeResume !== undefined) return hugeAnswer(hugeResume, true, huge);
       return new Response(`id: ev-2\nevent: message\ndata: ${pendingAnswer}\n\n`, {
         headers: { "content-type": "text/event-stream" },
       });
@@ -213,6 +222,15 @@ function setup(
       init?.method === "POST" && typeof init.body === "string"
         ? (JSON.parse(init.body) as { method?: string; params?: { name?: string } })
         : undefined;
+    if (rpc?.method && rpc.method === options.huge) {
+      const reply = await downstream.fetch(input as string, init);
+      await reply.body?.cancel();
+      const id = (rpc as { id?: unknown }).id;
+      // A listing's bound is the 32 MiB catalog ceiling.
+      return rpc.method === "tools/list"
+        ? hugeAnswer(id, false, huge, false, 200, 40 * 1024 * 1024)
+        : hugeAnswer(id, false, huge, false, 202);
+    }
     if (rpc?.method !== "tools/call") return downstream.fetch(input as string, init);
     const name = rpc.params!.name!;
     const authorization = new Headers(init?.headers).get("authorization");
@@ -242,6 +260,10 @@ function setup(
       await reply.body?.cancel();
       return hugeAnswer((rpc as { id?: unknown }).id, answer === "huge-sse", huge, answer === "huge-declared");
     }
+    if (answer === "huge-500") {
+      await reply.body?.cancel();
+      return hugeAnswer((rpc as { id?: unknown }).id, false, huge, false, 500);
+    }
     // The handler ran, then the tool answers for call 2: "isError" names calls by `id`.
     if (answer === "isError" || answer === "isErrorLong") {
       if ((rpc.params as { arguments?: { id?: number } }).arguments?.id !== 2) return reply;
@@ -267,6 +289,10 @@ function setup(
     await reply.body?.cancel();
     if (answer === 307 || answer === 308)
       return new Response(null, { status: answer, headers: { location: `${downstream.url}?moved` } });
+    if (answer === "huge-resume") {
+      hugeResume = (rpc as { id?: unknown }).id;
+      return new Response("retry: 10\nid: ev-1\ndata: \n\n", { headers: { "content-type": "text/event-stream" } });
+    }
     if (answer === "resume") {
       pendingAnswer = JSON.stringify({
         jsonrpc: "2.0",
@@ -1013,7 +1039,7 @@ describe("remote MCP answers past the response byte bound", () => {
     expect(huge.pulled).toBeLessThanOrEqual(BOUND + 2 * HUGE_CHUNK.length);
   };
 
-  it.each(["huge-json", "huge-sse"] as const)(
+  it.each(["huge-json", "huge-sse", "huge-resume"] as const)(
     "INV-9: a write answered %s past the bound is read no further, sent once, and unknown",
     async (answer) => {
       const flow = setup();
@@ -1024,9 +1050,38 @@ describe("remote MCP answers past the response byte bound", () => {
       expect(write.error!.message).toContain("whether it took effect is unknown");
       expect(flow.sent("create_item")).toHaveLength(1);
       expect(flow.applied).toEqual(["create_item 1"]);
+      // A resumed answer stream is bounded and answered as the call it resumes.
+      expect(flow.resumed()).toEqual(answer === "huge-resume" ? ["ev-1"] : []);
       stoppedAtBound(flow.huge);
     },
   );
+
+  it("INV-9: a write answered by an HTTP error with an endless body keeps its unknown outcome, read to a prefix", async () => {
+    const flow = setup();
+    flow.answers.set("create_item", "huge-500");
+    const write = await flow.outcome("create_item", { id: 1 });
+    expect(write.error).toMatchObject({ code: "connector_call_failed", retryable: false, writeOutcome: "unknown" });
+    expect(flow.sent("create_item")).toHaveLength(1);
+    expect(flow.huge.cancelled).toBe(true);
+    expect(flow.huge.pulled).toBeLessThanOrEqual(3 * HUGE_CHUNK.length);
+  });
+
+  it("a 202 with an endless body is discarded after a prefix, and the connection still works", async () => {
+    const flow = setup({ huge: "notifications/initialized" });
+    expect((await flow.outcome("list_items")).error).toBeUndefined();
+    expect(flow.huge.cancelled).toBe(true);
+    expect(flow.huge.pulled).toBeLessThanOrEqual(3 * HUGE_CHUNK.length);
+  });
+
+  it("a tools/list page past the bound fails the listing at the bound", async () => {
+    const flow = setup({ huge: "tools/list" });
+    const CATALOG = 32 * 1024 * 1024;
+    await expect(flow.connector.listTools(flow.context())).rejects.toThrow(
+      `answered tools/list with more than ${CATALOG} bytes`,
+    );
+    expect(flow.huge.cancelled).toBe(true);
+    expect(flow.huge.pulled).toBeLessThanOrEqual(CATALOG + 2 * HUGE_CHUNK.length);
+  });
 
   it.each(["huge-json", "huge-declared", "huge-sse"] as const)(
     "a read answered %s past the bound fails typed and says how to ask for less, in a call and in a program",
@@ -1037,7 +1092,7 @@ describe("remote MCP answers past the response byte bound", () => {
       expect(read.error).toMatchObject({ code: "connector_call_failed", retryable: false });
       expect(read.error).not.toHaveProperty("writeOutcome");
       expect(read.error!.message).toContain(`answered "list_items" with more than ${BOUND} bytes`);
-      expect(read.error!.message).toContain("narrow the call");
+      expect(read.error!.message).toContain("Narrow the call");
       stoppedAtBound(flow.huge);
       // A declared length past the bound is refused before its body is read.
       if (answer === "huge-declared") expect(flow.huge.pulled).toBeLessThan(HUGE_CHUNK.length);
@@ -1046,7 +1101,7 @@ describe("remote MCP answers past the response byte bound", () => {
       flow.huge.cancelled = false;
       const run = await flow.program(false, 1, "list_items");
       expect(run.error).toMatchObject({ retryable: false });
-      expect(JSON.stringify(run.error)).toContain("narrow the call");
+      expect(JSON.stringify(run.error)).toContain("Narrow the call");
       expect(flow.sent("list_items")).toHaveLength(2);
       stoppedAtBound(flow.huge);
     },
