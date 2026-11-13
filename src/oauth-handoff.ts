@@ -158,6 +158,7 @@ const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
     return authFlow<{ url: string; nonce: string }>(function* () {
       const unavailable = oauthConnectUnavailable(opts);
       if (unavailable) throw new Error(unavailable);
+      connectorId = opts.registry.grantOwner(connectorId);
       const connector = opts.registry.getConnector(connectorId);
       if (!connector || !principal) throw new Error("OAuth connection requires an initiating user identity.");
       const handoff: Handoff = {

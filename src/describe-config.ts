@@ -49,6 +49,8 @@ export interface DescribedConnector {
   title?: string;
   description?: string;
   authScope: "shared" | "personal";
+  /** The connector whose OAuth grant this one uses; omitted when it uses its own. */
+  grantOwner?: string;
   /** Resolved connector `members` in declaration order; omitted when unset. */
   members?: DescribedMember[];
   source: ConnectorDescription["source"];
@@ -324,12 +326,14 @@ function describeConnector(
   const guideSummary = connectorGuideSummary(connector);
   const guided = connector.usageGuide !== undefined;
   const members = registry.connectorMembers(connector.id);
+  const grantOwner = registry.grantOwner(connector.id);
   return {
     ...(connector.readOnly === true ? { readOnly: true } : {}),
     id: connector.id,
     ...(str(connector.title) !== undefined ? { title: connector.title! } : {}),
     ...(str(connector.description) !== undefined ? { description: connector.description! } : {}),
     authScope: connector.authScope === "personal" ? "personal" : "shared",
+    ...(grantOwner !== connector.id ? { grantOwner } : {}),
     ...(members ? { members: members.map(describedMember) } : {}),
     ...own,
     ...(credential && typeof credential === "object"

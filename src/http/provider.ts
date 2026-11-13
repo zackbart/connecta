@@ -3,6 +3,11 @@ import { routePhrases, routesOf } from "../agent-routes.js";
 import { credentialFailureClass } from "../credential-verification.js";
 import { Context, Effect, Option } from "effect";
 import { api } from "../connectors/api.js";
+import { API_OPTIONS, apiConnector, type ApiOptions } from "../connectors/api-connector.js";
+import { assertKnownOptions } from "../config-schema.js";
+import { staticOAuth, type SharedOAuthGrant } from "../auth/static-oauth.js";
+import { tagAccountRestriction } from "../oauth-account.js";
+import { tagGrantOwner } from "../oauth-grant-owner.js";
 import { OAUTH_CHALLENGE_MAX_BYTES } from "../auth/renewable-grant.js";
 import type { ApiHandlerContext, ApiOAuthConfig, ApiTool } from "../connectors/api-connector.js";
 import { ConnectorCallError } from "../errors.js";
@@ -228,6 +233,59 @@ export function oauthGrantRenewal(id: string): NonNullable<Parameters<typeof ref
   };
 }
 
+/**
+ * An `api()` OAuth connector on a grant several connectors share: the one
+ * whose id is `grant.owner` holds it, and every other reads and renews it.
+ * Each keeps its own `oauth` settings for its calls; their client, endpoints
+ * and scope must match the owner's, which the grant's consent requested.
+ */
+export function apiUsingGrant(id: string, opts: ApiOptions, grant: SharedOAuthGrant): Connector {
+  opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
+  if (opts.oauth === undefined) throw new Error(`api() connector "${id}" shares an OAuth grant but declares no oauth.`);
+  const hooks = staticOAuth(id, opts.oauth, opts.authScope ?? "shared", grant);
+  const connector = tagGrantOwner(apiConnector(id, opts, hooks), grant.owner, grant);
+  return hooks.account ? tagAccountRestriction(connector, hooks.account) : connector;
+}
+
+/** The grant a construction shares, and the OAuth settings its consent requested. */
+interface ConstructionGrant {
+  readonly grant: SharedOAuthGrant;
+  readonly oauth: ApiOAuthConfig;
+}
+
+let constructionGrant: ConstructionGrant | undefined;
+
+/**
+ * Build connectors whose OAuth-mode connections use `grant` instead of a
+ * grant of their own. Construction is synchronous, so the grant reaches only
+ * the connectors `build` constructs.
+ */
+export function constructOnGrant<A>(grant: SharedOAuthGrant, oauth: ApiOAuthConfig, build: () => A): A {
+  const outer = constructionGrant;
+  constructionGrant = { grant, oauth };
+  try {
+    return build();
+  } finally {
+    constructionGrant = outer;
+  }
+}
+
+/** A product's own OAuth settings on the shared grant: same client and endpoints, the grant's whole scope. */
+function onSharedGrant(id: string, own: ApiOAuthConfig, shared: ApiOAuthConfig): ApiOAuthConfig {
+  const same: readonly (keyof ApiOAuthConfig)[] = [
+    "authorizationEndpoint",
+    "tokenEndpoint",
+    "issuer",
+    "clientId",
+    "clientSecret",
+    "tokenEndpointAuthMethod",
+  ];
+  const granted = new Set(shared.scope?.split(" "));
+  if (same.some((key) => own[key] !== shared[key]) || own.scope?.split(" ").some((scope) => !granted.has(scope)))
+    throw new Error(`Connection "${id}" cannot use a shared OAuth grant whose client, endpoints or scopes differ.`);
+  return { ...own, ...(shared.scope !== undefined ? { scope: shared.scope } : {}) };
+}
+
 /** An ordinary Promise connector factory; Effect remains inside the kit. */
 export function defineApiProvider<O extends ProviderOptions>(definition: ApiProviderDefinition<O>): ProviderFactory<O> {
   const {
@@ -346,6 +404,7 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
           `defaultPageSize must be a whole number from 1 to ${pageSize?.max ?? "a declared pageSize maximum"}.`,
         );
       }
+      const shared = constructionGrant;
       const configured = transport?.(options);
       const machineGrant = grant?.(options);
       const connectionBaseUrl = baseUrl(options);
@@ -483,8 +542,12 @@ export function defineApiProvider<O extends ProviderOptions>(definition: ApiProv
         );
       const renderedGuide = provider.usageGuide(guide(options));
       const connectionScope = authScope?.(options);
+      const build = (apiOptions: Parameters<typeof api>[1]) =>
+        shared && oauthConfig
+          ? apiUsingGrant(id, { ...apiOptions, oauth: onSharedGrant(id, oauthConfig, shared.oauth) }, shared.grant)
+          : api(id, apiOptions);
       const connector = tracksEveryRequest(
-        api(id, {
+        build({
           ...(defaultCallAdmission
             ? {
                 callAdmission:

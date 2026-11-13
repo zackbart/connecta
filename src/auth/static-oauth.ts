@@ -350,11 +350,12 @@ class StaticOAuthProvider extends KvOAuthProvider {
     coordinator: OAuthRefreshCoordinator,
     private readonly settings: StaticOAuthSettings,
     requestOwned = false,
+    grantOwner = connectorId,
   ) {
     super(
       connectorId,
       ctx.storage,
-      `${ctx.baseUrl}/oauth/callback/${connectorId}`,
+      `${ctx.baseUrl}/oauth/callback/${grantOwner}`,
       coordinator,
       ctx.allowAuthorization === true,
       oauthSealerFor(ctx),
@@ -580,11 +581,22 @@ const readChallengeNative = /* @__PURE__ */ registerAuth(
   },
 );
 
+/** One downstream grant several `api()` connectors use: its owner's id names its callback. */
+export interface SharedOAuthGrant {
+  readonly owner: string;
+  readonly coordinators: (ctx: ConnectorContext) => OAuthRefreshCoordinator;
+}
+
+export function sharedOAuthGrant(owner: string): SharedOAuthGrant {
+  return { owner, coordinators: refreshCoordinatorsByPartition() };
+}
+
 /** The grant behind one `api()` connector's `oauth`, as the hooks it exposes. */
 export function staticOAuth(
   id: string,
   config: ApiOAuthConfig,
   authScope: "shared" | "personal" = "shared",
+  grant?: SharedOAuthGrant,
 ): ApiOAuthHooks {
   const settings = settingsFor(id, config, authScope);
   const callbackParametersMatch = (params?: URLSearchParams): boolean =>
@@ -593,7 +605,7 @@ export function staticOAuth(
       return values?.length === 1 && values[0] === expected;
     });
   const issuerContext: OAuthClientInformationContext = { issuer: settings.identity };
-  const coordinatorFor = refreshCoordinatorsByPartition();
+  const coordinatorFor = grant?.coordinators ?? refreshCoordinatorsByPartition();
   // Keyed by request scope, so nothing here outlives the request that set it.
   const callbackProviders = new WeakMap<object, StaticOAuthProvider>();
   const rejectedScopes = new WeakSet<object>();
@@ -602,7 +614,7 @@ export function staticOAuth(
   const warnShortSecret = shortSecretWarning();
   const providerFor = (ctx: ConnectorContext, requestOwned = false) => {
     warnShortSecret(settings.clientSecret, ctx.logger);
-    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings, requestOwned);
+    return new StaticOAuthProvider(id, ctx, coordinatorFor(ctx), settings, requestOwned, grant?.owner);
   };
 
   /**

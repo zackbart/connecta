@@ -32,6 +32,7 @@ import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limit
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { usesCallerIdentity, type ConnectorCaller } from "./connector-caller.js";
 import { connectorAdmits, type Member } from "./membership.js";
+import { grantGroups, grantOwnerOf } from "./oauth-grant-owner.js";
 import { forwardsPrincipal } from "./request-principal.js";
 import { canonicalJson } from "./canonical-json.js";
 import type { CredentialVault } from "./credential-contract.js";
@@ -575,6 +576,7 @@ export class Registry implements RegistryView {
   private readonly classification: Readonly<Record<string, Readonly<Record<string, ClassificationOverride>>>>;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
+  private readonly grants: ReadonlyMap<string, readonly string[]>;
   private readonly oauthPartition = {};
   private callAdmissionClosed = false;
   /** Bounded FIFO of absent grants already warned about. */
@@ -630,6 +632,7 @@ export class Registry implements RegistryView {
         this.callAdmission.set(c.id, new ConnectorCallAdmissionController(c.id, c.callAdmission));
       }
     }
+    this.grants = grantGroups(this.connectors.values());
     this.classification = Object.assign(
       Object.create(null),
       Object.fromEntries(
@@ -839,6 +842,17 @@ export class Registry implements RegistryView {
     return this.connectors.get(id);
   }
 
+  /** The connector whose downstream OAuth grant `id` uses: itself unless another owns it. */
+  grantOwner(id: string): string {
+    const connector = this.connectors.get(id);
+    return (connector && grantOwnerOf(connector)) ?? id;
+  }
+
+  /** The other connectors that use the grant `id` owns. */
+  grantMembers(id: string): readonly string[] {
+    return this.grants.get(id) ?? [];
+  }
+
   getResourceConnector(id: string): Connector | undefined {
     return this.getConnector(id);
   }
@@ -891,9 +905,10 @@ export class Registry implements RegistryView {
         getAll: readValues,
       };
     }
+    const grantOwner = this.grantOwner(id);
     const context = operationView(
       {
-        storage: namespaced(this.opts.storage, scopes.connector(id)),
+        storage: namespaced(this.opts.storage, scopes.connector(grantOwner)),
         logger: this.opts.logger,
         baseUrl,
         ...(this.opts.publicUrl !== undefined ? { publicUrl: this.opts.publicUrl } : {}),
@@ -947,12 +962,12 @@ export class Registry implements RegistryView {
     sentSecretsFor(context);
     wrapViewCredentials(context);
     attachOAuthPartition(context, this.oauthPartition);
-    // Downstream OAuth state is sealed under the vault key, bound to this
-    // connector and owner. The sealer rides beside the context, not on it.
+    // Downstream OAuth state is sealed under the vault key, bound to the
+    // grant's connector and owner. The sealer rides beside the context, not on it.
     return this.opts.credentialVault
       ? attachOAuthSealer(
           context,
-          vaultOAuthSealer(this.opts.credentialVault, id, this.opts.credentialOwner, this.opts.logger),
+          vaultOAuthSealer(this.opts.credentialVault, grantOwner, this.opts.credentialOwner, this.opts.logger),
         )
       : context;
   }
@@ -1687,20 +1702,32 @@ export class Registry implements RegistryView {
             ),
           );
         }),
-      invalidateStored: (self, id) =>
-        Effect.suspend(() => {
-          self.catalogObservedAt.delete(id);
-          return Effect.tryPromise({
-            try: () => invalidateCatalogCache(self.opts.catalogStorage ?? self.opts.storage, id),
-            catch: (error) => error,
-          }).pipe(
-            Effect.catch((error) =>
-              Effect.sync(() =>
-                logFailure(self.opts.logger, "catalog invalidation failed", failureRecord({ connector: id }, error)),
-              ),
-            ),
-          );
-        }),
+      invalidateStored: (self, id) => {
+        const owner = self.grantOwner(id);
+        const ids = self.connectors.has(owner) ? [owner, ...self.grantMembers(owner)] : [id];
+        return Effect.forEach(
+          ids,
+          (each) =>
+            Effect.suspend(() => {
+              self.catalogObservedAt.delete(each);
+              return Effect.tryPromise({
+                try: () => invalidateCatalogCache(self.opts.catalogStorage ?? self.opts.storage, each),
+                catch: (error) => error,
+              }).pipe(
+                Effect.catch((error) =>
+                  Effect.sync(() =>
+                    logFailure(
+                      self.opts.logger,
+                      "catalog invalidation failed",
+                      failureRecord({ connector: each }, error),
+                    ),
+                  ),
+                ),
+              );
+            }),
+          { discard: true },
+        );
+      },
     });
   }
 }

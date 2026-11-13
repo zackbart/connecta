@@ -87,7 +87,9 @@ import { encryptedCredentialVault } from "../src/credentials.js";
 import type { AuthenticatedIdentity, Connector, ConnectorContext, InboundAuth, KVStorage } from "../src/types.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { activitySink, createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
-import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+import { GOOGLE_PRODUCTS, googleAccount, type GoogleAccountOptions } from "../src/google-account.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { accessTokens } from "../src/access-tokens.js";
@@ -3728,5 +3730,231 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
         }
       },
     );
+  });
+
+  describe("googleAccount: one consent and one grant for every product (#1416)", () => {
+    const workAccount = (overrides: Record<string, unknown> = {}) =>
+      googleAccount("work", {
+        purpose: "Work",
+        oauth: CLIENT,
+        authScope: "personal",
+        ...overrides,
+      } as GoogleAccountOptions);
+
+    it("returns the account, then one connector per product in a fixed order", NODE, () => {
+      const connectors = workAccount();
+      expect(connectors.map((connector) => connector.id)).toEqual([
+        "work",
+        ...GOOGLE_PRODUCTS.map((name) => `work_${name}`),
+      ]);
+      expect(connectors[0]!.staticTools).toEqual([]);
+      expect(connectors[0]!.title).toBe("Google");
+      expect(connectors.every((connector) => connector.authScope === "personal")).toBe(true);
+      expect(workAccount({ products: ["calendar", "gmail"] }).map((connector) => connector.id)).toEqual([
+        "work",
+        "work_gmail",
+        "work_calendar",
+      ]);
+      const delegated = googleAccount("work", {
+        purpose: "Work",
+        serviceAccount: account(),
+        subject: "alice@org.example",
+        products: ["gmail"],
+      });
+      expect(delegated.map((connector) => connector.id)).toEqual(["work_gmail"]);
+    });
+
+    it.each([
+      ["no products", { products: [] }, /products must be a non-empty list/],
+      ["a repeated product", { products: ["gmail", "gmail"] }, /distinct names/],
+      ["an unknown product", { products: ["photos"] }, /products must be/],
+      ["a per-product base URL", { baseUrl: "https://proxy.example" }, /baseUrl/],
+      ["both modes", { serviceAccount: account() }, /googleAccount\(\) takes either .*never both/],
+      ["no authScope", { authScope: undefined }, /googleAccount\(\) OAuth mode requires authScope/],
+      ["no purpose", { purpose: " " }, /purpose/],
+    ])("refuses %s at construction", NODE, (_name, overrides, message) => {
+      expect(() => workAccount(overrides)).toThrow(message);
+    });
+
+    it("describes which connector holds each product's grant", NODE, () => {
+      const connecta = createTestConnecta({ connectors: workAccount({ products: ["gmail"] }), logger: silentLogger });
+      const described = connecta.describeConfig().connectors.map((connector) => [connector.id, connector.grantOwner]);
+      expect(described).toEqual([
+        ["work", undefined],
+        ["work_gmail", "work"],
+      ]);
+    });
+
+    it("refuses a product connector whose account is not configured or holds another grant", NODE, () => {
+      const [owner, mail] = workAccount({ products: ["gmail"] });
+      expect(() => makeRegistry([mail!])).toThrow(/OAuth grant of connector "work", which is not configured/);
+      const [, otherMail] = workAccount({ products: ["gmail"], oauth: { ...CLIENT, clientId: "other.apps.example" } });
+      expect(() => makeRegistry([owner!, otherMail!])).toThrow(/built for another OAuth grant than connector "work"/);
+      expect(() => makeRegistry([owner!, mail!])).not.toThrow();
+    });
+
+    it(
+      "INV-5 INV-9: one consent serves every product, renews once for all, and disconnects together",
+      NODE,
+      async () => {
+        installOwnedTransport();
+        const connectors = workAccount({ products: ["gmail", "drive"] });
+        const [owner, mail, files] = connectors as [Connector, Connector, Connector];
+        const registry = makeRegistry(connectors);
+        const [alice, bob] = await Promise.all(
+          ["alice", "bob"].map((id) => identityStorageKey({ namespace: "synthetic", id })),
+        );
+        const as = (principalKey: string, id: string) => () =>
+          registry.scoped({ connectorIds: "all", principalKey }).contextFor(id, BASE);
+
+        expect((await mail.status!(as(alice!, "work_gmail")())).state).toBe("auth_required");
+        const url = await connect(owner, as(alice!, "work"), "alice");
+        expect(url.searchParams.get("scope")!.split(" ").sort()).toEqual(
+          [...new Set([...GMAIL_SCOPES, ...DRIVE_SCOPES])].sort(),
+        );
+        expect(url.searchParams.get("redirect_uri")).toBe(`${BASE}/oauth/callback/work`);
+        for (const [connector, id] of [
+          [mail, "work_gmail"],
+          [files, "work_drive"],
+        ] as const)
+          expect((await connector.status!(as(alice!, id)())).state).toBe("ok");
+
+        expect(JSON.stringify(await labels(mail, as(alice!, "work_gmail")()))).toContain("alice label");
+        await files.callTool("create_file", { name: "Notes", content: "Hello" }, as(alice!, "work_drive")());
+        expect(google.api.map((call) => call.authorization)).toEqual(["Bearer ya29.alice-1", "Bearer ya29.alice-1"]);
+
+        google.replies.push(unauthorized);
+        await labels(mail, as(alice!, "work_gmail")());
+        await files.callTool("create_file", { name: "More", content: "Hi" }, as(alice!, "work_drive")());
+        expect(google.api.at(-1)!.authorization).toBe("Bearer ya29.alice-2");
+        expect(google.tokenRequests.map((form) => form.get("grant_type"))).toEqual([
+          "authorization_code",
+          "refresh_token",
+        ]);
+
+        const unconnected = await labels(mail, as(bob!, "work_gmail")()).catch((error: unknown) => error);
+        expect(classifyCallError(unconnected).code).toBe("downstream_oauth_required");
+
+        await files.disconnectAuth!(as(alice!, "work_drive")());
+        for (const [connector, id] of [
+          [owner, "work"],
+          [mail, "work_gmail"],
+          [files, "work_drive"],
+        ] as const)
+          expect((await connector.status!(as(alice!, id)())).state).toBe("auth_required");
+      },
+    );
+
+    it("INV-4: a member connects the account through the one product their pool holds", NODE, async () => {
+      installOwnedTransport();
+      const storage = memoryStorage();
+      const namespace = "https://clerk.example.test";
+      const connecta = createTestConnecta({
+        connectors: workAccount({ products: ["gmail", "drive"] }),
+        auth: ["alice", "bob"].map((user) => ({
+          ...fakeClerkAuth({ token: user, userId: user, signInUrl: "https://accounts.example/sign-in" }),
+          activityActorNamespace: namespace,
+        })),
+        maintainers: [{ namespace, id: "alice" }],
+        pools: { team: { tools: ["work_gmail"], members: [{ namespace, id: "bob" }] } },
+        storage,
+        publicUrl: BASE,
+        logger: "silent",
+        vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+      });
+      const asBob = (url: string) => connecta.fetch(new Request(url, { headers: { Cookie: "__session=bob" } }));
+      try {
+        const rpc = async (name: string, args: Record<string, unknown>) =>
+          readJsonRpc(
+            await connecta.fetch(mcpRpc("tools/call", { name, arguments: args }, { token: "bob", pool: "team" })),
+          );
+        const handoff = JSON.parse(
+          (await rpc("authorize_connector", { connector: "work_gmail" })).result.content[0].text,
+        );
+        expect(new URL(handoff.authorizationUrl).pathname).toBe("/connect/work");
+
+        const started = await asBob(handoff.authorizationUrl);
+        expect(started.status).toBe(302);
+        const consent = new URL(started.headers.get("Location")!);
+        expect(consent.searchParams.get("redirect_uri")).toBe(`${BASE}/oauth/callback/work`);
+        google.codes.set("4/code-bob", "bob");
+        const params = googleCallback(
+          "4/code-bob",
+          consent.searchParams.get("state")!,
+          consent.searchParams.get("scope")!,
+        );
+        const finished = await asBob(`${BASE}/oauth/callback/work?${params}`);
+        expect(finished.status).toBe(200);
+        await finished.arrayBuffer();
+
+        const call = await rpc("call_tool", { address: "work_gmail.list_labels", args: {} });
+        expect(JSON.stringify(call)).toContain("bob label");
+
+        const page = await asBob(`${BASE}/ui/api/config`);
+        expect(page.status).toBe(200);
+        const contract = (await page.json()) as {
+          connectors: { id: string; manage: { kind: string }; grantOwner?: string; connection: { state: string } }[];
+        };
+        expect(
+          contract.connectors.map((connector) => [
+            connector.id,
+            connector.manage.kind,
+            connector.grantOwner ?? null,
+            connector.connection.state,
+          ]),
+        ).toEqual([
+          ["work", "oauth", null, "ok"],
+          ["work_gmail", "none", "work", "ok"],
+        ]);
+
+        const manage = (method: string, path: string) =>
+          connecta.fetch(new Request(`${BASE}${path}`, { method, headers: { Cookie: "__session=bob", Origin: BASE } }));
+        const relink = await manage("POST", "/ui/oauth/work?mode=continue");
+        expect(relink.status).toBe(200);
+        await relink.arrayBuffer();
+        const disconnected = await manage("DELETE", "/ui/oauth/work");
+        expect(disconnected.status).toBeLessThan(300);
+        await disconnected.arrayBuffer();
+        const after = await rpc("call_tool", { address: "work_gmail.list_labels", args: {} });
+        expect(JSON.stringify(after)).toContain("downstream_oauth_required");
+      } finally {
+        await connecta.close();
+      }
+    });
+
+    it("INV-4: managing a product connector also takes the account's members", NODE, async () => {
+      const namespace = "https://clerk.example.test";
+      const [owner, mail] = workAccount({ products: ["gmail"], members: [{ namespace, id: "bob" }] });
+      const aliceOnly = Object.assign(Object.create(owner!) as Connector, { members: [{ namespace, id: "alice" }] });
+      const storage = memoryStorage();
+      const connecta = createTestConnecta({
+        connectors: [aliceOnly, mail!],
+        auth: ["alice", "bob"].map((user) => ({
+          ...fakeClerkAuth({ token: user, userId: user, signInUrl: "https://accounts.example/sign-in" }),
+          activityActorNamespace: namespace,
+        })),
+        maintainers: [{ namespace, id: "carol" }],
+        pools: { team: { tools: ["work_gmail"], members: [{ namespace, id: "bob" }] } },
+        storage,
+        publicUrl: BASE,
+        logger: "silent",
+        vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+      });
+      try {
+        for (const [method, path] of [
+          ["DELETE", "/ui/oauth/work_gmail"],
+          ["POST", "/ui/oauth/work_gmail?mode=continue"],
+          ["DELETE", "/ui/oauth/work"],
+        ] as const) {
+          const refused = await connecta.fetch(
+            new Request(`${BASE}${path}`, { method, headers: { Cookie: "__session=bob", Origin: BASE } }),
+          );
+          expect(refused.status, `${method} ${path}`).toBeGreaterThanOrEqual(403);
+          await refused.arrayBuffer();
+        }
+      } finally {
+        await connecta.close();
+      }
+    });
   });
 });

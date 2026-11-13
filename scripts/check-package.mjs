@@ -316,6 +316,8 @@ try {
     "dist/types.d.ts",
     "dist/google.js",
     "dist/google.d.ts",
+    "dist/google-account.js",
+    "dist/google-account.d.ts",
     "dist/json-schema.js",
     "dist/json-schema.d.ts",
     "dist/executors/quickjs.js",

@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-13: One grant for several connectors (#1416, #1418) adds grant owners to the registry (storage namespace and sealer through the owner, group checks and invalidation), owner-following Connect links, management and member contract, and the shared refresh coordinator. CI for #1418 merged with main at 1e048e2f measures the root at 447,754 B and examples/worker at 833,157 B. Owner-approved: the caps move to 448,100 B and 833,500 B, leaving 346 B and 343 B. The new ./google-account entry bundles all nine Google products on one grant and measures 622,478 B on CI; its cap leaves about 57,000 B, as ./google's leaves 60,000 B.",
     "2026-11-13: Revalidating expired catalogs at admission (#1414) adds the settled-catalog relisting and the write-restriction check that decides which calls relist. A same-toolchain local comparison against origin/main at 180da1fe measures +194 B root and +169 B examples/worker, ./ui unchanged. CI on main at 0a56b9e0 measures the root at 447,050 B and examples/worker at 832,185 B; with #1411 and this change the root reaches about 447,260 B and examples/worker about 832,360 B, past its 832,300 B cap. The caps move to 447,600 B and 832,700 B, leaving about 340 B each. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-13: Exact writes on read-only pools and unlisted roster connectors (#1409) add write-grant parsing and construction checks, the per-tool write refusal, and the unlisted endpoint fact. A same-toolchain local comparison against origin/main at 864071f8 measures +861 B root, +963 B examples/worker and +167 B ./ui. Estimated from the previous CI measurements, the root reaches about 447,045 B and examples/worker about 831,937 B, past their 446,550 B and 831,350 B caps. The caps move to 447,400 B and 832,300 B, leaving about 355 B and 363 B. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-13: Accepting Google's RFC 9207 callback issuer (#1405) adds the declared-issuer check and value-free warnings for each silent OAuth callback refusal. CI on main at a5e9e843 measures the root at 445,972 B and examples/worker at 830,803 B, 28 B and 47 B under their caps; a same-toolchain local comparison against origin/main measures +212 B root and +171 B examples/worker, ./ui unchanged. The caps move to 446,550 B and 831,350 B, leaving about 366 B and 376 B. ./ui, baselineGzip and every other cap are unchanged.",
@@ -101,7 +102,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 447600
+      "maxGzip": 448100
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -196,7 +197,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 832700
+      "maxGzip": 833500
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
@@ -214,6 +215,10 @@
     "./google": {
       "baselineGzip": 62229,
       "maxGzip": 122229
+    },
+    "./google-account": {
+      "baselineGzip": 622478,
+      "maxGzip": 679433
     }
   }
 }

@@ -772,7 +772,8 @@ function memberConnector(
             ),
       () => ({ connection: personal ? { state: "error", problem: "connector_unavailable" } : null, tools: [] }),
     );
-    const manage = yield* memberManage(context, authz, connector);
+    const owner = context.opts.registry.grantOwner(id);
+    const manage = owner === id ? yield* memberManage(context, authz, connector) : { kind: "none" as const };
     const addresses = new Set<string>();
     const tools = describedTools(seen.tools).flatMap((tool) => {
       // A name outside the record grammar is withheld entirely, not shown as a placeholder.
@@ -790,6 +791,7 @@ function memberConnector(
       tools,
       connection: personal ? seen.connection : null,
       manage: personal ? manage : { kind: "none" as const },
+      ...(owner === id ? {} : { grantOwner: owner }),
     };
   });
 }
@@ -815,6 +817,11 @@ function memberRead(
       .map((c) => c.id)
       .filter((id) => opts.registry.connectorAdmits(id, authz.identity));
     const ids = new Set(allIds.filter((id) => pools.some(([, pool]) => servesConnector(pool, id))));
+    for (const id of ids) {
+      const owner = opts.registry.grantOwner(id);
+      if (owner !== id && opts.registry.getConnector(owner)?.authScope === "personal" && allIds.includes(owner))
+        ids.add(owner);
+    }
     const registry = opts.registry.scoped(
       scopeFor(authz, opts.config.auth.length > 0, [...ids], pools.length === 1 ? pools[0]![0] : undefined),
     );
