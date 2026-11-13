@@ -151,59 +151,13 @@ const ENV_VALUE_FIELDS = ["value", "vsmValue", "legacyValue", "decryptedValue"];
 /** The fields of a labelled or typed secret record that hold what the label names. */
 const LABELLED_VALUE_FIELDS = [...ENV_VALUE_FIELDS, "args", "text"];
 const URL_PARAM_STRONG = /token|secret|password|passwd|passphrase|signature|jwt|credential|bypass|authorization/i;
-const URL_PARAM_WEAK = new Set(["key", "keys", "code", "codes", "auth", "sig"]);
-const URL_PARAM_QUALIFIERS = new Set([
-  "x",
-  "api",
-  "access",
-  "auth",
-  "oauth",
-  "secret",
-  "private",
-  "session",
-  "signing",
-  "client",
-  "license",
-  "master",
-  "shared",
-  "sas",
-  "account",
-  "security",
-  "encryption",
-  "consumer",
-  "subscription",
-  "service",
-  "app",
-  "verification",
-  "otp",
-  "magic",
-  "login",
-  "reset",
-  "invite",
-  "url",
-  "hmac",
-  "request",
-  "upload",
-  "download",
-  "share",
-  "sharing",
-  "signed",
-]);
-const URL_PARAM_COMPACT = new RegExp(
-  `^x?(?:${[...URL_PARAM_QUALIFIERS].filter((word) => word !== "x").join("|")})+(?:key|keys|code|codes|sig)$`,
-);
+const URL_PARAM_WEAK = /key|auth|code|sig$/;
+const URL_PARAM_ORDINARY =
+  /keyword|keyboard|keynote|keyframe|monkey|turkey|donkey|hockey|jockey|whiskey|author|countrycode|postcode|postalcode|zipcode|areacode|currencycode|languagecode|localecode|statuscode|errorcode|barcode|unicode|geocode|encode|decode/g;
 
 function credentialParameter(name: string): boolean {
-  if (URL_PARAM_STRONG.test(name)) return true;
-  const words = name
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .toLowerCase()
-    .split(/[^a-z0-9]+/)
-    .filter(Boolean);
-  const last = words.at(-1);
-  if (last === undefined) return false;
-  if (URL_PARAM_WEAK.has(last) && words.slice(0, -1).every((word) => URL_PARAM_QUALIFIERS.has(word))) return true;
-  return words.some((word) => URL_PARAM_COMPACT.test(word));
+  if (URL_PARAM_STRONG.test(name) || /^sig$/i.test(name)) return true;
+  return URL_PARAM_WEAK.test(name.toLowerCase().replace(/[_-]/g, "").replace(URL_PARAM_ORDINARY, " "));
 }
 
 function credentialFragment(fragment: string): boolean {
