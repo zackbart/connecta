@@ -72,7 +72,7 @@ export const lookalikeConnectors = (): Connector[] => [
     tool("assign_ticket", "Assign one ticket to an agent or a group.", write),
     tool("merge_tickets", "Merge duplicate tickets into one, keeping every comment.", write),
   ]),
-  fake("calendar", [
+  fake("agenda", [
     tool("list_calendars", "List the calendars this user can see, with their ids and colors."),
     tool("list_events", "List events on one calendar between two dates. Free time is not included; recurring events are expanded."),
     tool("get_event", "Get one calendar event with its attendees and video link."),
@@ -178,8 +178,8 @@ export const LABELLED_QUERIES: readonly LabelledQuery[] = [
   { query: "what status is this ticket in", expect: ["tickets.get_ticket_status"] },
   { query: "export audit log", expect: ["audit.op_1042"] },
   { query: "rotate the signing key", expect: ["audit.op_1043"] },
-  { query: "create calendar event", expect: ["calendar.create_event"] },
-  { query: "when is everyone free", expect: ["calendar.find_free_time"] },
+  { query: "create calendar event", expect: ["agenda.create_event", "calendar.create_event"] },
+  { query: "when is everyone free", expect: ["agenda.find_free_time", "calendar.query_free_busy"] },
   { query: "send money to a vendor", expect: ["payments.send_money"] },
   { query: "send an invoice", expect: ["payments.send_invoice"] },
   { query: "pause a subscription", expect: ["billing.update_subscription"] },

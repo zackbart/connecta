@@ -1,0 +1,202 @@
+{
+  "format": 5,
+  "digest": "sha256:36b32fe2b973560a8611ac8e72fde971ca427c643bd9f5e408ae680a9e7c4dae",
+  "options": {},
+  "candidates": {
+    "GET /calendars/{calendarId}/acl": {
+      "fields": ["nextPageToken", "nextSyncToken"],
+      "named": false
+    },
+    "POST /calendars/{calendarId}/acl/watch": {
+      "fields": ["token"],
+      "named": true
+    },
+    "GET /calendars/{calendarId}/events": {
+      "fields": [
+        "items[].conferenceData.entryPoints[].accessCode",
+        "items[].conferenceData.entryPoints[].meetingCode",
+        "items[].conferenceData.entryPoints[].passcode",
+        "items[].conferenceData.entryPoints[].password",
+        "items[].conferenceData.entryPoints[].pin",
+        "items[].conferenceData.signature",
+        "nextPageToken",
+        "nextSyncToken"
+      ],
+      "named": false
+    },
+    "POST /calendars/{calendarId}/events": {
+      "fields": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].meetingCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin",
+        "conferenceData.signature"
+      ],
+      "named": false
+    },
+    "POST /calendars/{calendarId}/events/import": {
+      "fields": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].meetingCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin",
+        "conferenceData.signature"
+      ],
+      "named": true
+    },
+    "POST /calendars/{calendarId}/events/quickAdd": {
+      "fields": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].meetingCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin",
+        "conferenceData.signature"
+      ],
+      "named": false
+    },
+    "POST /calendars/{calendarId}/events/watch": {
+      "fields": ["token"],
+      "named": true
+    },
+    "GET /calendars/{calendarId}/events/{eventId}": {
+      "fields": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].meetingCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin",
+        "conferenceData.signature"
+      ],
+      "named": false
+    },
+    "PUT /calendars/{calendarId}/events/{eventId}": {
+      "fields": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].meetingCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin",
+        "conferenceData.signature"
+      ],
+      "named": false
+    },
+    "PATCH /calendars/{calendarId}/events/{eventId}": {
+      "fields": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].meetingCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin",
+        "conferenceData.signature"
+      ],
+      "named": false
+    },
+    "GET /calendars/{calendarId}/events/{eventId}/instances": {
+      "fields": [
+        "items[].conferenceData.entryPoints[].accessCode",
+        "items[].conferenceData.entryPoints[].meetingCode",
+        "items[].conferenceData.entryPoints[].passcode",
+        "items[].conferenceData.entryPoints[].password",
+        "items[].conferenceData.entryPoints[].pin",
+        "items[].conferenceData.signature",
+        "nextPageToken",
+        "nextSyncToken"
+      ],
+      "named": false
+    },
+    "POST /calendars/{calendarId}/events/{eventId}/move": {
+      "fields": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].meetingCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin",
+        "conferenceData.signature"
+      ],
+      "named": false
+    },
+    "POST /calendars/{calendarId}/transferOwnership": {
+      "fields": [],
+      "named": true
+    },
+    "GET /users/me/calendarList": {
+      "fields": ["nextPageToken", "nextSyncToken"],
+      "named": false
+    },
+    "POST /users/me/calendarList/watch": {
+      "fields": ["token"],
+      "named": true
+    },
+    "GET /users/me/settings": {
+      "fields": ["nextPageToken", "nextSyncToken"],
+      "named": false
+    },
+    "POST /users/me/settings/watch": {
+      "fields": ["token"],
+      "named": true
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /calendars/{calendarId}/events": [
+        "items[].conferenceData.entryPoints[].accessCode",
+        "items[].conferenceData.entryPoints[].passcode",
+        "items[].conferenceData.entryPoints[].password",
+        "items[].conferenceData.entryPoints[].pin"
+      ],
+      "POST /calendars/{calendarId}/events": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin"
+      ],
+      "POST /calendars/{calendarId}/events/import": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin"
+      ],
+      "POST /calendars/{calendarId}/events/quickAdd": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin"
+      ],
+      "GET /calendars/{calendarId}/events/{eventId}": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin"
+      ],
+      "PUT /calendars/{calendarId}/events/{eventId}": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin"
+      ],
+      "PATCH /calendars/{calendarId}/events/{eventId}": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin"
+      ],
+      "GET /calendars/{calendarId}/events/{eventId}/instances": [
+        "items[].conferenceData.entryPoints[].accessCode",
+        "items[].conferenceData.entryPoints[].passcode",
+        "items[].conferenceData.entryPoints[].password",
+        "items[].conferenceData.entryPoints[].pin"
+      ],
+      "POST /calendars/{calendarId}/events/{eventId}/move": [
+        "conferenceData.entryPoints[].accessCode",
+        "conferenceData.entryPoints[].passcode",
+        "conferenceData.entryPoints[].password",
+        "conferenceData.entryPoints[].pin"
+      ]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

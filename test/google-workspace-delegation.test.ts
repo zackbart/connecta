@@ -3,6 +3,7 @@ import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
 import { forms } from "../src/providers/forms/index.js";
 import { meet } from "../src/providers/meet/index.js";
+import { CALENDAR_SCOPES, calendar } from "../src/providers/calendar/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { slides } from "../src/providers/slides/index.js";
 // Google Workspace domain-wide delegation, the layer every Workspace product
@@ -1785,6 +1786,7 @@ describe("Workspace served classification on unauthorized requests", () => {
     ["slides", slides, "create_presentation", { title: "Example" }],
     ["meet", meet, "create_space", { accessType: "TRUSTED" }],
     ["people", people, "create_contact_group", { name: "Example" }],
+    ["calendar", calendar, "quick_add_event", { text: "Lunch tomorrow at noon" }],
   ] as const)(
     "INV-9: %s preserves the write's authorization verdict and unknown outcome through recovery advice",
     NODE,
@@ -2780,6 +2782,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     ["forms", forms, FORMS_SCOPES, "https://forms.googleapis.com"],
     ["meet", meet, MEET_SCOPES, "https://meet.googleapis.com"],
     ["people", people, PEOPLE_SCOPES, "https://people.googleapis.com"],
+    ["calendar", calendar, CALENDAR_SCOPES, "https://www.googleapis.com"],
   ] as const;
   const unauthorized = () =>
     Response.json({ error: { code: 401, message: "Invalid Credentials", status: "UNAUTHENTICATED" } }, { status: 401 });

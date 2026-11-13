@@ -2841,9 +2841,10 @@ hatches. Fixed write steps are snapshotted at construction. Docs declares a
 create and its optional initial-text edit as separate steps, each sent at most
 once.
 
-Every Google product (Gmail, Drive, Docs, Sheets, Slides, Forms and People)
-uses the shared standard-surface support. The frozen measurement manifest
-covers the original six; People is not part of that historical measurement.
+Every Google product (Gmail, Drive, Docs, Sheets, Slides, Forms, People and
+Calendar) uses the shared standard-surface support. The frozen measurement
+manifest covers the original six; People and Calendar are not part of that
+historical measurement.
 `scripts/google-discovery.mjs` converts
 archived exact-byte official Discovery documents into deterministic OpenAPI.
 The primary vendored pin retains the official URL, revision and source digest;

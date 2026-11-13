@@ -1,0 +1,305 @@
+{
+  "version": 2,
+  "provider": "calendar",
+  "generated": {
+    "operations": [
+      "DELETE /calendar/v3/calendars/{calendarId}",
+      "DELETE /calendar/v3/calendars/{calendarId}/acl/{ruleId}",
+      "DELETE /calendar/v3/calendars/{calendarId}/events/{eventId}",
+      "DELETE /calendar/v3/users/me/calendarList/{calendarId}",
+      "GET /calendar/v3/calendars/{calendarId}",
+      "GET /calendar/v3/calendars/{calendarId}/acl",
+      "GET /calendar/v3/calendars/{calendarId}/acl/{ruleId}",
+      "GET /calendar/v3/calendars/{calendarId}/events",
+      "GET /calendar/v3/calendars/{calendarId}/events/{eventId}",
+      "GET /calendar/v3/calendars/{calendarId}/events/{eventId}/instances",
+      "GET /calendar/v3/colors",
+      "GET /calendar/v3/users/me/calendarList",
+      "GET /calendar/v3/users/me/calendarList/{calendarId}",
+      "GET /calendar/v3/users/me/settings",
+      "GET /calendar/v3/users/me/settings/{setting}",
+      "PATCH /calendar/v3/calendars/{calendarId}",
+      "PATCH /calendar/v3/calendars/{calendarId}/acl/{ruleId}",
+      "PATCH /calendar/v3/calendars/{calendarId}/events/{eventId}",
+      "PATCH /calendar/v3/users/me/calendarList/{calendarId}",
+      "POST /calendar/v3/calendars",
+      "POST /calendar/v3/calendars/{calendarId}/acl",
+      "POST /calendar/v3/calendars/{calendarId}/acl/watch",
+      "POST /calendar/v3/calendars/{calendarId}/clear",
+      "POST /calendar/v3/calendars/{calendarId}/events",
+      "POST /calendar/v3/calendars/{calendarId}/events/import",
+      "POST /calendar/v3/calendars/{calendarId}/events/quickAdd",
+      "POST /calendar/v3/calendars/{calendarId}/events/watch",
+      "POST /calendar/v3/calendars/{calendarId}/events/{eventId}/move",
+      "POST /calendar/v3/calendars/{calendarId}/transferOwnership",
+      "POST /calendar/v3/channels/stop",
+      "POST /calendar/v3/freeBusy",
+      "POST /calendar/v3/users/me/calendarList",
+      "POST /calendar/v3/users/me/calendarList/watch",
+      "POST /calendar/v3/users/me/settings/watch",
+      "PUT /calendar/v3/calendars/{calendarId}",
+      "PUT /calendar/v3/calendars/{calendarId}/acl/{ruleId}",
+      "PUT /calendar/v3/calendars/{calendarId}/events/{eventId}",
+      "PUT /calendar/v3/users/me/calendarList/{calendarId}"
+    ],
+    "evidence": {
+      "discovery.document.json": "sha256:36b32fe2b973560a8611ac8e72fde971ca427c643bd9f5e408ae680a9e7c4dae",
+      "discovery.json": "sha256:9d37ae150114c4e4bd3c2d95fd97dbb80b3492875db95b0cd504f51f872f8a4a",
+      "openapi.json": "sha256:7cbd6cb924d223f73f3c394cbeb2474d76ef04be8e83bdc25097a92679aa5b99",
+      "value-safety.json": "sha256:efa5d19c3ed5de7e0e0ec23419b76f749128a41cd555dc74f4e889d24e4ca62d"
+    }
+  },
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest",
+        "format": "google-discovery",
+        "pin": "discovery.json"
+      },
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar"
+      ],
+      "endpoints": [
+        {
+          "operation": "POST /calendar/v3/calendars",
+          "specRevision": "20261109",
+          "contract": "sha256:194512c7e20907943e9bf9c88ca0be77d57a3fb3fca97ca2dafb7759e8c1c616"
+        },
+        {
+          "operation": "GET /calendar/v3/calendars/{calendarId}",
+          "specRevision": "20261109",
+          "contract": "sha256:f9f8578f96557111f31929952cd0a2cca615e6ee7cb98f6a0ffc77a095889a90"
+        },
+        {
+          "operation": "PUT /calendar/v3/calendars/{calendarId}",
+          "specRevision": "20261109",
+          "contract": "sha256:3f0392f5d402e47bc3b312b56f41436c24ecbdf56403bc379fa3dba624aa6738"
+        },
+        {
+          "operation": "PATCH /calendar/v3/calendars/{calendarId}",
+          "specRevision": "20261109",
+          "contract": "sha256:3f0392f5d402e47bc3b312b56f41436c24ecbdf56403bc379fa3dba624aa6738"
+        },
+        {
+          "operation": "DELETE /calendar/v3/calendars/{calendarId}",
+          "specRevision": "20261109",
+          "contract": "sha256:4247b4d8d3f8b6277e1433591bd96ae01171ef5c50e049f934f5945e087e7827"
+        },
+        {
+          "operation": "GET /calendar/v3/calendars/{calendarId}/acl",
+          "specRevision": "20261109",
+          "contract": "sha256:184a3e01407c0607dc5fafb7f31d4e6a34918ce4276e7122d55b2446f331d195"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/acl",
+          "specRevision": "20261109",
+          "contract": "sha256:268bed566558fc0ec8b9511f7518211aaea72ba3047e4526ae1d01daa6bc5a84"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/acl/watch",
+          "specRevision": "20261109",
+          "contract": "sha256:239cbe12263ca62721c558d1c54161eb3c0841626fa6a9d09f8e1eeda9b23b00"
+        },
+        {
+          "operation": "GET /calendar/v3/calendars/{calendarId}/acl/{ruleId}",
+          "specRevision": "20261109",
+          "contract": "sha256:97a47b06aef794fb6d44f5ca6d3ee756533b711d0e73b4ecd60856f687155068"
+        },
+        {
+          "operation": "PUT /calendar/v3/calendars/{calendarId}/acl/{ruleId}",
+          "specRevision": "20261109",
+          "contract": "sha256:0f533eedfa01dbb94bf01c2f98ee7952f82a2d64c2ba6a335b27e36eb3596784"
+        },
+        {
+          "operation": "PATCH /calendar/v3/calendars/{calendarId}/acl/{ruleId}",
+          "specRevision": "20261109",
+          "contract": "sha256:0f533eedfa01dbb94bf01c2f98ee7952f82a2d64c2ba6a335b27e36eb3596784"
+        },
+        {
+          "operation": "DELETE /calendar/v3/calendars/{calendarId}/acl/{ruleId}",
+          "specRevision": "20261109",
+          "contract": "sha256:04e7ae69b14210f314627c4b2c2bec384ff32449c5a719b742fd174ab48ecba6"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/clear",
+          "specRevision": "20261109",
+          "contract": "sha256:4247b4d8d3f8b6277e1433591bd96ae01171ef5c50e049f934f5945e087e7827"
+        },
+        {
+          "operation": "GET /calendar/v3/calendars/{calendarId}/events",
+          "specRevision": "20261109",
+          "contract": "sha256:2496cf0573f942871f4ec4d2378a0bc2a8eaf5227d0ab19bedc36d1cd835d79c"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/events",
+          "specRevision": "20261109",
+          "contract": "sha256:3308779389a6630b5202d8619dd3bbb8f6ca017c7fb4515f9e53d216b99926c3"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/events/import",
+          "specRevision": "20261109",
+          "contract": "sha256:ff0cf88b9fef576e67364abab4f6d3d605007db1b25bfd4d97b8328514319a33"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/events/quickAdd",
+          "specRevision": "20261109",
+          "contract": "sha256:6dd80a57644bcbbddef96a592fecd5b20a65eba30db99861ff0f0e9f2f46f6cc"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/events/watch",
+          "specRevision": "20261109",
+          "contract": "sha256:60740491daf50bd5f0cf3b87f30f961ce92959a2249f2baa31754fcb38d2134d"
+        },
+        {
+          "operation": "GET /calendar/v3/calendars/{calendarId}/events/{eventId}",
+          "specRevision": "20261109",
+          "contract": "sha256:2a36f9eb147e281ae9f16aaaf4623abb4fb99c00c3f480d90d727ad7c123bbda"
+        },
+        {
+          "operation": "PUT /calendar/v3/calendars/{calendarId}/events/{eventId}",
+          "specRevision": "20261109",
+          "contract": "sha256:587c40bcb96f6ef21de3e0d1adcd67909dc7e905f863baf9aea7108b9db0619f"
+        },
+        {
+          "operation": "PATCH /calendar/v3/calendars/{calendarId}/events/{eventId}",
+          "specRevision": "20261109",
+          "contract": "sha256:587c40bcb96f6ef21de3e0d1adcd67909dc7e905f863baf9aea7108b9db0619f"
+        },
+        {
+          "operation": "DELETE /calendar/v3/calendars/{calendarId}/events/{eventId}",
+          "specRevision": "20261109",
+          "contract": "sha256:7281a4b102806f0b4f846e372ffc8acef651d6937257f4754933bee63de8118c"
+        },
+        {
+          "operation": "GET /calendar/v3/calendars/{calendarId}/events/{eventId}/instances",
+          "specRevision": "20261109",
+          "contract": "sha256:e38cdaf340f6ecd2b990f6c6486e7b3da5c00da78f82dae5969c738b38bcf666"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/events/{eventId}/move",
+          "specRevision": "20261109",
+          "contract": "sha256:cc0166f60d6ce2232b5c22cc43febd374a6934902b0d73060b3242ae3439e795"
+        },
+        {
+          "operation": "POST /calendar/v3/calendars/{calendarId}/transferOwnership",
+          "specRevision": "20261109",
+          "contract": "sha256:b68acf8acec84f4f88723665fc788cd2bbbf80feb5784c09328b0d6f052fd3c2"
+        },
+        {
+          "operation": "POST /calendar/v3/channels/stop",
+          "specRevision": "20261109",
+          "contract": "sha256:a47459cb6ee69714435b440143b4179e80dad918899fe7a11725fcea06cb920c"
+        },
+        {
+          "operation": "GET /calendar/v3/colors",
+          "specRevision": "20261109",
+          "contract": "sha256:3c214cf0cd7fd24df36b78890396fc3ef7d09f56a1d0b1d37b36b603c9af7e16"
+        },
+        {
+          "operation": "POST /calendar/v3/freeBusy",
+          "specRevision": "20261109",
+          "contract": "sha256:7abc499a4e9ed0a41d6f60fefa4c925917628f8177f2a8bbad6fb38b1b43fced"
+        },
+        {
+          "operation": "GET /calendar/v3/users/me/calendarList",
+          "specRevision": "20261109",
+          "contract": "sha256:a49c9cdaa0e90c61c23f7e76242d07b01e2c139043df065018e5e1d1162e88e8"
+        },
+        {
+          "operation": "POST /calendar/v3/users/me/calendarList",
+          "specRevision": "20261109",
+          "contract": "sha256:92ee9c004de03ec768ab99e22b64875770f40883c720adea57d7e6cf47ce8ac4"
+        },
+        {
+          "operation": "POST /calendar/v3/users/me/calendarList/watch",
+          "specRevision": "20261109",
+          "contract": "sha256:eaf7d69b49e1cfb2536c65280478fbbc60db90ef06ec35c953c71c8cf0957ef8"
+        },
+        {
+          "operation": "GET /calendar/v3/users/me/calendarList/{calendarId}",
+          "specRevision": "20261109",
+          "contract": "sha256:dd4ef9795e8f0ed99ec7a430c29d136986a8c6c097853737afb70de36c24dcc8"
+        },
+        {
+          "operation": "PUT /calendar/v3/users/me/calendarList/{calendarId}",
+          "specRevision": "20261109",
+          "contract": "sha256:4c8f0ff60d2baa7bcc5c203081672f684564d43842c8d0bbf05bc4d2cb78afc4"
+        },
+        {
+          "operation": "PATCH /calendar/v3/users/me/calendarList/{calendarId}",
+          "specRevision": "20261109",
+          "contract": "sha256:4c8f0ff60d2baa7bcc5c203081672f684564d43842c8d0bbf05bc4d2cb78afc4"
+        },
+        {
+          "operation": "DELETE /calendar/v3/users/me/calendarList/{calendarId}",
+          "specRevision": "20261109",
+          "contract": "sha256:4247b4d8d3f8b6277e1433591bd96ae01171ef5c50e049f934f5945e087e7827"
+        },
+        {
+          "operation": "GET /calendar/v3/users/me/settings",
+          "specRevision": "20261109",
+          "contract": "sha256:9f0514383e21a59d00e2cced73521cdb3db8c5d81fadbbf40263bfa784833e29"
+        },
+        {
+          "operation": "POST /calendar/v3/users/me/settings/watch",
+          "specRevision": "20261109",
+          "contract": "sha256:8691667fa89dafaf99d3c44400cf77c5bfd1a39011fdd22a29ba49b6c2d499d3"
+        },
+        {
+          "operation": "GET /calendar/v3/users/me/settings/{setting}",
+          "specRevision": "20261109",
+          "contract": "sha256:84e72d35d4b6e92ed27ae526d6134d20ed72ee00401acab1ab1940fe0adaea5e"
+        }
+      ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/identity/protocols/oauth2/web-server",
+      "evidence": {
+        "authorizationEndpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "tokenEndpoint": "https://oauth2.googleapis.com/token",
+        "tokenEndpointAuthMethod": "client_secret_post",
+        "pkce": "S256",
+        "scopes": [
+          "https://www.googleapis.com/auth/calendar"
+        ],
+        "revocationEndpoint": "not configured: https://oauth2.googleapis.com/revoke",
+        "revocationSource": "https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke"
+      },
+      "reason": "OAuth mode's authorization-code grant against Google's web-server flow has no machine-readable contract. Compare the authorization and token endpoints, body client authentication, S256 PKCE support and the requested scopes with the page; confirm revocation still ends every grant the person gave the Google Cloud project, including its other OAuth clients, which is why no revocation endpoint is configured.",
+      "lastVerified": "2026-11-13"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/identity/openid-connect/openid-connect",
+      "evidence": {
+        "scopes": [
+          "openid",
+          "email"
+        ],
+        "jwks": "https://www.googleapis.com/oauth2/v3/certs",
+        "issuers": [
+          "https://accounts.google.com",
+          "accounts.google.com"
+        ],
+        "audience": "the OAuth client id",
+        "signature": "RS256",
+        "claims": [
+          "email",
+          "email_verified",
+          "hd"
+        ],
+        "authorizationParams": {
+          "prompt": "select_account consent"
+        }
+      },
+      "reason": "OAuth mode's accounts restriction reads the signed-in account from the ID token in Google's token response, and Google publishes that contract only as prose. Compare the JWKS URL, the two issuer spellings, aud as the client id, RS256 signing, email_verified, and hd as the claim that attests a Google Workspace domain (absent for consumer accounts), and confirm prompt still accepts space-delimited select_account and consent.",
+      "lastVerified": "2026-11-13"
+    }
+  ]
+}

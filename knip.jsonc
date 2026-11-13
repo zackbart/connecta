@@ -19,6 +19,7 @@
         // Published operator contract types are consumed by external UI clients.
         "src/ui.ts",
         "src/providers/breeze/index.ts",
+        "src/providers/calendar/index.ts",
         "src/providers/ccb/index.ts",
         "src/providers/cloudflare/index.ts",
         "src/providers/docs/index.ts",
