@@ -148,7 +148,7 @@ export const gmail = defineApiProvider<GmailOptions>({
     notes: () => ({
       read: "Full MIME and raw-message fields retain decoded sent-secret safety. Use get_attachment for fresh immutable-part resolution and bounded decoded content.",
       write:
-        "Prefer the named tools, which build RFC 2822 MIME, threading and merges. A raw body here is base64url RFC 2822 that you compose; messages/send and drafts/send deliver a message immediately and irreversibly.",
+        "Prefer the named tools, which build RFC 2822 MIME, threading and merges. A raw body here is base64url RFC 2822 that you compose; messages/send and drafts/send send it immediately and irreversibly.",
     }),
   },
   result,

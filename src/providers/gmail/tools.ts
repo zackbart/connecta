@@ -1173,8 +1173,13 @@ function withoutBlindCopies(original: Uint8Array): Uint8Array {
       kept.push(original.subarray(at));
       break;
     }
-    if (line[0] !== 0x20 && line[0] !== 0x09)
-      dropping = /^(?:resent-)?bcc[ \t]*:/i.test(String.fromCharCode(...line.subarray(0, 16)));
+    const carriageReturn = line.indexOf(0x0d);
+    if (carriageReturn >= 0 && carriageReturn !== line.length - 2)
+      throw new ConnectorCallError(
+        "invalid_args",
+        "This message's headers break a line with a bare carriage return, so its blind copies cannot be removed exactly. Nothing was sent; forward it in Gmail.",
+      );
+    if (line[0] !== 0x20 && line[0] !== 0x09) dropping = isBlindCopyField(line);
     if (!dropping) kept.push(line);
     at = end;
   }
@@ -1185,6 +1190,22 @@ function withoutBlindCopies(original: Uint8Array): Uint8Array {
     offset += part.length;
   }
   return bytes;
+}
+const BLIND_COPY_FIELDS = ["bcc", "resent-bcc"];
+/** A field name is every byte before the first colon, less trailing whitespace (RFC 5322 obs-optional). */
+function isBlindCopyField(line: Uint8Array): boolean {
+  const colon = line.indexOf(0x3a);
+  if (colon < 0) return false;
+  let end = colon;
+  while (end > 0 && (line[end - 1] === 0x20 || line[end - 1] === 0x09)) end--;
+  return BLIND_COPY_FIELDS.some(
+    (name) =>
+      name.length === end &&
+      [...name].every((character, index) => asciiLower(line[index]!) === character.charCodeAt(0)),
+  );
+}
+function asciiLower(byte: number): number {
+  return byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte;
 }
 /** An ASCII attachment name from a subject; quoting never needs an escape. */
 function emlName(subject: string | undefined): string {
@@ -2086,7 +2107,7 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
     {
       name: "batch_update_message_labels",
       description:
-        "Add or remove the same label ids on up to 1,000 Gmail messages at once. Gmail returns no per-message result, only success; read messages back to verify.",
+        "Add or remove the same label ids on up to 1,000 Gmail messages at once. Gmail returns no per-message result, only success; read messages back to confirm.",
       annotations: { readOnlyHint: false, destructiveHint: true },
       check: (args, problems) =>
         requireOne(args, problems, ["addLabelIds", "removeLabelIds"], "a label id in addLabelIds or removeLabelIds"),

@@ -1278,17 +1278,29 @@ Named reads return projected records or `{ items, page }`; `fields` narrows a
 record or each list item. Size cuts appear in `truncated`. The pinned index
 contains 79 methods and admits every one: GETs read through `gmail_api_read`,
 and every other method writes through `gmail_api_write`. A composed base64url
-`raw` message is decoded with each MIME part's base64 or quoted-printable body,
-header encoded words and attached messages, and refused before sending when any
-carries a withheld link or uses a charset, transfer encoding or nesting (over 8
-levels or 256 parts) that cannot be inspected. Full MIME
+`raw` message is admitted only in MIME the connection reads exactly as a mail
+client would, and every decoded part, header and attached message is checked
+for a withheld link before sending. It accepts identity, base64 and
+quoted-printable transfer encodings; US-ASCII, UTF-8, ISO-8859-n and
+windows-125n charsets; header encoded words, with whitespace between adjacent
+words dropped as clients drop it; and Content-Type, Content-Transfer-Encoding
+and Content-Disposition values made of plain or quoted parameters. It refuses,
+sending nothing: comments in those headers, repeated or RFC 2231 extended
+parameters (`filename*=`; use an encoded word or an ASCII name), repeated
+headers, other charsets (ISO-2022-JP, Shift_JIS, EUC, GB, Big5, UTF-16/32,
+UTF-7), text that is invalid in its charset, a line that begins with a part
+boundary but is not an exact delimiter, header lines that are not fields, bare
+carriage returns, nesting over 8 levels or 256 parts, more than 4,096 encoded
+words, and more than 16 MiB of decoded content. Full MIME
 JSON crosses the same decoded sent-secret safety boundary. Settings reads
 withhold send-as SMTP passwords, S/MIME private keys and their passwords, and
 client-side encryption wrapped keys. Use the named attachment tool for
 immutable part identity, charset rendering, one-MiB download bounds and
 decoded-size validation. `forward_message` forwards originals up to 3 MiB in
 one request, unchanged except that their `Bcc` and `Resent-Bcc` headers are
-removed; forward a larger message in Gmail.
+removed, whatever whitespace precedes the colon; an original whose header block
+breaks a line with a bare carriage return is refused. Forward a larger or
+refused message in Gmail.
 
 A hatch read has three layers: the direct-call delivery contains the tool's
 `{ status, data, page? }` result, whose `data` is Google's JSON. In a program:

@@ -8,6 +8,7 @@ import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js
 import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
 import { verdicts } from "./lib/index.js";
+import { refuseWithheldRaw } from "./lib/raw.js";
 import type { ConnectorCaller } from "../../connector-caller.js";
 import { safety } from "./api.js";
 import { attachmentFixtures } from "./fixtures.js";
@@ -766,10 +767,13 @@ describe("sending and organizing mail", () => {
       "BCC: first@church.example,\r\n\tsecond@church.example,\r\n third@church.example\r\n",
       "resent-bcc: resent@church.example\r\n",
       "Bcc : obsolete@church.example\r\n",
+      `Bcc${" ".repeat(13)}: spaced@church.example\r\n`,
+      `Resent-Bcc${" ".repeat(7)}:\r\n\tfolded@church.example\r\n`,
+      "bCc\t \t\t: tabbed@church.example\r\n",
+      `RESENT-BCC${" \t".repeat(500)}:long@church.example,\r\n continued@church.example\r\n`,
     ];
     const body = "\r\nBcc: written in the body stays\r\nCafé\r\n";
-    const original =
-      kept[0]! + blind[0]! + kept[1]! + blind[1]! + kept[2]! + blind[2]! + kept[3]! + blind[3]! + kept[4]! + body;
+    const original = kept.map((line, index) => line + blind.slice(index * 2, index * 2 + 2).join("")).join("") + body;
     route = (request) => {
       const reply = sent(request);
       if (reply) return reply;
@@ -783,7 +787,20 @@ describe("sending and organizing mail", () => {
       source.lastIndexOf("--connecta-"),
     );
     expect(attached).toBe(kept.join("") + body);
-    expect(source).not.toMatch(/hidden|first@|second@|third@|resent@|obsolete@/);
+    expect(source).not.toMatch(
+      /hidden|first@|second@|third@|resent@|obsolete@|spaced@|folded@|tabbed@|long@|continued@/,
+    );
+
+    calls.length = 0;
+    const bare = "From: ann@church.example\r\nX-Note: a\rBcc: hidden@church.example\r\nSubject: Agenda\r\n\r\nHi\r\n";
+    route = (request) => {
+      if (request.url.searchParams.get("format") === "raw") return { body: { id: "m2", raw: b64url(bare) } };
+      return { body: { id: "m2", threadId: "t1", payload: { headers: [{ name: "Subject", value: "Agenda" }] } } };
+    };
+    await expect(
+      call(connection(), "forward_message", { messageId: "m2", to: ["treasurer@church.example"] }),
+    ).rejects.toMatchObject({ code: "invalid_args", message: expect.stringMatching(/bare carriage return/) });
+    expect(writes()).toEqual([]);
   });
 
   it("sends and deletes drafts by stable id", async () => {
@@ -990,128 +1007,226 @@ describe("sending and organizing mail", () => {
     expect(calls.at(-1)).toMatchObject({ method: "PUT", body: { enabled: false } });
   });
 
-  it("inspects every decoded MIME part for withheld links before IO, refusing what it cannot read", async () => {
-    const link = "See https://example.com/doc?token=[redacted]";
-    const base64Part = b64url(link).replace(/-/g, "+").replace(/_/g, "/");
-    const entity = (headers: string, content: string) => `${headers}\r\n\r\n${content}\r\n`;
-    const multipart = (boundary: string, ...parts: string[]) =>
-      `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\npreamble\r\n` +
-      parts.map((part) => `--${boundary}\r\n${part}`).join("") +
-      `--${boundary}--\r\n`;
-    const message = (rest: string) => b64url(`To: a@church.example\r\nSubject: Hi\r\nMIME-Version: 1.0\r\n${rest}`);
-    const plain = entity("Content-Type: text/plain", "Hello");
-    const withheld = {
-      base64: message(entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: base64", base64Part)),
-      quotedPrintable: message(
-        entity(
-          "Content-Type: text/html\r\nContent-Transfer-Encoding: quoted-printable",
-          '<a href=3D"https://example.com/doc?tok=\r\nen=3D=5Bredacted=5D">doc</a>',
-        ),
-      ),
-      nestedBase64: message(
-        multipart(
-          "outer",
-          plain,
-          multipart(
-            "inner",
-            plain,
-            entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: BASE64", base64Part),
-          ),
-        ),
-      ),
-      attachedMessage: message(
-        multipart(
-          "outer",
-          plain,
+  it(
+    "inspects every decoded MIME part for withheld links before IO, refusing what it cannot read",
+    { timeout: 30_000 },
+    async () => {
+      const hatch = connection();
+      const link = "See https://example.com/doc?token=[redacted]";
+      const base64Part = b64url(link).replace(/-/g, "+").replace(/_/g, "/");
+      const entity = (headers: string, content: string) => `${headers}\r\n\r\n${content}\r\n`;
+      const multipart = (boundary: string, ...parts: string[]) =>
+        `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\npreamble\r\n` +
+        parts.map((part) => `--${boundary}\r\n${part}`).join("") +
+        `--${boundary}--\r\n`;
+      const message = (rest: string) => b64url(`To: a@church.example\r\nSubject: Hi\r\nMIME-Version: 1.0\r\n${rest}`);
+      const plain = entity("Content-Type: text/plain", "Hello");
+      const withheld = {
+        base64: message(entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: base64", base64Part)),
+        quotedPrintable: message(
           entity(
-            "Content-Type: message/rfc822\r\nContent-Transfer-Encoding: base64",
-            b64url(`Subject: Fwd\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${link.replace("=", "=3D")}\r\n`)
-              .replace(/-/g, "+")
-              .replace(/_/g, "/"),
+            "Content-Type: text/html\r\nContent-Transfer-Encoding: quoted-printable",
+            '<a href=3D"https://example.com/doc?tok=\r\nen=3D=5Bredacted=5D">doc</a>',
           ),
         ),
-      ),
-      encodedWord: b64url(`To: a@church.example\r\nSubject: =?UTF-8?B?${btoa(link)}?=\r\n\r\nHello\r\n`),
-    };
-    const unreadable = {
-      utf16: message(
-        entity('Content-Type: text/plain; charset="UTF-16"\r\nContent-Transfer-Encoding: base64', "AFsAcgBlAGQ="),
-      ),
-      utf7: message(entity("Content-Type: text/plain; charset=utf-7", "+AFs-redacted+AF0-")),
-      unknownEncoding: message(
-        entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: x-uuencode", "begin 644 x"),
-      ),
-      invalidBase64: message(
-        entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: base64", "U2VlIGh0d*HBzOi8v"),
-      ),
-      encodedMultipart: message(
-        "Content-Type: multipart/mixed; boundary=b\r\nContent-Transfer-Encoding: base64\r\n\r\n--b\r\n\r\nx\r\n--b--\r\n",
-      ),
-      commentedType: message(
-        `Content-Type: multipart/mixed (note); boundary=b\r\n\r\n--b\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Part}\r\n--b--\r\n`,
-      ),
-      bareCarriageReturn: message(`Content-Transfer-Encoding: base64\r${base64Part}\r\n`),
-      continuedBoundary: message("Content-Type: multipart/mixed; boundary*0=b\r\n\r\n--b\r\n\r\nx\r\n--b--\r\n"),
-      repeatedEncoding: message(
-        entity("Content-Transfer-Encoding: 7bit\r\nContent-Transfer-Encoding: base64", base64Part),
-      ),
-      tooDeep: message(
-        Array.from(
-          { length: 10 },
-          (_, level) => `Content-Type: multipart/mixed; boundary=b${level}\r\n\r\n--b${level}\r\n`,
-        ).join("") + "\r\nx\r\n",
-      ),
-    };
-    for (const [name, raw] of [...Object.entries(withheld), ...Object.entries(unreadable)]) {
-      for (const [path, body] of [
-        ["/messages/send", { raw }],
-        ["/drafts/send", { message: { raw } }],
-        ["/drafts", { message: { raw } }],
-        ["/messages/import", { raw }],
-      ] as const) {
-        const refusal = await call(connection(), "gmail_api_write", { method: "POST", path, body }).then(
-          () => undefined,
-          (error: unknown) => error,
-        );
-        expect(refusal, `${name} ${path}`).toMatchObject({
-          code: "invalid_args",
-          message:
-            name in withheld
-              ? expect.stringMatching(/withheld/)
-              : expect.stringMatching(/cannot|deeper|repeats|must use|carriage return/),
-        });
+        nestedBase64: message(
+          multipart(
+            "outer",
+            plain,
+            multipart(
+              "inner",
+              plain,
+              entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: BASE64", base64Part),
+            ),
+          ),
+        ),
+        attachedMessage: message(
+          multipart(
+            "outer",
+            plain,
+            entity(
+              "Content-Type: message/rfc822\r\nContent-Transfer-Encoding: base64",
+              b64url(
+                `Subject: Fwd\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${link.replace("=", "=3D")}\r\n`,
+              )
+                .replace(/-/g, "+")
+                .replace(/_/g, "/"),
+            ),
+          ),
+        ),
+        encodedWord: b64url(`To: a@church.example\r\nSubject: =?UTF-8?B?${btoa(link)}?=\r\n\r\nHello\r\n`),
+        splitEncodedWords: message(
+          `Subject: See https://example.com/doc?token==?UTF-8?Q?=5Bre?= =?UTF-8?Q?dacted=5D?=\r\n${plain}`,
+        ),
+        foldedEncodedWords: message(
+          `Subject: =?UTF-8?B?${btoa("See https://example.com/doc?token=[re")}?=\r\n\t =?ISO-8859-1?Q?dacted]?=\r\n${plain}`,
+        ),
+      };
+      const unreadable = {
+        utf16: message(
+          entity('Content-Type: text/plain; charset="UTF-16"\r\nContent-Transfer-Encoding: base64', "AFsAcgBlAGQ="),
+        ),
+        utf7: message(entity("Content-Type: text/plain; charset=utf-7", "+AFs-redacted+AF0-")),
+        unknownEncoding: message(
+          entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: x-uuencode", "begin 644 x"),
+        ),
+        invalidBase64: message(
+          entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: base64", "U2VlIGh0d*HBzOi8v"),
+        ),
+        encodedMultipart: message(
+          "Content-Type: multipart/mixed; boundary=b\r\nContent-Transfer-Encoding: base64\r\n\r\n--b\r\n\r\nx\r\n--b--\r\n",
+        ),
+        commentedType: message(
+          `Content-Type: multipart/mixed (note); boundary=b\r\n\r\n--b\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Part}\r\n--b--\r\n`,
+        ),
+        bareCarriageReturn: message(`Content-Transfer-Encoding: base64\r${base64Part}\r\n`),
+        continuedBoundary: message("Content-Type: multipart/mixed; boundary*0=b\r\n\r\n--b\r\n\r\nx\r\n--b--\r\n"),
+        repeatedEncoding: message(
+          entity("Content-Transfer-Encoding: 7bit\r\nContent-Transfer-Encoding: base64", base64Part),
+        ),
+        commentedBoundary: message(
+          `Content-Type: multipart/mixed; boundary=b (note)\r\n\r\n--b\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Part}\r\n--b--\r\n`,
+        ),
+        commentedEncoding: message(entity("Content-Transfer-Encoding: base64 (note)", base64Part)),
+        commentedDisposition: message(entity('Content-Disposition: attachment (x); filename="a.txt"', "Hello")),
+        extendedFilename: message(entity("Content-Disposition: attachment; filename*=utf-8''a%5B.txt", "Hello")),
+        repeatedParameter: message(
+          `Content-Type: multipart/mixed; boundary=b; boundary=c\r\n\r\n--c\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Part}\r\n--c--\r\n--b--\r\n`,
+        ),
+        ambiguousDelimiter: message(
+          `Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\nx\r\n--b note\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Part}\r\n--b--\r\n`,
+        ),
+        iso2022Body: b64url(
+          `To: a@church.example\r\nContent-Type: text/plain; charset=ISO-2022-JP\r\n\r\nSee https://example.com/doc?token=[re\x1b(Bdacted]\r\n`,
+        ),
+        iso2022Word: message(`Subject: =?ISO-2022-JP?Q?[re=1B(Bdacted]?=\r\n${plain}`),
+        ...Object.fromEntries(
+          ["Shift_JIS", "EUC-JP", "GB2312", "Big5", "UTF-32", "koi8-r"].map((charset) => [
+            charset,
+            message(entity(`Content-Type: text/plain; charset=${charset}`, "Hello")),
+          ]),
+        ),
+        invalidUtf8: b64url(
+          `To: a@church.example\r\n\r\nSee https://example.com/doc?token=[re\xffdacted]\r\n`,
+          "latin1",
+        ),
+        strayQuotedPrintable: message(entity("Content-Transfer-Encoding: quoted-printable", "[re=zzdacted]")),
+        noColon: message(`Hello there\r\n${plain}`),
+        tooDeep: message(
+          Array.from(
+            { length: 10 },
+            (_, level) => `Content-Type: multipart/mixed; boundary=b${level}\r\n\r\n--b${level}\r\n`,
+          ).join("") + "\r\nx\r\n",
+        ),
+      };
+      for (const [name, raw] of [...Object.entries(withheld), ...Object.entries(unreadable)]) {
+        for (const [path, body] of [
+          ["/messages/send", { raw }],
+          ["/drafts/send", { message: { raw } }],
+          ["/drafts", { message: { raw } }],
+          ["/messages/import", { raw }],
+        ] as const) {
+          const refusal = await call(hatch, "gmail_api_write", { method: "POST", path, body }).then(
+            () => undefined,
+            (error: unknown) => error,
+          );
+          expect(refusal, `${name} ${path}`).toMatchObject({
+            code: "invalid_args",
+            message:
+              name in withheld ? expect.stringMatching(/withheld/) : expect.stringMatching(/^Not sent: (?!.*withheld)/),
+          });
+        }
       }
-    }
-    for (const name of ["send_message", "create_draft"])
-      for (const args of [
-        { body: link },
-        { body: "Hi", htmlBody: `<a href="https://example.com/doc?token=&#91;redacted&#93;">doc</a>` },
-      ])
-        await expect(
-          call(connection(), name, { to: ["a@church.example"], subject: "Hi", ...args }),
-          `${name} ${JSON.stringify(args)}`,
-        ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toEqual([]);
+      for (const name of ["send_message", "create_draft"])
+        for (const args of [
+          { body: link },
+          { body: "Hi", htmlBody: `<a href="https://example.com/doc?token=&#91;redacted&#93;">doc</a>` },
+          { subject: "See https://example.com/doc?token==?UTF-8?Q?=5Bre?= =?UTF-8?Q?dacted=5D?=" },
+          { subject: "=?ISO-2022-JP?Q?[re=1B(Bdacted]?=" },
+        ])
+          await expect(
+            call(connection(), name, { to: ["a@church.example"], subject: "Hi", ...args }),
+            `${name} ${JSON.stringify(args)}`,
+          ).rejects.toMatchObject({ code: "invalid_args" });
+      expect(calls).toEqual([]);
 
-    route = sent;
-    const readable = message(
-      multipart(
-        "outer",
-        entity(
-          "Content-Type: text/plain; charset=ISO-8859-1\r\nContent-Transfer-Encoding: quoted-printable",
-          "Caf=E9 =3D fine",
+      route = sent;
+      const readable = message(
+        `Subject: =?UTF-8?Q?Caf=C3=A9?= =?ISO-8859-1?Q?_cr=E8me?= notes\r\n` +
+          `Content-Type: multipart/mixed;\r\n\tboundary="(outer) b";\r\n charset=us-ascii;\r\n\r\n` +
+          `--(outer) b \t\r\n` +
+          entity(
+            'Content-Type: text/plain; charset="windows-1252"\r\nContent-Disposition: inline; filename="a (1).txt"',
+            "Caf\u00e9",
+          ) +
+          `--(outer) b--\r\n`,
+      );
+      await expect(
+        call(connection(), "gmail_api_write", { method: "POST", path: "/messages/send", body: { raw: readable } }),
+      ).resolves.toMatchObject({ status: 200, data: { id: "s1" } });
+      calls.length = 0;
+      const mixed = message(
+        multipart(
+          "outer",
+          entity(
+            "Content-Type: text/plain; charset=ISO-8859-1\r\nContent-Transfer-Encoding: quoted-printable",
+            "Caf=E9 =3D fine",
+          ),
+          entity(
+            "Content-Type: text/plain\r\nContent-Transfer-Encoding: base64",
+            btoa("https://example.com/doc?token=abc"),
+          ),
+          entity("Content-Type: message/rfc822", "Subject: inner\r\n\r\nText [redacted] away from a link\r\n"),
         ),
-        entity(
-          "Content-Type: text/plain\r\nContent-Transfer-Encoding: base64",
-          btoa("https://example.com/doc?token=abc"),
-        ),
-        entity("Content-Type: message/rfc822", "Subject: inner\r\n\r\nText [redacted] away from a link\r\n"),
-      ),
+      );
+      await expect(
+        call(connection(), "gmail_api_write", { method: "POST", path: "/messages/send", body: { raw: mixed } }),
+      ).resolves.toMatchObject({ status: 200, data: { id: "s1" } });
+      expect(calls).toHaveLength(1);
+    },
+  );
+
+  it("refuses a forward note whose subject splits a withheld link across encoded words, sending nothing", async () => {
+    route = (request) => {
+      if (request.url.searchParams.get("format") === "raw")
+        return { body: { id: "m2", raw: b64url("Subject: Agenda\r\n\r\nHi\r\n") } };
+      return { body: { id: "m2", threadId: "t1", payload: { headers: [{ name: "Subject", value: "Agenda" }] } } };
+    };
+    for (const subject of [
+      "See https://example.com/doc?token==?UTF-8?Q?=5Bre?= =?UTF-8?Q?dacted=5D?=",
+      "=?ISO-2022-JP?Q?[re=1B(Bdacted]?=",
+    ])
+      await expect(
+        call(connection(), "forward_message", { messageId: "m2", to: ["treasurer@church.example"], subject }),
+        subject,
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(writes()).toEqual([]);
+  });
+
+  it("inspects worst-case raw messages in linear time and bounds what it decodes", { timeout: 30_000 }, () => {
+    const megabyte = 1024 * 1024;
+    const hostile = {
+      paddedDelimiter: `Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\nx\r\n--b${" ".repeat(megabyte)}X\r\n`,
+      spacedLine: `Content-Type: multipart/mixed; boundary=b\r\n\r\n--b\r\n\r\n${" ".repeat(megabyte)}X\r\n--b--\r\n`,
+      softBreakPadding: `Content-Transfer-Encoding: quoted-printable\r\n\r\n${"=".padEnd(megabyte, " ")}X\r\n`,
+      encodedWordStarts: `Subject: ${"=?".repeat(megabyte / 2)}\r\n\r\nx\r\n`,
+      unclosedEncodedWords: `Subject: ${"=?a?B?x ".repeat(megabyte / 8)}?=\r\n\r\nx\r\n`,
+      parameterPadding: `Content-Type: text/plain${" ".repeat(megabyte)};charset=utf-8\r\n\r\nx\r\n`,
+      manyFields: `${"X-A: b\r\n".repeat(megabyte / 8)}\r\nx\r\n`,
+      encodedWordFlood: `Subject: ${"=?utf-8?B?w6k=?= =?windows-1252?Q?=E9?= ".repeat(megabyte / 40)}\r\n\r\nx\r\n`,
+      manyDelimiters: `Content-Type: multipart/mixed; boundary=b\r\n\r\n${"--b\r\n\r\n".repeat(megabyte / 8)}`,
+    };
+    for (const [name, source] of Object.entries(hostile)) {
+      const raw = b64url(`To: a@church.example\r\n${source}`);
+      const started = performance.now();
+      refuseWithheldRaw({ raw });
+      expect(performance.now() - started, name).toBeLessThan(1000);
+    }
+    expect(refuseWithheldRaw({ raw: b64url(`To: a@church.example\r\n${hostile.encodedWordFlood}`) })).toMatch(
+      /more than 4096 encoded words/,
     );
-    await expect(
-      call(connection(), "gmail_api_write", { method: "POST", path: "/messages/send", body: { raw: readable } }),
-    ).resolves.toMatchObject({ status: 200, data: { id: "s1" } });
-    expect(calls).toHaveLength(1);
+    const oversized = new Uint8Array(17 * megabyte).fill(0x61);
+    expect(refuseWithheldRaw({ raw: b64url(new TextDecoder().decode(oversized)) })).toMatch(/decodes to more than/);
   });
 
   it("withholds send-as SMTP passwords, S/MIME private material and CSE wrapped keys from settings reads", async () => {
