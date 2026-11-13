@@ -39,9 +39,15 @@ const googleBindings = vi.hoisted(() => {
   const bindings = new WeakMap<object, { connection: object; index: object }>();
   const check = ({ connection, index, binding }: Declaration) => {
     if (
-      !["Gmail", "Google Drive", "Google Docs", "Google Sheets", "Google Slides", "Google Forms"].includes(
-        connection.provider,
-      )
+      ![
+        "Gmail",
+        "Google Drive",
+        "Google Docs",
+        "Google Sheets",
+        "Google Slides",
+        "Google Forms",
+        "Google People",
+      ].includes(connection.provider)
     )
       return;
     const reviewed = binding?.send && bindings.get(binding.send);

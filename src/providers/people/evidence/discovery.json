@@ -1,0 +1,7 @@
+{
+  "documentation": "https://developers.google.com/people/api/rest",
+  "url": "https://people.googleapis.com/$discovery/rest?version=v1",
+  "revision": "20261111",
+  "digest": "sha256:532f281096109fa10e94c6b79bc78811326bed61a43d0ccc1efec476e5b64caf",
+  "vendored": true
+}

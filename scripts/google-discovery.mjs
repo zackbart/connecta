@@ -35,6 +35,7 @@ const ROOTS = {
   slides: "/v1",
   forms: "/v1",
   meet: "/v2",
+  people: "/v1",
 };
 const GLOBALS = new Set(["fields", "prettyPrint"]);
 // Reviewed action vocabulary supplements original ids/nouns, never negates

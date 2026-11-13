@@ -222,6 +222,8 @@ interface StandardListSpec<F extends Schema.Struct.Fields, Row extends Schema.To
   readonly cursorScope?: Readonly<Record<string, unknown>>;
   /** Expose only an exact count supplied by the vendor, never an estimate from observed rows. */
   readonly total?: true;
+  /** Filter checks the input Schema cannot express, refused with every `fields` problem before `page`. */
+  readonly check?: (args: Schema.Struct<F>["Type"], problems: ArgumentProblems) => void;
   readonly page: (
     args: Schema.Struct<F>["Type"] & { readonly limit: number },
     cursor: string | undefined,
@@ -287,7 +289,7 @@ export function list(
       input,
       // `fields` narrows each item, so items render sparse; the envelope keeps items and page required.
       output: Schema.Unknown,
-      check: withFields(contract, undefined),
+      check: withFields(contract, spec.check as ((args: never, problems: ArgumentProblems) => void) | undefined),
       run: (args: Readonly<Record<string, unknown>> & { readonly fields?: readonly string[] }) =>
         Effect.gen(function* () {
           // A cursor stays valid when only the projection changes between pages.
