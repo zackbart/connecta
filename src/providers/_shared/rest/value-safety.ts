@@ -476,11 +476,35 @@ const TRAILING_ESCAPE =
   /(?:%(?:25){0,4}([0-9a-f]{2})|&(?:#0{0,6}(\d{1,7})|#x0{0,6}([0-9a-f]{1,6})|([a-z]{2,6}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\)$/i;
 /** Every escape in link text, decoded together; an unknown entity name stays as written. */
 const ESCAPES =
-  /%([0-9a-f]{2})|&(?:#0*(\d{1,7})|#x0*([0-9a-f]{1,6})|([a-z][a-z0-9]{1,31}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\(?=[^a-z0-9])/gi;
+  /%([0-9a-f]{2})|&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|([a-z]{2,8}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\(?=[^a-z0-9])/gi;
 /** One slash however it is spelled, read forwards. */
 const SLASH = /\/|\\\/|%(?:25){0,4}2f|&#0{0,6}47;?|&#x0{0,6}2f;?|&sol;?|\\u002f|\\x2f/iy;
-/** WHATWG's ASCII-valued named references; every other one decodes to non-ASCII and cannot spell the marker or a URL delimiter. */
 const NAMED: Readonly<Record<string, string>> = {
+  amp: "&",
+  colon: ":",
+  quot: '"',
+  apos: "'",
+  lt: "<",
+  gt: ">",
+  quest: "?",
+  num: "#",
+  semi: ";",
+  equals: "=",
+  sol: "/",
+  percnt: "%",
+  bsol: "\\",
+  lbrack: "[",
+  rbrack: "]",
+  lsqb: "[",
+  rsqb: "]",
+  period: ".",
+};
+
+/** The same escapes as a recipient decodes them: numeric references with any leading zeros, and named references up to 32 characters. */
+const RECIPIENT_ESCAPES =
+  /%([0-9a-f]{2})|&(?:#0*(\d{1,7})|#x0*([0-9a-f]{1,6})|([a-z][a-z0-9]{1,31}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\(?=[^a-z0-9])/gi;
+/** WHATWG's ASCII-valued named references; every other one decodes to non-ASCII and cannot spell the marker or a URL delimiter. */
+const RECIPIENT_NAMED: Readonly<Record<string, string>> = {
   amp: "&",
   apos: "'",
   ast: "*",
@@ -538,12 +562,15 @@ function codePoint(value: number): string {
 }
 
 /** The character an escape's groups spell: percent, decimal, hex, name, `\u`, `\x`; a bare backslash spells nothing. */
-function unescaped(groups: ReadonlyArray<string | undefined>): string | undefined {
+function unescaped(
+  groups: ReadonlyArray<string | undefined>,
+  named: Readonly<Record<string, string>> = NAMED,
+): string | undefined {
   const [percent, decimal, hex, name, unicode, byte] = groups;
   if (percent !== undefined) return String.fromCharCode(Number.parseInt(percent, 16));
   if (decimal !== undefined) return codePoint(Number(decimal));
   if (hex !== undefined) return codePoint(Number.parseInt(hex, 16));
-  if (name !== undefined) return NAMED[name.toLowerCase()];
+  if (name !== undefined) return named[name.toLowerCase()];
   if (unicode !== undefined || byte !== undefined) return String.fromCharCode(Number.parseInt((unicode ?? byte)!, 16));
   return "";
 }
@@ -688,14 +715,15 @@ function linkSpan(text: string, start: number, host: number, inline: boolean, cr
   let cut = -1;
   let open = "?";
   let end = start;
-  let crossed: Crossed | undefined;
+  let crossing: Crossing | undefined;
   for (; end < text.length; end++) {
     const code = text.charCodeAt(end);
     if (endsLink(code, text[end]!)) {
       if (!crossRuns || end < host || !isUrlWhitespace(code)) break;
-      crossed = crossing(text, end, host, crossed);
-      if (!crossed) break;
-      end = crossed.next - 1;
+      crossing ??= { state: { matched: 0, segment: Segment.None }, fed: host };
+      const next = crossRun(text, end, host, crossing);
+      if (next < 0) break;
+      end = next - 1;
       continue;
     }
     if (inline) {
@@ -966,10 +994,14 @@ function mapStrings(value: unknown, cleanText: (text: string) => string, depth: 
  * would, through up to four layers of escaping (`%255B`, `&amp;#91;`). Each
  * round is one linear pass.
  */
-function decodeLinkText(text: string, percent = true): string {
+function decodeLinkText(text: string, percent = true, escapes = ESCAPES, named = NAMED): string {
   for (let round = 0; round < 4; round++) {
-    const next = text.replace(ESCAPES, (token, ...groups: Array<string | undefined>) =>
-      !percent && groups[0] !== undefined ? token : token === "\\" ? "" : (unescaped(groups.slice(0, 6)) ?? token),
+    const next = text.replace(escapes, (token, ...groups: Array<string | undefined>) =>
+      !percent && groups[0] !== undefined
+        ? token
+        : token === "\\"
+          ? ""
+          : (unescaped(groups.slice(0, 6), named) ?? token),
     );
     if (next === text) break;
     text = next;
@@ -988,23 +1020,35 @@ function decodeLinkText(text: string, percent = true): string {
  */
 export function carriesWithheldLink(value: unknown): boolean {
   return carriesString(value, (source) => {
-    const text = canonicalReferences(source);
+    for (const { cut, end } of linkSpans(source)) {
+      if (cut >= 0 && decodeLinkText(source.slice(cut, end)).includes(REDACTED)) return true;
+    }
+    if (!RECIPIENT_SPELLING.test(source)) return false;
+    const text = recipientText(source);
     for (const { cut, end } of linkSpans(text, false, true)) {
-      if (cut >= 0 && carriesMarker(decodeLinkText(text.slice(cut, end)))) return true;
+      if (cut >= 0 && carriesMarker(decodeRecipient(text.slice(cut, end)))) return true;
     }
     return false;
   });
 }
 
+const RECIPIENT_SPELLING = /[&%\\\t\n\r]/;
 const LEADING_ZEROS = /&#(?:0+(?=\d)|(x)0+(?=[0-9a-f]))/gi;
+const WHITESPACE_REFERENCE = /&(?:tab;|newline;|#(?:9|1[03])(?!\d);?|#x[9ad](?![0-9a-f]);?)/gi;
 const URL_WHITESPACE = /[\t\n\r]/g;
-const URL_WHITESPACE_RUN = /[\t\n\r]+/;
-const CROSSING_TAIL = 64;
-const CROSSING_SOURCE = 256;
+const LOOKAHEAD = 256;
 
-/** Numeric references read with any number of leading zeros, as the WHATWG HTML parser reads them. */
-function canonicalReferences(text: string): string {
-  return text.replace(LEADING_ZEROS, (_, hex?: string) => `&#${hex ?? ""}`);
+/**
+ * Text as a recipient's HTML parser hands it to a URL parser: numeric references
+ * without leading zeros, and references to a tab or line break as that character,
+ * so a run that mixes both is one run.
+ */
+function recipientText(text: string): string {
+  return text.replace(LEADING_ZEROS, (_, hex?: string) => `&#${hex ?? ""}`).replace(WHITESPACE_REFERENCE, "\t");
+}
+
+function decodeRecipient(text: string): string {
+  return decodeLinkText(text, true, RECIPIENT_ESCAPES, RECIPIENT_NAMED);
 }
 
 function withoutUrlWhitespace(text: string): string {
@@ -1019,78 +1063,113 @@ function isParameterDelimiter(char: string): boolean {
   return char === "?" || char === "#" || char === "&" || char === ";";
 }
 
-function markerConsistent(candidate: string): boolean {
-  return REDACTED.startsWith(candidate) || candidate.startsWith(REDACTED);
+const enum Segment {
+  None,
+  Key,
+  Equals,
+  Value,
+}
+
+/** Marker progress and the current parameter's shape, over decoded characters with crossed runs removed. */
+interface MarkerState {
+  matched: number;
+  segment: Segment;
+}
+
+/** Advance by one decoded character; true once the marker is complete. */
+function step(state: MarkerState, char: string): boolean {
+  if (char === REDACTED[state.matched]) state.matched++;
+  else state.matched = char === "[" ? 1 : 0;
+  if (isParameterDelimiter(char)) state.segment = Segment.Key;
+  else if (state.segment === Segment.Key)
+    state.segment = char === "=" ? Segment.Equals : char === "[" || char === "]" ? Segment.Value : Segment.Key;
+  else if (state.segment === Segment.Equals) state.segment = Segment.Value;
+  return state.matched === REDACTED.length;
+}
+
+function continuesMarker(text: string, from: number, to: number, matched: number): boolean {
+  let at = from;
+  while (at < to && matched < REDACTED.length && text[at] === REDACTED[matched]) {
+    at++;
+    matched++;
+  }
+  return at === to || matched === REDACTED.length;
 }
 
 /**
- * Whether a URL parser stripping the tab or line break between `before` and
- * `after` (both decoded) would join them into the marker: `before` ends in a
- * proper prefix of it and `after` continues it, or `before` ends in a
- * parameter with no value yet (`?`, `&key`, `?key=`) and `after` holds only
- * key characters and `=` before the marker begins.
+ * Whether a URL parser stripping the run of tabs and line breaks before
+ * `text[from, to)` would join it into the marker: the run splits the marker,
+ * or follows a parameter with no value yet (`?`, `&key`, `?key=`) and the
+ * word holds only key characters and `=` before the marker begins.
  */
-function crossesToMarker(before: string, after: string): boolean {
-  if (after === "") return false;
-  const open = before.lastIndexOf("[");
-  if (open >= 0 && before.length - open < REDACTED.length) {
-    const prefix = before.slice(open);
-    if (REDACTED.startsWith(prefix) && markerConsistent(prefix + after)) return true;
+function crosses(state: MarkerState, text: string, from: number, to: number): boolean {
+  if (from >= to) return false;
+  if (state.matched > 0 && continuesMarker(text, from, to, state.matched)) return true;
+  if (state.segment !== Segment.Key && state.segment !== Segment.Equals) return false;
+  let at = from;
+  if (state.segment === Segment.Key) {
+    while (at < to && !"=[]".includes(text[at]!) && !isParameterDelimiter(text[at]!)) at++;
+    if (at === to) return false;
+    if (text[at] === "=" && ++at === to) return true;
   }
-  let delimiter = before.length - 1;
-  while (delimiter >= 0 && !isParameterDelimiter(before[delimiter]!)) delimiter--;
-  if (delimiter < 0) return false;
-  let equals = false;
-  for (let at = delimiter + 1; at < before.length; at++) {
-    const char = before[at]!;
-    if (equals || char === "[" || char === "]") return false;
-    equals = char === "=";
-  }
-  let at = 0;
-  if (!equals) {
-    while (at < after.length && !"=[]".includes(after[at]!) && !isParameterDelimiter(after[at]!)) at++;
-    if (after[at] === "=") at++;
-    else if (after[at] !== "[") return false;
-  }
-  return at === after.length || (after[at] === "[" && markerConsistent(after.slice(at)));
-}
-
-interface Crossed {
-  next: number;
-  tail: string;
-  tailEnd: number;
+  return text[at] === "[" && continuesMarker(text, at, to, 0);
 }
 
 /**
- * The run of tabs and line breaks at `at`, crossed when the decoded text on
- * either side would join into the marker. Each crossing decodes source
- * characters no earlier crossing decoded, plus a bounded tail.
+ * Whether decoded link text holds the marker, crossing only the runs
+ * `crosses` allows; any other run ends the reading. Each character is read at
+ * most twice: once looking ahead from a run, once stepping.
  */
-function crossing(text: string, at: number, from: number, previous: Crossed | undefined): Crossed | undefined {
+function carriesMarker(text: string): boolean {
+  const state: MarkerState = { matched: 0, segment: Segment.None };
+  const end = text.length;
+  for (let at = 0; at < end;) {
+    if (!isUrlWhitespace(text.charCodeAt(at))) {
+      if (step(state, text[at]!)) return true;
+      at++;
+      continue;
+    }
+    let next = at;
+    while (next < end && isUrlWhitespace(text.charCodeAt(next))) next++;
+    let word = next;
+    while (word < end && !isUrlWhitespace(text.charCodeAt(word))) word++;
+    if (!crosses(state, text, next, word)) return false;
+    at = next;
+  }
+  return false;
+}
+
+/** The decoded words of a link read so far, fed once each; decoded tabs and line breaks pass through. */
+interface Crossing {
+  state: MarkerState;
+  fed: number;
+}
+
+function feed(state: MarkerState, decoded: string): boolean {
+  for (let at = 0; at < decoded.length; at++)
+    if (!isUrlWhitespace(decoded.charCodeAt(at)) && step(state, decoded[at]!)) return true;
+  return false;
+}
+
+/**
+ * The end of the literal run at `at` when the link continues across it. The
+ * link's decoded text before the run and the bounded word after it are each
+ * decoded once, so a link's crossings together read each source character at
+ * most twice.
+ */
+function crossRun(text: string, at: number, host: number, crossing: Crossing): number {
+  if (feed(crossing.state, decodeRecipient(text.slice(Math.max(host, crossing.fed), at)))) return -1;
   let next = at;
   while (next < text.length && isUrlWhitespace(text.charCodeAt(next))) next++;
   let word = next;
-  while (word < text.length && word - next < CROSSING_SOURCE && !endsLink(text.charCodeAt(word), text[word]!)) word++;
-  const contiguous = previous !== undefined && at - previous.tailEnd <= CROSSING_SOURCE;
-  const gap = contiguous ? previous.tailEnd : Math.max(from, at - CROSSING_SOURCE);
-  const before = ((contiguous ? previous.tail : "") + withoutUrlWhitespace(decodeLinkText(text.slice(gap, at)))).slice(
-    -CROSSING_TAIL,
-  );
-  const after = withoutUrlWhitespace(decodeLinkText(text.slice(next, word)));
-  if (!crossesToMarker(before, after)) return undefined;
-  return { next, tail: (before + after).slice(-CROSSING_TAIL), tailEnd: word };
-}
-
-/** Whether decoded link text holds the marker, crossing only the tab and line-break runs a URL parser would join into it. */
-function carriesMarker(decoded: string): boolean {
-  if (!decoded.includes("\t") && !decoded.includes("\n") && !decoded.includes("\r")) return decoded.includes(REDACTED);
-  const [first = "", ...rest] = decoded.split(URL_WHITESPACE_RUN);
-  let joined = first;
-  for (const part of rest) {
-    if (!crossesToMarker(joined.slice(-CROSSING_TAIL), part)) break;
-    joined += part;
-  }
-  return joined.includes(REDACTED);
+  while (word < text.length && word - next < LOOKAHEAD && !endsLink(text.charCodeAt(word), text[word]!)) word++;
+  const after = decodeRecipient(text.slice(next, word));
+  let stop = 0;
+  while (stop < after.length && !isUrlWhitespace(after.charCodeAt(stop))) stop++;
+  if (!crosses(crossing.state, after, 0, stop)) return -1;
+  feed(crossing.state, after);
+  crossing.fed = word;
+  return next;
 }
 
 function carriesString(value: unknown, inspect: (text: string) => boolean): boolean {
@@ -1126,19 +1205,36 @@ function carriesString(value: unknown, inspect: (text: string) => boolean): bool
   return false;
 }
 
+function carriesWithheldValue(text: string, containment: boolean): boolean {
+  const decoded = decodeLinkText(text);
+  if (containment) return redactionAltered(text) || redactionAltered(decoded);
+  if (decoded === REDACTED) return true;
+  for (const candidate of [text, decoded])
+    for (const { start, end } of linkSpans(candidate))
+      if (redactionAltered(decodeLinkText(candidate.slice(start, end)))) return true;
+  return false;
+}
+
+function carriesRecipientValue(text: string, containment: boolean): boolean {
+  const decoded = decodeRecipient(text);
+  const stripped = withoutUrlWhitespace(decoded);
+  if (containment) return redactionAltered(stripped);
+  if (stripped === REDACTED) return true;
+  for (const candidate of [text, decoded])
+    for (const { start, end } of linkSpans(candidate, false, true))
+      if (carriesMarker(decodeRecipient(candidate.slice(start, end)))) return true;
+  return false;
+}
+
 /** Whole marker values and withheld destinations are refused; paths and queries also refuse containment. */
 export function refuseWithheldValues(value: unknown, title: string, containment = false): void {
   if (
-    !carriesString(value, (source) => {
-      const text = canonicalReferences(source);
-      const decoded = decodeLinkText(text);
-      if (containment) return redactionAltered(text) || redactionAltered(withoutUrlWhitespace(decoded));
-      if (withoutUrlWhitespace(decoded) === REDACTED) return true;
-      for (const candidate of [text, decoded])
-        for (const { start, end } of linkSpans(candidate, false, true))
-          if (carriesMarker(decodeLinkText(candidate.slice(start, end)))) return true;
-      return false;
-    })
+    !carriesString(
+      value,
+      (text) =>
+        carriesWithheldValue(text, containment) ||
+        (RECIPIENT_SPELLING.test(text) && carriesRecipientValue(recipientText(text), containment)),
+    )
   )
     return;
   throw new ConnectorCallError(

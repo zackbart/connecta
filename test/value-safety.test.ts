@@ -351,6 +351,11 @@ describe("pre-signed links in free text", () => {
     "https://file.notes.example/a?t=\n[redacted]",
     "https://file.notes.example/a?to\r\nken=\t[re&#9;dac&NewLine;ted]",
     "https://file.notes.example/a#\t%5Bredacted%5D",
+    '<a href="https://file.notes.example/a?x=1&Tab;&t=[redacted]">doc</a>',
+    "https://file.notes.example/a?t=1&#9;[redacted]",
+    '<a href="https://file.notes.example/a?[\t&Tab;\tredacted]">doc</a>',
+    "https://file.notes.example/a?to\t&#x0A;\tken=[re%09dacted]",
+    `https://file.notes.example/a?${"k".repeat(300)}=\t[redacted]`,
     "[doc](<https://file.notes.example/a?t=[re\tdacted]>) and more",
     "https://file.notes.example/a?t=[re\ndacted]",
   ])("INV-5: finds the placeholder however it is encoded in %s", (text) => {
@@ -365,7 +370,6 @@ describe("pre-signed links in free text", () => {
     '<a href="https://example.com/?q=redacted&amp;n=&#0000091;1&#93;&Tab;">the redacted report</a>',
     "if a < b then\nhttps://example.com/?q=1\n[redacted] stays prose",
     "https://example.com/a?t=1\n[redacted]",
-    "https://example.com/a?t=1&Tab;[redacted]",
     "https://example.com/a?flag\nnote [redacted]",
     "https://example.com/a?t=[re\tviewed]",
   ])("INV-5: admits ordinary text with entities, line breaks and the word in %s", (text) => {
@@ -386,6 +390,8 @@ describe("pre-signed links in free text", () => {
     ["marker prefixes across many runs", "//a?t=\t[r\te\td\ta\tc\tt\te\tx ".repeat(60_000)],
     ["long words after line breaks", `//a?\n${"b".repeat(300)}`.repeat(6_000)],
     ["referenced line breaks in one query", `https://file.notes.example/a?t=${"[r&Tab;e&#10;".repeat(200_000)}`],
+    ["markers across literal runs", `https://file.notes.example/a?t=${"\t[redacted]&t=".repeat(20_000)}`],
+    ["markers across referenced runs", `https://file.notes.example/a?t=${"&#9;[redacted]&t=".repeat(20_000)}`],
   ])(
     "INV-5: scans %s in linear time",
     (_, text) => {

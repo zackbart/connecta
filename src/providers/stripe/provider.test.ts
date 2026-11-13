@@ -436,6 +436,8 @@ describe("stripe() over an API key", () => {
         'Text ="lead <a href="https://files.example/a?t=[re\tdacted]">doc</a>',
         '"https://files.example/a?t=[re\tdacted]" <alice@example.com>',
         '<style>body { background: url("https://files.example/a?t=[re\tdacted]") }</style>',
+        '<a href="https://files.example/a?x=1&Tab;&t=[redacted]">doc</a>',
+        '<a href="https://files.example/a?[\t&Tab;\tredacted]">doc</a>',
       ].map((note) => ({ method: "POST", path: "/v1/customers", body: { metadata: { note } } })),
     ])
       expect((await refusal(connector.callTool("stripe_api_write", bad, ctx))).code).toBe("invalid_args");

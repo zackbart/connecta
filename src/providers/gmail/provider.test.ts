@@ -1090,6 +1090,15 @@ describe("sending and organizing mail", () => {
             '<style>body { background: url("https://example.com/a?t=[re\tdacted]") }</style>',
           ),
         ),
+        referencedTabBeforeParameter: message(
+          entity("Content-Type: text/html", '<a href="https://example.com/a?x=1&Tab;&t=[redacted]">doc</a>'),
+        ),
+        mixedRun: message(
+          entity(
+            "Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: base64",
+            btoa('<a href="https://example.com/a?[\t&Tab;\tredacted]">doc</a>'),
+          ),
+        ),
         recipientWhitespace: message(
           entity(
             "Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable",
@@ -1184,6 +1193,8 @@ describe("sending and organizing mail", () => {
           { to: ['"https://example.com/a?t=[re\\\tdacted]" <a@church.example>'] },
           { body: "Hi", htmlBody: 'Text ="lead <a href="https://example.com/a?t=[re\tdacted]">doc</a>' },
           { body: "Hi", htmlBody: '<style>body { background: url("https://example.com/a?t=[re\tdacted]") }</style>' },
+          { body: "Hi", htmlBody: '<a href="https://example.com/a?x=1&Tab;&t=[redacted]">doc</a>' },
+          { body: "Hi", htmlBody: '<a href="https://example.com/a?[\t&Tab;\tredacted]">doc</a>' },
         ])
           await expect(
             call(connection(), name, { to: ["a@church.example"], subject: "Hi", ...args }),
