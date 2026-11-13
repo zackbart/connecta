@@ -476,28 +476,53 @@ const TRAILING_ESCAPE =
   /(?:%(?:25){0,4}([0-9a-f]{2})|&(?:#0{0,6}(\d{1,7})|#x0{0,6}([0-9a-f]{1,6})|([a-z]{2,6}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\)$/i;
 /** Every escape in link text, decoded together; an unknown entity name stays as written. */
 const ESCAPES =
-  /%([0-9a-f]{2})|&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|([a-z]{2,8}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\(?=[^a-z0-9])/gi;
+  /%([0-9a-f]{2})|&(?:#0*(\d{1,7})|#x0*([0-9a-f]{1,6})|([a-z][a-z0-9]{1,31}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\(?=[^a-z0-9])/gi;
 /** One slash however it is spelled, read forwards. */
 const SLASH = /\/|\\\/|%(?:25){0,4}2f|&#0{0,6}47;?|&#x0{0,6}2f;?|&sol;?|\\u002f|\\x2f/iy;
+/** WHATWG's ASCII-valued named references; every other one decodes to non-ASCII and cannot spell the marker or a URL delimiter. */
 const NAMED: Readonly<Record<string, string>> = {
   amp: "&",
-  colon: ":",
-  quot: '"',
   apos: "'",
-  lt: "<",
-  gt: ">",
-  quest: "?",
-  num: "#",
-  semi: ";",
-  equals: "=",
-  sol: "/",
-  percnt: "%",
+  ast: "*",
   bsol: "\\",
+  colon: ":",
+  comma: ",",
+  commat: "@",
+  diacriticalgrave: "`",
+  dollar: "$",
+  equals: "=",
+  excl: "!",
+  fjlig: "fj",
+  grave: "`",
+  gt: ">",
+  hat: "^",
+  lbrace: "{",
   lbrack: "[",
-  rbrack: "]",
+  lcub: "{",
+  lowbar: "_",
+  lpar: "(",
   lsqb: "[",
-  rsqb: "]",
+  lt: "<",
+  midast: "*",
+  newline: "\n",
+  num: "#",
+  percnt: "%",
   period: ".",
+  plus: "+",
+  quest: "?",
+  quot: '"',
+  rbrace: "}",
+  rbrack: "]",
+  rcub: "}",
+  rpar: ")",
+  rsqb: "]",
+  semi: ";",
+  sol: "/",
+  tab: "\t",
+  underbar: "_",
+  verbar: "|",
+  vert: "|",
+  verticalline: "|",
 };
 /** The longest scheme read back from its `:`. */
 const MAX_SCHEME = 32;
@@ -955,12 +980,75 @@ function decodeLinkText(text: string, percent = true): string {
  * a person's text. Every destination uses the same policy regardless of host.
  */
 export function carriesWithheldLink(value: unknown): boolean {
-  return carriesString(value, (text) => {
-    for (const { cut, end } of linkSpans(text)) {
-      if (cut >= 0 && decodeLinkText(text.slice(cut, end)).includes(REDACTED)) return true;
+  return carriesString(value, (source) =>
+    recipientReadings(source).some((text) => {
+      for (const { cut, end } of linkSpans(text)) {
+        if (cut >= 0 && withoutUrlWhitespace(decodeLinkText(text.slice(cut, end))).includes(REDACTED)) return true;
+      }
+      return false;
+    }),
+  );
+}
+
+const LEADING_ZEROS = /&#(?:0+(?=\d)|(x)0+(?=[0-9a-f]))/gi;
+const URL_WHITESPACE = /[\t\n\r]/g;
+const URL_WHITESPACE_REFERENCE = /&(?:tab;|newline;|#(?:9|1[03])(?!\d);?|#x[9ad](?![0-9a-f]);?)/gi;
+
+function withoutUrlWhitespace(text: string): string {
+  return text.replace(URL_WHITESPACE, "");
+}
+
+function withoutUrlWhitespaceOrReference(text: string): string {
+  return withoutUrlWhitespace(text).replace(URL_WHITESPACE_REFERENCE, "");
+}
+
+function isAsciiWhitespace(code: number): boolean {
+  return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d;
+}
+
+/**
+ * Tabs and line breaks removed where a URL parser reads text whole: a value with no
+ * spaces, a quoted attribute value (`="…"`), or an angle-bracketed tag or destination.
+ * Elsewhere a line break ends a link, so prose keeps its lines.
+ */
+function urlWhitespaceStripped(text: string): string {
+  if (!text.includes(" ")) return withoutUrlWhitespaceOrReference(text);
+  let out = "";
+  let copied = 0;
+  let close = "";
+  let quote = "";
+  let opened = 0;
+  let previous = "";
+  for (let at = 0; at < text.length; at++) {
+    const char = text[at]!;
+    const opensValue = (char === '"' || char === "'") && previous === "=";
+    if (!isAsciiWhitespace(text.charCodeAt(at))) previous = char;
+    if (quote) {
+      if (char === quote) quote = "";
+    } else if (close === ">" && opensValue) quote = char;
+    else if (close && char === close) {
+      out += text.slice(copied, opened) + withoutUrlWhitespaceOrReference(text.slice(opened, at));
+      copied = at;
+      close = "";
+    } else if (!close && opensValue) {
+      close = char;
+      opened = at + 1;
+    } else if (!close && char === "<" && at + 1 < text.length && !isAsciiWhitespace(text.charCodeAt(at + 1))) {
+      close = ">";
+      opened = at + 1;
     }
-    return false;
-  });
+  }
+  if (close) {
+    out += text.slice(copied, opened) + withoutUrlWhitespaceOrReference(text.slice(opened));
+    copied = text.length;
+  }
+  return out + text.slice(copied);
+}
+
+function recipientReadings(text: string): string[] {
+  const canonical = text.replace(LEADING_ZEROS, (_, hex?: string) => `&#${hex ?? ""}`);
+  const stripped = urlWhitespaceStripped(canonical);
+  return stripped === canonical ? [canonical] : [canonical, stripped];
 }
 
 function carriesString(value: unknown, inspect: (text: string) => boolean): boolean {
@@ -999,15 +1087,17 @@ function carriesString(value: unknown, inspect: (text: string) => boolean): bool
 /** Whole marker values and withheld destinations are refused; paths and queries also refuse containment. */
 export function refuseWithheldValues(value: unknown, title: string, containment = false): void {
   if (
-    !carriesString(value, (text) => {
-      const decoded = decodeLinkText(text);
-      if (containment) return redactionAltered(text) || redactionAltered(decoded);
-      if (decoded === REDACTED) return true;
-      for (const candidate of [text, decoded])
-        for (const { start, end } of linkSpans(candidate))
-          if (redactionAltered(decodeLinkText(candidate.slice(start, end)))) return true;
-      return false;
-    })
+    !carriesString(value, (source) =>
+      recipientReadings(source).some((text) => {
+        const decoded = decodeLinkText(text);
+        if (containment) return redactionAltered(text) || redactionAltered(withoutUrlWhitespace(decoded));
+        if (withoutUrlWhitespace(decoded) === REDACTED) return true;
+        for (const candidate of [text, decoded])
+          for (const { start, end } of linkSpans(candidate))
+            if (redactionAltered(withoutUrlWhitespace(decodeLinkText(candidate.slice(start, end))))) return true;
+        return false;
+      }),
+    )
   )
     return;
   throw new ConnectorCallError(

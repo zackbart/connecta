@@ -1286,7 +1286,9 @@ client would, and every decoded part, header and attached message is checked
 for a withheld link before sending. It accepts identity, base64 and
 quoted-printable transfer encodings; US-ASCII, UTF-8, ISO-8859-n and
 windows-125n charsets; header encoded words, with whitespace between adjacent
-words dropped as clients drop it; and Content-Type, Content-Transfer-Encoding
+words dropped as clients drop it; RFC 5322 quoted-pairs in header values, such
+as a display name or `filename="…"` parameter, read both as written and
+unescaped; and Content-Type, Content-Transfer-Encoding
 and Content-Disposition values made of plain or quoted parameters. It refuses,
 sending nothing: comments in those headers, repeated or RFC 2231 extended
 parameters (`filename*=`; use an encoded word or an ASCII name), repeated

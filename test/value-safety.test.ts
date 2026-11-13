@@ -12,6 +12,7 @@ import {
   refuseWithheldBase64,
   refuseWithheldLinks,
   refuseWithheldUpload,
+  refuseWithheldValues,
   safe,
   validPath,
   valueSafety,
@@ -340,14 +341,45 @@ describe("pre-signed links in free text", () => {
     "https://file.notes.example/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D",
     "https://file.notes.example/f/f/a.png?&amp;#91;redacted&amp;#93;",
     "![a](https://file.notes.example/f/f/a\\).png?[redacted])",
+    '<a href="https://file.notes.example/a?t=&#0000000000091;redacted&#0000000093;">doc</a>',
+    "see https://file.notes.example/a?t=&#x00000000005B;redacted&#X0005d; now",
+    "https:&#00000000047;&#x000002F;file.notes.example/a&#0000000063;[redacted]",
+    '<a href="https://file.notes.example/a?t=&lbrack;re&Tab;dact&NewLine;ed&rsqb;">doc</a>',
+    '<a href="https://file.notes.example/a?t=[re\tdac\r\nted]">doc</a>',
+    "<a href='ht\ttps:/\n/file.notes.example/a?t=[redacted]'>doc</a>",
+    '<a href="https:/&Tab;/file.notes.example/a&#x9;?t=[redacted]">doc</a>',
+    "[doc](<https://file.notes.example/a?t=[re\tdacted]>) and more",
+    "https://file.notes.example/a?t=[re\ndacted]",
   ])("INV-5: finds the placeholder however it is encoded in %s", (text) => {
     expect(carriesWithheldLink({ text })).toBe(true);
+    expect(() => refuseWithheldLinks({ text }, "Vendor")).toThrow(expect.objectContaining({ code: "invalid_args" }));
+  });
+
+  it.each([
+    "Source: https://example.com/report?q=1\n[redacted] fields were omitted.",
+    "Source: https://example.com/report\r\n[redacted] fields were omitted.",
+    "Fish &amp; chips &NewLine; &#0000038; &lbrack;redacted&rsqb; https://example.com/menu?item=1 &copy; &Colon;",
+    '<a href="https://example.com/?q=redacted&amp;n=&#0000091;1&#93;&Tab;">the redacted report</a>',
+    "if a < b then\nhttps://example.com/?q=1\n[redacted] stays prose",
+  ])("INV-5: admits ordinary text with entities, line breaks and the word in %s", (text) => {
+    expect(carriesWithheldLink({ text })).toBe(false);
+    expect(() => refuseWithheldValues({ text }, "Vendor")).not.toThrow();
   });
 
   it.each([
     ["host names in one unbroken link", `https://${"file.notes.example/".repeat(200_000)}`],
     ["one Markdown destination of open parentheses", `[a](https://file.notes.example/${"(".repeat(2_000_000)}`],
     ["leading Markdown whitespace", `[a](${" ".repeat(2_000_000)}https://file.notes.example/a?b)[redacted]`],
+    [
+      "numeric references with long zero runs",
+      `https://file.notes.example/a?${"&#00000000000000000091;&#x0".repeat(100_000)}`,
+    ],
+    ["one reference of zeros", `https://file.notes.example/a?&#${"0".repeat(2_000_000)}91;redacted]`],
+    [
+      "quoted values and tags across lines",
+      `${"a=\"\t<b\n x='&Tab;\r".repeat(200_000)} https://file.notes.example/a?b`,
+    ],
+    ["an unclosed tag of line breaks", `x <a ${"\n&#10;\t".repeat(400_000)}https://file.notes.example/a?b`],
   ])(
     "INV-5: scans %s in linear time",
     (_, text) => {

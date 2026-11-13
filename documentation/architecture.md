@@ -1675,7 +1675,16 @@ every vendor ships one reviewed table through one mechanism
    form-encoded, raw/base64 bytes, multipart parts and named writes) refuses
    with `invalid_args` and zero dispatch when a URL destination's own query
    or fragment contains the exact `[redacted]` placeholder, plain or up to four
-   layers encoded. Upload admission reads decoded bytes and each multipart
+   layers encoded, in any spelling a recipient reconstructs: numeric character
+   references with any number of leading zeros, every WHATWG named reference
+   that decodes to ASCII (`&lbrack;`, `&rsqb;`, `&Tab;`, `&NewLine;`), and ASCII
+   tabs and line breaks, written or referenced, which the WHATWG URL parser
+   strips. Tabs and line breaks are read as stripped inside a quoted attribute
+   value (`="…"`), an angle-bracketed tag or destination, or a value with no
+   spaces; elsewhere a line break ends a link, so prose that puts the marker
+   on the line after a link is admitted. Other named references decode to
+   non-ASCII characters, which cannot spell the marker or a URL delimiter.
+   Kit admission reads the same spellings. Upload admission reads decoded bytes and each multipart
    string/blob. Vercel deployment `files[].data` with `encoding: "base64"`
    and Cloudflare KV bulk `value` with `base64: true` pass through the same
    byte inspection with one decode, bounded by the field's own encoded length

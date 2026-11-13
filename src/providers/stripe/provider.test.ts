@@ -428,6 +428,12 @@ describe("stripe() over an API key", () => {
       { method: "POST", path: "/v1/customers", body: { email: "alice@example.com" }, fields: ["typo"] },
       { method: "POST", path: "/v1/customers", body: { metadata: { tier: "[redacted]" } } },
       { method: "POST", path: "/v1/customers", body: { name: "%5Bredacted%5D" } },
+      ...[
+        '<a href="https://files.example/a?t=&#0000000000091;redacted&#x00005d;">doc</a>',
+        '<a href="https://files.example/a?t=&lbrack;re&Tab;dacted&rsqb;">doc</a>',
+        '<a href="https://files.example/a?t=[re\tdac\r\nted]">doc</a>',
+        "https://files.example/a?t=[re\ndacted]",
+      ].map((note) => ({ method: "POST", path: "/v1/customers", body: { metadata: { note } } })),
     ])
       expect((await refusal(connector.callTool("stripe_api_write", bad, ctx))).code).toBe("invalid_args");
     expect(sent).toHaveLength(before);
@@ -437,7 +443,16 @@ describe("stripe() over an API key", () => {
       { method: "POST", path: "/v1/customers", body: { description: "The log says [redacted]" } },
       ctx,
     );
-    expect(sent).toHaveLength(before + 1);
+    await connector.callTool(
+      "stripe_api_write",
+      {
+        method: "POST",
+        path: "/v1/customers",
+        body: { description: "Fish &amp; chips &#0000038; https://example.com/menu?item=1\n[redacted] was omitted" },
+      },
+      ctx,
+    );
+    expect(sent).toHaveLength(before + 2);
     // Named reads accept fields and reject bad roots before authentication.
     expect(
       (await refusal(connector.callTool("get_balance_summary", { fields: ["typo"] }, connectorContext()))).code,

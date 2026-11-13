@@ -13,6 +13,7 @@ const IDENTITY_ENCODINGS = new Set(["7bit", "8bit", "binary"]);
 const TRANSFER_ENCODINGS = new Set([...IDENTITY_ENCODINGS, "base64", "quoted-printable"]);
 const TSPECIALS = '()<>@,;:\\"/[]?=';
 const BOUNDARY_CHARACTERS = /^[0-9A-Za-z'()+_,\-./:=? ]+$/;
+const QUOTED_PAIR = /\\([\t\x20-\x7e])/g;
 
 class Refusal extends Error {}
 
@@ -101,7 +102,7 @@ function inspectEntity(source: string, depth: number, defaultType: string, budge
   if (depth > MAX_MIME_DEPTH) refuse(`this raw message nests MIME deeper than ${MAX_MIME_DEPTH} levels.`);
   if (++budget.parts > MAX_MIME_PARTS) refuse(`this raw message has more than ${MAX_MIME_PARTS} MIME parts.`);
   const { fields, body } = splitEntity(source);
-  scan(fields.flatMap((field) => headerReadings(field.value, budget)).join("\n"), budget);
+  scan(fields.flatMap((field) => fieldReadings(field.value, budget)).join("\n"), budget);
   const contentType = single(fields, "content-type");
   const encodingField = single(fields, "content-transfer-encoding");
   const disposition = single(fields, "content-disposition");
@@ -369,6 +370,16 @@ function decodeCharset(binary: string, charset: string): string {
   } catch {
     return refuse(`a raw message part is not valid ${charset.slice(0, 40)} text.`);
   }
+}
+
+/**
+ * A field value's readings, and when it holds RFC 5322 quoted-pairs, also its readings
+ * with each pair read as the character it escapes, as clients read quoted strings,
+ * comments and parameter values before decoding encoded words.
+ */
+function fieldReadings(value: string, budget: Budget): string[] {
+  const readings = headerReadings(value, budget);
+  return value.includes("\\") ? [...readings, ...headerReadings(value.replace(QUOTED_PAIR, "$1"), budget)] : readings;
 }
 
 interface EncodedWord {
