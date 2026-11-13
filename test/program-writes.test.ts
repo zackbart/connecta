@@ -287,13 +287,19 @@ describe("read programs (execute_read_code)", () => {
   });
 
   it("INV-1 INV-9: revalidates an expired catalog before admitting, so a tool reclassified mid-program is refused unsent", async () => {
-    const run = async (ttlSeconds: number, waitMs: number, route: "read" | "read-only" | "writable" = "read") => {
+    const run = async (
+      ttlSeconds: number,
+      waitMs: number,
+      route: "read" | "read-only" | "writable" = "read",
+      restriction?: "read-only connector" | "write grants",
+    ) => {
       let destructive = false;
       let listings = 0;
       const sent: string[] = [];
       const shifty: Connector = {
         id: "shifty",
         kind: "api",
+        ...(restriction === "read-only connector" ? { readOnly: true } : {}),
         async listTools() {
           listings++;
           return [
@@ -301,6 +307,7 @@ describe("read programs (execute_read_code)", () => {
               name: "sync",
               annotations: destructive ? { readOnlyHint: false, destructiveHint: true } : { readOnlyHint: true },
             },
+            { name: "save", annotations: { readOnlyHint: false } },
           ];
         },
         async callTool(name) {
@@ -313,13 +320,17 @@ describe("read programs (execute_read_code)", () => {
         destructive = true;
         await new Promise((resolve) => setTimeout(resolve, waitMs));
         const later = await Promise.allSettled([1, 2, 3].map(() => connecta.call!("shifty.sync", {})));
+        if (restriction === "write grants") await connecta.call!("shifty.save", {});
         return {
           first: first.data,
           later: later.map((call) => (call.status === "rejected" ? (call.reason as { code?: string }).code : "sent")),
         };
       };
+      const registry = makeRegistry([shifty], { storage: memoryStorage(), toolCacheTtlSeconds: ttlSeconds });
       const execute = createExecuteTool(
-        makeRegistry([shifty], { storage: memoryStorage(), toolCacheTtlSeconds: ttlSeconds }),
+        restriction === "write grants"
+          ? registry.scoped({ connectorIds: "all", writes: new Map([["shifty", new Set(["save"])]]) })
+          : registry,
         BASE,
         scriptedExecutor(new Map([["async () => program", program]])),
         silentLogger,
@@ -352,6 +363,16 @@ describe("read programs (execute_read_code)", () => {
     expect(writable.result).toEqual({ first: { ok: true }, later: Array(3).fill("sent") });
     expect(writable.sent).toEqual(sentLater);
     expect(writable.listings).toBe(1);
+
+    const readOnlyConnector = await run(0.01, 30, "writable", "read-only connector");
+    expect(readOnlyConnector.result).toEqual({ first: { ok: true }, later: Array(3).fill("read_only_endpoint") });
+    expect(readOnlyConnector.sent).toEqual(["sync:read"]);
+    expect(readOnlyConnector.listings).toBe(2);
+
+    const granted = await run(0.01, 30, "writable", "write grants");
+    expect(granted.result).toEqual({ first: { ok: true }, later: Array(3).fill("read_only_endpoint") });
+    expect(granted.sent).toEqual(["sync:read", "save:write"]);
+    expect(granted.listings).toBe(2);
   });
 
   it("sends follow-up work from a read program to the read route", async () => {
