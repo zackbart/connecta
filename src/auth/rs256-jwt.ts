@@ -1,8 +1,9 @@
 // RS256 JWT and JWKS verification shared by the built-in Vercel workload and
 // Cloudflare Access assertion verifiers: Web APIs only, no SDK or platform import.
-import { Effect, Exit } from "effect";
+import { Duration, Effect, Exit } from "effect";
 import { decodeBase64url } from "../bytes.js";
-import { detach, runEdge, withDeadlineEffect } from "../runtime/run.js";
+import { detach, fromSignal, runEdge, withDeadlineEffect } from "../runtime/run.js";
+import { Settlement } from "../runtime/settlement.js";
 import {
   authCall,
   authCatch,
@@ -20,9 +21,8 @@ const REFRESH_MS = 30_000;
 // starts a fetch normally sees its outcome, and a hung fetch has failed and
 // set its backoff before that request's deadline answers.
 const FETCH_DEADLINE_MS = 4_000;
+const RETRY_MS = 1_000;
 const SKEW_SECONDS = 30;
-/** Thrown when two key fetches are already in flight for one key set. */
-export const KEY_FETCH_BUSY = Symbol("key fetch capacity reached");
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
@@ -163,64 +163,69 @@ const readKeysNative = /* @__PURE__ */ registerAuth(readKeys, function (url: str
 });
 
 /**
- * One bounded public-key cache for one JWKS URL; never shares request I/O or
- * promises. Keys live five minutes. An unknown `kid` against a fresh cache
- * refreshes at most once every thirty seconds, a failed fetch blocks further
- * fetches for thirty seconds, and at most two fetches run at once. Each fetch
- * runs to completion under its own four-second deadline: a caller that leaves
- * stops waiting but neither cancels nor discards it, so disconnects cannot
- * start fetches faster than these bounds. The lookup resolves the key, or
- * undefined for an unknown `kid`; it throws `KEY_FETCH_BUSY` or an
- * unavailable error when it cannot read the set.
+ * One bounded public-key cache for one JWKS URL. Keys live five minutes. An
+ * unknown `kid` against a fresh cache refreshes at most once every thirty
+ * seconds. At most one fetch runs at a time, and every caller that needs the
+ * set while it runs waits for that fetch under its own signal; only plain key
+ * data and the outcome cross between requests. A failed fetch fails all of
+ * its waiters together, and the next fetch starts no sooner than one second
+ * after it, joined by everyone who arrives meanwhile. Each fetch runs to
+ * completion under its own four-second deadline: a caller that leaves stops
+ * waiting but neither cancels nor discards it, so disconnects cannot start
+ * fetches faster than these bounds. The lookup resolves the key, or undefined
+ * for an unknown `kid`; it throws when it cannot read the set.
  */
 export function jwksKeys(url: string): (kid: string, signal: AbortSignal) => Promise<JsonWebKey | undefined> {
   let cache: { expires: number; keys: Map<string, JsonWebKey> } | undefined;
   let refreshAfter = 0;
   let retryAfter = 0;
-  let fetching = 0;
+  let pending: { outcome: Settlement<void, unknown>; abandonAfter: number } | undefined;
 
   function load(signal: AbortSignal): Promise<void> {
     return runEdge(authProgram<void>(loadNative, [signal]));
   }
   const loadNative = /* @__PURE__ */ registerAuth(load, function (signal: AbortSignal) {
     return Effect.flatMap(Effect.serviceOption(AuthenticationWork), (work) =>
-      // Checked, counted and started in one JS turn, so concurrent callers
-      // cannot both pass the cap.
-      Effect.callback<void, unknown>((resume) => {
-        if (signal.aborted) {
-          resume(Effect.fail(signal.reason));
-          return;
+      Effect.suspend(() => {
+        if (signal.aborted) return Effect.fail(signal.reason);
+        const now = Date.now();
+        // workerd drops a cancelled invocation's I/O without running its
+        // callbacks, so a fetch that outlived every bound is no longer running.
+        if (pending && now > pending.abandonAfter) {
+          pending.outcome.settle(Exit.fail(new Error("JWKS unavailable")));
+          pending = undefined;
         }
-        if (fetching >= 2) {
-          resume(Effect.fail(KEY_FETCH_BUSY));
-          return;
+        if (!pending) {
+          const delay = Math.max(0, retryAfter - now);
+          const started = {
+            outcome: new Settlement<void, unknown>(),
+            abandonAfter: now + delay + FETCH_DEADLINE_MS + 1_000,
+          };
+          pending = started;
+          const read = withDeadlineEffect((own) => authCall<Map<string, JsonWebKey>>(readKeys, [url, own]), {
+            timeoutMs: FETCH_DEADLINE_MS,
+            timeoutError: new Error("JWKS fetch timed out"),
+          });
+          // Detached from every caller: only its own deadline ends it, and
+          // every exit, interruption included, records its outcome.
+          const fetched = (delay > 0 ? Effect.sleep(Duration.millis(delay)).pipe(Effect.andThen(read)) : read).pipe(
+            Effect.onExit((exit) =>
+              Effect.sync(() => {
+                if (pending === started) pending = undefined;
+                if (Exit.isSuccess(exit)) cache = { expires: Date.now() + CACHE_MS, keys: exit.value };
+                else retryAfter = Date.now() + RETRY_MS;
+                started.outcome.settle(Exit.isSuccess(exit) ? Exit.void : Exit.fail(new Error("JWKS unavailable")));
+              }),
+            ),
+          );
+          // The starting request's authentication charge keeps every physical
+          // read, and on Workers its waitUntil, until the fetch settles.
+          const settlement = detach(
+            work._tag === "Some" ? fetched.pipe(Effect.provideService(AuthenticationWork, work.value)) : fetched,
+          );
+          if (work._tag === "Some") work.value.track(settlement);
         }
-        if (Date.now() < retryAfter) {
-          resume(Effect.fail(new Error("JWKS unavailable")));
-          return;
-        }
-        fetching++;
-        // Detached from the caller: only its own deadline ends it, and every
-        // exit, interruption included, counts it and records its outcome.
-        const fetched = withDeadlineEffect((own) => authCall<Map<string, JsonWebKey>>(readKeys, [url, own]), {
-          timeoutMs: FETCH_DEADLINE_MS,
-          timeoutError: new Error("JWKS fetch timed out"),
-        }).pipe(
-          Effect.onExit((exit) =>
-            Effect.sync(() => {
-              fetching--;
-              if (Exit.isSuccess(exit)) cache = { expires: Date.now() + CACHE_MS, keys: exit.value };
-              else retryAfter = Date.now() + REFRESH_MS;
-              resume(Exit.isSuccess(exit) ? Effect.void : Effect.fail(new Error("JWKS unavailable")));
-            }),
-          ),
-        );
-        // The starting request's authentication charge keeps every physical
-        // read, and on Workers its waitUntil, until the fetch settles.
-        const settlement = detach(
-          work._tag === "Some" ? fetched.pipe(Effect.provideService(AuthenticationWork, work.value)) : fetched,
-        );
-        if (work._tag === "Some") work.value.track(settlement);
+        return Effect.raceAllFirst([pending.outcome.wait(), fromSignal(signal)]);
       }),
     );
   });

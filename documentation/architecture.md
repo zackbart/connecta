@@ -177,15 +177,18 @@ An admitted non-preflight `/mcp` request then takes five steps in
 2. **Authorize.** Every adapter invocation passes the independent fixed
    16-active-authorization bound in `src/auth-admission.ts`, including header-named
    listens, SDK-owned auth, agent-token storage, and operator/connection routes
-   outside the MCP pool. Shared state is counters and bounded plain charge
-   records, never request I/O; there is no queue or shared promise. Saturation
+   outside the MCP pool. Shared state is counters, bounded plain charge
+   records and a FIFO queue of at most 16 `Settlement`s, never request I/O or
+   signals. A request that finds the active bound full waits there for at most
+   two seconds, holding no slot; a releasing request hands its slot to the
+   queue head and wakes it in its own request. A full queue or an expired wait
    returns retryable 503 `authentication_busy` with `Retry-After: 1` and a
    checked payload-free log. Each request releases exactly once after the
    adapter and its cancellation cleanup settle; abort alone does not release
    capacity. At its hard deadline plus one second of grace, unfinished work
    moves to a separate allowance of 16 abandoned operations, or stays active
    while that allowance is full. A full allowance refuses all new work, logged
-   as `authentication_abandoned_saturated`; only a charge's end decrements it
+   as `authentication_abandoned_saturated`, and refuses everything queued; only a charge's end decrements it
    and promotes an overdue active charge. A charge ends exactly once, through a
    released state in its plain record: on settlement, or when the collector
    frees its token. That token is an object held only by the closures

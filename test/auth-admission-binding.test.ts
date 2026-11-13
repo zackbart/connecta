@@ -94,6 +94,8 @@ it.skipIf(!worker)(
 type Authentication = {
   active: number;
   limit: number;
+  queued: number;
+  queueLimit: number;
   abandoned: number;
   abandonedLimit: number;
   abandonedSaturated: boolean;

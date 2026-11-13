@@ -1,11 +1,11 @@
 import { authCall, authFlow, authMethod } from "./native.js";
-import { decodeJwt, jwksKeys, KEY_FETCH_BUSY, rs256Header, validJwtTime, verifyRs256 } from "./rs256-jwt.js";
+import { decodeJwt, jwksKeys, rs256Header, validJwtTime, verifyRs256 } from "./rs256-jwt.js";
 // Built-in workload credentials: Web APIs only; no SDK or platform import.
 import type { ResolvedAgent } from "../agent-config.js";
 import { AGENT_NAMESPACE, agentSubjectId, trustAgentProvider } from "../agent-identity.js";
-import { authenticationBusyResponse, withAuthenticationDeadline } from "../auth-admission.js";
+import { withAuthenticationDeadline } from "../auth-admission.js";
 import { authorizationCredential } from "../inbound-credential.js";
-import type { AuthResult, InboundAuth, Logger } from "../types.js";
+import type { AuthResult, InboundAuth } from "../types.js";
 
 const ISSUER = "https://oidc.vercel.com";
 const JWKS = `${ISSUER}/.well-known/jwks`;
@@ -35,7 +35,7 @@ function denied(): AuthResult {
 }
 
 /** One bounded public-key cache per deployment; never retains request I/O or promises. */
-export function vercelAgentAuth(agents: readonly ResolvedAgent[], logger: Logger = console): InboundAuth | undefined {
+export function vercelAgentAuth(agents: readonly ResolvedAgent[]): InboundAuth | undefined {
   const bindings = agents.filter((agent) => agent.vercel);
   if (bindings.length === 0) return undefined;
   const keys = jwksKeys(JWKS);
@@ -86,12 +86,7 @@ export function vercelAgentAuth(agents: readonly ResolvedAgent[], logger: Logger
               });
             }),
           ])) as AuthResult;
-        } catch (error) {
-          if (error === KEY_FETCH_BUSY)
-            return {
-              ok: false,
-              response: authenticationBusyResponse(logger),
-            };
+        } catch {
           return denied();
         }
       });
