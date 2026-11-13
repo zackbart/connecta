@@ -37,8 +37,11 @@ one Google treats as the person's main value.
 ## Editing contacts
 
 Only the user's own contacts change; other contacts and directory profiles are
-read-only. `update_contact` and `update_contact_group` need the `etag` from the
-latest read, and a stale etag is refused: read again and rebuild the change.
+read-only. `update_contact` needs the `contactSource` that the contact's latest
+read or update returned, passed back unchanged; `update_contact_group` needs
+the group's latest `etag`. A stale one is refused: read again and rebuild the
+change. Make a second update to the same contact with the `contactSource` the
+first update returned.
 Each field an update names replaces that whole field, so send every email or
 phone the contact should keep. An etag does not make a repeated create safe:
 after an uncertain create or copy, search before trying again.

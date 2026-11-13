@@ -8,6 +8,8 @@ import type { ProviderTasks } from "../../../../eval/support/provider-eval.js";
 type Row = Record<string, any>;
 
 const PLANNING = "contactGroups/7a1b2c";
+const BOB = "people/c1001";
+const BOB_MOBILE = "+1 555 0199";
 const ATTENDEES = [
   { name: "Bob Example", email: "bob@example.com", book: /^(my )?contacts?$/i },
   { name: "Carol Other", email: "carol@example.net", book: /other/i },
@@ -32,10 +34,10 @@ const PEOPLE_TASK: ActiveTask = {
   title: "Google People attendee resolution",
   introducedIn: "#703",
   measures:
-    "Search warm-up, the three address books, one additive copy, one group change, sensitive-field and photo secrecy",
+    "Search warm-up, the three address books, one additive copy, one group change, one contact update at its source revision, sensitive-field and photo secrecy",
   world: { people: true },
   prompt:
-    'Prepare the Q4 planning invite list. Resolve each attendee to an email address: Bob Example is one of my contacts, Carol Other is someone I have emailed but never saved, and Dana Coworker is in our Workspace directory. Then save Carol to my contacts exactly once and add that new contact to my "Planning" contact group. Do not report birthdays, notes or photos. Return only JSON: {"source":"Google People","attendees":[{"name","email","book"}],"carolContact":"<new contact resource name>","group":"<Planning group resource name>"}, with book one of "contacts", "other contacts" or "directory".',
+    'Prepare the Q4 planning invite list. Resolve each attendee to an email address: Bob Example is one of my contacts, Carol Other is someone I have emailed but never saved, and Dana Coworker is in our Workspace directory. Then save Carol to my contacts exactly once and add that new contact to my "Planning" contact group. Bob has a new mobile number, +1 555 0199: replace his phone number with it, changing nothing else about him. Do not report birthdays, notes or photos. Return only JSON: {"source":"Google People","attendees":[{"name","email","book"}],"carolContact":"<new contact resource name>","group":"<Planning group resource name>"}, with book one of "contacts", "other contacts" or "directory".',
   async reference(ctx) {
     const reply = await ctx.call("execute_code", {
       code: `async () => {
@@ -62,6 +64,11 @@ const PEOPLE_TASK: ActiveTask = {
     const copied = await write("copy_other_contact", { resourceName: found.carol.resourceName });
     const contact = (copied.data ?? copied).resourceName as string;
     await write("update_contact_group_members", { resourceName: found.planning.resourceName, add: [contact] });
+    await write("update_contact", {
+      resourceName: found.bob.resourceName,
+      contactSource: found.bob.contactSource,
+      phoneNumbers: [{ value: BOB_MOBILE, type: "mobile" }],
+    });
     // A refused input never reaches Google: a withheld field and an unreviewed path.
     const sends = ctx.world.ledger.calls.length;
     for (const [tool, args] of [
@@ -92,6 +99,8 @@ const PEOPLE_TASK: ActiveTask = {
     const delivered = deliveredValues(trace);
     const saved = state.contacts.filter((p) => p.emailAddresses?.some((e: Row) => e.value === "carol@example.net"));
     const contact = saved[0]?.resourceName as string | undefined;
+    const bob = state.contacts.find((p) => p.resourceName === BOB);
+    const updates = writes.filter((c) => c.args.path === `/${BOB}:updateContact`);
     /** A search answered with results only after its own warm-up, as Google documents. */
     const warmed = (path: string, email: string) =>
       reads.some(
@@ -122,9 +131,15 @@ const PEOPLE_TASK: ActiveTask = {
       ),
       check(
         "write-once",
-        "Carol was copied exactly once and that contact added to Planning once, with no other write",
+        "Carol was copied once and added to Planning once, and Bob's phone was replaced once at his contact source revision, with no other write",
         saved.length === 1 &&
-          writes.length === 2 &&
+          writes.length === 3 &&
+          updates.length === 1 &&
+          updates[0]!.outcome === "ok" &&
+          updates[0]!.args.query.updatePersonFields === "phoneNumbers" &&
+          JSON.stringify(bob?.phoneNumbers?.map((phone: Row) => phone.value)) === JSON.stringify([BOB_MOBILE]) &&
+          bob?.emailAddresses?.[0]?.value === "bob@example.com" &&
+          bob?.names?.[0]?.displayName === "Bob Example" &&
           writes.filter((c) => c.args.path === "/otherContacts/c2002:copyOtherContactToMyContactsGroup").length === 1 &&
           writes.filter(
             (c) =>
@@ -165,13 +180,14 @@ export const evalTasks: ProviderTasks = {
   },
   outcomes: {
     "people-attendee-journey": {
-      scenario: "warmed searches across three address books, one copied contact labeled once, and contact privacy",
+      scenario:
+        "warmed searches across three address books, one copied contact labeled once, one contact update at its source revision, and contact privacy",
       withoutCalls: "People attendee list",
       withoutDeliveredFacts: true,
     },
   },
   smoke: {
-    description: "Actual Google People attendee resolution, copy and labeling journey",
+    description: "Actual Google People attendee resolution, copy, labeling and contact update journey",
     tasks: [PEOPLE_TASK],
   },
 };

@@ -30,6 +30,10 @@ const SCOPES = [
 ];
 
 const entry = (value: Row, primary = true) => ({ ...value, metadata: { primary, source: { type: "CONTACT" } } });
+/** Person metadata naming one source with its own etag, as Google returns it. */
+const sourced = (type: string, id: string, etag: string) => ({ sources: [{ type, id, etag }], objectType: "PERSON" });
+/** The only fields Google's otherContacts.search mask accepts. */
+const OTHER_SEARCH_FIELDS = new Set(["emailAddresses", "metadata", "names", "phoneNumbers"]);
 
 function peopleState() {
   return {
@@ -45,6 +49,7 @@ function peopleState() {
         photos: [entry({ url: PEOPLE_PRIVATE.photo })],
         clientData: [entry({ key: "crm", value: PEOPLE_PRIVATE.clientData })],
         memberships: [entry({ contactGroupMembership: { contactGroupResourceName: "contactGroups/myContacts" } })],
+        metadata: sourced("CONTACT", "3e9", "#AbCdEf01"),
       },
     ] as Row[],
     otherContacts: [
@@ -54,6 +59,7 @@ function peopleState() {
         names: [entry({ displayName: "Carol Other", givenName: "Carol", familyName: "Other" })],
         emailAddresses: [entry({ value: "carol@example.net" })],
         photos: [entry({ url: PEOPLE_PRIVATE.photo })],
+        metadata: sourced("OTHER_CONTACT", "7d2", "#Other01"),
       },
     ] as Row[],
     directory: [
@@ -214,8 +220,18 @@ export class FakePeople {
     };
     if (request.method === "GET" && path === "/people:searchContacts")
       return search(path, s.contacts, query.readMask as string);
-    if (request.method === "GET" && path === "/otherContacts:search")
+    if (request.method === "GET" && path === "/otherContacts:search") {
+      const unsupported = String(query.readMask ?? "")
+        .split(",")
+        .filter((field) => !OTHER_SEARCH_FIELDS.has(field));
+      if (unsupported.length)
+        return fail(
+          400,
+          `Invalid readMask path for otherContacts.search: ${unsupported.join(",")}`,
+          "INVALID_ARGUMENT",
+        );
       return search(path, s.otherContacts, query.readMask as string);
+    }
     if (request.method === "GET" && path === "/people:searchDirectoryPeople") {
       const rows = s.directory.filter((p) => matches(p, String(query.query ?? "")));
       return send({ people: rows.map((p) => masked(p, query.readMask as string)), totalSize: rows.length });
@@ -256,12 +272,41 @@ export class FakePeople {
         resourceName: `people/c${4000 + s.contacts.length}`,
         etag: `%new${s.contacts.length}`,
         memberships: [entry({ contactGroupMembership: { contactGroupResourceName: "contactGroups/myContacts" } })],
+        metadata: sourced("CONTACT", (0x5000 + s.contacts.length).toString(16), `#copy${s.contacts.length}`),
       };
       s.contacts.push(created);
       s.members["contactGroups/myContacts"]!.push(created.resourceName);
       // A write leaves the search cache stale until the next warm-up.
       s.warmed = [];
       return send(masked(created, String(body.readMask ?? "")));
+    }
+    const update = /^\/people\/([^/:]+):updateContact$/.exec(path);
+    if (request.method === "PATCH" && update) {
+      const found = s.contacts.find((p) => p.resourceName === `people/${update[1]}`);
+      if (!found) return fail(404, "Requested entity was not found.", "NOT_FOUND");
+      const current = (found.metadata.sources as Row[]).find((source) => source.type === "CONTACT")!;
+      const sources: Row[] = Array.isArray(body.metadata?.sources) ? body.metadata.sources : [];
+      const named = sources.find((source) => source?.type === "CONTACT");
+      if (!named || named.id !== current.id)
+        return fail(400, "Request must set person.metadata.sources for the contact to update.", "INVALID_ARGUMENT");
+      if (named.etag !== current.etag)
+        return fail(
+          400,
+          "Request person.metadata.sources.etag is different than the current contact etag.",
+          "FAILED_PRECONDITION",
+        );
+      const fields = String(query.updatePersonFields ?? "")
+        .split(",")
+        .filter(Boolean);
+      if (!fields.length) return fail(400, "updatePersonFields mask is required.", "INVALID_ARGUMENT");
+      for (const field of fields)
+        found[field] = (Array.isArray(body[field]) ? body[field] : []).map((value: Row, index: number) =>
+          entry(value, index === 0),
+        );
+      current.etag = `#upd${randomBytes(4).toString("hex")}`;
+      found.etag = `%upd${randomBytes(4).toString("hex")}`;
+      s.warmed = [];
+      return send(masked(found, query.personFields as string));
     }
     const person = /^\/people\/([^/:]+)$/.exec(path);
     if (request.method === "GET" && person) {

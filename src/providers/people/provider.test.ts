@@ -82,6 +82,13 @@ const PERSON = {
   birthdays: [{ date: { year: 1990, month: 1, day: 2 } }],
   biographies: [{ value: "Private note", contentType: "TEXT_PLAIN" }],
   clientData: [{ key: "crm-id", value: "app-private-value" }],
+  metadata: {
+    sources: [
+      { type: "PROFILE", id: "1009", etag: "#profile" },
+      { type: "CONTACT", id: "3e9", etag: "#AbCdEf", updateTime: "2026-11-01T00:00:00Z" },
+    ],
+    objectType: "PERSON",
+  },
 };
 
 describe("searching contacts", () => {
@@ -93,7 +100,7 @@ describe("searching contacts", () => {
       ["/v1/people:searchContacts", ""],
       ["/v1/people:searchContacts", "bob"],
     ]);
-    expect(calls[1]!.url.searchParams.get("readMask")).toBe("names,emailAddresses,phoneNumbers,organizations");
+    expect(calls[1]!.url.searchParams.get("readMask")).toBe("names,emailAddresses,phoneNumbers,organizations,metadata");
     expect(calls[1]!.url.searchParams.get("pageSize")).toBe("10");
     expect(result.page).toEqual({ hasMore: false });
     expect(result.items[0]).toEqual({
@@ -102,6 +109,7 @@ describe("searching contacts", () => {
       names: [{ displayName: "Bob Example", primary: true }],
       emailAddresses: [{ value: "bob@example.com", type: "work", primary: true }, { value: "bob@example.org" }],
       photos: [{ url: "[redacted]", primary: true }],
+      contactSource: { id: "3e9", etag: "#AbCdEf" },
     });
     const narrowed = await call(connector, "search_contacts", { query: "bob", fields: ["emailAddresses"] });
     expect(narrowed.items).toEqual([{ emailAddresses: result.items[0].emailAddresses }]);
@@ -122,6 +130,24 @@ describe("searching contacts", () => {
       code: "invalid_args",
     });
     expect(calls).toHaveLength(0);
+  });
+
+  it("refuses photos in an other-contact search before the warm-up, while an other-contact list may ask for them", async () => {
+    route = () => ({ body: { otherContacts: [] } });
+    const connector = connection();
+    const failure = await call(connector, "search_other_contacts", {
+      query: "carol",
+      personFields: ["names", "photos"],
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "invalid_args" });
+    expect(String((failure as Error).message)).toContain("/personFields/1");
+    expect(String((failure as Error).message)).toContain("emailAddresses, metadata, names, phoneNumbers");
+    expect(String((failure as Error).message)).not.toContain("photos");
+    expect(calls).toHaveLength(0);
+    await call(connector, "list_other_contacts", { personFields: ["names", "photos"] });
+    expect(calls.map((c) => [c.url.pathname, c.url.searchParams.get("readMask")])).toEqual([
+      ["/v1/otherContacts", "names,photos"],
+    ]);
   });
 });
 
@@ -147,7 +173,7 @@ describe("the sensitive-field choice", () => {
       resourceName: "people/c1",
       personFields: ["names", "birthdays", "biographies"],
     });
-    expect(calls.at(-1)!.url.searchParams.get("personFields")).toBe("names,birthdays,biographies");
+    expect(calls.at(-1)!.url.searchParams.get("personFields")).toBe("names,birthdays,biographies,metadata");
     expect(full.birthdays).toEqual([{ date: { year: 1990, month: 1, day: 2 } }]);
     expect(full.biographies).toEqual([{ value: "Private note", contentType: "TEXT_PLAIN" }]);
     const hatchFull = await call(returning, "people_api_read", {
@@ -200,39 +226,96 @@ describe("writing contacts", () => {
     installOwnedTransport();
   });
 
-  it("replaces only the fields given, at the read etag, and reports a stale etag as conflict", async () => {
-    route = () => ({ body: { ...PERSON, phoneNumbers: [{ value: "+1 555 0100" }] } });
+  it("updates at the read contactSource as Google's contract requires, and reports a stale source etag as conflict", async () => {
+    const stored = structuredClone(PERSON) as Record<string, any>;
+    const contactSourceOfStored = () => stored.metadata.sources.find((source: any) => source.type === "CONTACT");
+    let revision = 0;
+    route = (call) => {
+      const masked = () => {
+        const fields = new Set((call.url.searchParams.get("personFields") ?? "").split(","));
+        return Object.fromEntries(
+          Object.entries(stored).filter(([key]) => key === "resourceName" || key === "etag" || fields.has(key)),
+        );
+      };
+      if (call.method === "GET" && call.url.pathname === "/v1/people/c1") return { body: masked() };
+      if (call.method !== "PATCH" || call.url.pathname !== "/v1/people/c1:updateContact") return { status: 404 };
+      const named = (call.body?.metadata?.sources ?? []).find((source: any) => source?.type === "CONTACT");
+      const current = contactSourceOfStored();
+      if (!named || named.id !== current.id)
+        return {
+          status: 400,
+          body: {
+            error: {
+              code: 400,
+              message: "Request must set person.metadata.sources for the contact source to update.",
+              status: "INVALID_ARGUMENT",
+            },
+          },
+        };
+      if (named.etag !== current.etag)
+        return {
+          status: 400,
+          body: {
+            error: {
+              code: 400,
+              message: "Request person.metadata.sources.etag is different than the current contact etag.",
+              status: "FAILED_PRECONDITION",
+            },
+          },
+        };
+      for (const field of (call.url.searchParams.get("updatePersonFields") ?? "").split(","))
+        stored[field] = call.body[field];
+      revision += 1;
+      current.etag = `#rev${revision}`;
+      stored.etag = `%rev${revision}`;
+      return { body: masked() };
+    };
     const connector = connection();
+    const read = await call(connector, "get_person", { resourceName: "people/c1" });
+    expect(calls[0]!.url.searchParams.get("personFields")).toBe(
+      "names,emailAddresses,phoneNumbers,organizations,metadata",
+    );
+    expect(read.contactSource).toEqual({ id: "3e9", etag: "#AbCdEf" });
+    expect(read).not.toHaveProperty("metadata");
+
     const updated = await call(connector, "update_contact", {
       resourceName: "people/c1",
-      etag: "%EgUBAgMEBQ==",
+      contactSource: read.contactSource,
       phoneNumbers: [{ value: "+1 555 0100", type: "mobile" }],
     });
-    const sent = calls[0]!;
-    expect(sent.method).toBe("PATCH");
-    expect(sent.url.pathname).toBe("/v1/people/c1:updateContact");
+    const sent = calls[1]!;
     expect(sent.url.searchParams.get("updatePersonFields")).toBe("phoneNumbers");
-    expect(sent.body).toEqual({ phoneNumbers: [{ value: "+1 555 0100", type: "mobile" }], etag: "%EgUBAgMEBQ==" });
-    expect(updated.phoneNumbers).toEqual([{ value: "+1 555 0100" }]);
+    expect(sent.url.searchParams.get("personFields")).toBe("names,emailAddresses,phoneNumbers,organizations,metadata");
+    expect(sent.body).toEqual({
+      phoneNumbers: [{ value: "+1 555 0100", type: "mobile" }],
+      metadata: { sources: [{ type: "CONTACT", id: "3e9", etag: "#AbCdEf" }] },
+    });
+    expect(updated.phoneNumbers).toEqual([{ value: "+1 555 0100", type: "mobile" }]);
+    expect(updated.contactSource).toEqual({ id: "3e9", etag: "#rev1" });
 
-    route = () => ({
-      status: 400,
-      body: {
-        error: {
-          code: 400,
-          message: "Request person.etag is different than the current person.etag.",
-          status: "FAILED_PRECONDITION",
-        },
-      },
+    const failure = await call(connector, "update_contact", {
+      resourceName: "people/c1",
+      contactSource: read.contactSource,
+      name: { givenName: "Bob" },
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: "conflict" });
+    expect(calls).toHaveLength(3);
+    expect(stored.names).toEqual(PERSON.names);
+
+    await call(connector, "update_contact", {
+      resourceName: "people/c1",
+      contactSource: updated.contactSource,
+      name: { givenName: "Bob" },
     });
-    await expect(
-      call(connector, "update_contact", { resourceName: "people/c1", etag: "stale", name: { givenName: "Bob" } }),
-    ).rejects.toMatchObject({ code: "conflict" });
-    expect(calls).toHaveLength(2);
-    await expect(call(connector, "update_contact", { resourceName: "people/c1", etag: "e" })).rejects.toMatchObject({
-      code: "invalid_args",
-    });
-    expect(calls).toHaveLength(2);
+    expect(stored.names).toEqual([{ givenName: "Bob" }]);
+    expect(calls).toHaveLength(4);
+
+    for (const args of [
+      { resourceName: "people/c1", contactSource: updated.contactSource },
+      { resourceName: "people/c1", etag: "%rev1", name: { givenName: "Bob" } },
+    ])
+      await expect(call(connector, "update_contact", args)).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(4);
   });
 
   it("checks a hatch photo's decoded bytes before upload", async () => {

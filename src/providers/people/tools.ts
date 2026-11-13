@@ -52,8 +52,10 @@ const PERSON_FIELDS = [
   "urls",
   "userDefined",
 ] as const;
-/** The only fields Google's "Other contacts" masks accept. */
-const OTHER_CONTACT_FIELDS = ["emailAddresses", "metadata", "names", "phoneNumbers", "photos"] as const;
+/** The only fields Google's otherContacts.list mask accepts. */
+const OTHER_CONTACT_LIST_FIELDS = ["emailAddresses", "metadata", "names", "phoneNumbers", "photos"] as const;
+/** The only fields Google's otherContacts.search mask accepts: no photos. */
+const OTHER_CONTACT_SEARCH_FIELDS = ["emailAddresses", "metadata", "names", "phoneNumbers"] as const;
 /** What resolving a person needs, and all a default read asks for. */
 const DEFAULT_FIELDS = ["names", "emailAddresses", "phoneNumbers", "organizations"] as const;
 const DEFAULT_OTHER_FIELDS = ["names", "emailAddresses", "phoneNumbers"] as const;
@@ -90,6 +92,13 @@ const groupName = string("Group resource name from list_contact_groups, e.g. con
   pattern("^contactGroups/[A-Za-z0-9_-]+$"),
 );
 const etag = string("Current etag from the latest read; a stale one is refused.", 512).check(pattern("^\\S+$"));
+const ContactSource = Schema.Struct({ id: Schema.String, etag: Schema.String });
+const contactSource = Schema.Struct({
+  id: string("contactSource.id from the latest read.", 128).check(pattern("^\\S+$")),
+  etag: string("contactSource.etag from the latest read; a stale one is refused.", 512).check(pattern("^\\S+$")),
+}).annotate({
+  description: "The contactSource the latest get_person, search, list or update returned for this contact, unchanged.",
+});
 const Truncated = Schema.Array(Schema.String);
 /** Google's searches return one capped page with no continuation. */
 const TerminalPage = Schema.Struct({
@@ -103,6 +112,7 @@ const Entries = Schema.Array(Schema.Unknown);
 const PersonRecord = optional({
   resourceName: Schema.String,
   etag: Schema.String,
+  contactSource: ContactSource,
   ...Object.fromEntries(PERSON_FIELDS.map((field) => [field, field === "metadata" ? Schema.Unknown : Entries])),
   truncated: Truncated,
 }) as unknown as Schema.Struct<Record<string, Schema.optionalKey<Schema.Top>>>;
@@ -226,11 +236,29 @@ function capped(ctx: ConnectorContext, whole: string, max: number, remedy: strin
 }
 
 /**
- * One person as an agent reads it: the resource name and etag, then each
- * field's entries with Google's per-entry source metadata reduced to a
- * `primary` flag. Long text is cut and its path reported in `truncated`.
+ * The CONTACT source and its etag, which Google requires in an updateContact
+ * body as `metadata.sources` and checks as the revision.
  */
-function projectPerson(ctx: ConnectorContext, value: unknown, maxChars: number, remedy: string): JsonRecord {
+function contactSourceOf(person: JsonRecord): { id: string; etag: string } | undefined {
+  const source = asArray(asRecord(person["metadata"])["sources"])
+    .map(asRecord)
+    .find((entry) => entry["type"] === "CONTACT" && text(entry["id"]) && text(entry["etag"]));
+  return source ? { id: source["id"], etag: source["etag"] } : undefined;
+}
+
+/**
+ * One person as an agent reads it: the resource name, etag and contact source,
+ * then each field's entries with Google's per-entry source metadata reduced to
+ * a `primary` flag. Person metadata appears only when `metadata` was asked
+ * for. Long text is cut and its path reported in `truncated`.
+ */
+function projectPerson(
+  ctx: ConnectorContext,
+  value: unknown,
+  maxChars: number,
+  remedy: string,
+  metadata = true,
+): JsonRecord {
   const person = asRecord(value);
   const truncated = new Set<string>();
   const cut = (entry: unknown, path: string): unknown => {
@@ -244,9 +272,12 @@ function projectPerson(ctx: ConnectorContext, value: unknown, maxChars: number, 
     return Object.fromEntries(Object.entries(entry).map(([key, child]) => [key, cut(child, `${path}.${key}`)]));
   };
   const out: JsonRecord = {};
+  const source = contactSourceOf(person);
   for (const [field, entries] of Object.entries(person)) {
     if (field === "resourceName" || field === "etag") out[field] = entries;
-    else if (field === "metadata") out[field] = cut(entries, field);
+    else if (field === "metadata") {
+      if (metadata) out[field] = cut(entries, field);
+    }
     // clientData is other applications' storage, withheld by review: the hatch shows its keys.
     else if (Array.isArray(entries) && (PERSON_FIELDS as readonly string[]).includes(field))
       out[field] = entries.map((raw) => {
@@ -255,6 +286,7 @@ function projectPerson(ctx: ConnectorContext, value: unknown, maxChars: number, 
         return asRecord(metadata)["primary"] === true ? { ...kept, primary: true } : kept;
       });
   }
+  if (source) out["contactSource"] = source;
   if (truncated.size) out["truncated"] = [...truncated];
   return out;
 }
@@ -337,9 +369,13 @@ export function peopleTools({
   const returned = options.sensitiveFields === "return";
   const allowed = PERSON_FIELDS.filter((field) => returned || !PEOPLE_SENSITIVE_FIELDS.includes(field));
   const personFields = fieldsInput(allowed, DEFAULT_FIELDS, "Person");
-  const otherFields = fieldsInput(OTHER_CONTACT_FIELDS, DEFAULT_OTHER_FIELDS, "Other contact");
+  const otherListFields = fieldsInput(OTHER_CONTACT_LIST_FIELDS, DEFAULT_OTHER_FIELDS, "Other contact");
+  const otherSearchFields = fieldsInput(OTHER_CONTACT_SEARCH_FIELDS, DEFAULT_OTHER_FIELDS, "Other contact");
   const maskOf = (fields: readonly string[] | undefined, defaults: readonly string[]) =>
     [...new Set(fields ?? defaults)].join(",");
+  /** A contact read's mask, always with person metadata so the result carries its contactSource. */
+  const contactMask = (fields: readonly string[] | undefined = DEFAULT_FIELDS) => maskOf([...fields, "metadata"], []);
+  const asked = (fields: readonly string[] | undefined) => fields?.includes("metadata") === true;
   const segment = (resourceName: string) => encodeURIComponent(resourceName.slice(resourceName.indexOf("/") + 1));
   const json = (request: GoogleRequest, step?: string) => client.json(request, step ? { step } : undefined);
   /** An update at the etag a read returned: a stale one maps to `conflict`. */
@@ -382,6 +418,7 @@ export function peopleTools({
     path: string;
     fields: ReturnType<typeof fieldsInput>;
     defaults: readonly string[];
+    contacts: boolean;
     remedy: string;
   }) =>
     read(connection, {
@@ -407,7 +444,7 @@ export function peopleTools({
       run: (args) =>
         Effect.gen(function* () {
           const ctx = yield* contextOf;
-          const readMask = maskOf(args.personFields, spec.defaults);
+          const readMask = spec.contacts ? contactMask(args.personFields) : maskOf(args.personFields, spec.defaults);
           const pageSize = args.limit ?? 10;
           const reply = yield* searched(
             (query) => ({ method: "GET", path: spec.path, template: spec.path, query: { query, readMask, pageSize } }),
@@ -415,7 +452,13 @@ export function peopleTools({
           );
           const rows = yield* fitPage(
             asArray(reply["results"]).map((result) =>
-              projectPerson(ctx, asRecord(result)["person"], LIST_TEXT_CHARS, "get_person reads it whole"),
+              projectPerson(
+                ctx,
+                asRecord(result)["person"],
+                LIST_TEXT_CHARS,
+                spec.remedy,
+                !spec.contacts || asked(args.personFields),
+              ),
             ),
           );
           return {
@@ -433,6 +476,7 @@ export function peopleTools({
     selection: ReturnType<typeof fieldsInput>;
     rows: string;
     remedy: string;
+    contacts?: boolean;
     request: (args: Schema.Struct<F>["Type"], page: { token: string | undefined; size: number }) => GoogleRequest;
     send?: (request: GoogleRequest) => Effect.Effect<unknown, HttpFailure, CallServices>;
   }) =>
@@ -454,8 +498,10 @@ export function peopleTools({
           const ctx = yield* contextOf;
           const page = yield* resumeFrom(cursor, args.limit);
           const reply = asRecord(yield* (spec.send ?? json)(spec.request(args, page)));
+          const metadata =
+            !spec.contacts || asked((args as { readonly personFields?: readonly string[] }).personFields);
           const rows = yield* fitPage(
-            asArray(reply[spec.rows]).map((row) => projectPerson(ctx, row, LIST_TEXT_CHARS, spec.remedy)),
+            asArray(reply[spec.rows]).map((row) => projectPerson(ctx, row, LIST_TEXT_CHARS, spec.remedy, metadata)),
           );
           const next = yield* continuation(ctx, reply["nextPageToken"], page.size);
           return { rows, page: { hasMore: next !== null, nextCursor: next } };
@@ -478,6 +524,7 @@ export function peopleTools({
       path: "/people:searchContacts",
       fields: personFields,
       defaults: DEFAULT_FIELDS,
+      contacts: true,
       remedy: "get_person reads it whole",
     }),
     pagedPeople({
@@ -500,12 +547,13 @@ export function peopleTools({
       },
       rows: "connections",
       remedy: "get_person reads it whole",
+      contacts: true,
       request: (args, page) => ({
         method: "GET",
         path: "/people/me/connections",
         template: "/people/{peopleId}/connections",
         query: {
-          personFields: maskOf(args.personFields, DEFAULT_FIELDS),
+          personFields: contactMask(args.personFields),
           sortOrder: args.sortOrder,
           pageSize: page.size,
           pageToken: page.token,
@@ -515,7 +563,7 @@ export function peopleTools({
     read(connection, {
       name: "get_person",
       description:
-        "Get one person by resource name: a contact (people/c…), a profile id, or people/me for the signed-in user's own profile. Returns the etag updates need.",
+        "Get one person by resource name: a contact (people/c…), a profile id, or people/me for the signed-in user's own profile. A contact carries the contactSource updates need.",
       input: Schema.Struct({
         resourceName: personName("people/me, or a resource name from a search or list."),
         personFields: personFields.input,
@@ -526,8 +574,8 @@ export function peopleTools({
       run: (args) =>
         Effect.gen(function* () {
           const ctx = yield* contextOf;
-          const person = yield* getPerson(args.resourceName, maskOf(args.personFields, DEFAULT_FIELDS));
-          return projectPerson(ctx, person, GET_TEXT_CHARS, "people_api_read reads it whole");
+          const person = yield* getPerson(args.resourceName, contactMask(args.personFields));
+          return projectPerson(ctx, person, GET_TEXT_CHARS, "people_api_read reads it whole", asked(args.personFields));
         }),
     }),
     read(connection, {
@@ -561,17 +609,18 @@ export function peopleTools({
               template: "/people:batchGet",
               query: {
                 resourceNames: [...new Set(args.resourceNames)],
-                personFields: maskOf(args.personFields, DEFAULT_FIELDS),
+                personFields: contactMask(args.personFields),
               },
             }),
           );
+          const metadata = asked(args.personFields);
           const items = yield* fitPage(
             asArray(reply["responses"]).map((entry) => {
               const response = asRecord(entry);
               const requested = text(response["requestedResourceName"]);
               if (response["person"] !== undefined)
                 return {
-                  ...projectPerson(ctx, response["person"], LIST_TEXT_CHARS, "get_person reads it whole"),
+                  ...projectPerson(ctx, response["person"], LIST_TEXT_CHARS, "get_person reads it whole", metadata),
                   ...(requested ? { requestedResourceName: requested } : {}),
                 };
               const status = asRecord(response["status"]);
@@ -605,7 +654,7 @@ export function peopleTools({
             method: "POST",
             path: "/people:createContact",
             template: "/people:createContact",
-            query: { personFields: DEFAULT_FIELDS.join(",") },
+            query: { personFields: contactMask() },
             body: contactBody(args),
           }).pipe(
             Effect.catch(
@@ -614,14 +663,14 @@ export function peopleTools({
               ),
             ),
           );
-          return projectPerson(ctx, created, GET_TEXT_CHARS, "get_person reads it whole");
+          return projectPerson(ctx, created, GET_TEXT_CHARS, "get_person reads it whole", false);
         }),
     }),
     write(connection, {
       name: "update_contact",
       description:
-        "Replace a contact's name, emails, phones or organizations at its current etag. Each field given replaces that whole field; fields omitted stay unchanged.",
-      input: Schema.Struct({ resourceName: contactName, etag, ...contactFields }),
+        "Replace a contact's name, emails, phones or organizations at the contactSource its latest read returned. Each field given replaces that whole field; others stay.",
+      input: Schema.Struct({ resourceName: contactName, contactSource, ...contactFields }),
       output: PersonRecord,
       destructive: true,
       check: (args, problems) => {
@@ -640,10 +689,15 @@ export function peopleTools({
             method: "PATCH",
             path: `/people/${segment(args.resourceName)}:updateContact`,
             template: "/people/{peopleId}:updateContact",
-            query: { updatePersonFields, personFields: DEFAULT_FIELDS.join(",") },
-            body: { ...body, etag: args.etag },
+            query: { updatePersonFields, personFields: contactMask() },
+            body: {
+              ...body,
+              metadata: {
+                sources: [{ type: "CONTACT", id: args.contactSource.id, etag: args.contactSource.etag }],
+              },
+            },
           });
-          return projectPerson(ctx, updated, GET_TEXT_CHARS, "get_person reads it whole");
+          return projectPerson(ctx, updated, GET_TEXT_CHARS, "get_person reads it whole", false);
         }),
     }),
     write(connection, {
@@ -852,16 +906,17 @@ export function peopleTools({
       description:
         "Search other contacts, the people Gmail saved from interactions without adding them, by name, email or phone prefix. Not the user's own contacts.",
       path: "/otherContacts:search",
-      fields: otherFields,
+      fields: otherSearchFields,
       defaults: DEFAULT_OTHER_FIELDS,
+      contacts: false,
       remedy: "people_api_read reads it whole",
     }),
     pagedPeople({
       name: "list_other_contacts",
       description:
         "List other contacts, the people Gmail saved from interactions without adding them, paged with names, emails and phones. Not the user's own contacts.",
-      selection: otherFields,
-      filters: { personFields: otherFields.input },
+      selection: otherListFields,
+      filters: { personFields: otherListFields.input },
       rows: "otherContacts",
       remedy: "people_api_read reads it whole",
       request: (args, page) => ({
@@ -893,7 +948,7 @@ export function peopleTools({
             method: "POST",
             path: `/otherContacts/${segment(args.resourceName)}:copyOtherContactToMyContactsGroup`,
             template: "/otherContacts/{otherContactsId}:copyOtherContactToMyContactsGroup",
-            body: { copyMask: DEFAULT_OTHER_FIELDS.join(","), readMask: DEFAULT_FIELDS.join(",") },
+            body: { copyMask: DEFAULT_OTHER_FIELDS.join(","), readMask: contactMask() },
           }).pipe(
             Effect.catch(
               uncertainCreate(
@@ -901,7 +956,7 @@ export function peopleTools({
               ),
             ),
           );
-          return projectPerson(ctx, copied, GET_TEXT_CHARS, "get_person reads it whole");
+          return projectPerson(ctx, copied, GET_TEXT_CHARS, "get_person reads it whole", false);
         }),
     }),
     pagedPeople({

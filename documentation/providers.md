@@ -1638,8 +1638,12 @@ phone numbers, organizations and memberships are the requested data.
 `readOnly: true` omits and refuses writes. Named reads ask Google for names,
 email addresses, phone numbers and organizations unless `personFields` names
 others. Lists return 25 people by default, at most 100. Searches return at most
-30, Google's cap, with no continuation. Updates replace each whole field they
-name, at the etag a read returned; a stale etag is refused. Creates, copies and
+30, Google's cap, with no continuation. Contact reads, creates, copies and
+updates return `contactSource` (`{ id, etag }`), the contact's revision.
+`update_contact` takes it back unchanged and replaces each whole field it
+names; group updates take the group `etag`. A stale revision fails `conflict`.
+Other-contact searches accept only names, email addresses, phone numbers and
+metadata; other-contact lists also accept photos. Creates, copies and
 group creation are additive writes. Google supplies no idempotency key, so an
 uncertain create is never resent. The hatch reaches all 24 indexed methods,
 including:

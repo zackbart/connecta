@@ -44,7 +44,10 @@ the provider does not need the other two.
 `people.searchContacts` and `otherContacts.search` document that a client
 should send a warm-up request with an empty query before searching, because
 the search cache can be stale. The named search tools send that request and
-then the search, each as its own declared step. The second request is charged
+then the search, each as its own declared step. `otherContacts.search` accepts
+only `emailAddresses`, `metadata`, `names` and `phoneNumbers` in its mask,
+while `otherContacts.list` also accepts `photos`; each named tool refuses any
+other field before the warm-up is sent. The second request is charged
 to the call's admission budget before it is sent. Both cap `pageSize` at 30
 and return no continuation; the named tools declare a terminal page. The
 manual drift check covers this prose.
@@ -107,8 +110,14 @@ with a marker and reported in `truncated`.
 
 Standard Google errors keep reviewed reason facts and numeric Retry-After.
 `notFound` is ambiguous: a profile the account cannot see and a missing one
-both answer 404. Contact and group updates carry the etag a read returned, and
-Google refuses a stale one with FAILED_PRECONDITION. Those requests, named and
+both answer 404. `people.updateContact` requires `person.metadata.sources` to
+name the CONTACT source (type, id and that source's etag) and treats the source
+etag, not the person etag, as the revision. Contact reads therefore always ask
+for `metadata` and project only that source as `contactSource: { id, etag }`,
+keeping the rest of person metadata out unless `personFields` names it;
+`update_contact` sends it back as the one CONTACT source. Group updates carry
+the group etag. Google refuses a stale revision with FAILED_PRECONDITION.
+Those requests, named and
 hatch (including batch contact updates), set the shared `revisionGuarded` flag,
 so the refusal is `conflict`, the one declared conflict source. Directory tools reword 400 and
 403 to say that the directory exists only for Google Workspace accounts and
