@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { calendar } from "../src/providers/calendar/index.js";
 import { cloudflare } from "../src/providers/cloudflare/index.js";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
@@ -47,6 +48,7 @@ describe.each([
   ["forms", forms],
   ["meet", meet],
   ["people", people],
+  ["calendar", calendar],
 ] as const)("%s in OAuth mode", (_name, factory) => {
   it.each(["shared", "personal"] as const)(
     "INV-11: accepts and retains connector members with %s auth, refusing an empty list (#1377)",

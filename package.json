@@ -79,6 +79,10 @@
       "types": "./dist/providers/breeze/index.d.ts",
       "import": "./dist/providers/breeze/index.js"
     },
+    "./providers/calendar": {
+      "types": "./dist/providers/calendar/index.d.ts",
+      "import": "./dist/providers/calendar/index.js"
+    },
     "./providers/ccb": {
       "types": "./dist/providers/ccb/index.d.ts",
       "import": "./dist/providers/ccb/index.js"

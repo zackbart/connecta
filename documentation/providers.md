@@ -135,6 +135,20 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
+<summary>Google Calendar (14 tools)</summary>
+
+[Setup](#google-calendar). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/calendar/api/v3/reference).
+
+- **Named reads:** `get_event`, `list_calendars`, `list_events`, `query_free_busy`.
+- **Named writes:** `create_event`, `delete_event`, `move_event`, `quick_add_event`, `respond_to_event`, `update_event`.
+- **API reads:** `calendar_api_details`, `calendar_api_read`, `calendar_api_search`.
+- **API writes:** `calendar_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/calendar).
+
+</details>
+
+<details>
 <summary>Church Community Builder (20 tools)</summary>
 
 [Setup](#church-community-builder). **API source:** [Upstream OpenAPI](https://docs.pushpay.io/chms-v2/openapi/chms-api-specs.json?download=1).
@@ -1147,7 +1161,8 @@ send route. Drafts are written only through `create_draft` and `update_draft`.
 Gmail is the documented three-hatch exception to the four-hatch default.
 
 **OAuth mode.** Every Google product (`gmail`, `drive`, `docs`, `sheets`,
-`slides`, `forms`, `meet`, `people`) alternatively connects Google accounts through Connecta's
+`slides`, `forms`, `meet`, `people`,
+`calendar`) alternatively connects Google accounts through Connecta's
 downstream OAuth grant. It needs no Workspace administrator and also serves
 consumer Google accounts:
 
@@ -1654,6 +1669,60 @@ including:
 - group batch reads.
 
 Vendor responses are bounded at 8 MiB.
+
+## Google Calendar
+
+```ts
+import { calendar } from "@zackbart/connecta/providers/calendar";
+
+calendar("calendar", {
+  purpose: "Staff scheduling and meeting invitations",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => accounts[identity.principal?.id ?? ""],
+});
+```
+
+Enable the Google Calendar API in a Google Cloud project. Create a service
+account without project IAM roles, enable domain-wide delegation, and store
+its JSON key as a deployment secret. A Workspace super administrator must
+add the key's numeric `client_id` to Admin console → Security → Access and
+data control → API controls → Manage Domain Wide Delegation, with exactly
+`https://www.googleapis.com/auth/calendar` (full Calendar read and write).
+A grant can take up to 24 hours to apply. If key creation is disabled by
+`iam.disableServiceAccountKeyCreation`, an organization policy administrator
+must permit it for the project. [OAuth mode](#gmail) instead takes
+`{ oauth, authScope }` and requests exactly that scope; enable the Google
+Calendar API in the OAuth client's project.
+
+Configure inbound authentication. `subject` may be one fixed Workspace
+address or a function mapping the admitted identity to an address. Calls
+without a mapped account fail `auth_required`; tool arguments cannot select
+an account, and `primary` is the mapped user's own calendar. A fixed subject
+gives every admitted caller that account's calendars. Each logical call
+resolves its subject once, including the read inside `update_event` and
+`respond_to_event`. A missing event and one the account cannot see are
+indistinguishable.
+
+`readOnly: true` omits and refuses writes. There is no configurable sensitive
+field set: event details, guests and their responses are requested data. A
+conference entry point's `accessCode`, `passcode`, `password` and `pin` are
+permanently withheld on named tools and the hatch; the join link stays.
+`create_event` and `quick_add_event` are additive writes; updates, responses,
+moves and deletes are destructive. Invitation and change emails follow each
+write's `sendUpdates`; omitted, Google applies its own default. The hatch
+admits every indexed method behind its reviewed verdict, including sharing
+rules, calendar create/update/delete/clear, ownership transfer, the calendar
+list, settings, colors, instances and import. Push notification channels
+(every `watch` method and `channels.stop`) remain refused: they deliver to a
+webhook this connection cannot receive.
+
+`list_events` defaults to 25 rows, at most 50, and `list_calendars` to 25, at
+most 100; their cursors are signed and bound to the connection, caller and
+arguments through the shared deployment store. Results target the shared
+Workspace result budget; vendor responses are bounded at 8 MiB. Google
+supplies no idempotency key, so a write is sent once and never replayed. Set
+`callAdmission` for the deployment's shared quota; the connector does not
+reserve a Workspace-wide quota.
 
 ## QuickBooks Online
 

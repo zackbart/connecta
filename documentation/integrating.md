@@ -121,6 +121,9 @@ deletes files. Google Docs setup and hatch limits are in
 [Google Docs setup](./providers.md#google-docs). Slides setup is in
 [Google Slides setup](./providers.md#google-slides). Meet setup, its three scopes
 and the capabilities Google gates are in [Google Meet setup](./providers.md#google-meet).
+Calendar setup, its single
+full-Calendar scope and refused push channels are in
+[Google Calendar setup](./providers.md#google-calendar).
 
 Stripe, Vercel, and Cloudflare vendor only their APIs. Cloudflare setup is in
 [Maintained provider setup](./providers.md#cloudflare).
