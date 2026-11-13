@@ -253,3 +253,7 @@ One checklist item is one PR; reference its owning issue in the body.
 The orchestrator squash-merges clean, green PRs with the PR title as summary and deletes the branch.
 Deployments, advisory publication and npm publishing require the owner's authorization
 for that release or operation. Authorization given in the session remains valid.
+Bundle cap moves need no owner approval and are not raised with the owner. When a
+change passes a cap in `scripts/bundle-budget.json`, set it from CI's measurement
+of the PR plus about 350 B of headroom, and add a dated note naming the change and
+its measured size.
