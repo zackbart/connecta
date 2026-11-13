@@ -839,7 +839,11 @@ export class InvocationService {
           const admissionSignal = context.dispatchSignal
             ? AbortSignal.any([context.dispatchSignal, ...(callSignal ? [callSignal] : [])])
             : callSignal;
-          const resolution = yield* this.catalog.resolve(address, defined({ signal: admissionSignal }));
+          const resolution = yield* this.catalog.resolve(
+            address,
+            defined({ signal: admissionSignal }),
+            context.source === READ_PROGRAM_SOURCE || (context.source === "execute_code" && context.readOnly === true),
+          );
           catalogMs += resolution.catalogMs;
           if (callSignal?.aborted) return yield* Effect.fail(callSignal.reason);
           if (admissionSignal?.aborted) return callerCancelledDetails();

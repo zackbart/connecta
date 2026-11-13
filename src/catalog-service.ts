@@ -951,7 +951,7 @@ export class CatalogService {
   private catalog(
     id: string,
     callOptions: ConnectorOperationOptions,
-    admission = false,
+    revalidateExpired = false,
   ): Effect.Effect<ToolDef[], unknown> {
     return Effect.suspend(() => {
       const askedAt = Date.now();
@@ -1004,7 +1004,7 @@ export class CatalogService {
         retained = { identity, read: started, settledAt: Infinity };
         this.catalogs.set(id, retained);
       }
-      if (!admission) return retained.read.join(callOptions.signal);
+      if (!revalidateExpired) return retained.read.join(callOptions.signal);
       const joined = retained;
       return Effect.flatMap(joined.read.join(callOptions.signal), (tools) => {
         if (joined.settledAt >= askedAt || catalogIsFresh(tools)) return Effect.succeed(tools);
@@ -1582,7 +1582,11 @@ export class CatalogService {
   // resolveTool without the Promise, for InvocationService's pipeline, which
   // yields it inside the call's deadline rather than crossing an edge. Never
   // fails: an unloadable catalog is a resolution like any other refusal.
-  resolve(address: string, callOptions: ConnectorOperationOptions = {}): Effect.Effect<CatalogResolution> {
+  resolve(
+    address: string,
+    callOptions: ConnectorOperationOptions = {},
+    revalidateExpired = false,
+  ): Effect.Effect<CatalogResolution> {
     return Effect.suspend(() => {
       const resolved = this.registry.resolveAddress(address);
       if (!resolved) {
@@ -1590,7 +1594,7 @@ export class CatalogService {
       }
       const { connector, toolName } = resolved;
       const started = Date.now();
-      return Effect.match(this.catalog(connector.id, callOptions, true), {
+      return Effect.match(this.catalog(connector.id, callOptions, revalidateExpired), {
         onFailure: (cause) => this.catalogLoadFailure(cause, started, connector, toolName),
         onSuccess: (tools): CatalogResolution => {
           const definition = tools.find((tool) => tool.name === toolName);

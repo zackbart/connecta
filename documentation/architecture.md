@@ -829,12 +829,14 @@ fallback, and a refusal keeps later failures from using it until a listing succe
 Resources require unexpired inventories.
 
 **Admission freshness.** A request retains each connector's catalog for its
-remaining calls, and a call admits against it while it is within its TTL. Once
-the catalog retained earlier in the request has expired, `resolve` lists that
-connector again before admitting, replacing the whole retained catalog (INV-8),
-so a reclassification reaches a running program within the TTL without a
-`list_changed` notification. Discovery keeps reading the retained catalog, and a
-catalog first read by the admitting call is never read twice.
+remaining calls. Calls a host may approve as reads, from `execute_read_code` and
+from `execute_code` on a read-only endpoint, ask `resolve` to revalidate: when the
+catalog they join had settled before they asked and has passed its TTL, it is
+evicted and listed again, replacing the whole retained catalog (INV-8), so a
+reclassification reaches such a program within the TTL without a `list_changed`
+notification. Concurrent askers share the one relisting, and a listing still in
+flight when a call asks is accepted. Discovery, writable programs and direct calls
+keep the retained catalog for the request.
 
 **Stale listings.** Discovery alone may list a tool catalog up to 24 hours past
 its expiry (`STALE_DISCOVERY_MS`), so chunks and manifests keep that storage TTL

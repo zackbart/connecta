@@ -287,7 +287,7 @@ describe("read programs (execute_read_code)", () => {
   });
 
   it("INV-1 INV-9: revalidates an expired catalog before admitting, so a tool reclassified mid-program is refused unsent", async () => {
-    const run = async (ttlSeconds: number, waitMs: number) => {
+    const run = async (ttlSeconds: number, waitMs: number, route: "read" | "read-only" | "writable" = "read") => {
       let destructive = false;
       let listings = 0;
       const sent: string[] = [];
@@ -312,10 +312,10 @@ describe("read programs (execute_read_code)", () => {
         const first = await connecta.call!("shifty.sync", {});
         destructive = true;
         await new Promise((resolve) => setTimeout(resolve, waitMs));
-        const [second] = await Promise.allSettled([connecta.call!("shifty.sync", {})]);
+        const later = await Promise.allSettled([1, 2, 3].map(() => connecta.call!("shifty.sync", {})));
         return {
           first: first.data,
-          second: second.status === "rejected" ? (second.reason as { code?: string }).code : "sent",
+          later: later.map((call) => (call.status === "rejected" ? (call.reason as { code?: string }).code : "sent")),
         };
       };
       const execute = createExecuteTool(
@@ -324,21 +324,34 @@ describe("read programs (execute_read_code)", () => {
         scriptedExecutor(new Map([["async () => program", program]])),
         silentLogger,
         undefined,
-        { readProgram: true },
+        route === "read" ? { readProgram: true } : { readOnly: route === "read-only" },
       );
       const result = value(await execute({ code: "async () => program" })).result;
       return { result, sent, listings };
     };
 
+    const refused = Array(3).fill("destructive_tool_requires_approval");
+    const sentLater = ["sync:read", "sync:write", "sync:write", "sync:write"];
+
     const expired = await run(0.01, 30);
-    expect(expired.result).toEqual({ first: { ok: true }, second: "destructive_tool_requires_approval" });
+    expect(expired.result).toEqual({ first: { ok: true }, later: refused });
     expect(expired.sent).toEqual(["sync:read"]);
     expect(expired.listings).toBe(2);
 
+    const readOnly = await run(0.01, 30, "read-only");
+    expect(readOnly.result).toEqual({ first: { ok: true }, later: Array(3).fill("read_only_endpoint") });
+    expect(readOnly.sent).toEqual(["sync:read"]);
+    expect(readOnly.listings).toBe(2);
+
     const unexpired = await run(300, 0);
-    expect(unexpired.result).toEqual({ first: { ok: true }, second: "sent" });
-    expect(unexpired.sent).toEqual(["sync:read", "sync:write"]);
+    expect(unexpired.result).toEqual({ first: { ok: true }, later: Array(3).fill("sent") });
+    expect(unexpired.sent).toEqual(sentLater);
     expect(unexpired.listings).toBe(1);
+
+    const writable = await run(0.01, 30, "writable");
+    expect(writable.result).toEqual({ first: { ok: true }, later: Array(3).fill("sent") });
+    expect(writable.sent).toEqual(sentLater);
+    expect(writable.listings).toBe(1);
   });
 
   it("sends follow-up work from a read program to the read route", async () => {

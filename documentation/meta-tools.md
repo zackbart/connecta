@@ -142,18 +142,27 @@ unmarked, and a resent program can reach the vendor twice.
 
 **Freshness bound.** A program admits each call against the catalog its request
 retained, so calls made within a catalog's TTL see one consistent catalog and
-list nothing again. Once a retained catalog passes its TTL, the next call to that
-connector lists it again before admission and admits against the new listing: a tool
-the downstream has since reclassified as a write is refused as above, with nothing
-sent, whether or not the downstream sent `notifications/tools/list_changed`. A
-downstream's reclassification therefore reaches a running program no later than its
-catalog TTL (`ttlMs`, or `discovery.catalogTtlSeconds` for a listing without one); a
-catalog with a zero TTL is listed again before every call after its first. Every
-call surface admits this way, so `execute_code`, `call_tool` and
-`call_destructive_tool` admit a write as a write past the same bound. A relisting
-that fails transiently resolves the call through the bounded stale fallback in
+list nothing again. In a read program, and in `execute_code` on a read-only
+endpoint, a call to a connector whose retained catalog has passed its TTL first
+lists that connector again and admits against the new listing: a tool the
+downstream has since reclassified as a write is refused as above, with nothing
+sent, whether or not the downstream sent `notifications/tools/list_changed`.
+Concurrent calls share one relisting. A downstream's reclassification therefore
+reaches such a program no later than its catalog TTL (`ttlMs`, or
+`discovery.catalogTtlSeconds` for a listing without one).
+
+Two costs follow. A catalog with a zero TTL, which is the MCP SDK server's
+default, is listed again before every call after the program's first to that
+connector, one `tools/list` round trip each. A relisting that fails transiently
+resolves the call through the bounded stale fallback in
 [architecture](./architecture.md#storage-credentials-and-connectors), so while a
 downstream cannot list, the bound extends by at most five minutes.
+
+Writable `execute_code`, `call_destructive_tool` and `call_tool` never relist
+within a request. A writable program is approved as a write program as a whole,
+so its calls keep the catalog its request retained for the whole run. `call_tool`
+and `call_destructive_tool` make one call per request against a catalog that the
+call itself read.
 
 **Discovery lists writes, marked.** `connecta.search` and `connecta.describe` return
 them with `callable: false`, and no other entry carries the field. Writes are not
