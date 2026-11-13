@@ -581,12 +581,7 @@ const readChallengeNative = /* @__PURE__ */ registerAuth(
   },
 );
 
-/** The grant behind one `api()` connector's `oauth`, as the hooks it exposes. */
-/**
- * One downstream grant several `api()` connectors use (#1416): the connector
- * that owns it, whose id names its callback, and the refresh coordination
- * every user of it shares, so concurrent renewals collapse into one.
- */
+/** One downstream grant several `api()` connectors use: its owner's id names its callback. */
 export interface SharedOAuthGrant {
   readonly owner: string;
   readonly coordinators: (ctx: ConnectorContext) => OAuthRefreshCoordinator;
@@ -596,6 +591,7 @@ export function sharedOAuthGrant(owner: string): SharedOAuthGrant {
   return { owner, coordinators: refreshCoordinatorsByPartition() };
 }
 
+/** The grant behind one `api()` connector's `oauth`, as the hooks it exposes. */
 export function staticOAuth(
   id: string,
   config: ApiOAuthConfig,

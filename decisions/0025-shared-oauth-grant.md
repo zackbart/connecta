@@ -30,9 +30,12 @@ connector per product, `<id>_<product>`, each using that grant.
   that product, but the group shares one refresh coordinator. Separate
   coordinators over the same grant would contend for its renewal lease.
 - **A tool-less account connector.** It gives the grant an id that is not a
-  product, one row on the member and operator pages, and one redirect URI. A
-  person may manage it through any product connector their pools hold, so
-  pools need not list it.
+  product, one row on the member page, and one redirect URI. A person may
+  manage it through any product connector their pools hold, so pools need not
+  list it. The operator page still lists each product connector beside it.
+- **Tagged with the grant itself.** Each connector records the shared grant
+  object it was built for, so connectors from two `googleAccount()` calls with
+  the same id cannot be mixed into one group.
 - **One consent, all scopes.** The consent screen is longer, but Gmail's and
   Drive's restricted scopes already require Google's verification on their
   own. A declined permission fails only that product with

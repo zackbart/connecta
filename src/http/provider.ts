@@ -243,7 +243,7 @@ export function apiUsingGrant(id: string, opts: ApiOptions, grant: SharedOAuthGr
   opts = assertKnownOptions(opts, `api(${JSON.stringify(id)})`, API_OPTIONS);
   if (opts.oauth === undefined) throw new Error(`api() connector "${id}" shares an OAuth grant but declares no oauth.`);
   const hooks = staticOAuth(id, opts.oauth, opts.authScope ?? "shared", grant);
-  const connector = tagGrantOwner(apiConnector(id, opts, hooks), grant.owner);
+  const connector = tagGrantOwner(apiConnector(id, opts, hooks), grant.owner, grant);
   return hooks.account ? tagAccountRestriction(connector, hooks.account) : connector;
 }
 

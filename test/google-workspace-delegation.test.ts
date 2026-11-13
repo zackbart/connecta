@@ -3785,9 +3785,12 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       ]);
     });
 
-    it("refuses a product connector whose account is not configured", NODE, () => {
-      const [, mail] = workAccount();
+    it("refuses a product connector whose account is not configured or holds another grant", NODE, () => {
+      const [owner, mail] = workAccount({ products: ["gmail"] });
       expect(() => makeRegistry([mail!])).toThrow(/OAuth grant of connector "work", which is not configured/);
+      const [, otherMail] = workAccount({ products: ["gmail"], oauth: { ...CLIENT, clientId: "other.apps.example" } });
+      expect(() => makeRegistry([owner!, otherMail!])).toThrow(/built for another OAuth grant than connector "work"/);
+      expect(() => makeRegistry([owner!, mail!])).not.toThrow();
     });
 
     it(
@@ -3903,6 +3906,52 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           ["work", "oauth", null, "ok"],
           ["work_gmail", "none", "work", "ok"],
         ]);
+
+        const manage = (method: string, path: string) =>
+          connecta.fetch(new Request(`${BASE}${path}`, { method, headers: { Cookie: "__session=bob", Origin: BASE } }));
+        const relink = await manage("POST", "/ui/oauth/work?mode=continue");
+        expect(relink.status).toBe(200);
+        await relink.arrayBuffer();
+        const disconnected = await manage("DELETE", "/ui/oauth/work");
+        expect(disconnected.status).toBeLessThan(300);
+        await disconnected.arrayBuffer();
+        const after = await rpc("call_tool", { address: "work_gmail.list_labels", args: {} });
+        expect(JSON.stringify(after)).toContain("downstream_oauth_required");
+      } finally {
+        await connecta.close();
+      }
+    });
+
+    it("INV-4: managing a product connector also takes the account's members", NODE, async () => {
+      const namespace = "https://clerk.example.test";
+      const [owner, mail] = workAccount({ products: ["gmail"], members: [{ namespace, id: "bob" }] });
+      const aliceOnly = Object.assign(Object.create(owner!) as Connector, { members: [{ namespace, id: "alice" }] });
+      const storage = memoryStorage();
+      const connecta = createTestConnecta({
+        connectors: [aliceOnly, mail!],
+        auth: ["alice", "bob"].map((user) => ({
+          ...fakeClerkAuth({ token: user, userId: user, signInUrl: "https://accounts.example/sign-in" }),
+          activityActorNamespace: namespace,
+        })),
+        maintainers: [{ namespace, id: "carol" }],
+        pools: { team: { tools: ["work_gmail"], members: [{ namespace, id: "bob" }] } },
+        storage,
+        publicUrl: BASE,
+        logger: "silent",
+        vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+      });
+      try {
+        for (const [method, path] of [
+          ["DELETE", "/ui/oauth/work_gmail"],
+          ["POST", "/ui/oauth/work_gmail?mode=continue"],
+          ["DELETE", "/ui/oauth/work"],
+        ] as const) {
+          const refused = await connecta.fetch(
+            new Request(`${BASE}${path}`, { method, headers: { Cookie: "__session=bob", Origin: BASE } }),
+          );
+          expect(refused.status, `${method} ${path}`).toBeGreaterThanOrEqual(403);
+          await refused.arrayBuffer();
+        }
       } finally {
         await connecta.close();
       }

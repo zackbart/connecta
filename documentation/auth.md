@@ -3325,14 +3325,16 @@ connector in the group uses the owner's grant instead of its own:
   same token.
 - Status on any connector in the group reads the owner's grant. Disconnect on
   any of them removes it for all.
-- For a personal group, a person may manage the owner when they may manage any
-  connector in the group: a pool that holds one of them, and the connector's
-  `members`. The owner's own `members` must also admit them.
+- For a personal group, a person may manage the owner when a pool of theirs
+  holds any connector in the group that admits them. Managing any connector
+  in the group, including Disconnect, also requires the owner's `members` to
+  admit them.
 - Each connector keeps its own `apiOrigins`, so a token is sent only to the
   origins of the connector making the call. Every connector's client,
   endpoints and scope must equal the owner's.
-- Construction fails when a connector's grant owner is not configured, owns no
-  grant, or has a different `authScope`.
+- Construction fails when a connector's grant owner is not configured, holds
+  another grant than the one the connector was built for (connectors from two
+  `googleAccount()` calls with one id), or has a different `authScope`.
 - `describeConfig()` and the member contract report `grantOwner` on every
   connector that uses another's grant.
 
