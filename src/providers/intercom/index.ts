@@ -83,8 +83,8 @@ export const intercom = defineApiProvider<IntercomOptions>({
   blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
   searchSynonyms: [["teammate", "admin"]],
   bundle: {
-    baselineGzip: 405055,
-    note: "./providers/intercom measures 405,055 B gzip standalone in CI's build (package) job, Node 22.23.4, on the PR merge with main 7be07115 (#1408). This includes the shared Effect provider kit and the compiled 277-operation index, paid once per deployment; provider entries are reported, not capped, and standalone sizes are not additive.",
+    baselineGzip: 406371,
+    note: "./providers/intercom measures 406,371 B gzip standalone in CI's build (package) job, Node 22.23.4, on the PR merge with main 180da1fe (#1408). This includes the shared Effect provider kit and the compiled 277-operation index, paid once per deployment; provider entries are reported, not capped, and standalone sizes are not additive.",
   },
   vendor: IntercomApi,
   baseUrl: (options) => {
