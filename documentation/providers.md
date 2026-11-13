@@ -111,7 +111,7 @@ manual vendor review; its read hatch cannot execute arbitrary query SQL.
 These generated reference catalogs separate named workflows from API tools
 and reads from writes. API search/details inspect indexed contracts, including
 refused operations. Raw read/write calls accept only reviewed operations within
-configured scope and safety rules. Gmail has no generic write tool.
+configured scope and safety rules.
 
 Addresses use your connector ID: Stripe configured as `billing` exposes
 `billing.stripe_api_read`. Configuration, credentials and read-only policy affect
@@ -484,11 +484,9 @@ in 32 KiB pages/chunks when necessary. The summary has its separate 300-unit
 search budget; ranking uses the indexed language, not attached refusal prose.
 
 Use `_api_details` with the indexed method and path when a refused method lies
-outside the call tool's schema. For example, `gmail_api_details` with
-`method: "POST", path: "/messages/send"` explains the sending refusal; Gmail's
-read hatch still has no method argument and there is no Gmail write hatch.
-`forms_api_details` likewise explains `DELETE /forms/{formId}/watches/{watchId}`
-even though DELETE remains absent from the Forms write schema. GitHub
+outside the call tool's schema. For example, `forms_api_details` explains
+`DELETE /forms/{formId}/watches/{watchId}` even though DELETE remains absent
+from the Forms write schema. GitHub
 `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` also remains outside its raw
 write schema; inspect its refusal and named alternative through details. All such calls
 remain refused before authentication or downstream I/O.
@@ -1165,7 +1163,10 @@ reply and forward mail, send and delete drafts, relabel, archive, trash and
 permanently delete messages and threads, manage labels, filters and the
 vacation responder, and change every other mailbox setting through
 `gmail_api_write`, including forwarding, delegates and send-as aliases. Every
-write is classified as one; sends and permanent deletes are destructive. To
+write is classified as one. Sends, relabels, trash and permanent deletes, and
+changes to filters, delivery, forwarding, push watches, identity or security
+settings are destructive; only creating drafts and labels, inserting messages
+and restoring from trash are plain writes. To
 offer less, set `readOnly: true` on the connection, or list only chosen tools
 (for example `mail.search_threads`, `mail.create_draft`) in a pool.
 
@@ -1276,14 +1277,18 @@ Connection tab (`ConnectorStatus.account`); activity never records it.
 Named reads return projected records or `{ items, page }`; `fields` narrows a
 record or each list item. Size cuts appear in `truncated`. The pinned index
 contains 79 methods and admits every one: GETs read through `gmail_api_read`,
-and every other method writes through `gmail_api_write`, which checks a
-composed base64url `raw` message for withheld links before sending. Full MIME
+and every other method writes through `gmail_api_write`. A composed base64url
+`raw` message is decoded with each MIME part's base64 or quoted-printable body,
+header encoded words and attached messages, and refused before sending when any
+carries a withheld link or uses a charset, transfer encoding or nesting (over 8
+levels or 256 parts) that cannot be inspected. Full MIME
 JSON crosses the same decoded sent-secret safety boundary. Settings reads
 withhold send-as SMTP passwords, S/MIME private keys and their passwords, and
 client-side encryption wrapped keys. Use the named attachment tool for
 immutable part identity, charset rendering, one-MiB download bounds and
 decoded-size validation. `forward_message` forwards originals up to 3 MiB in
-one request; forward a larger message in Gmail.
+one request, unchanged except that their `Bcc` and `Resent-Bcc` headers are
+removed; forward a larger message in Gmail.
 
 A hatch read has three layers: the direct-call delivery contains the tool's
 `{ status, data, page? }` result, whose `data` is Google's JSON. In a program:

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
 import { requestSentSecrets } from "../../sent-secrets.js";
 import { gmail } from "./index.js";
+import { verdicts } from "./lib/index.js";
 import type { ConnectorCaller } from "../../connector-caller.js";
 import { safety } from "./api.js";
 import { attachmentFixtures } from "./fixtures.js";
@@ -566,6 +567,69 @@ describe("sending and organizing mail", () => {
       expect(tools.find((tool) => tool.name === name)!.description).toMatch(/permanently|Permanently/);
   });
 
+  it("holds the complete reviewed verdict table: only additive creates and restores are plain writes", () => {
+    const by = (verdict: string) =>
+      Object.entries(verdicts)
+        .filter(([, value]) => value === verdict)
+        .map(([key]) => key);
+    expect(Object.keys(verdicts)).toHaveLength(79);
+    expect(by("read")).toEqual(Object.keys(verdicts).filter((key) => key.startsWith("GET ")));
+    expect(by("read")).toHaveLength(30);
+    expect(by("write")).toEqual([
+      "POST /drafts",
+      "POST /labels",
+      "POST /messages",
+      "POST /messages/{id}/untrash",
+      "POST /threads/{id}/untrash",
+    ]);
+    expect(by("destructive")).toEqual([
+      "POST /drafts/send",
+      "DELETE /drafts/{id}",
+      "PUT /drafts/{id}",
+      "DELETE /labels/{id}",
+      "PATCH /labels/{id}",
+      "PUT /labels/{id}",
+      "POST /messages/batchDelete",
+      "POST /messages/batchModify",
+      "POST /messages/import",
+      "POST /messages/send",
+      "DELETE /messages/{id}",
+      "POST /messages/{id}/modify",
+      "POST /messages/{id}/trash",
+      "PUT /settings/autoForwarding",
+      "POST /settings/cse/identities",
+      "DELETE /settings/cse/identities/{cseEmailAddress}",
+      "PATCH /settings/cse/identities/{emailAddress}",
+      "POST /settings/cse/keypairs",
+      "POST /settings/cse/keypairs/{keyPairId}:disable",
+      "POST /settings/cse/keypairs/{keyPairId}:enable",
+      "POST /settings/cse/keypairs/{keyPairId}:obliterate",
+      "POST /settings/delegates",
+      "DELETE /settings/delegates/{delegateEmail}",
+      "POST /settings/filters",
+      "DELETE /settings/filters/{id}",
+      "POST /settings/forwardingAddresses",
+      "DELETE /settings/forwardingAddresses/{forwardingEmail}",
+      "PUT /settings/imap",
+      "PUT /settings/language",
+      "PUT /settings/pop",
+      "POST /settings/sendAs",
+      "DELETE /settings/sendAs/{sendAsEmail}",
+      "PATCH /settings/sendAs/{sendAsEmail}",
+      "PUT /settings/sendAs/{sendAsEmail}",
+      "POST /settings/sendAs/{sendAsEmail}/smimeInfo",
+      "DELETE /settings/sendAs/{sendAsEmail}/smimeInfo/{id}",
+      "POST /settings/sendAs/{sendAsEmail}/smimeInfo/{id}/setDefault",
+      "POST /settings/sendAs/{sendAsEmail}/verify",
+      "PUT /settings/vacation",
+      "POST /stop",
+      "DELETE /threads/{id}",
+      "POST /threads/{id}/modify",
+      "POST /threads/{id}/trash",
+      "POST /watch",
+    ]);
+  });
+
   it("sends a new message as RFC 2822 base64url raw, once, and refuses one without recipients before IO", async () => {
     await expect(call(connection(), "send_message", { subject: "Hi", body: "x" })).rejects.toMatchObject({
       code: "invalid_args",
@@ -687,6 +751,39 @@ describe("sending and organizing mail", () => {
     ).rejects.toMatchObject({ code: "invalid_args" });
     expect(calls).toHaveLength(1);
     expect(writes()).toEqual([]);
+  });
+
+  it("removes Bcc and Resent-Bcc from the forwarded original's headers, keeping every other byte", async () => {
+    const kept = [
+      "From: Ann Elder <ann@church.example>\r\n",
+      "To: pastor@church.example\r\n",
+      "X-Bcc-Note: kept\r\n",
+      "Subject: Agenda\r\n",
+      "Message-ID: <m2@mail.example>\r\n",
+    ];
+    const blind = [
+      "Bcc: hidden@church.example\r\n",
+      "BCC: first@church.example,\r\n\tsecond@church.example,\r\n third@church.example\r\n",
+      "resent-bcc: resent@church.example\r\n",
+      "Bcc : obsolete@church.example\r\n",
+    ];
+    const body = "\r\nBcc: written in the body stays\r\nCafé\r\n";
+    const original =
+      kept[0]! + blind[0]! + kept[1]! + blind[1]! + kept[2]! + blind[2]! + kept[3]! + blind[3]! + kept[4]! + body;
+    route = (request) => {
+      const reply = sent(request);
+      if (reply) return reply;
+      if (request.url.searchParams.get("format") === "raw") return { body: { id: "m2", raw: b64url(original) } };
+      return { body: { id: "m2", threadId: "t1", payload: { headers: [{ name: "Subject", value: "Agenda" }] } } };
+    };
+    await call(connection(), "forward_message", { messageId: "m2", to: ["treasurer@church.example"] });
+    const source = decodeRaw(calls.at(-1)!.body.raw);
+    const attached = source.slice(
+      source.indexOf("8bit\r\n\r\n") + "8bit\r\n\r\n".length,
+      source.lastIndexOf("--connecta-"),
+    );
+    expect(attached).toBe(kept.join("") + body);
+    expect(source).not.toMatch(/hidden|first@|second@|third@|resent@|obsolete@/);
   });
 
   it("sends and deletes drafts by stable id", async () => {
@@ -891,6 +988,130 @@ describe("sending and organizing mail", () => {
     route = () => ({ body: { id: "Label_9", name: "Hatch" } });
     await call(connection(), "gmail_api_write", { method: "PUT", path: "/settings/imap", body: { enabled: false } });
     expect(calls.at(-1)).toMatchObject({ method: "PUT", body: { enabled: false } });
+  });
+
+  it("inspects every decoded MIME part for withheld links before IO, refusing what it cannot read", async () => {
+    const link = "See https://example.com/doc?token=[redacted]";
+    const base64Part = b64url(link).replace(/-/g, "+").replace(/_/g, "/");
+    const entity = (headers: string, content: string) => `${headers}\r\n\r\n${content}\r\n`;
+    const multipart = (boundary: string, ...parts: string[]) =>
+      `Content-Type: multipart/mixed; boundary="${boundary}"\r\n\r\npreamble\r\n` +
+      parts.map((part) => `--${boundary}\r\n${part}`).join("") +
+      `--${boundary}--\r\n`;
+    const message = (rest: string) => b64url(`To: a@church.example\r\nSubject: Hi\r\nMIME-Version: 1.0\r\n${rest}`);
+    const plain = entity("Content-Type: text/plain", "Hello");
+    const withheld = {
+      base64: message(entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: base64", base64Part)),
+      quotedPrintable: message(
+        entity(
+          "Content-Type: text/html\r\nContent-Transfer-Encoding: quoted-printable",
+          '<a href=3D"https://example.com/doc?tok=\r\nen=3D=5Bredacted=5D">doc</a>',
+        ),
+      ),
+      nestedBase64: message(
+        multipart(
+          "outer",
+          plain,
+          multipart(
+            "inner",
+            plain,
+            entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: BASE64", base64Part),
+          ),
+        ),
+      ),
+      attachedMessage: message(
+        multipart(
+          "outer",
+          plain,
+          entity(
+            "Content-Type: message/rfc822\r\nContent-Transfer-Encoding: base64",
+            b64url(`Subject: Fwd\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${link.replace("=", "=3D")}\r\n`)
+              .replace(/-/g, "+")
+              .replace(/_/g, "/"),
+          ),
+        ),
+      ),
+      encodedWord: b64url(`To: a@church.example\r\nSubject: =?UTF-8?B?${btoa(link)}?=\r\n\r\nHello\r\n`),
+    };
+    const unreadable = {
+      utf16: message(
+        entity('Content-Type: text/plain; charset="UTF-16"\r\nContent-Transfer-Encoding: base64', "AFsAcgBlAGQ="),
+      ),
+      utf7: message(entity("Content-Type: text/plain; charset=utf-7", "+AFs-redacted+AF0-")),
+      unknownEncoding: message(
+        entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: x-uuencode", "begin 644 x"),
+      ),
+      invalidBase64: message(
+        entity("Content-Type: text/plain\r\nContent-Transfer-Encoding: base64", "U2VlIGh0d*HBzOi8v"),
+      ),
+      encodedMultipart: message(
+        "Content-Type: multipart/mixed; boundary=b\r\nContent-Transfer-Encoding: base64\r\n\r\n--b\r\n\r\nx\r\n--b--\r\n",
+      ),
+      commentedType: message(
+        `Content-Type: multipart/mixed (note); boundary=b\r\n\r\n--b\r\nContent-Transfer-Encoding: base64\r\n\r\n${base64Part}\r\n--b--\r\n`,
+      ),
+      bareCarriageReturn: message(`Content-Transfer-Encoding: base64\r${base64Part}\r\n`),
+      continuedBoundary: message("Content-Type: multipart/mixed; boundary*0=b\r\n\r\n--b\r\n\r\nx\r\n--b--\r\n"),
+      repeatedEncoding: message(
+        entity("Content-Transfer-Encoding: 7bit\r\nContent-Transfer-Encoding: base64", base64Part),
+      ),
+      tooDeep: message(
+        Array.from(
+          { length: 10 },
+          (_, level) => `Content-Type: multipart/mixed; boundary=b${level}\r\n\r\n--b${level}\r\n`,
+        ).join("") + "\r\nx\r\n",
+      ),
+    };
+    for (const [name, raw] of [...Object.entries(withheld), ...Object.entries(unreadable)]) {
+      for (const [path, body] of [
+        ["/messages/send", { raw }],
+        ["/drafts/send", { message: { raw } }],
+        ["/drafts", { message: { raw } }],
+        ["/messages/import", { raw }],
+      ] as const) {
+        const refusal = await call(connection(), "gmail_api_write", { method: "POST", path, body }).then(
+          () => undefined,
+          (error: unknown) => error,
+        );
+        expect(refusal, `${name} ${path}`).toMatchObject({
+          code: "invalid_args",
+          message:
+            name in withheld
+              ? expect.stringMatching(/withheld/)
+              : expect.stringMatching(/cannot|deeper|repeats|must use|carriage return/),
+        });
+      }
+    }
+    for (const name of ["send_message", "create_draft"])
+      for (const args of [
+        { body: link },
+        { body: "Hi", htmlBody: `<a href="https://example.com/doc?token=&#91;redacted&#93;">doc</a>` },
+      ])
+        await expect(
+          call(connection(), name, { to: ["a@church.example"], subject: "Hi", ...args }),
+          `${name} ${JSON.stringify(args)}`,
+        ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toEqual([]);
+
+    route = sent;
+    const readable = message(
+      multipart(
+        "outer",
+        entity(
+          "Content-Type: text/plain; charset=ISO-8859-1\r\nContent-Transfer-Encoding: quoted-printable",
+          "Caf=E9 =3D fine",
+        ),
+        entity(
+          "Content-Type: text/plain\r\nContent-Transfer-Encoding: base64",
+          btoa("https://example.com/doc?token=abc"),
+        ),
+        entity("Content-Type: message/rfc822", "Subject: inner\r\n\r\nText [redacted] away from a link\r\n"),
+      ),
+    );
+    await expect(
+      call(connection(), "gmail_api_write", { method: "POST", path: "/messages/send", body: { raw: readable } }),
+    ).resolves.toMatchObject({ status: 200, data: { id: "s1" } });
+    expect(calls).toHaveLength(1);
   });
 
   it("withholds send-as SMTP passwords, S/MIME private material and CSE wrapped keys from settings reads", async () => {

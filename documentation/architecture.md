@@ -2637,8 +2637,7 @@ Operations found only through a request or response field follow primary
 matches, and search names an authored tool whenever one serves an operation.
 A refused method outside a read/write tool's input schema is inspected through
 `_api_details` with its indexed method and path. Call validation remains closed:
-Gmail's 49 non-GET refusals do not add a method field or a write hatch, and Forms'
-refused DELETE remains outside its write enum. GitHub's refused raw PUT merge
+Forms' refused DELETE remains outside its write enum. GitHub's refused raw PUT merge
 is likewise outside its write enum; its named guarded alternative is unaffected.
 Such schema refusals happen
 before authentication or I/O; details exposes the same reviewed reason as search.

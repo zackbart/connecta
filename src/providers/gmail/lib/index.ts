@@ -1,6 +1,8 @@
 // Reviewed frozen Gmail v1 inventory: all 79 indexed keys execute with literal verdicts.
-// Reads are GETs; additive creates and restores are writes; sends, overwrites,
-// relabels, trash, permanent deletes and sharing settings are destructive.
+// Reads are GETs. Writes only add mail, drafts or labels, or restore from trash.
+// Anything that sends, overwrites, relabels, trashes or deletes, or changes
+// delivery, forwarding, filtering, notification, identity or security settings
+// is destructive.
 import { OperationIndex } from "../../_shared/rest/operation-index.js";
 import type { HatchDeclaration } from "../../../http/hatch.js";
 import { googlePageToken } from "../../../http/hatch-paging.js";
@@ -28,7 +30,7 @@ export const verdicts = {
   "POST /messages": "write",
   "POST /messages/batchDelete": "destructive",
   "POST /messages/batchModify": "destructive",
-  "POST /messages/import": "write",
+  "POST /messages/import": "destructive",
   "POST /messages/send": "destructive",
   "DELETE /messages/{id}": "destructive",
   "GET /messages/{id}": "read",
@@ -40,12 +42,12 @@ export const verdicts = {
   "GET /settings/autoForwarding": "read",
   "PUT /settings/autoForwarding": "destructive",
   "GET /settings/cse/identities": "read",
-  "POST /settings/cse/identities": "write",
+  "POST /settings/cse/identities": "destructive",
   "DELETE /settings/cse/identities/{cseEmailAddress}": "destructive",
   "GET /settings/cse/identities/{cseEmailAddress}": "read",
   "PATCH /settings/cse/identities/{emailAddress}": "destructive",
   "GET /settings/cse/keypairs": "read",
-  "POST /settings/cse/keypairs": "write",
+  "POST /settings/cse/keypairs": "destructive",
   "GET /settings/cse/keypairs/{keyPairId}": "read",
   "POST /settings/cse/keypairs/{keyPairId}:disable": "destructive",
   "POST /settings/cse/keypairs/{keyPairId}:enable": "destructive",
@@ -55,7 +57,7 @@ export const verdicts = {
   "DELETE /settings/delegates/{delegateEmail}": "destructive",
   "GET /settings/delegates/{delegateEmail}": "read",
   "GET /settings/filters": "read",
-  "POST /settings/filters": "write",
+  "POST /settings/filters": "destructive",
   "DELETE /settings/filters/{id}": "destructive",
   "GET /settings/filters/{id}": "read",
   "GET /settings/forwardingAddresses": "read",
@@ -75,7 +77,7 @@ export const verdicts = {
   "PATCH /settings/sendAs/{sendAsEmail}": "destructive",
   "PUT /settings/sendAs/{sendAsEmail}": "destructive",
   "GET /settings/sendAs/{sendAsEmail}/smimeInfo": "read",
-  "POST /settings/sendAs/{sendAsEmail}/smimeInfo": "write",
+  "POST /settings/sendAs/{sendAsEmail}/smimeInfo": "destructive",
   "DELETE /settings/sendAs/{sendAsEmail}/smimeInfo/{id}": "destructive",
   "GET /settings/sendAs/{sendAsEmail}/smimeInfo/{id}": "read",
   "POST /settings/sendAs/{sendAsEmail}/smimeInfo/{id}/setDefault": "destructive",
@@ -89,7 +91,7 @@ export const verdicts = {
   "POST /threads/{id}/modify": "destructive",
   "POST /threads/{id}/trash": "destructive",
   "POST /threads/{id}/untrash": "write",
-  "POST /watch": "write",
+  "POST /watch": "destructive",
 } satisfies HatchDeclaration["verdicts"];
 export const named = {
   "GET /threads": "search_threads",

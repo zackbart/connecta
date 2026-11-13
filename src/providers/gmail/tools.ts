@@ -21,6 +21,7 @@ import { Operation } from "../../runtime/call.js";
 import { index } from "./lib/index.js";
 import { fieldContracts, inputs, outputs, type GmailToolName } from "./lib/schemas.js";
 import { threadingIds } from "./lib/threading.js";
+import { refuseWithheldRaw } from "./lib/raw.js";
 
 interface GmailToolProgram {
   readonly name: GmailToolName;
@@ -1113,6 +1114,10 @@ function buildRawMessage(message: Composition): string {
   const lines = [...headerLines(message), ...textEntity(message)];
   return base64url(new TextEncoder().encode(`${lines.join("\r\n")}\r\n`));
 }
+function refuseWithheldComposition(raw: string): void {
+  const refusal = refuseWithheldRaw({ raw });
+  if (refusal) throw new ConnectorCallError("invalid_args", refusal);
+}
 /**
  * A forward: the note as the first entity, then the original's exact RFC 5322
  * bytes as a `message/rfc822` attachment, so every header, body and file it
@@ -1150,6 +1155,36 @@ function buildForwardMessage(message: Composition, original: Uint8Array, filenam
     offset += part.length;
   }
   return base64url(bytes);
+}
+/**
+ * The original's header block without `Bcc` or `Resent-Bcc` fields and their
+ * folded continuations; every other byte, the body included, is kept as it
+ * was. Blind copies are private to the sender and never travel in a forward.
+ */
+function withoutBlindCopies(original: Uint8Array): Uint8Array {
+  const kept: Uint8Array[] = [];
+  let at = 0;
+  let dropping = false;
+  while (at < original.length) {
+    const newline = original.indexOf(0x0a, at);
+    const end = newline < 0 ? original.length : newline + 1;
+    const line = original.subarray(at, end);
+    if (line[0] === 0x0a || (line[0] === 0x0d && line[1] === 0x0a)) {
+      kept.push(original.subarray(at));
+      break;
+    }
+    if (line[0] !== 0x20 && line[0] !== 0x09)
+      dropping = /^(?:resent-)?bcc[ \t]*:/i.test(String.fromCharCode(...line.subarray(0, 16)));
+    if (!dropping) kept.push(line);
+    at = end;
+  }
+  const bytes = new Uint8Array(kept.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+  for (const part of kept) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  return bytes;
 }
 /** An ASCII attachment name from a subject; quoting never needs an escape. */
 function emlName(subject: string | undefined): string {
@@ -1457,6 +1492,7 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
         inReplyTo: reply.inReplyTo,
         references: reply.references,
       });
+      refuseWithheldComposition(raw);
       return { message: compact({ raw, threadId: reply.threadId }) };
     });
   return [
@@ -1944,20 +1980,22 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
             });
           }
           if (bytes.length > MAX_FORWARD_BYTES) throw tooLarge();
+          const note: Composition = {
+            from: [],
+            to: addressList(args["to"]) ?? [],
+            cc: addressList(args["cc"]) ?? [],
+            bcc: addressList(args["bcc"]) ?? [],
+            replyTo: [],
+            subject: args["subject"] ?? original.subject,
+            body: String(args["body"] ?? ""),
+            htmlBody: typeof args["htmlBody"] === "string" ? args["htmlBody"] : undefined,
+            inReplyTo: original.inReplyTo,
+            references: original.references,
+          };
+          refuseWithheldComposition(buildRawMessage(note));
           const forwarded = buildForwardMessage(
-            {
-              from: [],
-              to: addressList(args["to"]) ?? [],
-              cc: addressList(args["cc"]) ?? [],
-              bcc: addressList(args["bcc"]) ?? [],
-              replyTo: [],
-              subject: args["subject"] ?? original.subject,
-              body: String(args["body"] ?? ""),
-              htmlBody: typeof args["htmlBody"] === "string" ? args["htmlBody"] : undefined,
-              inReplyTo: original.inReplyTo,
-              references: original.references,
-            },
-            bytes,
+            note,
+            withoutBlindCopies(bytes),
             emlName(oneLine(original.subject?.replace(/^fwd:\s*/i, ""))),
           );
           const sent = yield* client.json({

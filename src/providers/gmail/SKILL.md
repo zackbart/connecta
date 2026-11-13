@@ -62,7 +62,8 @@ A new message needs recipients. A reply (`replyToMessageId`) joins the
 answered message's thread and goes only to its Reply-To, else its From,
 unless recipients are restated; for reply-all, pass the original To and Cc.
 Keep the reply subject to retain the Gmail thread. A forward attaches the
-original unchanged as an .eml, with its files, in the same thread. Gmail
+original as an .eml, with its files, in the same thread; only its Bcc headers
+are removed. Gmail
 sets From to the mailbox itself; no argument chooses a sender.
 `send_draft` sends a draft exactly as saved. After an uncertain send, search
 `in:sent` with its subject and recipient before deciding whether to send again.

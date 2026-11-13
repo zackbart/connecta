@@ -346,20 +346,31 @@ must accept larger bodies. Smaller platform or proxy limits still apply.
 Gmail connections now request full mailbox access and both settings scopes
 (`https://mail.google.com/`, `https://www.googleapis.com/auth/gmail.settings.basic`
 and `https://www.googleapis.com/auth/gmail.settings.sharing`) and can send,
-delete and change settings by default. Re-grant before upgrading. Until then,
-in delegation mode every Gmail call fails `provider_permission_denied`; in
-OAuth mode an old grant still reads mail, but sends, mailbox changes and
-settings fail `provider_permission_denied`:
+delete and change settings by default. What works before the re-grant depends
+on the mode:
 
-- **Delegation mode:** a Workspace super administrator opens Admin console →
-  Security → Access and data control → API controls → Domain-wide delegation,
-  edits the service account's client id entry, and replaces
-  `gmail.readonly` and `gmail.compose` with exactly those three scopes. Keep the
-  other Workspace products' scopes on the entry. Changes can take up to 24 hours.
-- **OAuth mode:** each person reconnects a personal connection, and a maintainer
-  reconnects a shared one, from the member Connect page or the
-  `authorize_connector` handoff, consenting to the new scopes. An External
-  consent screen may need Google's verification for these scopes.
+- **Delegation mode:** the token request names every configured scope, so every
+  Gmail call, reads included, fails `provider_permission_denied` until the
+  domain-wide delegation entry grants the three new scopes. Avoid the outage by
+  adding them before upgrading: a Workspace super administrator opens Admin
+  console → Security → Access and data control → API controls → Domain-wide
+  delegation, edits the service account's client id entry, and adds the three
+  scopes while keeping `gmail.readonly`, `gmail.compose` and the other Workspace
+  products' scopes. Changes can take up to 24 hours. After the upgrade is
+  serving, remove `gmail.readonly` and `gmail.compose` from the entry.
+- **OAuth mode:** an existing `gmail.readonly` and `gmail.compose` grant keeps
+  working after the upgrade for reading mail, labels, filters and settings
+  through the named reads, and `gmail.compose` already authorizes
+  `messages.send`, `drafts.send` and `drafts.delete`. Sending, replying,
+  forwarding, `send_draft`, `delete_draft` and draft creation and updates
+  therefore work immediately, without a new consent. Relabeling, archiving,
+  marking read, starring, trash and restore, permanent deletes, label and filter
+  changes, the vacation responder and other settings, and message import and
+  insert fail `provider_permission_denied` until the connection reconnects and
+  consents to the new scopes. Each person reconnects a personal connection, and
+  a maintainer reconnects a shared one, from the member Connect page or the
+  `authorize_connector` handoff. An External consent screen may need Google's
+  verification for these scopes.
 
 To keep an agent from sending or deleting, set `readOnly: true` on the Gmail
 connection or list only the tools it may use in its pool; see
