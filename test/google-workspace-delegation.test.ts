@@ -2,6 +2,7 @@ import { NODE, WORKERS } from "./fixtures/runtime-tags.js";
 import { docs } from "../src/providers/docs/index.js";
 import { drive } from "../src/providers/drive/index.js";
 import { forms } from "../src/providers/forms/index.js";
+import { meet } from "../src/providers/meet/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { slides } from "../src/providers/slides/index.js";
 // Google Workspace domain-wide delegation, the layer every Workspace product
@@ -67,6 +68,7 @@ import { DOCS_SCOPES } from "../src/providers/docs/index.js";
 import { SHEETS_SCOPES } from "../src/providers/sheets/index.js";
 import { SLIDES_SCOPES } from "../src/providers/slides/index.js";
 import { FORMS_SCOPES } from "../src/providers/forms/index.js";
+import { MEET_SCOPES } from "../src/providers/meet/index.js";
 import { identityStorageKey } from "../src/identity.js";
 import { workspaceSubjectOf } from "../src/workspace-subject.js";
 import {
@@ -1780,6 +1782,7 @@ describe("Workspace served classification on unauthorized requests", () => {
     ["forms", forms, "create_form", { title: "Example" }],
     ["sheets", sheets, "create_spreadsheet", { title: "Example" }],
     ["slides", slides, "create_presentation", { title: "Example" }],
+    ["meet", meet, "create_space", { accessType: "TRUSTED" }],
   ] as const)(
     "INV-9: %s preserves the write's authorization verdict and unknown outcome through recovery advice",
     NODE,
@@ -2773,6 +2776,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     ["sheets", sheets, SHEETS_SCOPES, "https://sheets.googleapis.com"],
     ["slides", slides, SLIDES_SCOPES, "https://slides.googleapis.com"],
     ["forms", forms, FORMS_SCOPES, "https://forms.googleapis.com"],
+    ["meet", meet, MEET_SCOPES, "https://meet.googleapis.com"],
   ] as const;
   const unauthorized = () =>
     Response.json({ error: { code: 401, message: "Invalid Credentials", status: "UNAUTHENTICATED" } }, { status: 401 });

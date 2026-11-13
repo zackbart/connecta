@@ -387,6 +387,7 @@ describe("a read-only connection is not served its write rules (decision 0011, G
     ["slides", "## Edit at the version you read"],
     ["sheets", "## Edit and reconcile"],
     ["forms", "## Editing without losing structure"],
+    ["meet", "## Creating and changing spaces"],
     ["gmail", "## Draft recovery"],
     ["tithely", "## Writes"],
     ["planning-center", "deleting a\nprofile is permanent"],

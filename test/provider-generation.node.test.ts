@@ -823,9 +823,23 @@ describe("OpenAPI operation index generation", () => {
           "$ref",
         );
       }
+      if (pin.provider === "meet") {
+        // A reserved `{+name}` resource name splits into its flatPath segments,
+        // without the whole name's pattern on any one segment.
+        expect(index.resolve("GET", "/conferenceRecords/c1/participants/p1")).toMatchObject({
+          op: { operationId: "meet.conferenceRecords.participants.get" },
+          params: { conferenceRecordsId: "c1", participantsId: "p1" },
+        });
+        expect(index.resolve("POST", "/spaces/s1:endActiveConference").op.operationId).toBe(
+          "meet.spaces.endActiveConference",
+        );
+        const segment = normalized.paths["/spaces/{spacesId}"].get.parameters.find((p: any) => p.in === "path");
+        expect(segment).toMatchObject({ name: "spacesId", required: true, schema: { type: "string" } });
+        expect(segment.schema).not.toHaveProperty("pattern");
+      }
       expect(JSON.stringify(normalized)).toBe(JSON.stringify(normalizeDiscovery(JSON.parse(JSON.stringify(original)))));
     }
-    expect(operations).toBe(178);
+    expect(operations).toBe(pins.reduce((total: number, pin: { methods: number }) => total + pin.methods, 0));
     expect(requiredAnnotations).toBeGreaterThan(10);
     const data = buildOperationIndex(document, { ...source, options: { depth: 2, descriptions: 40 } });
     expect(data.fields).toBeUndefined();

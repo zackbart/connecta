@@ -38,6 +38,7 @@ if (!selected) {
       sheets: ["get_spreadsheet", { spreadsheetId: "sheets1" }],
       slides: ["get_presentation", { presentationId: "slides1", limit: 1, maxCharsPerSlide: 10 }],
       forms: ["get_form", { formId: "forms1" }],
+      meet: ["get_space", { space: "spaces/space1" }],
     } as const
   )[product];
   const context = {

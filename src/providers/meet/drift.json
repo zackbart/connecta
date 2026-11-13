@@ -1,0 +1,269 @@
+{
+  "version": 2,
+  "provider": "meet",
+  "generated": {
+    "operations": [
+      "GET /v2/conferenceRecords",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/participants",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/participants/{participantsId}",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/participants/{participantsId}/participantSessions",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/participants/{participantsId}/participantSessions/{participantSessionsId}",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/recordings",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/recordings/{recordingsId}",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/smartNotes",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/smartNotes/{smartNotesId}",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/transcripts",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/transcripts/{transcriptsId}",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/transcripts/{transcriptsId}/entries",
+      "GET /v2/conferenceRecords/{conferenceRecordsId}/transcripts/{transcriptsId}/entries/{entriesId}",
+      "GET /v2/spaces/{spacesId}",
+      "PATCH /v2/spaces/{spacesId}",
+      "POST /v2/spaces",
+      "POST /v2/spaces/{spacesId}:endActiveConference"
+    ],
+    "evidence": {
+      "discovery.document.json": "sha256:e9dbdd6710a8e4499775b173213fb30a59a8e7465edb7461a167ed51503e49cc",
+      "discovery.json": "sha256:65d5c1d71a434cdc1b80aef9ffee11e7f2d02f4ff4355bee42b4d640e860745d",
+      "openapi.json": "sha256:54efa2b298343aff94b7410b977f5bf711f945f81c708e7dd4c08c203bab7864",
+      "value-safety.json": "sha256:276e5672900a163e35c75fc0252439f496906a9d620843d9f59dba82cf2cbc11"
+    }
+  },
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://meet.googleapis.com/$discovery/rest?version=v2",
+        "format": "google-discovery",
+        "pin": "discovery.json"
+      },
+      "scopes": [
+        "https://www.googleapis.com/auth/meetings.space.created",
+        "https://www.googleapis.com/auth/meetings.space.readonly",
+        "https://www.googleapis.com/auth/meetings.space.settings"
+      ],
+      "endpoints": [
+        {
+          "operation": "POST /v2/spaces",
+          "specRevision": "20261109",
+          "contract": "sha256:fed99110636c99f98da85a4a90845c2e443753959ef4330d7cd0e1060f5ae7b9"
+        },
+        {
+          "operation": "GET /v2/spaces/{spacesId}",
+          "specRevision": "20261109",
+          "contract": "sha256:4ea0e0687fcce8cf61de5aaf634917fd9d8365434223cd74ce9f33a8e4a050aa"
+        },
+        {
+          "operation": "PATCH /v2/spaces/{spacesId}",
+          "specRevision": "20261109",
+          "contract": "sha256:7e79917706e32a64145969cc1e556e74fad88379c26ecaf50a59626d1428d9c7"
+        },
+        {
+          "operation": "POST /v2/spaces/{spacesId}:endActiveConference",
+          "specRevision": "20261109",
+          "contract": "sha256:6474fa0d49dc99db46659cdeb8fd5895518e58ba2f5e68ad2a73ec6f2be79166"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords",
+          "specRevision": "20261109",
+          "contract": "sha256:2b82fdf7091e5401cce539b5dec02292a791a1435c627bf6741b118c70942009"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}",
+          "specRevision": "20261109",
+          "contract": "sha256:0556106bf4e15c78ee2485f77a53ecfa0b06a584fff24da8aecb4dde59f0e340"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/participants",
+          "specRevision": "20261109",
+          "contract": "sha256:b8177864a6c7686d76aa65fc52cecb6fa282f8dbef142c51783cfb0543812a27"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/participants/{participantsId}",
+          "specRevision": "20261109",
+          "contract": "sha256:c35dc7800c24adb75585b465ad94de10b10c83ec1ef19e1b6625c087013585b6"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/participants/{participantsId}/participantSessions",
+          "specRevision": "20261109",
+          "contract": "sha256:0028de025190c9906201484a4ac1779a3ab5ed64cd75fbcd3aeae239ebe1064f"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/participants/{participantsId}/participantSessions/{participantSessionsId}",
+          "specRevision": "20261109",
+          "contract": "sha256:b8249f8d55cf29727d687a760372b085fd102ef2aeaab55eb208bd8ec4015781"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/recordings",
+          "specRevision": "20261109",
+          "contract": "sha256:363282629d90aec1a7af90559e6010a6f3ed2df5a19d61ce11337058ff582bfd"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/recordings/{recordingsId}",
+          "specRevision": "20261109",
+          "contract": "sha256:189f266dc12e59e6a2daaf94be7d6aad022706920e6acdae68b68ef1c1cc6456"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/transcripts",
+          "specRevision": "20261109",
+          "contract": "sha256:ee8e11560cf8fabeab7ab711cf01b452b98f8f563e674ad3ad10ad6c4403cc4e"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/transcripts/{transcriptsId}",
+          "specRevision": "20261109",
+          "contract": "sha256:af53ae559108bdece6d67e66d43ff808407b6f1f2f7e4c6c5b3038b87bd88599"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/transcripts/{transcriptsId}/entries",
+          "specRevision": "20261109",
+          "contract": "sha256:49231bf44e2f38844904bea46a61f06a9e02931d3e045bc02baf7b9733d1cfa8"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/transcripts/{transcriptsId}/entries/{entriesId}",
+          "specRevision": "20261109",
+          "contract": "sha256:6f35d92b024b30c8ed128e208fc00a41e67d702050e6dd44aa1d5661ae6dffec"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/smartNotes",
+          "specRevision": "20261109",
+          "contract": "sha256:65fe83ff4cbb32544e07b2a89d52cae09cc499ab8e2c71e3a52a90e164f9d825"
+        },
+        {
+          "operation": "GET /v2/conferenceRecords/{conferenceRecordsId}/smartNotes/{smartNotesId}",
+          "specRevision": "20261109",
+          "contract": "sha256:1db1e49474e09e272d04a98830fbd8250973058ddddeb424698a8c20506579f5"
+        }
+      ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/workspace/meet/api/guides/authenticate-authorize",
+      "evidence": {
+        "discoveryRevision": "20261109",
+        "methodsByScope": {
+          "meetings.space.created": [
+            "meet.conferenceRecords.get",
+            "meet.conferenceRecords.list",
+            "meet.conferenceRecords.participants.get",
+            "meet.conferenceRecords.participants.list",
+            "meet.conferenceRecords.participants.participantSessions.get",
+            "meet.conferenceRecords.participants.participantSessions.list",
+            "meet.conferenceRecords.recordings.get",
+            "meet.conferenceRecords.recordings.list",
+            "meet.conferenceRecords.smartNotes.get",
+            "meet.conferenceRecords.smartNotes.list",
+            "meet.conferenceRecords.transcripts.entries.get",
+            "meet.conferenceRecords.transcripts.entries.list",
+            "meet.conferenceRecords.transcripts.get",
+            "meet.conferenceRecords.transcripts.list",
+            "meet.spaces.create",
+            "meet.spaces.endActiveConference",
+            "meet.spaces.get",
+            "meet.spaces.members.batchUpdate",
+            "meet.spaces.members.create",
+            "meet.spaces.members.delete",
+            "meet.spaces.members.get",
+            "meet.spaces.members.list",
+            "meet.spaces.members.patch",
+            "meet.spaces.patch"
+          ],
+          "meetings.space.readonly": [
+            "meet.conferenceRecords.get",
+            "meet.conferenceRecords.list",
+            "meet.conferenceRecords.participants.get",
+            "meet.conferenceRecords.participants.list",
+            "meet.conferenceRecords.participants.participantSessions.get",
+            "meet.conferenceRecords.participants.participantSessions.list",
+            "meet.conferenceRecords.recordings.get",
+            "meet.conferenceRecords.recordings.list",
+            "meet.conferenceRecords.smartNotes.get",
+            "meet.conferenceRecords.smartNotes.list",
+            "meet.conferenceRecords.transcripts.entries.get",
+            "meet.conferenceRecords.transcripts.entries.list",
+            "meet.conferenceRecords.transcripts.get",
+            "meet.conferenceRecords.transcripts.list",
+            "meet.spaces.get",
+            "meet.spaces.members.get",
+            "meet.spaces.members.list"
+          ],
+          "meetings.space.settings": [
+            "meet.spaces.get",
+            "meet.spaces.patch"
+          ]
+        },
+        "classification": {
+          "meetings.space.created": "sensitive",
+          "meetings.space.readonly": "sensitive",
+          "meetings.space.settings": "non-sensitive"
+        }
+      },
+      "reason": "Discovery lists which methods accept each scope, but not what each scope reaches: meetings.space.created manages only spaces the requesting app created, meetings.space.readonly reads any space and conference record the user can access, and meetings.space.settings edits the settings of the user's own spaces. Compare each scope's description and classification on the page, and the per-method scope lists in the pinned Discovery document, with this record.",
+      "lastVerified": "2026-11-13"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/workspace/meet/api/guides/meeting-spaces-configuration",
+      "evidence": {
+        "organizerOnly": [
+          "artifactConfig",
+          "moderation"
+        ],
+        "moderationRestrictionsApplyWhen": "moderation ON",
+        "defaultAccessType": "the user's default access settings",
+        "artifactSettingsScope": "https://www.googleapis.com/auth/meetings.space.settings"
+      },
+      "reason": "Who may set each space setting, and when restrictions apply, is published only as prose. Confirm organizers (not co-hosts) alone set auto recording, transcripts and smart notes; moderation restrictions apply only while moderation is on; and the scope named for artifact settings. Also confirm the reference still marks no Meet method or field as Developer Preview; a newly gated capability needs documentation before it is claimed.",
+      "lastVerified": "2026-11-13"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/identity/protocols/oauth2/web-server",
+      "evidence": {
+        "authorizationEndpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "tokenEndpoint": "https://oauth2.googleapis.com/token",
+        "tokenEndpointAuthMethod": "client_secret_post",
+        "pkce": "S256",
+        "scopes": [
+          "https://www.googleapis.com/auth/meetings.space.created",
+          "https://www.googleapis.com/auth/meetings.space.readonly",
+          "https://www.googleapis.com/auth/meetings.space.settings"
+        ],
+        "revocationEndpoint": "not configured: https://oauth2.googleapis.com/revoke",
+        "revocationSource": "https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke"
+      },
+      "reason": "OAuth mode's authorization-code grant against Google's web-server flow has no machine-readable contract. Compare the authorization and token endpoints, body client authentication, S256 PKCE support and the requested scopes with the page; confirm revocation still ends every grant the person gave the Google Cloud project, including its other OAuth clients, which is why no revocation endpoint is configured.",
+      "lastVerified": "2026-11-12"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/identity/openid-connect/openid-connect",
+      "evidence": {
+        "scopes": [
+          "openid",
+          "email"
+        ],
+        "jwks": "https://www.googleapis.com/oauth2/v3/certs",
+        "issuers": [
+          "https://accounts.google.com",
+          "accounts.google.com"
+        ],
+        "audience": "the OAuth client id",
+        "signature": "RS256",
+        "claims": [
+          "email",
+          "email_verified",
+          "hd"
+        ],
+        "authorizationParams": {
+          "prompt": "select_account consent"
+        }
+      },
+      "reason": "OAuth mode's accounts restriction reads the signed-in account from the ID token in Google's token response, and Google publishes that contract only as prose. Compare the JWKS URL, the two issuer spellings, aud as the client id, RS256 signing, email_verified, and hd as the claim that attests a Google Workspace domain (absent for consumer accounts), and confirm prompt still accepts space-delimited select_account and consent.",
+      "lastVerified": "2026-11-12"
+    }
+  ]
+}

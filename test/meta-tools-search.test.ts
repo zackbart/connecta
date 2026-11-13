@@ -751,7 +751,7 @@ describe("search_tools", () => {
     ];
     const toolCount = (await Promise.all(connectors.map((connector) => connector.listTools({} as never)))).flat()
       .length;
-    expect(toolCount).toBe(494);
+    expect(toolCount).toBe(538);
     const cloned = textOf(
       await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query, limit: MAX_SEARCH_LIMIT }),
     ) as SearchResult;

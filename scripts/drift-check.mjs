@@ -311,7 +311,15 @@ async function loadSpecification(provider, manifest, options) {
       );
     const bytes = await readFile(resolvePath(directory, document));
     if (sha256(bytes) !== pin.digest) throw new EvidenceError("Supplemental document digest does not match its pin");
-    return { source: pin.documentation, document: validateOpenApi(provider, JSON.parse(bytes.toString("utf8"))) };
+    const parsed = JSON.parse(bytes.toString("utf8"));
+    return {
+      source: pin.documentation,
+      // A pinned Discovery original reads as Discovery, exactly as a live one does.
+      document:
+        manifest.specification.format === "google-discovery"
+          ? discoveryDocument(provider, parsed)
+          : validateOpenApi(provider, parsed),
+    };
   }
   const source = options.specSources.get(provider) ?? manifest.specification.url;
   // A provider documented page by page reads a page base, URL or directory; a

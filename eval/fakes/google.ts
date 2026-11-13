@@ -5,7 +5,7 @@ import { routeFakeVendor } from "./transport.js";
 import type { ConnectorSpec } from "./world.js";
 import type { Ledger, CallRecord } from "./service.js";
 
-export const GOOGLE_PRODUCTS = ["gmail", "drive", "docs", "sheets", "slides", "forms"] as const;
+export const GOOGLE_PRODUCTS = ["gmail", "drive", "docs", "sheets", "slides", "forms", "meet"] as const;
 export type GoogleProduct = (typeof GOOGLE_PRODUCTS)[number];
 type Row = Record<string, any>;
 export const ALICE = "alice@example.com",
@@ -19,6 +19,7 @@ const SCOPES: Record<GoogleProduct, string[]> = {
   sheets: ["spreadsheets"],
   slides: ["presentations"],
   forms: ["forms.body", "forms.responses.readonly"],
+  meet: ["meetings.space.created", "meetings.space.readonly", "meetings.space.settings"],
 };
 const HOSTS = new Set([
   "gmail.googleapis.com",
@@ -27,6 +28,7 @@ const HOSTS = new Set([
   "sheets.googleapis.com",
   "slides.googleapis.com",
   "forms.googleapis.com",
+  "meet.googleapis.com",
   "oauth2.googleapis.com",
 ]);
 export interface GoogleOptions {
@@ -164,10 +166,112 @@ interface GoogleAccount {
   presentation: Row;
   form: Row;
   responses: Row[];
+  meet: MeetState;
   values: any[][];
   created: Row[];
   uploads: Row[];
   mutations: Row[];
+}
+interface MeetState {
+  space: Row;
+  members: Row[];
+  conferences: Row[];
+  participants: Row[];
+  entries: Row[];
+  recordings: Row[];
+  transcripts: Row[];
+}
+/** One Meet space with three conferences, attendance and artifacts, plus another space's conference. */
+function meetState(): MeetState {
+  const conference = "conferenceRecords/conf1";
+  return {
+    space: {
+      name: "spaces/space1",
+      meetingCode: "abc-mnop-xyz",
+      meetingUri: "https://meet.google.com/abc-mnop-xyz",
+      config: { accessType: "TRUSTED", entryPointAccess: "ALL", moderation: "OFF" },
+      activeConference: { conferenceRecord: "conferenceRecords/conf3" },
+    },
+    members: [{ name: "spaces/space1/members/member1", email: "reviewer@example.com", role: "COHOST" }],
+    conferences: [
+      ["conf4", "spaces/space2", "2026-10-04T15:00:00Z", "2026-10-04T16:00:00Z"],
+      ["conf3", "spaces/space1", "2026-10-03T15:00:00Z", undefined],
+      ["conf2", "spaces/space1", "2026-10-02T15:00:00Z", "2026-10-02T16:00:00Z"],
+      ["conf1", "spaces/space1", "2026-10-01T15:00:00Z", "2026-10-01T16:00:00Z"],
+    ].map(([id, space, startTime, endTime]) => ({
+      name: `conferenceRecords/${id}`,
+      space,
+      startTime,
+      ...(endTime ? { endTime, expireTime: "2026-11-01T16:00:00Z" } : {}),
+    })),
+    participants: [
+      { id: "p1", signedinUser: { user: "users/101", displayName: "Alice Example" } },
+      { id: "p2", anonymousUser: { displayName: "Guest" } },
+      { id: "p3", signedinUser: { user: "users/102", displayName: "Reviewer Example" } },
+      { id: "p4", phoneUser: { displayName: "+1 ***-***-0123" } },
+    ].map(({ id, ...who }) => ({
+      name: `${conference}/participants/${id}`,
+      earliestStartTime: "2026-10-01T15:00:00Z",
+      latestEndTime: "2026-10-01T16:00:00Z",
+      ...who,
+    })),
+    entries: Array.from({ length: 9 }, (_, i) => ({
+      name: `${conference}/transcripts/t1/entries/e${i + 1}`,
+      participant: `${conference}/participants/${i % 2 ? "p3" : "p1"}`,
+      text: `Review point ${i + 1}.`,
+      languageCode: "en-US",
+      startTime: `2026-10-01T15:0${i}:00Z`,
+      endTime: `2026-10-01T15:0${i}:30Z`,
+    })),
+    recordings: [
+      {
+        name: `${conference}/recordings/rec1`,
+        state: "FILE_GENERATED",
+        driveDestination: { file: "recordingfile1", exportUri: "https://drive.google.com/file/d/recordingfile1/view" },
+      },
+    ],
+    transcripts: [
+      {
+        name: `${conference}/transcripts/t1`,
+        state: "FILE_GENERATED",
+        docsDestination: {
+          document: "transcriptdoc1",
+          exportUri: "https://docs.google.com/document/d/transcriptdoc1/view",
+        },
+      },
+    ],
+  };
+}
+/** Meet's documented filter grammar, as far as the fake serves it: AND of simple comparisons. */
+function meetFilter(filter: unknown): (row: Row) => boolean {
+  if (typeof filter !== "string" || !filter) return () => true;
+  const terms = filter.split(" AND ").map((term) => {
+    if (/^\s*end_time IS NULL\s*$/.test(term)) return (row: Row) => row.endTime === undefined;
+    if (/^\s*latest_end_time IS NULL\s*$/.test(term)) return (row: Row) => row.latestEndTime === undefined;
+    const match = /^\s*(space\.name|space\.meeting_code|start_time)\s*(=|>=|<=|<|>)\s*"([^"]*)"\s*$/.exec(term);
+    if (!match) throw new Error(`Unregistered Meet filter: ${term}`);
+    const [, field, op, value] = match;
+    return (row: Row) => {
+      const actual =
+        field === "space.name"
+          ? row.space
+          : field === "start_time"
+            ? row.startTime
+            : row.space === "spaces/space1"
+              ? "abc-mnop-xyz"
+              : "zzz-zzzz-zzz";
+      return op === "="
+        ? actual === value
+        : op === ">="
+          ? actual >= value!
+          : op === "<="
+            ? actual <= value!
+            : op === "<"
+              ? actual < value!
+              : actual > value!;
+    };
+  });
+  return (row) => terms.every((term) => term(row));
 }
 /** Selectors use slash, dotted or nested field-mask spelling. */
 function selectsField(mask: string | undefined, field: string): boolean {
@@ -458,6 +562,7 @@ export function googleState() {
           q2: { questionId: "q2", textAnswers: { answers: [{ value: `Comment ${i + 1}: ${"detail ".repeat(100)}` }] } },
         },
       })),
+      meet: meetState(),
       created: [] as Row[],
       uploads: [] as Row[],
       mutations: [] as Row[],
@@ -790,6 +895,7 @@ export class FakeGoogle {
       sheets: "/v4",
       slides: "/v1",
       forms: "/v1",
+      meet: "/v2",
     }[product];
     if (!url.pathname.startsWith(`${prefix}/`)) throw new Error("Google fake refused destination path");
     const path = decodeURIComponent(url.pathname.slice(prefix.length));
@@ -1299,6 +1405,62 @@ export class FakeGoogle {
         bump(a.form);
         return { replies, writeControl: { requiredRevisionId: a.form.revisionId } };
       }
+    }
+    if (product === "meet") {
+      const m = a.meet;
+      if (method === "GET" && (path === "/spaces/space1" || path === "/spaces/abc-mnop-xyz")) return m.space;
+      if (method === "GET" && path === "/spaces/new-space") return a.created.find((s) => s.name === "spaces/new-space");
+      if (method === "GET" && path === "/spaces/space1/members") return page(m.members, "members");
+      if (method === "POST" && path === "/spaces") {
+        mutate();
+        const space = {
+          name: "spaces/new-space",
+          meetingCode: "new-meet-code",
+          meetingUri: "https://meet.google.com/new-meet-code",
+          config: { accessType: "TRUSTED", entryPointAccess: "ALL", ...structuredClone(body.config ?? {}) },
+        };
+        a.created.push(space);
+        return space;
+      }
+      if (method === "PATCH" && path === "/spaces/space1") {
+        mutate();
+        for (const field of String(query.updateMask ?? "").split(",")) {
+          if (!field.startsWith("config.")) throw new Error(`Unregistered Meet update mask: ${field}`);
+          maskedUpdate(m.space.config, body.config ?? {}, field.slice("config.".length));
+        }
+        return m.space;
+      }
+      if (method === "POST" && path === "/spaces/space1:endActiveConference") {
+        if (!m.space.activeConference) {
+          call.outcome = "tool_error";
+          return Response.json(
+            { error: { code: 400, status: "FAILED_PRECONDITION", message: "No active conference" } },
+            { status: 400 },
+          );
+        }
+        mutate();
+        const ended = m.conferences.find((c) => c.name === m.space.activeConference.conferenceRecord)!;
+        ended.endTime = "2026-10-03T16:00:00Z";
+        delete m.space.activeConference;
+        return {};
+      }
+      if (method === "GET" && path === "/conferenceRecords")
+        return page(m.conferences.filter(meetFilter(query.filter)), "conferenceRecords");
+      if (method === "GET" && path.startsWith("/conferenceRecords/") && path.split("/").length === 3)
+        return m.conferences.find((c) => `/${c.name}` === path);
+      if (method === "GET" && path === "/conferenceRecords/conf1/participants")
+        return page(m.participants.filter(meetFilter(query.filter)), "participants");
+      if (method === "GET" && path === "/conferenceRecords/conf1/recordings") return page(m.recordings, "recordings");
+      if (method === "GET" && path === "/conferenceRecords/conf1/transcripts")
+        return page(m.transcripts, "transcripts");
+      if (method === "GET" && path === "/conferenceRecords/conf1/transcripts/t1/entries")
+        return page(m.entries, "transcriptEntries");
+      if (method === "GET" && /^\/conferenceRecords\/conf1\/(participants|recordings|transcripts)\/[^/]+$/.test(path))
+        return [...m.participants, ...m.recordings, ...m.transcripts].find((row) => `/${row.name}` === path);
+      if (method === "GET" && path.startsWith("/conferenceRecords/conf1/transcripts/t1/entries/"))
+        return m.entries.find((row) => `/${row.name}` === path);
+      if (method === "GET" && path.startsWith("/conferenceRecords/"))
+        return page([], path.endsWith("/smartNotes") ? "smartNotes" : path.split("/").at(-1)!);
     }
     throw new Error(`Unregistered Google fake route: ${product} ${method} ${path}`);
   }

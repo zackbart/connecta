@@ -156,12 +156,14 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
         `google.${subject}`,
       );
       requireEvidence(
-        account?.document && account?.spreadsheet && account?.presentation && account?.form,
+        account?.document && account?.spreadsheet && account?.presentation && account?.form && account?.meet,
         `google.${subject}.resources`,
       );
     }
     Object.assign(world.google.state, structuredClone(state.google));
-  } else if (state.calls.some((c) => ["gmail", "drive", "docs", "sheets", "slides", "forms"].includes(c.service)))
+  } else if (
+    state.calls.some((c) => ["gmail", "drive", "docs", "sheets", "slides", "forms", "meet"].includes(c.service))
+  )
     throw new Error("Incomplete saved grading evidence: google");
   if (state.rest) {
     for (const key of ["refunds", "dns", "purges", "envs"] as const)

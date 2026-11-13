@@ -1,0 +1,69 @@
+{
+  "format": 5,
+  "digest": "sha256:e9dbdd6710a8e4499775b173213fb30a59a8e7465edb7461a167ed51503e49cc",
+  "options": {},
+  "candidates": {
+    "GET /conferenceRecords": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /conferenceRecords/{conferenceRecordsId}/participants": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /conferenceRecords/{conferenceRecordsId}/participants/{participantsId}/participantSessions": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /conferenceRecords/{conferenceRecordsId}/recordings": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /conferenceRecords/{conferenceRecordsId}/smartNotes": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /conferenceRecords/{conferenceRecordsId}/transcripts": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "GET /conferenceRecords/{conferenceRecordsId}/transcripts/{transcriptsId}/entries": {
+      "fields": ["nextPageToken"],
+      "named": false
+    },
+    "POST /spaces": {
+      "fields": [
+        "config.entryPointAccess",
+        "gatewaySipAccess",
+        "gatewaySipAccess[].sipAccessCode",
+        "meetingCode",
+        "meetingUri"
+      ],
+      "named": false
+    },
+    "GET /spaces/{spacesId}": {
+      "fields": [
+        "config.entryPointAccess",
+        "gatewaySipAccess",
+        "gatewaySipAccess[].sipAccessCode",
+        "meetingCode",
+        "meetingUri"
+      ],
+      "named": false
+    },
+    "PATCH /spaces/{spacesId}": {
+      "fields": [
+        "config.entryPointAccess",
+        "gatewaySipAccess",
+        "gatewaySipAccess[].sipAccessCode",
+        "meetingCode",
+        "meetingUri"
+      ],
+      "named": false
+    },
+    "GET /spaces/{spacesId}/members": {
+      "fields": ["nextPageToken"],
+      "named": false
+    }
+  }
+}

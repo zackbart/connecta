@@ -111,6 +111,10 @@
       "types": "./dist/providers/granola/index.d.ts",
       "import": "./dist/providers/granola/index.js"
     },
+    "./providers/meet": {
+      "types": "./dist/providers/meet/index.d.ts",
+      "import": "./dist/providers/meet/index.js"
+    },
     "./providers/overflow": {
       "types": "./dist/providers/overflow/index.d.ts",
       "import": "./dist/providers/overflow/index.js"
