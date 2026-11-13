@@ -425,6 +425,38 @@ describe("global embedded REST URL policy (#812)", () => {
     expect(withholdEmbeddedUrls(expected)).toBe(expected);
   });
 
+  it.each([
+    "https://help.example/search?keyword=refund&country_code=US",
+    "https://help.example/locations?postcode=SW1A1AA",
+    "https://zoo.example/animals?monkey=capuchin&turkey=wild",
+    "https://blog.example/posts?author=alice&sort=newest#installation",
+    "https://help.example/proxy?url=https%3A%2F%2Fexample.com%2Farticle%3Fkey%3Dpublic",
+    "https://docs.example/a?zip_code=94107&keyboard=us#section=codes",
+  ])("INV-5: keeps an ordinary link whose parameter names only contain a credential word: %s", (link) => {
+    expect(withholdEmbeddedUrls(`see ${link} now`)).toBe(`see ${link} now`);
+    expect(valueSafety({ title: "Vendor", operations: {} }, () => index).redact({ link }, "GET", "/")).toEqual({
+      link,
+    });
+  });
+
+  it.each([
+    ["token", "https://files.example/a?token=PRIVATE"],
+    ["code", "https://app.example/callback?code=PRIVATE&state=s"],
+    ["key", "https://maps.example/js?key=PRIVATE"],
+    ["sig", "https://cdn.example/f.png?sig=PRIVATE"],
+    ["access_token", "https://api.example/me?access_token=PRIVATE"],
+    ["api_key", "https://api.example/v1?api_key=PRIVATE"],
+    ["apiKey", "https://api.example/v1?apiKey=PRIVATE"],
+    ["apikey", "https://api.example/v1?apikey=PRIVATE"],
+    ["x-api-key", "https://api.example/v1?x-api-key=PRIVATE"],
+    ["auth_code", "https://app.example/cb?auth_code=PRIVATE"],
+    ["client_secret", "https://app.example/cb?client_secret=PRIVATE"],
+    ["X-Amz-Signature", "https://bucket.example/o?X-Amz-Signature=PRIVATE"],
+    ["fragment access_token", "https://app.example/cb#access_token=PRIVATE&state=s"],
+  ])("INV-5: withholds the whole-token credential parameter %s", (_, link) => {
+    expect(withholdEmbeddedUrls(`see ${link} now`)).not.toContain("PRIVATE");
+  });
+
   it("INV-5: applies globally through arrays and projections' source objects without changing the default vendor policy", () => {
     const input = {
       description: "download https://files.example/a?token=PRIVATE",

@@ -150,9 +150,24 @@ const ENV_CONTAINERS = ["env", "envs", "envvar", "envvars", "newenvvar", "oldenv
 const ENV_VALUE_FIELDS = ["value", "vsmValue", "legacyValue", "decryptedValue"];
 /** The fields of a labelled or typed secret record that hold what the label names. */
 const LABELLED_VALUE_FIELDS = [...ENV_VALUE_FIELDS, "args", "text"];
-/** Query parameters that carry a credential in a URL: either rule. */
-const URL_PARAM_CONTAINS = /token|secret|password|passwd|signature|^sig$|key|auth|code|jwt|credential|bypass/i;
-const URL_PARAM_SUFFIX = /(token|secret|password|passphrase|key|signature|sig|credential|auth|authorization|jwt)$/;
+const URL_PARAM_STRONG = /token|secret|password|passwd|passphrase|signature|jwt|credential|bypass|authorization/i;
+const URL_PARAM_WEAK = /key|auth|code|sig$/;
+const URL_PARAM_ORDINARY =
+  /keyword|keyboard|keynote|keyframe|monkey|turkey|donkey|hockey|jockey|whiskey|author|countrycode|postcode|postalcode|zipcode|areacode|currencycode|languagecode|localecode|statuscode|errorcode|barcode|unicode|geocode|encode|decode/g;
+
+function credentialParameter(name: string): boolean {
+  if (URL_PARAM_STRONG.test(name) || /^sig$/i.test(name)) return true;
+  return URL_PARAM_WEAK.test(name.toLowerCase().replace(/[_-]/g, "").replace(URL_PARAM_ORDINARY, " "));
+}
+
+function credentialFragment(fragment: string): boolean {
+  if (URL_PARAM_STRONG.test(fragment)) return true;
+  if (!fragment.includes("=")) return /key|code|auth/i.test(fragment);
+  return fragment.split(/[&;]/).some((pair) => {
+    const equals = pair.indexOf("=");
+    return equals > 0 && credentialParameter(pair.slice(pair.lastIndexOf("/", equals) + 1, equals));
+  });
+}
 const URL_SHAPE = /^[a-z][a-z0-9+.-]*:\/\//i;
 /** What makes a string text rather than one whole URL: whitespace, quotes, escapes, entities, Markdown. */
 const TEXT = /[\s<>"'`\\]|&(?:#|[a-z]+;)|\]\(/i;
@@ -428,12 +443,12 @@ function sanitizeUrl(value: string, credentials = true): string {
   }
   // A snapshot of the names: setting a parameter while iterating the live list is unsafe.
   for (const name of credentials ? Array.from(url.searchParams.keys()) : []) {
-    if (URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""))) {
+    if (credentialParameter(name)) {
       url.searchParams.set(name, REDACTED);
       changed = true;
     }
   }
-  if (credentials && url.hash && /token|secret|key|code|auth/i.test(url.hash)) {
+  if (credentials && url.hash && credentialFragment(decodeLinkText(url.hash.slice(1)))) {
     url.hash = "";
     changed = true;
   }
@@ -812,7 +827,7 @@ function credentialQuery(text: string): boolean {
   if (fragment >= 0) {
     const words = decodeLinkText(decoded.slice(fragment + 1));
     // A fragment redaction altered cannot be read.
-    if (/token|secret|key|code|auth/i.test(words) || alteredFragment(words)) return true;
+    if (credentialFragment(words) || alteredFragment(words)) return true;
   }
   const query = fragment < 0 ? decoded : decoded.slice(0, fragment);
   for (let at = query[0] === "?" ? 1 : 0; at < query.length;) {
@@ -826,7 +841,7 @@ function credentialQuery(text: string): boolean {
     if (pair !== REDACTED && redactionAltered(equals < 0 ? pair : pair.slice(0, equals))) return true;
     if (equals < 0) continue;
     const name = pair.slice(0, equals);
-    if (!URL_PARAM_CONTAINS.test(name) && !URL_PARAM_SUFFIX.test(normalizedName(name))) continue;
+    if (!credentialParameter(name)) continue;
     if (pair.slice(equals + 1) !== REDACTED) return true;
   }
   return false;

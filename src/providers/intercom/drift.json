@@ -1,0 +1,1757 @@
+{
+  "version": 2,
+  "provider": "intercom",
+  "generated": {
+    "operations": [
+      "DELETE /admins/remove",
+      "DELETE /ai/content_import_sources/{source_id}",
+      "DELETE /ai/external_pages/{external_page_id}/tags/{id}",
+      "DELETE /ai/external_pages/{page_id}",
+      "DELETE /articles/{article_id}",
+      "DELETE /articles/{article_id}/tags/{id}",
+      "DELETE /audiences/{id}",
+      "DELETE /companies/{company_id}",
+      "DELETE /contacts/{contact_id}",
+      "DELETE /contacts/{contact_id}/companies/{company_id}",
+      "DELETE /contacts/{contact_id}/granted_companies/{company_id}",
+      "DELETE /contacts/{contact_id}/subscriptions/{subscription_id}",
+      "DELETE /contacts/{contact_id}/tags/{tag_id}",
+      "DELETE /content_snippets/{content_snippet_id}/tags/{id}",
+      "DELETE /content_snippets/{id}",
+      "DELETE /conversations/attributes/{id}",
+      "DELETE /conversations/attributes/{id}/options/{option_id}",
+      "DELETE /conversations/stream/token",
+      "DELETE /conversations/{conversation_id}",
+      "DELETE /conversations/{conversation_id}/customers/{contact_id}",
+      "DELETE /conversations/{conversation_id}/tags/{tag_id}",
+      "DELETE /custom_object_instances/{custom_object_type_identifier}",
+      "DELETE /custom_object_instances/{custom_object_type_identifier}/{custom_object_instance_id}",
+      "DELETE /data_connectors/{id}",
+      "DELETE /dynamic_contents/{id}",
+      "DELETE /folders/{id}",
+      "DELETE /help_center/collections/{collection_id}",
+      "DELETE /help_center/help_centers/{help_center_id}/redirects/{id}",
+      "DELETE /internal_articles/{internal_article_id}",
+      "DELETE /internal_articles/{internal_article_id}/tags/{id}",
+      "DELETE /news/news_items/{news_item_id}",
+      "DELETE /notes/{note_id}",
+      "DELETE /office_hours_schedules/{id}",
+      "DELETE /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions/{id}",
+      "DELETE /tags/{tag_id}",
+      "DELETE /tickets/{ticket_id}",
+      "DELETE /tickets/{ticket_id}/linked_conversations/{id}",
+      "DELETE /tickets/{ticket_id}/tags/{tag_id}",
+      "GET /admins",
+      "GET /admins/activity_log_event_types",
+      "GET /admins/activity_logs",
+      "GET /admins/{admin_id}",
+      "GET /ai/content_import_sources",
+      "GET /ai/content_import_sources/{source_id}",
+      "GET /ai/external_pages",
+      "GET /ai/external_pages/{page_id}",
+      "GET /articles",
+      "GET /articles/search",
+      "GET /articles/{article_id}",
+      "GET /articles/{article_id}/versions",
+      "GET /articles/{article_id}/versions/{id}",
+      "GET /articles/{id}/draft",
+      "GET /audiences",
+      "GET /audiences/{id}",
+      "GET /auth_tokens",
+      "GET /auth_tokens/{id}",
+      "GET /away_status_reasons",
+      "GET /brands",
+      "GET /brands/{id}",
+      "GET /calls",
+      "GET /calls/{call_id}",
+      "GET /calls/{call_id}/recording",
+      "GET /calls/{id}/transcript",
+      "GET /companies",
+      "GET /companies/scroll",
+      "GET /companies/{company_id}",
+      "GET /companies/{company_id}/contacts",
+      "GET /companies/{company_id}/notes",
+      "GET /companies/{company_id}/segments",
+      "GET /contacts",
+      "GET /contacts/activities",
+      "GET /contacts/bulk/{id}",
+      "GET /contacts/deleted",
+      "GET /contacts/find_by_external_id/{external_id}",
+      "GET /contacts/{contact_id}",
+      "GET /contacts/{contact_id}/companies",
+      "GET /contacts/{contact_id}/granted_companies",
+      "GET /contacts/{contact_id}/notes",
+      "GET /contacts/{contact_id}/segments",
+      "GET /contacts/{contact_id}/subscriptions",
+      "GET /contacts/{contact_id}/tags",
+      "GET /contacts/{id}/banners",
+      "GET /contacts/{id}/merge_histories",
+      "GET /content/search",
+      "GET /content_snippets",
+      "GET /content_snippets/{id}",
+      "GET /conversations",
+      "GET /conversations/attributes",
+      "GET /conversations/attributes/{id}",
+      "GET /conversations/deleted",
+      "GET /conversations/{conversation_id}",
+      "GET /conversations/{id}/handling_events",
+      "GET /conversations/{id}/hitl_events",
+      "GET /conversations/{id}/side_conversations",
+      "GET /conversations/{id}/team_handling_segments",
+      "GET /custom_object_instances/{custom_object_type_identifier}",
+      "GET /custom_object_instances/{custom_object_type_identifier}/{custom_object_instance_id}",
+      "GET /data_attributes",
+      "GET /data_connectors",
+      "GET /data_connectors/{data_connector_id}/execution_results",
+      "GET /data_connectors/{data_connector_id}/execution_results/{id}",
+      "GET /data_connectors/{id}",
+      "GET /data_connectors/{id}/versions",
+      "GET /data_connectors/{id}/versions/{version_id}",
+      "GET /download/content/data/{job_identifier}",
+      "GET /download/reporting_data/{job_identifier}",
+      "GET /dynamic_contents",
+      "GET /dynamic_contents/{id}",
+      "GET /emails",
+      "GET /emails/{id}",
+      "GET /events",
+      "GET /export/content/data/{job_identifier}",
+      "GET /export/reporting_data/get_datasets",
+      "GET /export/reporting_data/{job_identifier}",
+      "GET /export/workflows/{id}",
+      "GET /fin_voice/collect/{id}",
+      "GET /fin_voice/conversation/{conversation_id}",
+      "GET /fin_voice/external_id/{external_id}",
+      "GET /fin_voice/phone_number/{phone_number}",
+      "GET /folders",
+      "GET /folders/{id}",
+      "GET /help_center/collections",
+      "GET /help_center/collections/{collection_id}",
+      "GET /help_center/help_centers",
+      "GET /help_center/help_centers/{help_center_id}",
+      "GET /help_center/help_centers/{help_center_id}/redirects",
+      "GET /help_center/help_centers/{help_center_id}/redirects/{id}",
+      "GET /internal_articles",
+      "GET /internal_articles/search",
+      "GET /internal_articles/{internal_article_id}",
+      "GET /ip_allowlist",
+      "GET /jobs/status/{job_id}",
+      "GET /macros",
+      "GET /macros/{id}",
+      "GET /me",
+      "GET /messages/status",
+      "GET /messages/whatsapp/status",
+      "GET /news/news_items",
+      "GET /news/news_items/{news_item_id}",
+      "GET /news/newsfeeds",
+      "GET /news/newsfeeds/{newsfeed_id}",
+      "GET /news/newsfeeds/{newsfeed_id}/items",
+      "GET /notes/{note_id}",
+      "GET /office_hours_schedules",
+      "GET /office_hours_schedules/{id}",
+      "GET /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions",
+      "GET /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions/{id}",
+      "GET /roles",
+      "GET /roles/{id}",
+      "GET /segments",
+      "GET /segments/{segment_id}",
+      "GET /subscription_types",
+      "GET /subscription_types/{id}",
+      "GET /tags",
+      "GET /tags/{tag_id}",
+      "GET /teams",
+      "GET /teams/{team_id}",
+      "GET /teams/{team_id}/metrics",
+      "GET /ticket_states",
+      "GET /ticket_types",
+      "GET /ticket_types/{ticket_type_id}",
+      "GET /tickets/{ticket_id}",
+      "GET /visitors",
+      "PATCH /auth_tokens/{id}",
+      "PATCH /data_connectors/{id}",
+      "PATCH /data_connectors/{id}/versions/{version_id}",
+      "POST /admins/activity_logs/search",
+      "POST /ai/content_import_sources",
+      "POST /ai/external_pages",
+      "POST /ai/external_pages/{external_page_id}/tags",
+      "POST /articles",
+      "POST /articles/{article_id}/tags",
+      "POST /articles/{id}/draft/publish",
+      "POST /audiences",
+      "POST /auth_tokens",
+      "POST /calls/search",
+      "POST /companies",
+      "POST /companies/list",
+      "POST /companies/search",
+      "POST /companies/{company_id}/notes",
+      "POST /contacts",
+      "POST /contacts/bulk",
+      "POST /contacts/bulk/delete",
+      "POST /contacts/merge",
+      "POST /contacts/merge/preview",
+      "POST /contacts/search",
+      "POST /contacts/{contact_id}/archive",
+      "POST /contacts/{contact_id}/block",
+      "POST /contacts/{contact_id}/companies",
+      "POST /contacts/{contact_id}/notes",
+      "POST /contacts/{contact_id}/subscriptions",
+      "POST /contacts/{contact_id}/tags",
+      "POST /contacts/{contact_id}/unarchive",
+      "POST /contacts/{id}/banners/{view_id}/dismiss",
+      "POST /content/bulk_actions",
+      "POST /content_snippets",
+      "POST /content_snippets/{content_snippet_id}/tags",
+      "POST /conversations",
+      "POST /conversations/attributes",
+      "POST /conversations/attributes/{id}/options",
+      "POST /conversations/redact",
+      "POST /conversations/search",
+      "POST /conversations/stream/token",
+      "POST /conversations/{conversation_id}/convert",
+      "POST /conversations/{conversation_id}/customers",
+      "POST /conversations/{conversation_id}/parts",
+      "POST /conversations/{conversation_id}/rating",
+      "POST /conversations/{conversation_id}/reply",
+      "POST /conversations/{conversation_id}/tags",
+      "POST /conversations/{id}/merge",
+      "POST /custom_object_instances/{custom_object_type_identifier}",
+      "POST /data_attributes",
+      "POST /data_connectors",
+      "POST /dynamic_contents",
+      "POST /ecommerce/connectors/{import_source_id}/catalog",
+      "POST /ecommerce/connectors/{import_source_id}/events",
+      "POST /events",
+      "POST /events/summaries",
+      "POST /export/cancel/{job_identifier}",
+      "POST /export/content/data",
+      "POST /export/reporting_data/enqueue",
+      "POST /fin/ask",
+      "POST /fin/capabilities",
+      "POST /fin/csat",
+      "POST /fin/escalate",
+      "POST /fin/procedures/{procedure_id}/run",
+      "POST /fin/reply",
+      "POST /fin/start",
+      "POST /fin_voice/register",
+      "POST /folders",
+      "POST /help_center/collections",
+      "POST /help_center/help_centers/{help_center_id}/redirects",
+      "POST /internal_articles",
+      "POST /internal_articles/{internal_article_id}/tags",
+      "POST /messages",
+      "POST /news/news_items",
+      "POST /office_hours_schedules",
+      "POST /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions",
+      "POST /phone_call_redirects",
+      "POST /tags",
+      "POST /ticket_types",
+      "POST /ticket_types/{ticket_type_id}/attributes",
+      "POST /tickets",
+      "POST /tickets/enqueue",
+      "POST /tickets/search",
+      "POST /tickets/{ticket_id}/change_type",
+      "POST /tickets/{ticket_id}/linked_conversations",
+      "POST /tickets/{ticket_id}/reply",
+      "POST /tickets/{ticket_id}/tags",
+      "POST /visitors/convert",
+      "PUT /admins/{admin_id}/away",
+      "PUT /ai/content_import_sources/{source_id}",
+      "PUT /ai/external_pages/{page_id}",
+      "PUT /articles/{article_id}",
+      "PUT /articles/{id}/draft",
+      "PUT /audiences/{id}",
+      "PUT /companies/{company_id}",
+      "PUT /contacts/bulk",
+      "PUT /contacts/{contact_id}",
+      "PUT /contacts/{contact_id}/granted_companies",
+      "PUT /content_snippets/{id}",
+      "PUT /conversations/attributes/{id}",
+      "PUT /conversations/attributes/{id}/options/{option_id}",
+      "PUT /conversations/{conversation_id}",
+      "PUT /data_attributes/{data_attribute_id}",
+      "PUT /dynamic_contents/{id}",
+      "PUT /folders/{id}",
+      "PUT /help_center/collections/{collection_id}",
+      "PUT /internal_articles/{internal_article_id}",
+      "PUT /ip_allowlist",
+      "PUT /news/news_items/{news_item_id}",
+      "PUT /office_hours_schedules/{id}",
+      "PUT /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions/{id}",
+      "PUT /ticket_types/{ticket_type_id}",
+      "PUT /ticket_types/{ticket_type_id}/attributes/{attribute_id}",
+      "PUT /tickets/{ticket_id}",
+      "PUT /visitors"
+    ],
+    "evidence": {
+      "openapi.document.json": "sha256:53cfa47bd3a0ec7bca3effdfb2c1b2c58d8fe1ff8f37b282987d0fff69d12ba5",
+      "openapi.json": "sha256:34a6f76d2f94c22cd32e037a51130e3a28c40717b0c1799cf129a63d1d596239",
+      "value-safety.json": "sha256:a807c163f7097bff524fd91b0b7cfae5b61f4a2b689e9b3d576a1925b37347d4"
+    }
+  },
+  "checks": [
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "src/providers/intercom/evidence/openapi.document.json",
+        "documentation": "https://developers.intercom.com/docs/references/rest-api/api.intercom.io"
+      },
+      "endpoints": [
+        {
+          "operation": "GET /admins",
+          "specRevision": "2.18",
+          "contract": "sha256:fdcbc014e15f326b7154d9e4c6dc97f8bf9924c03f20de77d71b1d690583075e"
+        },
+        {
+          "operation": "GET /admins/activity_log_event_types",
+          "specRevision": "2.18",
+          "contract": "sha256:83ea37ed3aed40c123511235e46b9f3e3dc9cd265b90100ef75135c8fdd8c0e4"
+        },
+        {
+          "operation": "GET /admins/activity_logs",
+          "specRevision": "2.18",
+          "contract": "sha256:908426ff0f3bc4d7dc1e1122c3f85da4ead3fd37c9df90a8b823f323c5d4cab7"
+        },
+        {
+          "operation": "POST /admins/activity_logs/search",
+          "specRevision": "2.18",
+          "contract": "sha256:bc9631aa769f0563ed8fd5d1fd591cf1ff41ce1c004c5fb4bdf7c2d8ed27de00"
+        },
+        {
+          "operation": "DELETE /admins/remove",
+          "specRevision": "2.18",
+          "contract": "sha256:07259e10cfc235ea14387321fe0a9ead9adc1c82a930aa9aaa4ff7103796ff21"
+        },
+        {
+          "operation": "GET /admins/{admin_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:6943c64de570ff7f8c4c10db48d281d2185d60037537110c4a65863f8e314de5"
+        },
+        {
+          "operation": "PUT /admins/{admin_id}/away",
+          "specRevision": "2.18",
+          "contract": "sha256:b3e3dde98f2be05f0a457424e2f7d21a25b8a16f68e78c066a3496b26af092c1"
+        },
+        {
+          "operation": "GET /ai/content_import_sources",
+          "specRevision": "2.18",
+          "contract": "sha256:374bfa0c84dc75bf29e9a9aa6929d43ee545a7407e551b9fbf4ea4f5f7492b9a"
+        },
+        {
+          "operation": "POST /ai/content_import_sources",
+          "specRevision": "2.18",
+          "contract": "sha256:0692e189dd765bead1d4f3a3efeda16911808bd73640c1b7aa7b2a703c86ffab"
+        },
+        {
+          "operation": "GET /ai/content_import_sources/{source_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:e7e5e8db164ded7bec7fba916ef76b5b6580b1f71fd991fae9374a7b2c69180a"
+        },
+        {
+          "operation": "PUT /ai/content_import_sources/{source_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:37d8617ab7527b30c1daf4ae2f6a13e350bef1bc8d2015410d957211a6dff800"
+        },
+        {
+          "operation": "DELETE /ai/content_import_sources/{source_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:77c94d2a6a26b3d21c5b0a09959bbdb6421b295503a3fbcbb8cad6e3da64f0cc"
+        },
+        {
+          "operation": "GET /ai/external_pages",
+          "specRevision": "2.18",
+          "contract": "sha256:192d7076521cffe1847dec8ca1528a0e1591abb94f7ef588d0d0912f0ab180c3"
+        },
+        {
+          "operation": "POST /ai/external_pages",
+          "specRevision": "2.18",
+          "contract": "sha256:d8a269caf38c40a58b0f5cfba9e0d4949cc06082febbf11d1d16c341665662b3"
+        },
+        {
+          "operation": "POST /ai/external_pages/{external_page_id}/tags",
+          "specRevision": "2.18",
+          "contract": "sha256:a8e8255ee5e1ae05f6472cb15c9d1199f3869bf2e13311795aa26cedc1564f53"
+        },
+        {
+          "operation": "DELETE /ai/external_pages/{external_page_id}/tags/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:3c346524f6ee1694f77d14fecd7b2f36deae00fcd7f6927bdf83c32c30dda571"
+        },
+        {
+          "operation": "GET /ai/external_pages/{page_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:ac5ec639da2f0de48e9e452ad5f4c265106471bde22212e7825115abe608951f"
+        },
+        {
+          "operation": "PUT /ai/external_pages/{page_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:3f377fa9af0405d05903337fe6389566898a59a730816e54adb939b049d32795"
+        },
+        {
+          "operation": "DELETE /ai/external_pages/{page_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:ac5ec639da2f0de48e9e452ad5f4c265106471bde22212e7825115abe608951f"
+        },
+        {
+          "operation": "GET /articles",
+          "specRevision": "2.18",
+          "contract": "sha256:08af5522013b2be1d3e54cd6ba8be1ba285a986ee6802743ea6c6dbb2e078ce0"
+        },
+        {
+          "operation": "POST /articles",
+          "specRevision": "2.18",
+          "contract": "sha256:7fb0d6278e856e11811bad6e0b67e381037678f8f9967d304793e2dfb547afc8"
+        },
+        {
+          "operation": "GET /articles/search",
+          "specRevision": "2.18",
+          "contract": "sha256:f1fa73d5bc16e46fea16bd190022ff5fcc96d120d2eac78ffb0d5d0f81cdcd05"
+        },
+        {
+          "operation": "GET /articles/{article_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b20d892e639b15074baef8460d76f632cc66279f140d2e8a2136e6851dd68740"
+        },
+        {
+          "operation": "PUT /articles/{article_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:874533693d162fb91cd6c146d202d6020fcdedde8daeca5c501711599f0e6dad"
+        },
+        {
+          "operation": "DELETE /articles/{article_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:a1a336120564d92f7873408d962089e25b7b64de4c3035ef74ec9eeffbbf3bc2"
+        },
+        {
+          "operation": "POST /articles/{article_id}/tags",
+          "specRevision": "2.18",
+          "contract": "sha256:05c140071ba11fa1b511a9bc364e95d0f40e26fae163b89270a0b3e971733ced"
+        },
+        {
+          "operation": "DELETE /articles/{article_id}/tags/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:67b0118bab30513462541935abbde9f7d9c43e6e3dcef615811df99dee842e37"
+        },
+        {
+          "operation": "GET /articles/{article_id}/versions",
+          "specRevision": "2.18",
+          "contract": "sha256:2d173e2fda7e48b3037dc625d6b3f4052c7c69e970d5a2a2bd9541fc37a9174d"
+        },
+        {
+          "operation": "GET /articles/{article_id}/versions/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:9f60a454ef960b22d7c0bd1e2fcb2c9fcccbfcd5b1d916ada1a0ab5e0e2e42b8"
+        },
+        {
+          "operation": "GET /articles/{id}/draft",
+          "specRevision": "2.18",
+          "contract": "sha256:7d2106ef7f47efc6b49cba6e2e579bea0bf9ef39aa9b76eff93b1a709a8bcd81"
+        },
+        {
+          "operation": "PUT /articles/{id}/draft",
+          "specRevision": "2.18",
+          "contract": "sha256:d6a65bac7206c2dfbef9af4cbb2b306712babbaa8c3cb0cdf0fbe311ccf1c08c"
+        },
+        {
+          "operation": "POST /articles/{id}/draft/publish",
+          "specRevision": "2.18",
+          "contract": "sha256:8c85a9e647718232a54ac5b5f4467e73df0152a58966c261f72e2dd254348917"
+        },
+        {
+          "operation": "GET /audiences",
+          "specRevision": "2.18",
+          "contract": "sha256:c837eccc5b30a8853b48d76fa710a4c88504ce62ae51afb34a1e2f245607c211"
+        },
+        {
+          "operation": "POST /audiences",
+          "specRevision": "2.18",
+          "contract": "sha256:3953cd47ebc56d65b9764956e20642f9e2e06bd2bae58faf4e23ecdc27f3782a"
+        },
+        {
+          "operation": "GET /audiences/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:1a5e898d86d9ac303f880f064e8b82b39aa85783c5ee66d6dbe3c74046cfa194"
+        },
+        {
+          "operation": "PUT /audiences/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:1a9f95d3570526993219cbcb01e160f6a327d92de4c71d5cc455b0b3483c89a8"
+        },
+        {
+          "operation": "DELETE /audiences/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:e04c79f0317ba61de4a7018a83317a471ff804f9280c53f6f79f79536676976f"
+        },
+        {
+          "operation": "GET /auth_tokens",
+          "specRevision": "2.18",
+          "contract": "sha256:80ca3d53606669491de7a9b28a514a2e930fd1dc202d4307f5d32a7c4cf1ec4b"
+        },
+        {
+          "operation": "POST /auth_tokens",
+          "specRevision": "2.18",
+          "contract": "sha256:5314958bc845a2b05a27d9234b48a0b2dbc867e2dae4c1542bf38a4c4c69044c"
+        },
+        {
+          "operation": "GET /auth_tokens/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:abedc3e8f60b02fe175973754169a64625ea87db461addba425129601476a6a8"
+        },
+        {
+          "operation": "PATCH /auth_tokens/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:6d383633ea6903f0554964e7f4a5e2e665d0f92dc33f2b516323964b3f56409a"
+        },
+        {
+          "operation": "GET /away_status_reasons",
+          "specRevision": "2.18",
+          "contract": "sha256:16e954692e000efbf905c506d853e0f1d95dc0a2e65db9821d5ca347579697b1"
+        },
+        {
+          "operation": "GET /brands",
+          "specRevision": "2.18",
+          "contract": "sha256:c6a476474edcba3a6f3c801ca8d9848d23d2cb57edcb026afc213846624e5137"
+        },
+        {
+          "operation": "GET /brands/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:6cca49837f297555cb750874f2018464b393edd598c83f3e32b62bdece9b87a0"
+        },
+        {
+          "operation": "GET /calls",
+          "specRevision": "2.18",
+          "contract": "sha256:0e3f479e52205da93cbee3d692879b2ff35a6569df3dae51bec17370709ec835"
+        },
+        {
+          "operation": "POST /calls/search",
+          "specRevision": "2.18",
+          "contract": "sha256:69c5ae24b5bc52db2fd51bcc1ae09f5b61768b0a2b4c1e877f02a47462d67f07"
+        },
+        {
+          "operation": "GET /calls/{call_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:8c9316aa9e83687b718846f2811ceb88b798fded3efed707cbea869763ab3557"
+        },
+        {
+          "operation": "GET /calls/{call_id}/recording",
+          "specRevision": "2.18",
+          "contract": "sha256:ca65a3cb82fa982edbe4ec7bc1bd06d04b0c095eba8b5d96d79f4b54a329ab67"
+        },
+        {
+          "operation": "GET /calls/{id}/transcript",
+          "specRevision": "2.18",
+          "contract": "sha256:33c313a5c9ac4f829852322cbf947a0735d873e69969ad0c781d82976d89b940"
+        },
+        {
+          "operation": "GET /companies",
+          "specRevision": "2.18",
+          "contract": "sha256:d416f3480914aa3a77b7dfffe3b7c223ab7e20c27522ffe666df15814deb7db4"
+        },
+        {
+          "operation": "POST /companies",
+          "specRevision": "2.18",
+          "contract": "sha256:e90e21e8524a8d3e87732017453a7df2bc97d33a0923adaf4418bfe3fd4e24e0"
+        },
+        {
+          "operation": "POST /companies/list",
+          "specRevision": "2.18",
+          "contract": "sha256:fb14d5c6d8ae20cac754c13a55fc263efe96389a88c5001d742363042abe5d9e"
+        },
+        {
+          "operation": "GET /companies/scroll",
+          "specRevision": "2.18",
+          "contract": "sha256:2aaa719dae117493ecc689a9bed2f90f12789b22382bfc37037aea01d1800f19"
+        },
+        {
+          "operation": "POST /companies/search",
+          "specRevision": "2.18",
+          "contract": "sha256:b23ab818cca48b3d660a0db688f26d08439ed79b2783af283676b445cb9651ce"
+        },
+        {
+          "operation": "GET /companies/{company_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b1c6836ceca1283260c8b4b4a6e7bcdd00005f93ca78bcba1622ff148c0641aa"
+        },
+        {
+          "operation": "PUT /companies/{company_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:cbb8c6610b05cb18176220f1cac4e0a47093d9ff24be777268496dd96471ca08"
+        },
+        {
+          "operation": "DELETE /companies/{company_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:421367992ca611be84461922ea59ce0e41a739e841e5e4b4ddb919ab1e69c9ab"
+        },
+        {
+          "operation": "GET /companies/{company_id}/contacts",
+          "specRevision": "2.18",
+          "contract": "sha256:3590eaba6c75aad7d6efa7dada1402f624f181053db61d90ab579bae628950d2"
+        },
+        {
+          "operation": "GET /companies/{company_id}/notes",
+          "specRevision": "2.18",
+          "contract": "sha256:4a551c8614e1b35b1eb82e0d1b32cad8c92664a5dfa3bc351a0956ede19c65a6"
+        },
+        {
+          "operation": "POST /companies/{company_id}/notes",
+          "specRevision": "2.18",
+          "contract": "sha256:22fbb46680a88de3410652a8854fa52fd5316fb8def860ab17e1cf7eca097be7"
+        },
+        {
+          "operation": "GET /companies/{company_id}/segments",
+          "specRevision": "2.18",
+          "contract": "sha256:ef30e58f68b51b2319082ff4325589e1de61a6c3ed38baf875ed83e5c72ad5e4"
+        },
+        {
+          "operation": "GET /contacts",
+          "specRevision": "2.18",
+          "contract": "sha256:a8857c49d1cd5374ee3a77c2c325fb9e467078427aad20a6e766e30e7938b146"
+        },
+        {
+          "operation": "POST /contacts",
+          "specRevision": "2.18",
+          "contract": "sha256:a28b2cf01c500161c9e27b0076bb318191e58f52592e5ec408e488d0507444dc"
+        },
+        {
+          "operation": "GET /contacts/activities",
+          "specRevision": "2.18",
+          "contract": "sha256:580b9867d46860962a5dc210ae6442ece0e291eea4c688c38f3b8b6b972e0f36"
+        },
+        {
+          "operation": "POST /contacts/bulk",
+          "specRevision": "2.18",
+          "contract": "sha256:65841d625357d598ef61dd45e5f2144031103c287de7896211da8f9c164ad000"
+        },
+        {
+          "operation": "PUT /contacts/bulk",
+          "specRevision": "2.18",
+          "contract": "sha256:dc4943c8a3bc19dc61959c0b290343365f537539da69266000609f47fa2456fb"
+        },
+        {
+          "operation": "POST /contacts/bulk/delete",
+          "specRevision": "2.18",
+          "contract": "sha256:93eb087dd5f502f60997826d2c4f3253595fec136d6b7c570256d7bc8a0fa65b"
+        },
+        {
+          "operation": "GET /contacts/bulk/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:d88e859082ee8e355b13c7a304b1be326789354f731893d5b012b653223054cb"
+        },
+        {
+          "operation": "GET /contacts/deleted",
+          "specRevision": "2.18",
+          "contract": "sha256:29b779b46a4eb0b33bfd486c45056843880c34aafbd1b48063bbfa041d94d88c"
+        },
+        {
+          "operation": "GET /contacts/find_by_external_id/{external_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:e0c400ecc37f3ba53d7198833093d28613a46e649e8ff15e8c7c1f813da7e06b"
+        },
+        {
+          "operation": "POST /contacts/merge",
+          "specRevision": "2.18",
+          "contract": "sha256:d115f2bb3cbc60782ba6546a3d5606e8b85905b27eaaa861610de581b991544d"
+        },
+        {
+          "operation": "POST /contacts/merge/preview",
+          "specRevision": "2.18",
+          "contract": "sha256:930531873d1a838245c0b1e42e7ecb04a2cb2fda74bce19b841bfd65f9d6519a"
+        },
+        {
+          "operation": "POST /contacts/search",
+          "specRevision": "2.18",
+          "contract": "sha256:98db3a2783497ab5e837aafac59939a66526a881ab88c045a4eb24dd3f8ce04d"
+        },
+        {
+          "operation": "GET /contacts/{contact_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b2fbdb16162567490e1e01d309ef9739cd886dfda1309e864d74860c230dbbd0"
+        },
+        {
+          "operation": "PUT /contacts/{contact_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:883ab1aebb79aad767e204e4d53a50fae58ab3c69f76cbb9831d68dc3d7a6329"
+        },
+        {
+          "operation": "DELETE /contacts/{contact_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:5703b93454b3c70122196c8d701f46aa65da1f97d8aed4eb4bdc8165511d3f22"
+        },
+        {
+          "operation": "POST /contacts/{contact_id}/archive",
+          "specRevision": "2.18",
+          "contract": "sha256:61c3ef272de35fb0468061b8ea137b5c6ba5eff874b92e8bb67458770615add0"
+        },
+        {
+          "operation": "POST /contacts/{contact_id}/block",
+          "specRevision": "2.18",
+          "contract": "sha256:061a9d63753ca97106052945853d6388fbb1b1287906ff658228a520235c0282"
+        },
+        {
+          "operation": "GET /contacts/{contact_id}/companies",
+          "specRevision": "2.18",
+          "contract": "sha256:083ed7beea8d7c09d7e6843b57c8a67371c1813005536bb85d537a5abc1f2c1a"
+        },
+        {
+          "operation": "POST /contacts/{contact_id}/companies",
+          "specRevision": "2.18",
+          "contract": "sha256:bbc288d1c7e9181c26de38a3a3ad40051c4a33713ac54aff9fa51b80803eeb80"
+        },
+        {
+          "operation": "DELETE /contacts/{contact_id}/companies/{company_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:5d5d171ab2b7179dc53e8d1ff1d904b533503ad58453d531a5388269606a9e91"
+        },
+        {
+          "operation": "GET /contacts/{contact_id}/granted_companies",
+          "specRevision": "2.18",
+          "contract": "sha256:bae3abc7ebb4432443925957f09508de9b4ee08453f342fa35afd816997d37dc"
+        },
+        {
+          "operation": "PUT /contacts/{contact_id}/granted_companies",
+          "specRevision": "2.18",
+          "contract": "sha256:e1b2ccf8ef5cc02fdbd78c222bf064e3f053c441385f9aae2aea6a3cf470e3fb"
+        },
+        {
+          "operation": "DELETE /contacts/{contact_id}/granted_companies/{company_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:a0355bf8f2922ef83c3a2ac2fe2e9d8095d28574af9e9abf8902bffa41d1309e"
+        },
+        {
+          "operation": "GET /contacts/{contact_id}/notes",
+          "specRevision": "2.18",
+          "contract": "sha256:c4f975f39cd0f65a5653ee6c404bb78e44a05c6f45873cc5b7e052a46d3fbeb3"
+        },
+        {
+          "operation": "POST /contacts/{contact_id}/notes",
+          "specRevision": "2.18",
+          "contract": "sha256:bf617b672e5d6f6a5284974109492383b5249d88dda8fc97d02d15790d3998e2"
+        },
+        {
+          "operation": "GET /contacts/{contact_id}/segments",
+          "specRevision": "2.18",
+          "contract": "sha256:b16e7caf54e2ed60ede719687ea6080dc583e92a8c8c7a206ad3afec5973e07a"
+        },
+        {
+          "operation": "GET /contacts/{contact_id}/subscriptions",
+          "specRevision": "2.18",
+          "contract": "sha256:5091b0db54674389918e53f78abf94417c8de36746632d1a86b8c168075b8ce8"
+        },
+        {
+          "operation": "POST /contacts/{contact_id}/subscriptions",
+          "specRevision": "2.18",
+          "contract": "sha256:7e556bb110ed3d1a407941896782c85bbd28efd99f10809dd19ed44bc7846f36"
+        },
+        {
+          "operation": "DELETE /contacts/{contact_id}/subscriptions/{subscription_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:bfcacc8cf724741bb640aeb743f63253d23a72ad47aa06849eceebd3c4453c44"
+        },
+        {
+          "operation": "GET /contacts/{contact_id}/tags",
+          "specRevision": "2.18",
+          "contract": "sha256:1f6f010e7cb56cd2af08697b1ccc9bf5d29076697dcb6df96bbd88bfa6db49e9"
+        },
+        {
+          "operation": "POST /contacts/{contact_id}/tags",
+          "specRevision": "2.18",
+          "contract": "sha256:ccd4c5852ad8aac477f64fdaeddbd0f99e8f831d9f445b9261822a4c483ec6d2"
+        },
+        {
+          "operation": "DELETE /contacts/{contact_id}/tags/{tag_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:9b5ba5d1a5796e662346dc6bccead4499e99a3bf837d08d4fca7096e0c330e49"
+        },
+        {
+          "operation": "POST /contacts/{contact_id}/unarchive",
+          "specRevision": "2.18",
+          "contract": "sha256:61c3ef272de35fb0468061b8ea137b5c6ba5eff874b92e8bb67458770615add0"
+        },
+        {
+          "operation": "GET /contacts/{id}/banners",
+          "specRevision": "2.18",
+          "contract": "sha256:b0a2c200d93999a2e71bbcfc5183ce72578b6bd10722ec5680669e1d7c74de11"
+        },
+        {
+          "operation": "POST /contacts/{id}/banners/{view_id}/dismiss",
+          "specRevision": "2.18",
+          "contract": "sha256:13f79c585382769bcf9eddb98d44c4e1cda30cc555e8595559a71fb584a69890"
+        },
+        {
+          "operation": "GET /contacts/{id}/merge_histories",
+          "specRevision": "2.18",
+          "contract": "sha256:1b3482ea2e28cd0cd9c5c16bc355710a8204bbd33bb429c2d3529eb0fb25c20d"
+        },
+        {
+          "operation": "POST /content/bulk_actions",
+          "specRevision": "2.18",
+          "contract": "sha256:447ff29a539039603cc69be7d996e4bb2a8aa6e533e0391ad24a8ac2dd08a866"
+        },
+        {
+          "operation": "GET /content/search",
+          "specRevision": "2.18",
+          "contract": "sha256:340247016f64668624ef3f3e3c3f7c739ccda2127e5d1b8de129faa0d845d069"
+        },
+        {
+          "operation": "GET /content_snippets",
+          "specRevision": "2.18",
+          "contract": "sha256:4d670e7c07e46688cef6be0f5e98a4f301a3cfefec8ae7f8ce7cb1505d8c9272"
+        },
+        {
+          "operation": "POST /content_snippets",
+          "specRevision": "2.18",
+          "contract": "sha256:2d4f24ae52060d2ae0bdbd2860108651d9354fe4d46aabf8640ce3c981665765"
+        },
+        {
+          "operation": "POST /content_snippets/{content_snippet_id}/tags",
+          "specRevision": "2.18",
+          "contract": "sha256:2509ba77daa987f8e9bc10c5ed2961971e6267843f4d7fcdbb1bb057c91f059e"
+        },
+        {
+          "operation": "DELETE /content_snippets/{content_snippet_id}/tags/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:2edd91ecb50f4ba43775dc9683dbdd76e640252bfd9730bc9fbbdb6d009ecaed"
+        },
+        {
+          "operation": "GET /content_snippets/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:d29a6660ab4ced47e6dd9d86a7d978e26cc3a68a2cda2dadc57bc17e769fd185"
+        },
+        {
+          "operation": "PUT /content_snippets/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:33bec95deed1232ea0354d273e3671c5fde149b804e53cdae14ce8506d55787a"
+        },
+        {
+          "operation": "DELETE /content_snippets/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:e04c79f0317ba61de4a7018a83317a471ff804f9280c53f6f79f79536676976f"
+        },
+        {
+          "operation": "GET /conversations",
+          "specRevision": "2.18",
+          "contract": "sha256:025e0b321e774adb0e4d71c4be442a3db6679fdc62b2e5dc154ccd9c9d9981cd"
+        },
+        {
+          "operation": "POST /conversations",
+          "specRevision": "2.18",
+          "contract": "sha256:776f3184c78ce794cb4a3dcc06e2abda6c504842a76b53d07d0a24b25ec4593f"
+        },
+        {
+          "operation": "GET /conversations/attributes",
+          "specRevision": "2.18",
+          "contract": "sha256:d31c0f74ca48f65c604bbee13176156261f44918ae3a175ef86cebf189cfe8b6"
+        },
+        {
+          "operation": "POST /conversations/attributes",
+          "specRevision": "2.18",
+          "contract": "sha256:3d2315116cc4909797ca529386605ef1224c1f2126ff59c22b23eb066f05c5dc"
+        },
+        {
+          "operation": "GET /conversations/attributes/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:34de56f47eff681329c3775bbc42881d01e1873e172ac7d2e2a1b01bad670556"
+        },
+        {
+          "operation": "PUT /conversations/attributes/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:ca54b6434b752b0a24355cc03d446987c818665235e48fcf53b4235f025f8464"
+        },
+        {
+          "operation": "DELETE /conversations/attributes/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:34de56f47eff681329c3775bbc42881d01e1873e172ac7d2e2a1b01bad670556"
+        },
+        {
+          "operation": "POST /conversations/attributes/{id}/options",
+          "specRevision": "2.18",
+          "contract": "sha256:082f5c3485ffbaf72f9a04be8264ac71a0f11f72f5e86b04cdaf57b421a4861f"
+        },
+        {
+          "operation": "PUT /conversations/attributes/{id}/options/{option_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:bf14a46ac545454c62af2b052e74db21fadadde88938b61fe1697dd9c0b2e71a"
+        },
+        {
+          "operation": "DELETE /conversations/attributes/{id}/options/{option_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:0f95a59f5bed86a7cf60fae3767ced7c48313a3dbc7ebc32471edc6d24ced516"
+        },
+        {
+          "operation": "GET /conversations/deleted",
+          "specRevision": "2.18",
+          "contract": "sha256:d9a574962059ff0e615708eb68ca55fd6e2af4c6bcc272824dc19ceb985018eb"
+        },
+        {
+          "operation": "POST /conversations/redact",
+          "specRevision": "2.18",
+          "contract": "sha256:38e9bb76be8b92825a3885f3712b730e8a50ca820af74c96608be10c8883e2a6"
+        },
+        {
+          "operation": "POST /conversations/search",
+          "specRevision": "2.18",
+          "contract": "sha256:029d7e48028757acae5fd15a1e97bc0242ee4bf1cf1b90e9a0802bf8e67a28ca"
+        },
+        {
+          "operation": "POST /conversations/stream/token",
+          "specRevision": "2.18",
+          "contract": "sha256:7a34445ec641ff8b92b3870e178489eaadfb669b14ba76186bfd9b226a63c2d8"
+        },
+        {
+          "operation": "DELETE /conversations/stream/token",
+          "specRevision": "2.18",
+          "contract": "sha256:ecd0ce6f850b35250136e07c41660bada06bba3e260f2cfbd4d7b8ed488d6ac6"
+        },
+        {
+          "operation": "GET /conversations/{conversation_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:1380296e356bc75e1fb31bdcc1159a714fcf58183b394ef0b467a98d74eb1c32"
+        },
+        {
+          "operation": "PUT /conversations/{conversation_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:3f44c034f9c84a30009d15267f2b6dc21361cb14a7be752d3cfa7321decbe00a"
+        },
+        {
+          "operation": "DELETE /conversations/{conversation_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:ba2de5f82534416493c9fd5e52c57dfd1f8bacbe48973fbea872f2e9b8736d6b"
+        },
+        {
+          "operation": "POST /conversations/{conversation_id}/convert",
+          "specRevision": "2.18",
+          "contract": "sha256:a3050722c59815b154ef5ad16d2bdc8680fed44624e83c574b67eaed78047da5"
+        },
+        {
+          "operation": "POST /conversations/{conversation_id}/customers",
+          "specRevision": "2.18",
+          "contract": "sha256:7a470aa772678c9f50344e533f1b5acae021fbe124dc0c79b5d945ea1215cf99"
+        },
+        {
+          "operation": "DELETE /conversations/{conversation_id}/customers/{contact_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:4432cd13d734b009491cad367bbf4dd97e3b54d9c4147b9071b177a180fb5076"
+        },
+        {
+          "operation": "POST /conversations/{conversation_id}/parts",
+          "specRevision": "2.18",
+          "contract": "sha256:9cbbb8c62c7a7aaa903ad26a49b9510b99d05bfd7652b863b29c1d995bdb152b"
+        },
+        {
+          "operation": "POST /conversations/{conversation_id}/rating",
+          "specRevision": "2.18",
+          "contract": "sha256:b2c817e4fdd280b40699937cb5155eb322fd7014d87c3bcc3d79ce1d479a68d1"
+        },
+        {
+          "operation": "POST /conversations/{conversation_id}/reply",
+          "specRevision": "2.18",
+          "contract": "sha256:fd83f791d266c6fc8806970be5dcc3161245a039c4c60f73cab570ea38a92042"
+        },
+        {
+          "operation": "POST /conversations/{conversation_id}/tags",
+          "specRevision": "2.18",
+          "contract": "sha256:99380a1c749a29f34993e23acff7fa1feeb8cc98019543621387796d66acfb8e"
+        },
+        {
+          "operation": "DELETE /conversations/{conversation_id}/tags/{tag_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:ab51d4272b5a3063ef8d4908741adc265bfd8a3f7bb7d8724db2399ccc20e784"
+        },
+        {
+          "operation": "GET /conversations/{id}/handling_events",
+          "specRevision": "2.18",
+          "contract": "sha256:679857c931e59b61d5e856d77cd76bed822e5c89c93b8c4bf4d2228fb8e68904"
+        },
+        {
+          "operation": "GET /conversations/{id}/hitl_events",
+          "specRevision": "2.18",
+          "contract": "sha256:e4e6eb14db5ab76ca96ee16dc6ef021fd9cf8675d8adce8d70ad27c27cee7753"
+        },
+        {
+          "operation": "POST /conversations/{id}/merge",
+          "specRevision": "2.18",
+          "contract": "sha256:6a56b9feecd3b261f6b85adc86fcf719041f3c92664979f3057a83a2c9c48543"
+        },
+        {
+          "operation": "GET /conversations/{id}/side_conversations",
+          "specRevision": "2.18",
+          "contract": "sha256:b0663bd7bd9232d9f16128cdeaa108e552d34df896765eef4ff961397dce295b"
+        },
+        {
+          "operation": "GET /conversations/{id}/team_handling_segments",
+          "specRevision": "2.18",
+          "contract": "sha256:195681c1adce436ec63f4af757c9e01909e2c48635908587463551dbc45ed5fc"
+        },
+        {
+          "operation": "GET /custom_object_instances/{custom_object_type_identifier}",
+          "specRevision": "2.18",
+          "contract": "sha256:80e8afb8f6630b12ed8af7844950469697045ec8984fab17be70d5a6af949b07"
+        },
+        {
+          "operation": "POST /custom_object_instances/{custom_object_type_identifier}",
+          "specRevision": "2.18",
+          "contract": "sha256:22a3b6574af2cee549f55a5383f16aafef8dbc5f17dfb881db78f0b8a4c20a6a"
+        },
+        {
+          "operation": "DELETE /custom_object_instances/{custom_object_type_identifier}",
+          "specRevision": "2.18",
+          "contract": "sha256:81d6bb32408438e71018edff446a6472a855e26610de82062cc2bfac143027d4"
+        },
+        {
+          "operation": "GET /custom_object_instances/{custom_object_type_identifier}/{custom_object_instance_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:689cfb6e0dc22f56b4e061d493d48b77f0be938084d6fd837891079e794d73fc"
+        },
+        {
+          "operation": "DELETE /custom_object_instances/{custom_object_type_identifier}/{custom_object_instance_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:d58968f4a1b92444debb3b65d347199652aa9055eedfafb4707ba26f074427fb"
+        },
+        {
+          "operation": "GET /data_attributes",
+          "specRevision": "2.18",
+          "contract": "sha256:7853a39a5a49850ad4a3ec5d1be39e60b04fc165e487fbe82a678358375b7d61"
+        },
+        {
+          "operation": "POST /data_attributes",
+          "specRevision": "2.18",
+          "contract": "sha256:a4fd6188a421e5f66e7f6c0d789f6cfb8e5e972a50737496b7c2b6906bebb935"
+        },
+        {
+          "operation": "PUT /data_attributes/{data_attribute_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:2b7c4a3e1d73b82644845b14cec1f1717189e4c3b7fa217a94b57d0c05bc1b33"
+        },
+        {
+          "operation": "GET /data_connectors",
+          "specRevision": "2.18",
+          "contract": "sha256:da480cfe15d259dec103a01cb4c6aa84e72c57e22cdce206c2f051f63ec4beac"
+        },
+        {
+          "operation": "POST /data_connectors",
+          "specRevision": "2.18",
+          "contract": "sha256:06c128e8f87a42a77fc7440e28f937d7645e622810b25bae389af8561c4e77eb"
+        },
+        {
+          "operation": "GET /data_connectors/{data_connector_id}/execution_results",
+          "specRevision": "2.18",
+          "contract": "sha256:845e48972058bb2a0fe5bc82690f81ceab92a3c3363f4a43e6c3a24bf9d5b5c1"
+        },
+        {
+          "operation": "GET /data_connectors/{data_connector_id}/execution_results/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:4791c5128b8eeb4be9c89a13f26a092ae323055708feb42d0befbd802433e8fd"
+        },
+        {
+          "operation": "GET /data_connectors/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:42817ccbd2f883c18ba40aae9d7bb4aad32cb6bed24262b52cd1db0fd5c0a0d7"
+        },
+        {
+          "operation": "PATCH /data_connectors/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:229f7fc17086970cd16beadf3f50e07b6c401698e531bf3cf4581be5b9b2df22"
+        },
+        {
+          "operation": "DELETE /data_connectors/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:26ebd6f306fb3f51a8b471c2eb9db951cb292fe345aa3d4ecfd624a87c785936"
+        },
+        {
+          "operation": "GET /data_connectors/{id}/versions",
+          "specRevision": "2.18",
+          "contract": "sha256:e42a2558e234b4ef089899ddf2941f7dfe3ef0ea7eb59440771f6b7ed16b53a4"
+        },
+        {
+          "operation": "GET /data_connectors/{id}/versions/{version_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:c9574ac235c2bc31ab20d8b004040f280d531f9b23f278f820f55dd465e68b8c"
+        },
+        {
+          "operation": "PATCH /data_connectors/{id}/versions/{version_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:63f4c936fa315a2669628124075f7ff3dacc0c4beb73bdfc938c9589074953f5"
+        },
+        {
+          "operation": "GET /download/content/data/{job_identifier}",
+          "specRevision": "2.18",
+          "contract": "sha256:20fff1be8c637565787b391091c7767fcc9ae2ad1712efab912dd6814ebb459f"
+        },
+        {
+          "operation": "GET /download/reporting_data/{job_identifier}",
+          "specRevision": "2.18",
+          "contract": "sha256:00f41cd57f961f3e097d29234dcfcd022d0fe5de5f059f0a9ffd535cf437b30c"
+        },
+        {
+          "operation": "GET /dynamic_contents",
+          "specRevision": "2.18",
+          "contract": "sha256:00868544172ad2b3ae589bf1ee81e56b3d0aa004ef0e60bbbd7e6b191f555229"
+        },
+        {
+          "operation": "POST /dynamic_contents",
+          "specRevision": "2.18",
+          "contract": "sha256:2f819cc0e79387b29b602ac3135f35789bb8818f57d8c5120f6ab6a092b3142c"
+        },
+        {
+          "operation": "GET /dynamic_contents/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:4003915cabb6b2bfe8c8132d728dc4729f9eff0d6d94db9c762429ea4e33711f"
+        },
+        {
+          "operation": "PUT /dynamic_contents/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:5a9eebca5d736d27739aded687cbb551d2a1a069c62c9622db66e3394c4829b5"
+        },
+        {
+          "operation": "DELETE /dynamic_contents/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:e04c79f0317ba61de4a7018a83317a471ff804f9280c53f6f79f79536676976f"
+        },
+        {
+          "operation": "POST /ecommerce/connectors/{import_source_id}/catalog",
+          "specRevision": "2.18",
+          "contract": "sha256:a9ce963e1707b2a9c75db569e175703c37e79e80a38d4d284920a4ed61be5867"
+        },
+        {
+          "operation": "POST /ecommerce/connectors/{import_source_id}/events",
+          "specRevision": "2.18",
+          "contract": "sha256:f45ea0f0ec6e2a5d844f48aaf69d5d90451385dc65002ef2e459300013b620f8"
+        },
+        {
+          "operation": "GET /emails",
+          "specRevision": "2.18",
+          "contract": "sha256:55c262067172cedf87d6817c3a13fdbd02a32e418586941af40a66acdd880847"
+        },
+        {
+          "operation": "GET /emails/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:ea1a4ae2248a9c8f9c1ff956be025f646cc71b4c481e60372a475a44c2e3b7ab"
+        },
+        {
+          "operation": "GET /events",
+          "specRevision": "2.18",
+          "contract": "sha256:6d2fe3ddd07cb4b7c6e953383b2533ebd855bef4a1de9cbb71c6b4a8252ad99e"
+        },
+        {
+          "operation": "POST /events",
+          "specRevision": "2.18",
+          "contract": "sha256:527d6aac45bb4c082a699e2f69cdaa4bca14f5f01951b399c3882c17743d2ed8"
+        },
+        {
+          "operation": "POST /events/summaries",
+          "specRevision": "2.18",
+          "contract": "sha256:d8d3405d44c903d5d7f823ef43f2270b7acb9561561884b3ab50f7a7df38ec91"
+        },
+        {
+          "operation": "POST /export/cancel/{job_identifier}",
+          "specRevision": "2.18",
+          "contract": "sha256:640bd6a372f7d62a8381ce2f48ebd39d583fa038ea3e1a457b2886e595872c4c"
+        },
+        {
+          "operation": "POST /export/content/data",
+          "specRevision": "2.18",
+          "contract": "sha256:99c5d11bd8fecce05eade3ebf050ef37a8dc3d0503027314df2c21c96e341d9f"
+        },
+        {
+          "operation": "GET /export/content/data/{job_identifier}",
+          "specRevision": "2.18",
+          "contract": "sha256:640bd6a372f7d62a8381ce2f48ebd39d583fa038ea3e1a457b2886e595872c4c"
+        },
+        {
+          "operation": "POST /export/reporting_data/enqueue",
+          "specRevision": "2.18",
+          "contract": "sha256:64ced7483f792eb3eabb7f4a60c46978de354c8f27dc09ca0a9201a0f55e5851"
+        },
+        {
+          "operation": "GET /export/reporting_data/get_datasets",
+          "specRevision": "2.18",
+          "contract": "sha256:142d6a6ddd20311b9cc5976411b3708de2878d5fd684e681188ecbcabbcb9db1"
+        },
+        {
+          "operation": "GET /export/reporting_data/{job_identifier}",
+          "specRevision": "2.18",
+          "contract": "sha256:7929fe76666c4b8a3789902feac60ee063237fb55898b89480347d5915ab2650"
+        },
+        {
+          "operation": "GET /export/workflows/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:fea4a1be77286d473494f6b5514ff99280b52917cd50b5294acef7c9faa5a79d"
+        },
+        {
+          "operation": "POST /fin/ask",
+          "specRevision": "2.18",
+          "contract": "sha256:35b29de25e07ca8c6bdc94b6630b6b1bd7a59bbeff49a637788890a74026d94c"
+        },
+        {
+          "operation": "POST /fin/capabilities",
+          "specRevision": "2.18",
+          "contract": "sha256:4b0081c58b5567f2baefb908514a58488b67ebf4d8c0bf3d2db61964a2401c3a"
+        },
+        {
+          "operation": "POST /fin/csat",
+          "specRevision": "2.18",
+          "contract": "sha256:420b05c878499adf1eabd30a483a6e08ab90eaa4dc712e8e256b7ced1025878f"
+        },
+        {
+          "operation": "POST /fin/escalate",
+          "specRevision": "2.18",
+          "contract": "sha256:0c557df90892adfcda6978a13538025978c7a3959e75fcf6aa60e542addd2f9d"
+        },
+        {
+          "operation": "POST /fin/procedures/{procedure_id}/run",
+          "specRevision": "2.18",
+          "contract": "sha256:27a57d45c5d55b32f1ace6914202b007f29c2c88deaec1d66e42b42359c28b35"
+        },
+        {
+          "operation": "POST /fin/reply",
+          "specRevision": "2.18",
+          "contract": "sha256:97877d8bc1caaffa36b945748515b87686405a8f108eb58d7a0a1a45e277ccc2"
+        },
+        {
+          "operation": "POST /fin/start",
+          "specRevision": "2.18",
+          "contract": "sha256:cefa7779fc99db23a656fc952393b319dd941b31384d425ba888ef1c099ce88a"
+        },
+        {
+          "operation": "GET /fin_voice/collect/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:a3ecff9d0802e46c181d3f9fe79887c5c4b26de6309080b960052bf255019eeb"
+        },
+        {
+          "operation": "GET /fin_voice/conversation/{conversation_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:734c2cb1386e604ee4b27d91ce8e548534afa6232973a8d9138314d3a5103a2d"
+        },
+        {
+          "operation": "GET /fin_voice/external_id/{external_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:f2c55f5fdd394ca55056cf85291ab29eec35223412a7a296a15b03ad7430e040"
+        },
+        {
+          "operation": "GET /fin_voice/phone_number/{phone_number}",
+          "specRevision": "2.18",
+          "contract": "sha256:bfdf989f85edcf1c1e2449ec04786303f4dc09195acbe06544a13b1e9a4745b6"
+        },
+        {
+          "operation": "POST /fin_voice/register",
+          "specRevision": "2.18",
+          "contract": "sha256:9a160e4e721bf372c4b108097c3fa70519a95ffdf5efc79a43d113efb41dd9af"
+        },
+        {
+          "operation": "GET /folders",
+          "specRevision": "2.18",
+          "contract": "sha256:a635b6f566bf7055c9899205aa7bb667510a0e5ba25431243ff903957f301c48"
+        },
+        {
+          "operation": "POST /folders",
+          "specRevision": "2.18",
+          "contract": "sha256:936245e7fe038b10cd6b7503c80b52d49349b2afef22a6eea06e844827847047"
+        },
+        {
+          "operation": "GET /folders/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:68c9cbd533ba8ebaf917432aa4a8869299c459b06d9456b084050ffa7e7e1131"
+        },
+        {
+          "operation": "PUT /folders/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:d752aab86d108f8ff2320c293feedfe87620df265006d886304d78edc990ee2e"
+        },
+        {
+          "operation": "DELETE /folders/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:4af2a58c2a57f0546fc05d71a683d93caadd70f1f3d69961ade03f1b29679dc8"
+        },
+        {
+          "operation": "GET /help_center/collections",
+          "specRevision": "2.18",
+          "contract": "sha256:e6a3a113f581d6d85760f7e4877b6942e621256c0a6a543e73d9f0c0c476f9df"
+        },
+        {
+          "operation": "POST /help_center/collections",
+          "specRevision": "2.18",
+          "contract": "sha256:448ffe59a610d343c23f5c80d551184824f47eff5c4375ca68b7bf5ff45fe0b0"
+        },
+        {
+          "operation": "GET /help_center/collections/{collection_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:066ae2aed0e03bc09bb61e07258f5700faca68b5e4eedc55d6ae6362bd59438e"
+        },
+        {
+          "operation": "PUT /help_center/collections/{collection_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:5cf61f29abbd93621e415f3855fb0a7e17f96939a45c74cfb77363acec6234e7"
+        },
+        {
+          "operation": "DELETE /help_center/collections/{collection_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b4ec7c944f2a1c55951aa7d5eba441ba864f11d0d4237d049aac44ccc1c0fd87"
+        },
+        {
+          "operation": "GET /help_center/help_centers",
+          "specRevision": "2.18",
+          "contract": "sha256:04497d0342709960f21df650eccebe94851404c04f5079b273bc45d5fc03a8dd"
+        },
+        {
+          "operation": "GET /help_center/help_centers/{help_center_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:a27da10995e24ec1bafc101a9a9920ed5fcd64b024c8d3f267297fb4b25d5b8f"
+        },
+        {
+          "operation": "GET /help_center/help_centers/{help_center_id}/redirects",
+          "specRevision": "2.18",
+          "contract": "sha256:271b46390afce0c99da3fdb58769aa7cdc4eb1c8d5ff0c7a33a9f73bbfb35397"
+        },
+        {
+          "operation": "POST /help_center/help_centers/{help_center_id}/redirects",
+          "specRevision": "2.18",
+          "contract": "sha256:dd2469e76993556953f738d2798ed8248fc72d211b1155787da07f8f71952790"
+        },
+        {
+          "operation": "GET /help_center/help_centers/{help_center_id}/redirects/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:a2d419f62eb961ddf3a8c4c5244b1b09ba1d6a288c3d7ce0189ac30acada7003"
+        },
+        {
+          "operation": "DELETE /help_center/help_centers/{help_center_id}/redirects/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:bc4bb7c29d503714e6d581190983136e397b00606db6c9f4f1e474ab7ed3b051"
+        },
+        {
+          "operation": "GET /internal_articles",
+          "specRevision": "2.18",
+          "contract": "sha256:de120484f808f32de1da56521cd1010cc3e5d7fccf30a67332f213ca8c2ed771"
+        },
+        {
+          "operation": "POST /internal_articles",
+          "specRevision": "2.18",
+          "contract": "sha256:e67544b69873ec3f32ed2e62389b7d32f0b1575b46b7dbfc4877b628020ed991"
+        },
+        {
+          "operation": "GET /internal_articles/search",
+          "specRevision": "2.18",
+          "contract": "sha256:150c80bb2266a3427977d5f0abdfda074ecee9931c9ae519bbe20c3cabe24ce6"
+        },
+        {
+          "operation": "GET /internal_articles/{internal_article_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:df20d566afaf31cab39b6958148a51db137a0817b1fa99f18ff5ce27b11fc273"
+        },
+        {
+          "operation": "PUT /internal_articles/{internal_article_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:0fae5bde31e9fcca1379551f833e35990e1d9be6078ab7a5d9c60aee70e22d01"
+        },
+        {
+          "operation": "DELETE /internal_articles/{internal_article_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:3ace3c78f9a10098ad0365b38c981a4657e82d3647687841c8c0104cfc2cccb0"
+        },
+        {
+          "operation": "POST /internal_articles/{internal_article_id}/tags",
+          "specRevision": "2.18",
+          "contract": "sha256:72afb7d520ba01760a5a31a364aa9c52182bdb9198c382e23a734713bbaa50e3"
+        },
+        {
+          "operation": "DELETE /internal_articles/{internal_article_id}/tags/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b638f9c722fc422eec87608c90d46125b62043ddb575b5bcf0c4219549c675af"
+        },
+        {
+          "operation": "GET /ip_allowlist",
+          "specRevision": "2.18",
+          "contract": "sha256:f5bdaf508767fe18c299c41ef668c1f7921b5716718b900f71061d8008b0f33e"
+        },
+        {
+          "operation": "PUT /ip_allowlist",
+          "specRevision": "2.18",
+          "contract": "sha256:fb9c62941d5ccf541ca725f443877bac61f6c3aee1ecaf7e3a44172246dd1f56"
+        },
+        {
+          "operation": "GET /jobs/status/{job_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:5c3752b094b506a30cf2e42c91b1958a7e6118b7829825556aa9cdc3a01d5167"
+        },
+        {
+          "operation": "GET /macros",
+          "specRevision": "2.18",
+          "contract": "sha256:71c5a34bf90f10280ca625140b0a38eecdc519b405cf1c0ab9b858c4c2a771da"
+        },
+        {
+          "operation": "GET /macros/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:ae7e3605d39d9062a0bcd515183566da52a1a3dc331c8b94c2a1c77c4f2c8074"
+        },
+        {
+          "operation": "GET /me",
+          "specRevision": "2.18",
+          "contract": "sha256:fcaac2bfceb264a1409fbec21f61457aa598323df4df5379395147f565d396e7"
+        },
+        {
+          "operation": "POST /messages",
+          "specRevision": "2.18",
+          "contract": "sha256:74c1e733e171f42986633a56a7dae82289533825c8f6f684d77e5b8af8bde915"
+        },
+        {
+          "operation": "GET /messages/status",
+          "specRevision": "2.18",
+          "contract": "sha256:5c6ce27503f87debb70bc278816dee626dbe78ef7f5ad1413b12b150e34323df"
+        },
+        {
+          "operation": "GET /messages/whatsapp/status",
+          "specRevision": "2.18",
+          "contract": "sha256:47ea16f8976e7518cc28ebd67860791446d47459e5c3482e0a1ad456efe5912e"
+        },
+        {
+          "operation": "GET /news/news_items",
+          "specRevision": "2.18",
+          "contract": "sha256:66ab8ec479692e9e5f326fa2f0e798c63821c63d60c229901d1847e46de1753c"
+        },
+        {
+          "operation": "POST /news/news_items",
+          "specRevision": "2.18",
+          "contract": "sha256:661b35db964bfd252c5301c07e2db7e87fd007c29748c0a5de9afdca75b0a091"
+        },
+        {
+          "operation": "GET /news/news_items/{news_item_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:996f2b81a5bb0222dff59fa131fc468a943d8f0754af0cf0c60e5d0846e7c43a"
+        },
+        {
+          "operation": "PUT /news/news_items/{news_item_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:83d7dc17e8b222ed39a1357b04050ff398170337e225cefd5b7949e548866661"
+        },
+        {
+          "operation": "DELETE /news/news_items/{news_item_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:e5d5ed375147a2542eabd2a7ea86aea6b70d7f1e118f5fc50e22761125fa50e1"
+        },
+        {
+          "operation": "GET /news/newsfeeds",
+          "specRevision": "2.18",
+          "contract": "sha256:66ab8ec479692e9e5f326fa2f0e798c63821c63d60c229901d1847e46de1753c"
+        },
+        {
+          "operation": "GET /news/newsfeeds/{newsfeed_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b42381fad0baae921ba46521bb1c133d0fb2e71024ffbdad02ef1d1644e9aa91"
+        },
+        {
+          "operation": "GET /news/newsfeeds/{newsfeed_id}/items",
+          "specRevision": "2.18",
+          "contract": "sha256:6b267805584d407d3a3202a9d3880bb4f929afa528b5607346678649f5b1770d"
+        },
+        {
+          "operation": "GET /notes/{note_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:2da74c3407fbecb5c4f9b24aebca5a95e8007e7141b5ce6d0aabf34de58d53b0"
+        },
+        {
+          "operation": "DELETE /notes/{note_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:7de6f8f47c7577b6431869a62c155a8ed541c0c4734a0e989d3dbbc5b3967658"
+        },
+        {
+          "operation": "GET /office_hours_schedules",
+          "specRevision": "2.18",
+          "contract": "sha256:82ffb7bfec7174e34044796ebe81c0a59757c237825dcad3ad6afcf9b9d95afa"
+        },
+        {
+          "operation": "POST /office_hours_schedules",
+          "specRevision": "2.18",
+          "contract": "sha256:c01e41334724388f07e3359422c23bb1c5a7d921161e0927a024316bb1a07bd8"
+        },
+        {
+          "operation": "GET /office_hours_schedules/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:4c3e8944f0332b2331366cad1b7ed5591e46a83ec979d2310d6273c75b14cc64"
+        },
+        {
+          "operation": "PUT /office_hours_schedules/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:93ba282fe7cb8742a478c51b157ac57f1565f16d36efd18823b9d1123bf34e74"
+        },
+        {
+          "operation": "DELETE /office_hours_schedules/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:c7cb87967d6d4812cabb3eb2026aabf3bb12fe2acee8368a066065e106d7ef05"
+        },
+        {
+          "operation": "GET /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions",
+          "specRevision": "2.18",
+          "contract": "sha256:27ce8f91171deb2d0c71913479ca2073c6e3e4e77278cb890775205f26dcc9b6"
+        },
+        {
+          "operation": "POST /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions",
+          "specRevision": "2.18",
+          "contract": "sha256:12b9438a032e2d43cf5f610a47debacbf8e7029a7827736c1b150daf9b88e8a2"
+        },
+        {
+          "operation": "GET /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:51a67ef41d303dea80c9d257e8bb3be1a71076ff09e3d3afa11f4b0c3fb64a8f"
+        },
+        {
+          "operation": "PUT /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:53614ecc03a732cc5d0f7bfe878a14b3a42978d7cba211564857358e26f217d4"
+        },
+        {
+          "operation": "DELETE /office_hours_schedules/{office_hours_schedule_id}/office_hours_exceptions/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:467c4ee5a0e7f96fa912cc37fee969652b9818378bc4b12b4e75758585aee8bb"
+        },
+        {
+          "operation": "POST /phone_call_redirects",
+          "specRevision": "2.18",
+          "contract": "sha256:51a26d0d86a27d1360ead8f13b2892666e19a17da0473ad0455ef04ed60a2906"
+        },
+        {
+          "operation": "GET /roles",
+          "specRevision": "2.18",
+          "contract": "sha256:15444253ce8ff4895296f5138aca62e13c6844ff530834401aa217a324ce003d"
+        },
+        {
+          "operation": "GET /roles/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:6572f1415b900014160583b02e67fb6ddf42d5b8ebb111320c8803ec5d5f6b31"
+        },
+        {
+          "operation": "GET /segments",
+          "specRevision": "2.18",
+          "contract": "sha256:7457676f4ad7813b5cc59cb01779e8182b46f552fb201bb123da16ee4bc01099"
+        },
+        {
+          "operation": "GET /segments/{segment_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:19ec55f91032b3b598ecccfc182d3df0ed2b53646606476eb7f0a6449f1a7d14"
+        },
+        {
+          "operation": "GET /subscription_types",
+          "specRevision": "2.18",
+          "contract": "sha256:226af0dc4c24b3f8fc5842525c7c485c44d4b21c7d366f67f379fd1b7e93100e"
+        },
+        {
+          "operation": "GET /subscription_types/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:21bae56b914353d74ef199f3bd51dbeed88914db54b65971db1705f02c94328c"
+        },
+        {
+          "operation": "GET /tags",
+          "specRevision": "2.18",
+          "contract": "sha256:171fa9d0276fa0ceb6935c3fca24bca20a122daf0505b4ed401b9ecaa9b8b19e"
+        },
+        {
+          "operation": "POST /tags",
+          "specRevision": "2.18",
+          "contract": "sha256:d60373b998c8827e208273bd58e466ede3970dda61e87bf9ae778a633ad4ee8c"
+        },
+        {
+          "operation": "GET /tags/{tag_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b36b5ce53bc50276a943ae0d4822a817cdcefe267b800e5f289ca835c761de8b"
+        },
+        {
+          "operation": "DELETE /tags/{tag_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:8620ccc3b6d89e92a3595124aeb0c0fb6576be7b0e9e8554774718ab43639d46"
+        },
+        {
+          "operation": "GET /teams",
+          "specRevision": "2.18",
+          "contract": "sha256:73fa4c2402d132f1b8cdb6b3176577323bdfefa251f7d3339a33e4e7c93f16df"
+        },
+        {
+          "operation": "GET /teams/{team_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:757389830e414886fdd08c72f2a38fbf46e1c016ee85b8d471b2b2c0e35d00e1"
+        },
+        {
+          "operation": "GET /teams/{team_id}/metrics",
+          "specRevision": "2.18",
+          "contract": "sha256:0647aae3dbe73a2ce03b3f410766226820a4ddb9e9c84874fd3b97eb0992303c"
+        },
+        {
+          "operation": "GET /ticket_states",
+          "specRevision": "2.18",
+          "contract": "sha256:84feb78d0ec7a86831f2736c98c9fc739031d3f56f13bccd89ba481c69b5cf6d"
+        },
+        {
+          "operation": "GET /ticket_types",
+          "specRevision": "2.18",
+          "contract": "sha256:7b9e9cce0b65fcc7db8a520f0c3b89574b5df7c182381ca22fcf309099332c5e"
+        },
+        {
+          "operation": "POST /ticket_types",
+          "specRevision": "2.18",
+          "contract": "sha256:7d27ee8820e17c78be7db59d98a78f29e79adf5641c943a42ced12e3c5bb51de"
+        },
+        {
+          "operation": "GET /ticket_types/{ticket_type_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:0130b9ff2095e94524f7843ae292ab55072b09d48ab91ca78c1d77c610c15a3d"
+        },
+        {
+          "operation": "PUT /ticket_types/{ticket_type_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:55c11a6a31cef2e13b9ae7bcb89dec769b7b0ecc3e54c15869cd17530cfd2953"
+        },
+        {
+          "operation": "POST /ticket_types/{ticket_type_id}/attributes",
+          "specRevision": "2.18",
+          "contract": "sha256:826d5bbf16fb162d48a43fa52ad7d04b90325eb624b89e8ecdca4fcc68e669a3"
+        },
+        {
+          "operation": "PUT /ticket_types/{ticket_type_id}/attributes/{attribute_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:78d0b3e30be2f8a8c7c52f28a8c7f0a25db3577fceb546907b6cbbe147c1e027"
+        },
+        {
+          "operation": "POST /tickets",
+          "specRevision": "2.18",
+          "contract": "sha256:a107a1aea2e226fc9241731a980e3d13753a3c3340cf53fcc72169933df7e349"
+        },
+        {
+          "operation": "POST /tickets/enqueue",
+          "specRevision": "2.18",
+          "contract": "sha256:e2f67500506abc2cd3a6669e522207f2e0d2e28045eb41d3836bb5deb1209301"
+        },
+        {
+          "operation": "POST /tickets/search",
+          "specRevision": "2.18",
+          "contract": "sha256:13ecf8ea2948062d0d3aee4226534eefab2fa38b0a3d93c3f94ed6f5d6cd6fe5"
+        },
+        {
+          "operation": "GET /tickets/{ticket_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:aa9a39526ad1d33aa75ca53f7eebe3533b0ae4a5daf49fc850677830eadd4246"
+        },
+        {
+          "operation": "PUT /tickets/{ticket_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:df8ec78789452c99f203c88b2f99b9e084699d4b97804fba27d7093bbd85a876"
+        },
+        {
+          "operation": "DELETE /tickets/{ticket_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b48e7b4f3439a1e009038175f3ecee6d3a9b3ae8c70ad05aab549f5f2523abf2"
+        },
+        {
+          "operation": "POST /tickets/{ticket_id}/change_type",
+          "specRevision": "2.18",
+          "contract": "sha256:53277fca8b7a5aee6fb4263eb19ea1b140e2dbcd00d916554267bc15436d1265"
+        },
+        {
+          "operation": "POST /tickets/{ticket_id}/linked_conversations",
+          "specRevision": "2.18",
+          "contract": "sha256:78b4c52055a28f93bcdba9eae13be8ebfc3d2ba979cf8b227108e28ec0764bc9"
+        },
+        {
+          "operation": "DELETE /tickets/{ticket_id}/linked_conversations/{id}",
+          "specRevision": "2.18",
+          "contract": "sha256:b082ebc52b54f7701f29b40e254248f58814a37420fc932e6105b19a37cbb648"
+        },
+        {
+          "operation": "POST /tickets/{ticket_id}/reply",
+          "specRevision": "2.18",
+          "contract": "sha256:55041c430a906691a0157588125a72bfd8dd01ecb3c6b12b9a8189a5306f8933"
+        },
+        {
+          "operation": "POST /tickets/{ticket_id}/tags",
+          "specRevision": "2.18",
+          "contract": "sha256:381ad17d69a0094c3479e3b2fe5af973a371ac1bd0cf62a40e49005494114a9f"
+        },
+        {
+          "operation": "DELETE /tickets/{ticket_id}/tags/{tag_id}",
+          "specRevision": "2.18",
+          "contract": "sha256:29f882edb3056dd88eb18b5df930d3d7f634523b0cf1f030e6cda125fe4b237b"
+        },
+        {
+          "operation": "GET /visitors",
+          "specRevision": "2.18",
+          "contract": "sha256:300cbf624df59c591d0a665b81b5b1aa5bbbbaf6c6a5facddfba43c7ce1f7abd"
+        },
+        {
+          "operation": "PUT /visitors",
+          "specRevision": "2.18",
+          "contract": "sha256:2a1a6c77919aff3b3b3fd6115b15ee0f649c4f2603c2a905a00de2987a07e683"
+        },
+        {
+          "operation": "POST /visitors/convert",
+          "specRevision": "2.18",
+          "contract": "sha256:5f51ba7beb06da6e82dfef517bbfb66e6d171ef4d4b54087cfba90d95e272ff8"
+        }
+      ]
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.intercom.com/docs/build-an-integration/learn-more/rest-apis",
+      "reason": "Intercom documents regional hosts in prose, not in a machine-readable contract the pinned OpenAPI document can carry beyond its server list. Compare the Regional Hosting table with the provider region map: US api.intercom.io, Europe api.eu.intercom.io, Australia api.au.intercom.io, and the note that api.intercom.io attempts to route other regions.",
+      "lastVerified": "2026-11-13",
+      "evidence": {
+        "us": "https://api.intercom.io/",
+        "eu": "https://api.eu.intercom.io",
+        "au": "https://api.au.intercom.io"
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.intercom.com/docs/build-an-integration/learn-more/authentication",
+      "reason": "Authentication and teammate scoping are documentation prose. Confirm access tokens are sent as Authorization: Bearer, are issued to the installing or regenerating teammate, and that conversation access is limited by that teammate as well as the app scopes; OAuth remains out of scope.",
+      "lastVerified": "2026-11-13",
+      "evidence": {
+        "header": "Authorization: Bearer <access_token>",
+        "teammate": "An Access Token is issued to the teammate who installed the app on the workspace, or who last regenerated the token."
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.intercom.com/docs/build-an-integration/learn-more/rest-apis/update-your-api-version",
+      "reason": "The version header contract is prose. Confirm Intercom-Version on a request overrides the app setting, and compare the current changelog version with the pinned 2.18 document before moving the pin.",
+      "lastVerified": "2026-11-13",
+      "evidence": {
+        "header": "Intercom-Version",
+        "pinned": "2.18",
+        "changelog": "https://developers.intercom.com/docs/references/changelog"
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/conversations/manageconversation",
+      "reason": "The acting-teammate semantics are field descriptions the endpoint digests cover only structurally. Confirm admin_id stays required and names the admin performing the action on close, snooze, open and assignment, that assignee_id 0 unassigns both teammate and team, and that reply, note, tag and untag still take admin_id as the authoring admin.",
+      "lastVerified": "2026-11-13",
+      "evidence": {
+        "reply": "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/conversations/replyconversation",
+        "tag": "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/tags/attachtagtoconversation",
+        "untag": "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/tags/detachtagfromconversation",
+        "unassign": "assignee_id 0"
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.intercom.com/docs/references/rest-api/errors/rate-limiting",
+      "reason": "Rate limits and error statuses are prose. Compare the private-app default (10,000 calls per minute per workspace, metered in 10-second windows) with the default admission budget, and the HTTP response table (401, 403 api_plan_restricted, 404, 409, 429 with optional Retry-After, 406 without Accept) with the error table.",
+      "lastVerified": "2026-11-13",
+      "evidence": {
+        "privateDefaultPerMinute": 10000,
+        "windowSeconds": 10,
+        "errors": "https://developers.intercom.com/docs/references/rest-api/errors/http-responses"
+      }
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/conversations/manageconversation",
+      "reason": "Whether skip_notifications suppresses customer-facing messages is not stated anywhere machine-readable. The pinned 2.18 contract documents the flag on close, open and assignment only as an option to disable notifications (available from 2.15), and snooze has none. Intercom's help center says a teammate close signals the conversation-rating automation and fires Closed-state workflows that can ask the customer for a rating, without saying the flag or an API close stops them. Recheck both sources: if Intercom documents that skip_notifications suppresses CSAT and workflow messages, close may return to a non-destructive write.",
+      "lastVerified": "2026-11-13",
+      "evidence": {
+        "flag": "skip_notifications: Option to disable notifications when closing a conversation. Available from API version 2.15.",
+        "flagOperations": "close, open, assignment",
+        "csat": "https://www.intercom.com/help/en/articles/7872853-measure-customer-satisfaction-with-conversation-ratings",
+        "closedTrigger": "https://www.intercom.com/help/en/articles/6904514-when-a-teammate-changes-the-state-of-a-conversation"
+      }
+    }
+  ]
+}
