@@ -1079,6 +1079,17 @@ describe("sending and organizing mail", () => {
             '<a href="https://example.com/doc?token=&#0000000000091;redacted&#x000005D;">doc</a>',
           ),
         ),
+        quotedPairTab: message(`Cc: "https://example.com/a?t=[re\\\tdacted]" <b@church.example>\r\n${plain}`),
+        foldedDisplayName: message(`Cc: "https://example.com/a?t=[re\\dac\r\n\tted]" <b@church.example>\r\n${plain}`),
+        textBeforeAttribute: message(
+          entity("Content-Type: text/html", 'Text ="lead <a href="https://example.com/a?t=[re\tdacted]">doc</a>'),
+        ),
+        cssUrl: message(
+          entity(
+            "Content-Type: text/html",
+            '<style>body { background: url("https://example.com/a?t=[re\tdacted]") }</style>',
+          ),
+        ),
         recipientWhitespace: message(
           entity(
             "Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable",
@@ -1170,6 +1181,9 @@ describe("sending and organizing mail", () => {
           { to: ['"https://example.com/doc?token=[re\\dacted]" <a@church.example>'] },
           { body: "Hi", htmlBody: '<a href="https://example.com/doc?token=&#0000000000091;redacted&#93;">doc</a>' },
           { body: "Hi", htmlBody: '<a href="https://example.com/doc?token=&lbrack;re\tdac&NewLine;ted&rsqb;">doc</a>' },
+          { to: ['"https://example.com/a?t=[re\\\tdacted]" <a@church.example>'] },
+          { body: "Hi", htmlBody: 'Text ="lead <a href="https://example.com/a?t=[re\tdacted]">doc</a>' },
+          { body: "Hi", htmlBody: '<style>body { background: url("https://example.com/a?t=[re\tdacted]") }</style>' },
         ])
           await expect(
             call(connection(), name, { to: ["a@church.example"], subject: "Hi", ...args }),
@@ -1215,6 +1229,13 @@ describe("sending and organizing mail", () => {
         call(connection(), "gmail_api_write", { method: "POST", path: "/messages/send", body: { raw: mixed } }),
       ).resolves.toMatchObject({ status: 200, data: { id: "s1" } });
       expect(calls).toHaveLength(1);
+      for (const name of ["send_message", "create_draft"])
+        await call(connection(), name, {
+          to: ["a@church.example"],
+          subject: "Hi",
+          body: "https://example.com/a?t=1\n[redacted]",
+        });
+      expect(calls).toHaveLength(3);
     },
   );
 

@@ -346,8 +346,11 @@ describe("pre-signed links in free text", () => {
     "https:&#00000000047;&#x000002F;file.notes.example/a&#0000000063;[redacted]",
     '<a href="https://file.notes.example/a?t=&lbrack;re&Tab;dact&NewLine;ed&rsqb;">doc</a>',
     '<a href="https://file.notes.example/a?t=[re\tdac\r\nted]">doc</a>',
-    "<a href='ht\ttps:/\n/file.notes.example/a?t=[redacted]'>doc</a>",
-    '<a href="https:/&Tab;/file.notes.example/a&#x9;?t=[redacted]">doc</a>',
+    'Text ="lead <a href="https://file.notes.example/a?t=[re\tdacted]">doc</a>',
+    '<style>body { background: url("https://file.notes.example/a?t=[re\tdacted]") }</style>',
+    "https://file.notes.example/a?t=\n[redacted]",
+    "https://file.notes.example/a?to\r\nken=\t[re&#9;dac&NewLine;ted]",
+    "https://file.notes.example/a#\t%5Bredacted%5D",
     "[doc](<https://file.notes.example/a?t=[re\tdacted]>) and more",
     "https://file.notes.example/a?t=[re\ndacted]",
   ])("INV-5: finds the placeholder however it is encoded in %s", (text) => {
@@ -361,6 +364,10 @@ describe("pre-signed links in free text", () => {
     "Fish &amp; chips &NewLine; &#0000038; &lbrack;redacted&rsqb; https://example.com/menu?item=1 &copy; &Colon;",
     '<a href="https://example.com/?q=redacted&amp;n=&#0000091;1&#93;&Tab;">the redacted report</a>',
     "if a < b then\nhttps://example.com/?q=1\n[redacted] stays prose",
+    "https://example.com/a?t=1\n[redacted]",
+    "https://example.com/a?t=1&Tab;[redacted]",
+    "https://example.com/a?flag\nnote [redacted]",
+    "https://example.com/a?t=[re\tviewed]",
   ])("INV-5: admits ordinary text with entities, line breaks and the word in %s", (text) => {
     expect(carriesWithheldLink({ text })).toBe(false);
     expect(() => refuseWithheldValues({ text }, "Vendor")).not.toThrow();
@@ -375,11 +382,10 @@ describe("pre-signed links in free text", () => {
       `https://file.notes.example/a?${"&#00000000000000000091;&#x0".repeat(100_000)}`,
     ],
     ["one reference of zeros", `https://file.notes.example/a?&#${"0".repeat(2_000_000)}91;redacted]`],
-    [
-      "quoted values and tags across lines",
-      `${"a=\"\t<b\n x='&Tab;\r".repeat(200_000)} https://file.notes.example/a?b`,
-    ],
-    ["an unclosed tag of line breaks", `x <a ${"\n&#10;\t".repeat(400_000)}https://file.notes.example/a?b`],
+    ["links ending at line breaks", "//a?t=\n".repeat(300_000)],
+    ["marker prefixes across many runs", "//a?t=\t[r\te\td\ta\tc\tt\te\tx ".repeat(60_000)],
+    ["long words after line breaks", `//a?\n${"b".repeat(300)}`.repeat(6_000)],
+    ["referenced line breaks in one query", `https://file.notes.example/a?t=${"[r&Tab;e&#10;".repeat(200_000)}`],
   ])(
     "INV-5: scans %s in linear time",
     (_, text) => {

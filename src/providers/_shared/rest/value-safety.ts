@@ -682,15 +682,22 @@ interface Link extends LinkSpan {
  * Read a destination once. Admission ends at its actual CommonMark close,
  * counting balanced and escaped parentheses, before inspecting its query.
  */
-function linkSpan(text: string, start: number, host: number, inline: boolean): LinkSpan {
+function linkSpan(text: string, start: number, host: number, inline: boolean, crossRuns: boolean): LinkSpan {
   let depth = 0;
   let escaped = false;
   let cut = -1;
   let open = "?";
   let end = start;
+  let crossed: Crossed | undefined;
   for (; end < text.length; end++) {
     const code = text.charCodeAt(end);
-    if (endsLink(code, text[end]!)) break;
+    if (endsLink(code, text[end]!)) {
+      if (!crossRuns || end < host || !isUrlWhitespace(code)) break;
+      crossed = crossing(text, end, host, crossed);
+      if (!crossed) break;
+      end = crossed.next - 1;
+      continue;
+    }
     if (inline) {
       if (escaped) escaped = false;
       else if (code === 0x5c) escaped = true;
@@ -717,7 +724,7 @@ function linkSpan(text: string, start: number, host: number, inline: boolean): L
  * delimiters. Redaction (`failClosed`) also reads a link whose scheme and
  * host redaction took; admission never does.
  */
-function* linkSpans(text: string, failClosed = false): Generator<Link> {
+function* linkSpans(text: string, failClosed = false, crossRuns = false): Generator<Link> {
   const markers = failClosed && redactionAltered(text);
   for (let at = 0; at < text.length; at++) {
     const char = text[at]!;
@@ -726,7 +733,7 @@ function* linkSpans(text: string, failClosed = false): Generator<Link> {
       // A placeholder opening a word stands where a link's scheme and host may have been.
       // Its run is read once, query or not, and the scan resumes after it.
       const host = marker + REDACTED.length;
-      const span = linkSpan(text, host, host, false);
+      const span = linkSpan(text, host, host, false, crossRuns);
       const start = at;
       at = Math.max(at, span.end - 1);
       yield { ...span, start, host };
@@ -738,7 +745,7 @@ function* linkSpans(text: string, failClosed = false): Generator<Link> {
         const angle = text[destination] === "<";
         const start = destination + (angle ? 1 : 0);
         const host = destinationHost(text, start) ?? start;
-        const span = linkSpan(text, start, host, !angle);
+        const span = linkSpan(text, start, host, !angle, crossRuns);
         at = Math.max(destination, span.end) - 1;
         yield { ...span, start, host };
         continue;
@@ -752,7 +759,7 @@ function* linkSpans(text: string, failClosed = false): Generator<Link> {
         if (SLASH.test(text)) {
           const authority = SLASH.lastIndex;
           const begin = authorityAt(text, authority);
-          const span = linkSpan(text, authority, authority, false);
+          const span = linkSpan(text, authority, authority, false, crossRuns);
           const start = begin >= 0 ? begin : at;
           at = span.end - 1;
           yield { ...span, start, host: authority };
@@ -980,75 +987,110 @@ function decodeLinkText(text: string, percent = true): string {
  * a person's text. Every destination uses the same policy regardless of host.
  */
 export function carriesWithheldLink(value: unknown): boolean {
-  return carriesString(value, (source) =>
-    recipientReadings(source).some((text) => {
-      for (const { cut, end } of linkSpans(text)) {
-        if (cut >= 0 && withoutUrlWhitespace(decodeLinkText(text.slice(cut, end))).includes(REDACTED)) return true;
-      }
-      return false;
-    }),
-  );
+  return carriesString(value, (source) => {
+    const text = canonicalReferences(source);
+    for (const { cut, end } of linkSpans(text, false, true)) {
+      if (cut >= 0 && carriesMarker(decodeLinkText(text.slice(cut, end)))) return true;
+    }
+    return false;
+  });
 }
 
 const LEADING_ZEROS = /&#(?:0+(?=\d)|(x)0+(?=[0-9a-f]))/gi;
 const URL_WHITESPACE = /[\t\n\r]/g;
-const URL_WHITESPACE_REFERENCE = /&(?:tab;|newline;|#(?:9|1[03])(?!\d);?|#x[9ad](?![0-9a-f]);?)/gi;
+const URL_WHITESPACE_RUN = /[\t\n\r]+/;
+const CROSSING_TAIL = 64;
+const CROSSING_SOURCE = 256;
+
+/** Numeric references read with any number of leading zeros, as the WHATWG HTML parser reads them. */
+function canonicalReferences(text: string): string {
+  return text.replace(LEADING_ZEROS, (_, hex?: string) => `&#${hex ?? ""}`);
+}
 
 function withoutUrlWhitespace(text: string): string {
   return text.replace(URL_WHITESPACE, "");
 }
 
-function withoutUrlWhitespaceOrReference(text: string): string {
-  return withoutUrlWhitespace(text).replace(URL_WHITESPACE_REFERENCE, "");
+function isUrlWhitespace(code: number): boolean {
+  return code === 0x09 || code === 0x0a || code === 0x0d;
 }
 
-function isAsciiWhitespace(code: number): boolean {
-  return code === 0x20 || code === 0x09 || code === 0x0a || code === 0x0c || code === 0x0d;
+function isParameterDelimiter(char: string): boolean {
+  return char === "?" || char === "#" || char === "&" || char === ";";
+}
+
+function markerConsistent(candidate: string): boolean {
+  return REDACTED.startsWith(candidate) || candidate.startsWith(REDACTED);
 }
 
 /**
- * Tabs and line breaks removed where a URL parser reads text whole: a value with no
- * spaces, a quoted attribute value (`="…"`), or an angle-bracketed tag or destination.
- * Elsewhere a line break ends a link, so prose keeps its lines.
+ * Whether a URL parser stripping the tab or line break between `before` and
+ * `after` (both decoded) would join them into the marker: `before` ends in a
+ * proper prefix of it and `after` continues it, or `before` ends in a
+ * parameter with no value yet (`?`, `&key`, `?key=`) and `after` holds only
+ * key characters and `=` before the marker begins.
  */
-function urlWhitespaceStripped(text: string): string {
-  if (!text.includes(" ")) return withoutUrlWhitespaceOrReference(text);
-  let out = "";
-  let copied = 0;
-  let close = "";
-  let quote = "";
-  let opened = 0;
-  let previous = "";
-  for (let at = 0; at < text.length; at++) {
-    const char = text[at]!;
-    const opensValue = (char === '"' || char === "'") && previous === "=";
-    if (!isAsciiWhitespace(text.charCodeAt(at))) previous = char;
-    if (quote) {
-      if (char === quote) quote = "";
-    } else if (close === ">" && opensValue) quote = char;
-    else if (close && char === close) {
-      out += text.slice(copied, opened) + withoutUrlWhitespaceOrReference(text.slice(opened, at));
-      copied = at;
-      close = "";
-    } else if (!close && opensValue) {
-      close = char;
-      opened = at + 1;
-    } else if (!close && char === "<" && at + 1 < text.length && !isAsciiWhitespace(text.charCodeAt(at + 1))) {
-      close = ">";
-      opened = at + 1;
-    }
+function crossesToMarker(before: string, after: string): boolean {
+  if (after === "") return false;
+  const open = before.lastIndexOf("[");
+  if (open >= 0 && before.length - open < REDACTED.length) {
+    const prefix = before.slice(open);
+    if (REDACTED.startsWith(prefix) && markerConsistent(prefix + after)) return true;
   }
-  if (close) {
-    out += text.slice(copied, opened) + withoutUrlWhitespaceOrReference(text.slice(opened));
-    copied = text.length;
+  let delimiter = before.length - 1;
+  while (delimiter >= 0 && !isParameterDelimiter(before[delimiter]!)) delimiter--;
+  if (delimiter < 0) return false;
+  let equals = false;
+  for (let at = delimiter + 1; at < before.length; at++) {
+    const char = before[at]!;
+    if (equals || char === "[" || char === "]") return false;
+    equals = char === "=";
   }
-  return out + text.slice(copied);
+  let at = 0;
+  if (!equals) {
+    while (at < after.length && !"=[]".includes(after[at]!) && !isParameterDelimiter(after[at]!)) at++;
+    if (after[at] === "=") at++;
+    else if (after[at] !== "[") return false;
+  }
+  return at === after.length || (after[at] === "[" && markerConsistent(after.slice(at)));
 }
 
-function recipientReadings(text: string): string[] {
-  const canonical = text.replace(LEADING_ZEROS, (_, hex?: string) => `&#${hex ?? ""}`);
-  const stripped = urlWhitespaceStripped(canonical);
-  return stripped === canonical ? [canonical] : [canonical, stripped];
+interface Crossed {
+  next: number;
+  tail: string;
+  tailEnd: number;
+}
+
+/**
+ * The run of tabs and line breaks at `at`, crossed when the decoded text on
+ * either side would join into the marker. Each crossing decodes source
+ * characters no earlier crossing decoded, plus a bounded tail.
+ */
+function crossing(text: string, at: number, from: number, previous: Crossed | undefined): Crossed | undefined {
+  let next = at;
+  while (next < text.length && isUrlWhitespace(text.charCodeAt(next))) next++;
+  let word = next;
+  while (word < text.length && word - next < CROSSING_SOURCE && !endsLink(text.charCodeAt(word), text[word]!)) word++;
+  const contiguous = previous !== undefined && at - previous.tailEnd <= CROSSING_SOURCE;
+  const gap = contiguous ? previous.tailEnd : Math.max(from, at - CROSSING_SOURCE);
+  const before = ((contiguous ? previous.tail : "") + withoutUrlWhitespace(decodeLinkText(text.slice(gap, at)))).slice(
+    -CROSSING_TAIL,
+  );
+  const after = withoutUrlWhitespace(decodeLinkText(text.slice(next, word)));
+  if (!crossesToMarker(before, after)) return undefined;
+  return { next, tail: (before + after).slice(-CROSSING_TAIL), tailEnd: word };
+}
+
+/** Whether decoded link text holds the marker, crossing only the tab and line-break runs a URL parser would join into it. */
+function carriesMarker(decoded: string): boolean {
+  if (!decoded.includes("\t") && !decoded.includes("\n") && !decoded.includes("\r")) return decoded.includes(REDACTED);
+  const [first = "", ...rest] = decoded.split(URL_WHITESPACE_RUN);
+  let joined = first;
+  for (const part of rest) {
+    if (!crossesToMarker(joined.slice(-CROSSING_TAIL), part)) break;
+    joined += part;
+  }
+  return joined.includes(REDACTED);
 }
 
 function carriesString(value: unknown, inspect: (text: string) => boolean): boolean {
@@ -1087,17 +1129,16 @@ function carriesString(value: unknown, inspect: (text: string) => boolean): bool
 /** Whole marker values and withheld destinations are refused; paths and queries also refuse containment. */
 export function refuseWithheldValues(value: unknown, title: string, containment = false): void {
   if (
-    !carriesString(value, (source) =>
-      recipientReadings(source).some((text) => {
-        const decoded = decodeLinkText(text);
-        if (containment) return redactionAltered(text) || redactionAltered(withoutUrlWhitespace(decoded));
-        if (withoutUrlWhitespace(decoded) === REDACTED) return true;
-        for (const candidate of [text, decoded])
-          for (const { start, end } of linkSpans(candidate))
-            if (redactionAltered(withoutUrlWhitespace(decodeLinkText(candidate.slice(start, end))))) return true;
-        return false;
-      }),
-    )
+    !carriesString(value, (source) => {
+      const text = canonicalReferences(source);
+      const decoded = decodeLinkText(text);
+      if (containment) return redactionAltered(text) || redactionAltered(withoutUrlWhitespace(decoded));
+      if (withoutUrlWhitespace(decoded) === REDACTED) return true;
+      for (const candidate of [text, decoded])
+        for (const { start, end } of linkSpans(candidate, false, true))
+          if (carriesMarker(decodeLinkText(candidate.slice(start, end)))) return true;
+      return false;
+    })
   )
     return;
   throw new ConnectorCallError(

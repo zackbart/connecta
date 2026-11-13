@@ -433,6 +433,9 @@ describe("stripe() over an API key", () => {
         '<a href="https://files.example/a?t=&lbrack;re&Tab;dacted&rsqb;">doc</a>',
         '<a href="https://files.example/a?t=[re\tdac\r\nted]">doc</a>',
         "https://files.example/a?t=[re\ndacted]",
+        'Text ="lead <a href="https://files.example/a?t=[re\tdacted]">doc</a>',
+        '"https://files.example/a?t=[re\tdacted]" <alice@example.com>',
+        '<style>body { background: url("https://files.example/a?t=[re\tdacted]") }</style>',
       ].map((note) => ({ method: "POST", path: "/v1/customers", body: { metadata: { note } } })),
     ])
       expect((await refusal(connector.callTool("stripe_api_write", bad, ctx))).code).toBe("invalid_args");
@@ -452,7 +455,12 @@ describe("stripe() over an API key", () => {
       },
       ctx,
     );
-    expect(sent).toHaveLength(before + 2);
+    await connector.callTool(
+      "stripe_api_write",
+      { method: "POST", path: "/v1/customers", body: { description: "https://example.com/a?t=1\n[redacted]" } },
+      ctx,
+    );
+    expect(sent).toHaveLength(before + 3);
     // Named reads accept fields and reject bad roots before authentication.
     expect(
       (await refusal(connector.callTool("get_balance_summary", { fields: ["typo"] }, connectorContext()))).code,

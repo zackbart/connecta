@@ -1675,17 +1675,24 @@ every vendor ships one reviewed table through one mechanism
    form-encoded, raw/base64 bytes, multipart parts and named writes) refuses
    with `invalid_args` and zero dispatch when a URL destination's own query
    or fragment contains the exact `[redacted]` placeholder, plain or up to four
-   layers encoded, in any spelling a recipient reconstructs: numeric character
-   references with any number of leading zeros, every WHATWG named reference
-   that decodes to ASCII (`&lbrack;`, `&rsqb;`, `&Tab;`, `&NewLine;`), and ASCII
-   tabs and line breaks, written or referenced, which the WHATWG URL parser
-   strips. Tabs and line breaks are read as stripped inside a quoted attribute
-   value (`="…"`), an angle-bracketed tag or destination, or a value with no
-   spaces; elsewhere a line break ends a link, so prose that puts the marker
-   on the line after a link is admitted. Other named references decode to
-   non-ASCII characters, which cannot spell the marker or a URL delimiter.
-   Kit admission reads the same spellings. Upload admission reads decoded bytes and each multipart
-   string/blob. Vercel deployment `files[].data` with `encoding: "base64"`
+   layers encoded. Numeric character references read with any number of
+   leading zeros, and the WHATWG named references that decode to ASCII
+   (`&lbrack;`, `&rsqb;`, `&Tab;`, `&NewLine;`) decode; every other named
+   reference decodes to a non-ASCII character, which cannot spell the marker
+   or a URL delimiter. A run of ASCII tabs and line breaks, written or
+   referenced, inside a link's path, query or fragment is read as the WHATWG
+   URL parser strips it only where stripping it would join the marker: the
+   decoded text before the run ends in a proper prefix of `[redacted]` that
+   the text after continues, or ends in a parameter with no value yet (`?`,
+   `&key`, `?key=`) and the text after holds only key characters and `=`
+   before the marker begins. Any other run ends the link, whatever HTML, CSS
+   or MIME context surrounds it, so `https://example.com/a?t=1` followed by a
+   line `[redacted]` is admitted. A line or tab that ends a link with a
+   valueless parameter and is followed by `[redacted]` or `key=[redacted]` is
+   refused even in prose. Not recognized: a tab or line break inside a link's
+   scheme or authority (`https:/\t/host`), or between a parameter value and a
+   following marker (`?t=1\t[redacted]`). Kit admission applies the same
+   rule. Upload admission reads decoded bytes and each multipart string/blob. Vercel deployment `files[].data` with `encoding: "base64"`
    and Cloudflare KV bulk `value` with `base64: true` pass through the same
    byte inspection with one decode, bounded by the field's own encoded length
    (decoded bytes are at most three quarters of encoded characters). Cloudflare
