@@ -1,6 +1,6 @@
 {
   "notes": [
-    "2026-11-13: One grant for several connectors (#1416) adds grant owners to the registry (storage namespace and sealer through the owner, group checks and invalidation), owner-following Connect links, management and member contract, and the shared refresh coordinator. A same-toolchain local comparison against origin/main at 7be07115 measures +467 B root, +606 B examples/worker and +200 B ./ui. Projected from the previous CI measurements, the root reaches about 447,512 B and examples/worker about 832,543 B, past their 447,400 B and 832,300 B caps. Pending owner approval, the caps move to 447,900 B and 832,950 B, leaving about 388 B and 407 B. ./ui stays within its cap. The new ./google-account entry bundles all nine Google products on one grant and measures 619,433 B locally; its cap leaves 60,000 B, as ./google's does.",
+    "2026-11-13: One grant for several connectors (#1416) adds grant owners to the registry (storage namespace and sealer through the owner, group checks and invalidation), owner-following Connect links, management and member contract, and the shared refresh coordinator. A same-toolchain local comparison against origin/main at 7be07115 measures +467 B root, +606 B examples/worker and +200 B ./ui. Projected from the previous CI measurements, the root reaches about 447,512 B and examples/worker about 832,543 B, past their 447,400 B and 832,300 B caps. CI for #1418 at 984ccf7c measures the root at 447,590 B and examples/worker at 832,959 B. Pending owner approval, the caps move to 447,950 B and 833,330 B, leaving 360 B and 371 B. ./ui stays within its cap. The new ./google-account entry bundles all nine Google products on one grant and measures 619,433 B locally; its cap leaves 60,000 B, as ./google's does.",
     "2026-11-13: Exact writes on read-only pools and unlisted roster connectors (#1409) add write-grant parsing and construction checks, the per-tool write refusal, and the unlisted endpoint fact. A same-toolchain local comparison against origin/main at 864071f8 measures +861 B root, +963 B examples/worker and +167 B ./ui. Estimated from the previous CI measurements, the root reaches about 447,045 B and examples/worker about 831,937 B, past their 446,550 B and 831,350 B caps. The caps move to 447,400 B and 832,300 B, leaving about 355 B and 363 B. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-13: Accepting Google's RFC 9207 callback issuer (#1405) adds the declared-issuer check and value-free warnings for each silent OAuth callback refusal. CI on main at a5e9e843 measures the root at 445,972 B and examples/worker at 830,803 B, 28 B and 47 B under their caps; a same-toolchain local comparison against origin/main measures +212 B root and +171 B examples/worker, ./ui unchanged. The caps move to 446,550 B and 831,350 B, leaving about 366 B and 376 B. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-12: Bounding downstream OAuth response bodies (#1373, #1389) routes discovery and registration through the streaming body bound with a typed error. CI at a56bdb77 measures the root at 445,650 B and examples/worker at 830,476 B, past the 445,600 B and 830,150 B caps. Owner-approved: the caps move to 446,000 B and 830,850 B, leaving 350 B and 374 B.",
@@ -100,7 +100,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 447900
+      "maxGzip": 447950
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -192,7 +192,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 832950
+      "maxGzip": 833330
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
