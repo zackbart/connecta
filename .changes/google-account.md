@@ -1,0 +1,5 @@
+---
+type: added
+---
+
+`googleAccount(id, options)` from `@zackbart/connecta/google-account` connects one Google account to every Google product with one consent (#1416). It returns an account connector `<id>` with no tools, which owns the grant, its `/oauth/callback/<id>` callback and the Connect button, plus `<id>_gmail`, `<id>_drive`, `<id>_docs`, `<id>_sheets`, `<id>_slides`, `<id>_forms`, `<id>_meet`, `<id>_people` and `<id>_calendar`, each with that product's tools and guide on the shared grant. `products` narrows the set. Consent asks for every included product's scopes once. Connect links, `authorize_connector` handoffs and recovery for a product connector open the account's consent, and Disconnect on any of them ends the grant for all. A person may connect the account through any product connector in their pools, and the member page shows the account once. Delegation mode returns only the product connectors. Core gains grant owners for `api()` OAuth connectors: a connector's grant storage, sealing and callback follow its owner, and renewal is coordinated across the group.

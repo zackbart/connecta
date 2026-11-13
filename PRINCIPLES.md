@@ -75,7 +75,9 @@ links the executable checks.
   membership, pool tools, and pool owners come from admitted auth and
   deployment code, never arguments.
 - **INV-5: Credentials stay home.** Encrypt stored downstream credentials,
-  partition them by connector and owner, and render them nowhere. A configured
+  partition them by the connector that holds them and by owner, and render
+  them nowhere. A connector sharing another's OAuth grant reads it in that
+  connector's partition, never its own. A configured
   vault must seal downstream OAuth state. A deployment with no vault opts out of
   encryption at rest and stores the least a pending flow needs.
 - **INV-6: Payload-free records.** Activity, logs, and status carry no

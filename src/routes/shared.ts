@@ -761,7 +761,8 @@ export function memberConnectors(
  * credential manages nothing. Shared auth is deployment-wide, so it takes a
  * maintainer. A personal connector takes a stable principal that is a
  * maintainer, whose plain `/mcp` includes it, or a member of a pool that
- * contains it, and either way one the connector's `members` admit; it is
+ * contains it or a connector using its grant, and either way one the
+ * connector's `members` admit; it is
  * always the caller's own partition, which callers bind by principal. Every path that issues a link, starts,
  * completes, or disconnects auth, or writes a credential, asks this.
  */
@@ -776,7 +777,9 @@ export function mayManageConnector(
   if (!opts.registry.connectorAdmits(connector.id, identity)) return false;
   if (isMaintainer(opts.maintainers, identity)) return true;
   const pools = memberConnectors(opts, identity);
-  return pools === "all" || pools.has(connector.id);
+  return (
+    pools === "all" || pools.has(connector.id) || opts.registry.grantMembers(connector.id).some((id) => pools.has(id))
+  );
 }
 
 /** Agent token list, issue, rotate, and revoke: an interactive maintainer only. */

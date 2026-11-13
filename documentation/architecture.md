@@ -1938,6 +1938,20 @@ service binding on workerd.
 Node.
 Operator setup lives in [Google hosted MCP](./auth.md#google-service-account-tokens-and-hosted-mcp).
 
+`/google-account` (`src/google-account.ts`) exports `googleAccount()`, which
+builds every Workspace product's connector on one shared grant. It builds the
+account connector and each product through `apiUsingGrant` and
+`constructOnGrant` in `src/http/provider.ts`; `sharedOAuthGrant` in
+`src/auth/static-oauth.ts` shares the refresh coordinator, and
+`src/oauth-grant-owner.ts` tags and checks grant owners for the registry, which
+resolves a connector's storage namespace and sealer through its owner.
+Connect links (`src/oauth-handoff.ts`), `mayManageConnector`
+(`src/routes/shared.ts`) and the member contract (`src/routes/ui-config.ts`)
+follow the owner. `test/google-workspace-delegation.test.ts` covers the shared
+consent, renewal, disconnect, construction refusals and the member connect
+flow. Operator setup lives in [Google account](./providers.md#google-account);
+the contract in [One grant for several connectors](./auth.md#one-grant-for-several-connectors).
+
 `createConnecta` takes closed typed `ui`, `vault`, and `activity`
 slots, with factories at `/ui`, `/credentials`, and `/activity`
 and agent tokens at `/auth/access-tokens`. Root exports the contracts, never the implementations, and there

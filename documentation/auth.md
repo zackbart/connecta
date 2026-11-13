@@ -1484,7 +1484,7 @@ client registration, token exchange, and refresh retain their OAuth flows.
 
 Each owner of an OAuth connector (the deployment when shared, each principal
 when personal) has one **grant record**, `oauth:grant` in the connector's
-namespace: the live **epoch**, the latest consent's state digest, and one
+namespace, or its [grant owner's](#one-grant-for-several-connectors): the live **epoch**, the latest consent's state digest, and one
 authorization server's client registration, tokens, and discovery. Each
 consent has a **flow record**, `oauth:flow:<sha256(state)>`, holding its epoch
 and timestamp, its binding to the selected server and client, its consent URL,
@@ -3306,6 +3306,39 @@ a concurrently recovered grant is preserved. An observation
 storage failure does not replace the already received API response. `oauth` and
 `credential` are exclusive per connector, giving `auth_required` one recovery.
 For providers offering both, deployment config chooses; handlers check `ctx.oauth`.
+
+### One grant for several connectors
+
+[`googleAccount()`](./providers.md#google-account) builds connectors that share
+one downstream grant. One connector, the **grant owner**, holds it. Every other
+connector in the group uses the owner's grant instead of its own:
+
+- Grant, flow, refresh and connect-link records live in the owner's
+  namespace, partitioned by owner (deployment or principal) as usual. They are
+  sealed with the owner's connector id in the additional authenticated data.
+- The consent's redirect URI is the owner's `/oauth/callback/<owner id>`. A
+  Connect link, `authorize_connector` handoff, Restart or call recovery issued
+  for any connector in the group opens `/connect/<owner id>`.
+- Renewal is coordinated across the group, so concurrent 401s on different
+  connectors spend one refresh. A refusal recorded through one connector makes
+  every connector in the group report `auth_required`, because they hold the
+  same token.
+- Status on any connector in the group reads the owner's grant. Disconnect on
+  any of them removes it for all.
+- For a personal group, a person may manage the owner when they may manage any
+  connector in the group: a pool that holds one of them, and the connector's
+  `members`. The owner's own `members` must also admit them.
+- Each connector keeps its own `apiOrigins`, so a token is sent only to the
+  origins of the connector making the call. Every connector's client,
+  endpoints and scope must equal the owner's.
+- Construction fails when a connector's grant owner is not configured, owns no
+  grant, or has a different `authScope`.
+- `describeConfig()` and the member contract report `grantOwner` on every
+  connector that uses another's grant.
+
+Grant ownership is set at construction and cannot be chosen by any request.
+Moving a connector into or out of a group changes where its grant is stored,
+so its people connect again.
 
 ### Allowed accounts on `api()` OAuth
 

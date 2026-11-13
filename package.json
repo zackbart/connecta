@@ -178,6 +178,10 @@
     "./google": {
       "types": "./dist/google.d.ts",
       "import": "./dist/google.js"
+    },
+    "./google-account": {
+      "types": "./dist/google-account.d.ts",
+      "import": "./dist/google-account.js"
     }
   },
   "scripts": {

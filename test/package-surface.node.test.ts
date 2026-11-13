@@ -144,6 +144,7 @@ describe("public package boundary", () => {
         "./d1",
         "./json-schema",
         "./google",
+        "./google-account",
         "./quickjs",
         "./worker",
         "./auth/clerk",

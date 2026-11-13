@@ -1128,6 +1128,78 @@ category schedule lists one per two seconds. Override `callAdmission` to match
 shared usage, and respect the vendor's rate-limit wait. Replies are bounded
 at 8 MiB. The legacy per-church v1 XML API is outside this provider's scope.
 
+## Google account
+
+`googleAccount()` connects one Google account to every Google product with one
+consent. Use it instead of separate `gmail()`, `drive()`, … `calendar()`
+entries when the same account should reach several products:
+
+```ts
+import { googleAccount } from "@zackbart/connecta/google-account";
+
+const oauth = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET };
+
+createConnecta({
+  connectors: [
+    ...googleAccount("google", {
+      purpose: "Staff mail, files and calendars",
+      oauth,
+      authScope: "personal",
+      accounts: { domain: "example.com" },
+    }),
+  ],
+  pools: { team: { tools: ["google_gmail", "google_calendar"], members: ["alice", "bob"] } },
+});
+```
+
+It returns an array; spread it into `connectors`.
+
+| Connector                                                                                                                        | What it is                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<id>`                                                                                                                           | The account. It has no tools. It owns the one grant, its callback `<publicUrl>/oauth/callback/<id>`, its status and account label, and its Connect button. OAuth mode only. |
+| `<id>_gmail`, `<id>_drive`, `<id>_docs`, `<id>_sheets`, `<id>_slides`, `<id>_forms`, `<id>_meet`, `<id>_people`, `<id>_calendar` | One per product, with the same tools, guide and behavior as that product's own factory, using the account's grant.                                                          |
+
+Rules:
+
+- Options are the product options, applied to every product: `purpose`,
+  `title`, `instructions`, `readOnly`, `members`, `callAdmission`,
+  `maxResultBytes`, and one mode, `{ oauth, authScope, accounts? }` or
+  `{ serviceAccount, subject }`. `title` names the account connector and
+  defaults to `Google`. `baseUrl` is refused.
+- `products` lists the products to include, from `gmail`, `drive`, `docs`,
+  `sheets`, `slides`, `forms`, `meet`, `people` and `calendar`; omitted, all of
+  them. Connectors come back in that fixed order, the account first.
+- Consent asks once for the scopes of every included product, plus `openid
+  email` when `accounts` is set. Enable each included product's API in the
+  OAuth client's project and register only `<publicUrl>/oauth/callback/<id>`
+  as a redirect URI.
+- Pools list product connectors or their tools (`google_gmail`,
+  `google_gmail.search_threads`); they need not list `<id>`. A person may
+  connect the account when any of its product connectors is in one of their
+  pools and its `members` admit them. Maintainers always may.
+- Every Connect link, `authorize_connector` handoff and recovery for a product
+  connector opens the account's consent. Disconnect on any of them removes the
+  account's grant, so every product reports `auth_required` until the person
+  connects again. The member page shows the account once, with its products'
+  tool count.
+- A person who declines a product's permission on Google's consent screen gets
+  `provider_permission_denied` from that product until they reconnect and
+  allow it. The other products keep working.
+- Changing `products` changes the scopes the next consent asks for. Existing
+  grants keep the scopes they were given; people reconnect to grant new ones.
+- Delegation mode has no grant to share: `googleAccount()` returns only the
+  product connectors, each minting delegated tokens as it would alone.
+- Two Google accounts are two calls with different ids, such as
+  `googleAccount("work", …)` and `googleAccount("personal", …)`.
+- To give one product its own grant, such as a shared inbox or another
+  account, leave it out of `products` and add that product's own factory with
+  the same OAuth client:
+  `gmail("support", { purpose, oauth, authScope: "shared", accounts: "support@example.com" })`.
+  It keeps its own grant, callback and Connect button.
+- Moving from per-product connectors changes connector ids (`mail` becomes
+  `google_gmail`), so pools, `classification` and tool addresses change, and
+  grants do not carry over: each person connects the account once.
+
 ## Gmail
 
 Gmail uses a service account with Workspace domain-wide delegation. Enable
@@ -1174,7 +1246,8 @@ offer less, set `readOnly: true` on the connection, or list only chosen tools
 `slides`, `forms`, `meet`, `people`,
 `calendar`) alternatively connects Google accounts through Connecta's
 downstream OAuth grant. It needs no Workspace administrator and also serves
-consumer Google accounts:
+consumer Google accounts. To connect several products with one consent, use
+[`googleAccount()`](#google-account) instead:
 
 ```ts
 gmail("mail", {

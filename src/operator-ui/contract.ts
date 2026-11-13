@@ -103,8 +103,10 @@ export interface OperatorMemberConnector {
    * when `ok` and the connector checks accounts.
    */
   connection: { state: ConnectorStatus["state"]; problem?: UiProblem; account?: string } | null;
-  /** What the member may do. Always "none" for shared connectors. */
+  /** What the member may do. Always "none" for shared connectors and for one using another's grant. */
   manage: OperatorMemberManage;
+  /** The connector whose OAuth grant this one uses, which the member connects instead. */
+  grantOwner?: string;
 }
 
 export type OperatorMemberManage =

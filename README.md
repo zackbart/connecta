@@ -26,6 +26,9 @@ Connecta supplies the service credentials, so the agent doesn't need them.
 
 Maintained connections: <!-- providers:start -->Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Calendar, Google Docs, Google Drive, Google Forms, Google Meet, Google People (Contacts and directory), Google Sheets, Google Slides, Granola, Overflow, Planning Center, QuickBooks Online, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
 
+A Google account can be connected once for every Google product it uses, with
+one sign-in per person.
+
 Maintained API providers pair reviewed vendor contracts with tools built by
 Connecta. See the [API sources and tool inventory](./documentation/providers.md#api-sources-and-tool-inventory)
 for each provider's named workflows and reviewed API tools.

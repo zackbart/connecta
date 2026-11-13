@@ -114,20 +114,23 @@ export function memberPage(contract: OperatorUiContractV2 | null): MemberPageMod
   return {
     endpoints: contract.pools.map((pool) => ({ pool: pool.name, path: pool.humanPath })),
     accounts: contract.connectors
-      .filter((connector) => connector.authScope === "personal")
+      .filter((connector) => connector.authScope === "personal" && connector.grantOwner === undefined)
       .map((connector) => {
         const connection: Connection = connector.connection ?? { state: "auth_required" };
+        const using = contract.connectors.filter((other) => other.grantOwner === connector.id);
         return {
           id: connector.id,
           title: connector.title || connector.id,
-          toolCount: toolCount(connector),
+          toolCount: using.reduce((count, other) => count + toolCount(other), toolCount(connector)),
           badge: connector.connection
             ? {
                 label: connectorStatusLabel(connection.state, connection.problem),
                 tone: connectorStatusTone(connection.state),
               }
             : null,
-          summary: summaryFor(connector.manage, connection),
+          summary:
+            summaryFor(connector.manage, connection) ??
+            (using.length ? `Covers ${using.map((other) => other.title || other.id).join(", ")}` : null),
           account: connection.state === "ok" ? (connection.account ?? null) : null,
           manage: connector.manage,
           controls: controlsFor(connector.manage, connection),
