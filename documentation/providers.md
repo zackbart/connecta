@@ -2035,10 +2035,15 @@ that names one. `admin` is required unless `readOnly: true`. The provider also
 accepts `purpose`, optional `title`, `instructions`, `maxResultBytes`,
 `members`, `callAdmission` and the common `readOnly` restriction.
 
-Named writes: `reply_to_conversation` (destructive: the customer receives it),
-and the writes `add_conversation_note`, `close_conversation`,
-`open_conversation`, `snooze_conversation`, `assign_conversation`,
-`unassign_conversation`, `tag_conversation` and `untag_conversation`. There is
+Named writes: `reply_to_conversation` and `close_conversation` are
+destructive. The customer receives a reply. A close sends Intercom's
+`skip_notifications`, but Intercom documents that flag only as disabling
+notifications, and a close can still trigger a satisfaction survey or a
+Closed-state workflow message. `add_conversation_note`, `open_conversation`,
+`snooze_conversation`, `assign_conversation`, `unassign_conversation`,
+`tag_conversation` and `untag_conversation` are writes; open, assign and
+unassign also skip notifications, and assigning or unassigning a closed
+conversation reopens it. There is
 no raw write hatch. A pool can grant the reads alone (`tools: ["support"]`
 with `readOnly: true`) or exact write addresses alone, such as
 `tools: ["support.add_conversation_note"]`.
@@ -2048,9 +2053,15 @@ including the read-only search POSTs for conversations, contacts, companies,
 tickets and calls. Auth tokens, data connectors, the conversation stream
 token, exports and downloads, the IP allowlist, teammate audit logs, Fin agent
 runtime endpoints and call recordings are refused. Attachment, file-attribute
-and call recording or transcript URLs are always withheld; contact details are
-returned as customer data. GET lists that page with `starting_after` return
-`page.nextCursor`; search bodies carry their own `pagination.starting_after`.
+and call recording or transcript URLs are always withheld, and every string
+in an admitted response, including subjects, translations and open
+attribute maps, has credential-bearing link queries withheld while ordinary
+links remain. Contact details are returned as customer data. GET lists that
+page with `starting_after` return `page.nextCursor`; search bodies carry
+their own `pagination.starting_after`. A conversation read without
+`query.page` returns only its 500 newest parts and says so in `warnings`;
+`query.page: 1` pages every part oldest first through `page.nextCursor`.
+Query arrays the contract declares `explode: false` are sent comma-joined.
 
 Intercom's default limit for private apps is 10,000 calls per minute per
 workspace, shared by every private app, metered in 10-second windows. The

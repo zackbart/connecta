@@ -120,20 +120,20 @@ export function intercomTools({
     write(connection, {
       name: "close_conversation",
       description:
-        "Close an Intercom conversation as this connection's configured teammate, without sending the customer a message. A later customer reply reopens it.",
-      destructive: false,
+        "Close an Intercom conversation as this connection's configured teammate, with notifications skipped. A CSAT survey or a workflow on close can still message the customer.",
+      destructive: true,
       input: ById,
       output: ConversationResult,
-      run: (args) => manage(args.conversationId, { message_type: "close", type: "admin" }),
+      run: (args) => manage(args.conversationId, { message_type: "close", type: "admin", skip_notifications: true }),
     }),
     write(connection, {
       name: "open_conversation",
       description:
-        "Reopen a closed or snoozed Intercom conversation as this connection's configured teammate. It keeps its current assignee.",
+        "Reopen a closed or snoozed Intercom conversation as this connection's configured teammate, with notifications skipped. It keeps its current assignee.",
       destructive: false,
       input: ById,
       output: ConversationResult,
-      run: (args) => manage(args.conversationId, { message_type: "open" }),
+      run: (args) => manage(args.conversationId, { message_type: "open", skip_notifications: true }),
     }),
     write(connection, {
       name: "snooze_conversation",
@@ -161,7 +161,7 @@ export function intercomTools({
     write(connection, {
       name: "assign_conversation",
       description:
-        "Assign an Intercom conversation to a teammate or team, as this connection's configured teammate. Resolve the assignee id from the admins or teams list first.",
+        "Assign an Intercom conversation to a teammate or team as this connection's configured teammate, with notifications skipped. A closed conversation reopens.",
       destructive: false,
       input: Schema.Struct({
         conversationId,
@@ -174,16 +174,23 @@ export function intercomTools({
           message_type: "assignment",
           type: args.assigneeType,
           assignee_id: args.assigneeId,
+          skip_notifications: true,
         }),
     }),
     write(connection, {
       name: "unassign_conversation",
       description:
-        "Unassign an Intercom conversation, clearing both its teammate and team assignee, as this connection's configured teammate. It stays open.",
+        "Unassign an Intercom conversation, clearing its teammate and team assignee, as this connection's configured teammate, with notifications skipped. A closed one reopens.",
       destructive: false,
       input: ById,
       output: ConversationResult,
-      run: (args) => manage(args.conversationId, { message_type: "assignment", type: "admin", assignee_id: "0" }),
+      run: (args) =>
+        manage(args.conversationId, {
+          message_type: "assignment",
+          type: "admin",
+          assignee_id: "0",
+          skip_notifications: true,
+        }),
     }),
     write(connection, {
       name: "tag_conversation",

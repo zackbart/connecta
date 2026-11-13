@@ -13,9 +13,15 @@ email is never an id.
 A conversation's `source` is its first message. `conversation_parts` holds
 everything after it in order: comments, notes, assignments, closes and other
 events. `part_type` says which; a `note` is teammate-only, and parts typed
-`unknown` are retired types to skip. Reading one conversation returns its
-parts; list and search results do not, so read the conversation to see the
-whole thread.
+`unknown` are retired types to skip. List and search results carry no parts;
+read the conversation for them.
+
+Reading a conversation without `page` returns only its 500 most recent parts.
+To read a whole thread, send `page` 1 (with `per_page` up to 500): parts then
+come oldest first, and the read's next cursor continues until no page
+remains. Part-type and `parts_created_after`/`parts_created_before` filters
+apply before paging. `conversation_parts.total_count` counts only the parts in
+that response, never the conversation's total.
 
 The access token belongs to the teammate who installed the app, and reads see
 only what that teammate's conversation access allows. A missing conversation
@@ -35,8 +41,10 @@ the Messenger, and cannot be recalled. Use `add_conversation_note` for
 anything meant only for teammates, and reply only when the user asked for
 customer-facing words.
 
-A reply to a closed conversation reopens it. Closing sends the customer
-nothing. A conversation can have both a teammate and a team assignee;
+A reply to a closed conversation reopens it, and so does assigning or
+unassigning it. Closing skips notifications but can still send the customer a
+satisfaction survey or a workflow's message, so close only when the user asked
+for it. A conversation can have both a teammate and a team assignee;
 unassigning clears both. Tags must already exist: find the tag id in the
 tags list.
 

@@ -7,10 +7,11 @@ import { Credentials } from "../../http/services.js";
 import { restSafety } from "../../http/safety.js";
 import { get } from "../../http/vendor.js";
 import type { ConnectOptions, Connection } from "../../http/vendor.js";
-import { indexedVendor } from "../_shared/rest/kit.js";
+import { checked, indexedVendor } from "../_shared/rest/kit.js";
 import { OperationIndex } from "../_shared/rest/operation-index.js";
 import { valueSafety } from "../_shared/rest/value-safety.js";
 import { openapi } from "./openapi.generated.js";
+import { queryPairs } from "./lib/query.js";
 import { INTERCOM_VALUE_SAFETY, NAMED_WRITES, READS } from "./safety.js";
 
 export const index = new OperationIndex(openapi, { vendor: "intercom", title: "Intercom" });
@@ -76,16 +77,62 @@ const startingAfter: HatchPageAdapter = {
   },
 };
 
-export const pages = Object.fromEntries(
-  index.ops
-    .filter(
-      (op) =>
-        READS.has(`${op.method} ${op.path}`) &&
-        op.method === "GET" &&
-        index.contract(op).parameters.some((param) => param.in === "query" && param.name === "starting_after"),
-    )
-    .map((op) => [`${op.method} ${op.path}`, startingAfter]),
-);
+const conversationPartsPage: HatchPageAdapter = {
+  param: "page",
+  in: "query",
+  initialAnchor: true,
+  decode(cursor) {
+    const value = Number(cursor);
+    if (!/^\d+$/.test(String(cursor)) || !Number.isSafeInteger(value) || value < 1)
+      throw new ConnectorCallError("invalid_args", "query.page must be a whole number from 1.");
+    return value;
+  },
+  next(data, call) {
+    const parts = record(record(data)["conversation_parts"]);
+    if (!Object.hasOwn(parts, "pages")) return undefined;
+    const pages = record(parts["pages"]);
+    const current = Number(pages["page"] ?? call.query["page"]);
+    if (!Number.isSafeInteger(current) || current < 1)
+      throw new ConnectorCallError("connector_call_failed", "Intercom returned invalid paging metadata.", {
+        retryable: false,
+      });
+    const next = pages["next"];
+    if (typeof next === "string" && next) return current + 1;
+    const total = Number(pages["total_pages"]);
+    return Number.isSafeInteger(total) && current < total ? current + 1 : null;
+  },
+};
+
+const CONVERSATION = "GET /conversations/{conversation_id}";
+const PART_LIMIT = 500;
+
+export const pages = {
+  ...Object.fromEntries(
+    index.ops
+      .filter(
+        (op) =>
+          READS.has(`${op.method} ${op.path}`) &&
+          op.method === "GET" &&
+          index.contract(op).parameters.some((param) => param.in === "query" && param.name === "starting_after"),
+      )
+      .map((op) => [`${op.method} ${op.path}`, startingAfter]),
+  ),
+  [CONVERSATION]: conversationPartsPage,
+};
+
+function partsWarning(
+  call: { readonly op: { readonly method: string; readonly path: string } },
+  query: Readonly<Record<string, unknown>>,
+  data: unknown,
+) {
+  if (`${call.op.method} ${call.op.path}` !== CONVERSATION || query["page"] !== undefined) return [];
+  const parts = record(record(data)["conversation_parts"])["conversation_parts"];
+  return Array.isArray(parts) && parts.length >= PART_LIMIT
+    ? [
+        "Intercom returned only the 500 most recent conversation parts. To read every part, repeat this read with query.page 1 (and query.per_page up to 500), then follow page.nextCursor; pages run oldest first.",
+      ]
+    : [];
+}
 
 function namesAdmin(value: unknown, depth = 0): boolean {
   if (depth > 32 || value === null || typeof value !== "object") return false;
@@ -99,23 +146,25 @@ const ADMIN_REFUSAL =
 export function binding({ connection }: { connection: Connection }): HatchBinding {
   return {
     review:
-      "Reads only; any admin_id in a query or body is refused because the acting teammate comes from deployment config. JSON framing through Connection.sendPath.",
+      "Reads only; any admin_id in a query or body is refused because the acting teammate comes from deployment config. Query parameters follow the pinned style: explode:false arrays comma-joined, the exploded /events filter object spread into its field. JSON framing through Connection.sendPath.",
     refuse: (call) => (namesAdmin(call.query) || namesAdmin(call.body) ? ADMIN_REFUSAL : undefined),
+    warnings: true,
     send: (call, options) =>
-      connection.sendPath(
-        {
-          method: call.method,
-          path: call.path,
-          template: call.op.path,
-          query: Object.entries(call.query).flatMap(([key, value]) =>
-            (Array.isArray(value) ? value : [value])
-              .filter((item) => item !== undefined)
-              .map((item) => [key, String(item)] as const),
-          ),
-          ...(call.body === undefined ? {} : { json: JSON.stringify(call.body) }),
-        },
-        options,
-      ),
+      Effect.gen(function* () {
+        const query = yield* checked(() => queryPairs(`${call.method} ${call.op.path}`, call.query));
+        const answer = yield* connection.sendPath(
+          {
+            method: call.method,
+            path: call.path,
+            template: call.op.path,
+            query,
+            ...(call.body === undefined ? {} : { json: JSON.stringify(call.body) }),
+          },
+          options,
+        );
+        const warnings = partsWarning(call, call.query, answer.data);
+        return warnings.length ? { ...answer, warnings } : answer;
+      }),
   };
 }
 

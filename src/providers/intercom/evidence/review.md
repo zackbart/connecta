@@ -75,20 +75,25 @@ non-numeric answer.
 ## Classification
 
 - Reply (`message_type: comment`) leaves the workspace: destructive.
-- Note, close, open, snooze, assign, unassign, tag and untag change workspace
-  state only: writes.
-- Close sends no body, so it messages no one. Assignment and close bodies,
-  quick replies, attachments and `skip_notifications` are not exposed.
+- Close is destructive. It sends `skip_notifications: true`, which the pinned
+  contract documents only as "Option to disable notifications when closing a
+  conversation" (from 2.15). Intercom's help center says a teammate close
+  signals the conversation-rating automation
+  ([conversation ratings](https://www.intercom.com/help/en/articles/7872853-measure-customer-satisfaction-with-conversation-ratings))
+  and fires Closed-state workflows that can ask the customer for a rating
+  ([teammate changes state](https://www.intercom.com/help/en/articles/6904514-when-a-teammate-changes-the-state-of-a-conversation)).
+  Neither page says the flag or an API close suppresses those, so no
+  customer-message suppression can be promised. A manual check in
+  `drift.json` records both sources.
+- Note, open, snooze, assign, unassign, tag and untag change workspace state:
+  writes. Open, assign and unassign also send `skip_notifications: true`, the
+  only state changes besides close whose contract declares the flag; snooze
+  has none. Assigning or unassigning a closed conversation reopens it
+  (`skip_reopen` defaults to false), and the descriptions say so.
+- Close sends no body. Assignment and close bodies, quick replies,
+  attachments and `skip_reopen` are not exposed.
 - Reviewed read-only POSTs: conversation, contact, company, ticket and call
   search, and `POST /companies/list`.
-
-Every other operation is a hatch refusal. Refused read families: auth tokens
-(Fin data connector credentials), data connectors (outbound headers and
-authentication bypasses), the conversation stream token, content and
-reporting exports and downloads, the IP allowlist, teammate activity logs, Fin
-and Fin Voice runtime endpoints, and call recordings (a redirect to media).
-The single non-JSON success in the document, the reporting download, is
-refused.
 
 ## Value safety
 
@@ -110,14 +115,48 @@ and locations, is returned. Redacted:
 - Call `recording_url`, `transcription_url`, `fin_recording_url` and
   `fin_transcription_url`.
 
-Embedded URL review: conversation source and part bodies, source subjects in
-lists, side conversation part bodies, ticket part bodies and note bodies get
-the generic credential-name and global signing-parameter defense, so a signed
-download link embedded in HTML (for example `?expires=…&signature=…`) is
-withheld. Contact and company `custom_attributes` are untyped maps; a file
-attribute there is not reachable by a reviewed path and relies on the
-runtime credential-name heuristic. Vendor error prose stays withheld; codes
+Embedded URL review, fail closed: every admitted read and every named write
+applies the embedded-URL policy to its whole response (`{}` at the root), so
+every string at any depth, including fields the schema leaves undeclared or
+models as open maps, has credential-bearing link queries and fragments
+withheld while ordinary links keep their bytes. The audit of the pinned
+models' free-text and HTML string fields found 65 in `conversation` (title,
+source subject and body, email subjects and history, part bodies, part
+`translations.<locale>`, quick-reply text, rating remarks, scorecard notes
+and reasoning, monitor explanations, company notes, and the open
+`custom_attributes`, `event_details` and `sales_agent.collected_data` maps),
+22 in `ticket` (the open `ticket_attributes` map, which holds
+`_default_title_` and `_default_description_`, part bodies and translations,
+type and state labels), 30 in `contact` (including the open
+`custom_attributes` map), 153 in `article` (title, description, `body` and
+`body_markdown` for each translated locale), 3 in `internal_article`, 2 in
+`note` and 1 in `company_note`. Rather than enumerate them, the whole-response
+rule covers each one and any field added later. The global signing-parameter
+defense applies everywhere as well. Vendor error prose stays withheld; codes
 and statuses pass.
+
+## Query encoding
+
+The pinned document declares `style: form, explode: false` arrays on
+`GET /conversations/{conversation_id}` (`include_part_types`,
+`exclude_part_types`) and `GET /content/search` (`states`, `locales`,
+`tag_ids`, `any_tag_ids`, `folder_ids`, `content_types`, `created_by_ids`,
+`last_updated_by_ids`); these go out comma-joined, and an item containing a
+comma is refused. `GET /events` declares `filter` as an exploded form object,
+sent as its single field (`user_id=…`). Every other admitted array repeats
+its key, the form default. The safety suite checks this table against the
+pinned document.
+
+## Conversation parts
+
+Without `page`, a conversation read returns the 500 most recent parts, and
+`conversation_parts.total_count` counts only the parts in the response. With
+`page`, parts come oldest first, `per_page` up to 500, following
+`conversation_parts.pages.next` (`next` is null on the last page; the
+adapter falls back to `page < total_pages`). The read hatch admits
+`query.page` on the first request and binds later pages to `page.nextCursor`.
+An unpaged read that returns 500 parts carries a reviewed warning naming the
+paging sequence.
 
 ## Gaps
 

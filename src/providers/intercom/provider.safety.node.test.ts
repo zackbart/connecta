@@ -8,7 +8,9 @@ import candidates from "./evidence/value-safety.json";
 import source from "./evidence/openapi.json";
 import { index } from "./api.js";
 import { intercom } from "./index.js";
-import { INTERCOM_VALUE_SAFETY } from "./safety.js";
+import { COMMA_QUERY, EXPLODED_OBJECT_QUERY } from "./lib/query.js";
+import { INTERCOM_VALUE_SAFETY, READS } from "./safety.js";
+import document from "./evidence/openapi.document.json";
 
 const TOKEN = "intercom_value_safety_token";
 let sent = 0;
@@ -78,4 +80,33 @@ it("INV-5: withholds vendor error prose that could echo a stored value", async (
   expect(error.message).toContain("parameter_invalid");
   expect(error.message).not.toContain(marker);
   expect(JSON.stringify(error)).not.toContain(marker);
+});
+
+it("encodes every styled query parameter of an admitted read exactly as the pinned document declares", () => {
+  type Parameter = {
+    $ref?: string;
+    in?: string;
+    name?: string;
+    explode?: boolean;
+    schema?: { type?: string; $ref?: string };
+  };
+  const paths = document.paths as unknown as Record<string, Record<string, { parameters?: Parameter[] }>>;
+  const comma: Record<string, string[]> = {};
+  const exploded: Record<string, string[]> = {};
+  for (const [path, item] of Object.entries(paths))
+    for (const [method, operation] of Object.entries(item)) {
+      const key = `${method.toUpperCase()} ${path}`;
+      if (!READS.has(key)) continue;
+      for (const parameter of operation.parameters ?? []) {
+        if (parameter.in !== "query") continue;
+        expect(parameter.$ref, key).toBeUndefined();
+        expect(parameter.schema?.$ref, key).toBeUndefined();
+        const type = parameter.schema?.type;
+        if (type === "array" && parameter.explode === false) (comma[key] ??= []).push(parameter.name!);
+        else if (type === "object" && parameter.explode !== false) (exploded[key] ??= []).push(parameter.name!);
+        else expect([undefined, true], `${key} ${parameter.name}`).toContain(parameter.explode);
+      }
+    }
+  expect(comma).toEqual(COMMA_QUERY);
+  expect(exploded).toEqual(EXPLODED_OBJECT_QUERY);
 });

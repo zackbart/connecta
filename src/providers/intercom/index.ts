@@ -143,7 +143,7 @@ export const intercom = defineApiProvider<IntercomOptions>({
     binding,
     pathExample: "/conversations/123456789",
     notes: () => ({
-      read: "Search endpoints are POST bodies with a query object; pass pages.next.starting_after back as pagination.starting_after. GET lists that page with starting_after return page.nextCursor.",
+      read: "Search endpoints are POST bodies with a query object; pass pages.next.starting_after back as pagination.starting_after. GET lists that page with starting_after return page.nextCursor. A conversation read without query.page holds only its 500 newest parts; send query.page 1 to page every part oldest first.",
     }),
   },
   tools: ({ connection, options }) =>

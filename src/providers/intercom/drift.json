@@ -1740,6 +1740,18 @@
         "windowSeconds": 10,
         "errors": "https://developers.intercom.com/docs/references/rest-api/errors/http-responses"
       }
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.intercom.com/docs/references/rest-api/api.intercom.io/conversations/manageconversation",
+      "reason": "Whether skip_notifications suppresses customer-facing messages is not stated anywhere machine-readable. The pinned 2.18 contract documents the flag on close, open and assignment only as an option to disable notifications (available from 2.15), and snooze has none. Intercom's help center says a teammate close signals the conversation-rating automation and fires Closed-state workflows that can ask the customer for a rating, without saying the flag or an API close stops them. Recheck both sources: if Intercom documents that skip_notifications suppresses CSAT and workflow messages, close may return to a non-destructive write.",
+      "lastVerified": "2026-11-13",
+      "evidence": {
+        "flag": "skip_notifications: Option to disable notifications when closing a conversation. Available from API version 2.15.",
+        "flagOperations": "close, open, assignment",
+        "csat": "https://www.intercom.com/help/en/articles/7872853-measure-customer-satisfaction-with-conversation-ratings",
+        "closedTrigger": "https://www.intercom.com/help/en/articles/6904514-when-a-teammate-changes-the-state-of-a-conversation"
+      }
     }
   ]
 }

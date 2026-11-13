@@ -124,18 +124,11 @@ export const INTERCOM_VALUE_SAFETY: ValueSafetyTable = {
     }),
   ),
   embeddedUrls: {
-    operations: {
-      "GET /conversations": ["conversations[].source.body", "conversations[].source.subject"],
-      "POST /conversations/search": ["conversations[].source.body", "conversations[].source.subject"],
-      "GET /conversations/{conversation_id}": ["conversation_parts.conversation_parts[].body", "source.body"],
-      [NAMED_WRITES.reply]: ["conversation_parts.conversation_parts[].body", "source.body"],
-      [NAMED_WRITES.manage]: ["conversation_parts.conversation_parts[].body", "source.body"],
-      "GET /conversations/{id}/side_conversations": ["side_conversations[].conversation_parts[].body"],
-      "GET /tickets/{ticket_id}": ["ticket_parts.ticket_parts[].body"],
-      "POST /tickets/search": ["tickets[].ticket_parts.ticket_parts[].body"],
-      "GET /notes/{note_id}": ["body"],
-      "GET /contacts/{contact_id}/notes": ["data[].body"],
-      "GET /companies/{company_id}/notes": ["data[].body"],
-    },
+    operations: Object.fromEntries(
+      openapi.ops
+        .map(([method, path]) => `${method} ${path}`)
+        .filter((key) => READS.has(key) || WRITES.has(key))
+        .map((key) => [key, ["{}"]]),
+    ),
   },
 };

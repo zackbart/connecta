@@ -107,14 +107,14 @@ const WRITES: ReadonlyArray<readonly [string, Record<string, unknown>, string, s
     { conversationId: CONVERSATION },
     "POST",
     `/conversations/${CONVERSATION}/parts`,
-    { message_type: "close", type: "admin" },
+    { message_type: "close", type: "admin", skip_notifications: true },
   ],
   [
     "open_conversation",
     { conversationId: CONVERSATION },
     "POST",
     `/conversations/${CONVERSATION}/parts`,
-    { message_type: "open" },
+    { message_type: "open", skip_notifications: true },
   ],
   [
     "snooze_conversation",
@@ -128,14 +128,14 @@ const WRITES: ReadonlyArray<readonly [string, Record<string, unknown>, string, s
     { conversationId: CONVERSATION, assigneeType: "team", assigneeId: "42" },
     "POST",
     `/conversations/${CONVERSATION}/parts`,
-    { message_type: "assignment", type: "team", assignee_id: "42" },
+    { message_type: "assignment", type: "team", assignee_id: "42", skip_notifications: true },
   ],
   [
     "unassign_conversation",
     { conversationId: CONVERSATION },
     "POST",
     `/conversations/${CONVERSATION}/parts`,
-    { message_type: "assignment", type: "admin", assignee_id: "0" },
+    { message_type: "assignment", type: "admin", assignee_id: "0", skip_notifications: true },
   ],
   [
     "tag_conversation",
@@ -154,7 +154,7 @@ const WRITES: ReadonlyArray<readonly [string, Record<string, unknown>, string, s
 ];
 
 describe("intercom", () => {
-  it("classifies reads, the destructive customer reply and the other conversation writes without vendor I/O", async () => {
+  it("classifies reads, the destructive customer reply and close, and the other conversation writes without vendor I/O", async () => {
     const { connector, ctx } = setup();
     const tools = await connector.listTools(ctx);
     const byName = new Map(tools.map((tool) => [tool.name, tool]));
@@ -166,7 +166,7 @@ describe("intercom", () => {
     for (const [name] of WRITES) {
       expect(byName.get(name)!.annotations).toMatchObject({
         readOnlyHint: false,
-        destructiveHint: name === "reply_to_conversation",
+        destructiveHint: name === "reply_to_conversation" || name === "close_conversation",
       });
       expect(JSON.stringify(byName.get(name)!.inputSchema)).not.toContain("admin_id");
     }
@@ -313,6 +313,146 @@ describe("intercom", () => {
       name: "screenshot.png",
       url: "[redacted]",
     });
+  });
+
+  it("withholds credential links in every text field of conversations, tickets, notes and contacts, keeping ordinary links", async () => {
+    const capability = "https://files.example.com/report?token=opaque-capability";
+    const ordinary = "https://help.example.com/articles/42-refunds";
+    const text = `See ${capability} and ${ordinary}`;
+    const html = `<a href="${capability}">report</a> <a href="${ordinary}">help</a>`;
+    const { call } = setup();
+    const cases: Array<readonly [Record<string, unknown>, unknown]> = [
+      [
+        { path: `/conversations/${CONVERSATION}`, query: { include_translations: true } },
+        conversation({
+          title: text,
+          source: { type: "conversation", id: "1", subject: text, body: html, attachments: [] },
+          custom_attributes: { notes: text },
+          conversation_parts: {
+            type: "conversation_part.list",
+            conversation_parts: [
+              { id: "77", body: "ok", translations: { original: "en", de: html }, future_field: text },
+            ],
+          },
+        }),
+      ],
+      [
+        { path: "/conversations" },
+        { type: "conversation.list", conversations: [{ id: "1", source: { subject: text } }] },
+      ],
+      [
+        {
+          method: "POST",
+          path: "/conversations/search",
+          body: { query: { field: "state", operator: "=", value: "open" } },
+        },
+        { type: "conversation.list", conversations: [{ id: "1", title: text, source: { subject: text } }] },
+      ],
+      [
+        { path: "/tickets/123" },
+        {
+          type: "ticket",
+          id: "123",
+          ticket_attributes: { _default_title_: text, _default_description_: html },
+          ticket_parts: { ticket_parts: [{ id: "1", body: html, unknown_text: text }] },
+        },
+      ],
+      [
+        { method: "POST", path: "/tickets/search", body: { query: {} } },
+        { type: "ticket.list", tickets: [{ id: "1", ticket_attributes: { _default_description_: html } }] },
+      ],
+      [{ path: "/notes/9" }, { type: "note", id: "9", body: html }],
+      [{ path: "/contacts/c1" }, { type: "contact", id: "c1", name: "Bob", custom_attributes: { profile: text } }],
+      [{ path: "/articles/5" }, { type: "article", id: "5", body: html, description: text }],
+    ];
+    for (const [args, body] of cases) {
+      respond = () => Response.json(body);
+      const result = JSON.stringify(await call("intercom_api_read", args));
+      expect(result, JSON.stringify(args)).not.toContain("opaque-capability");
+      expect(result, JSON.stringify(args)).toContain(ordinary);
+    }
+    respond = () =>
+      Response.json(
+        conversation({
+          conversation_parts: { type: "conversation_part.list", conversation_parts: [{ id: "77", body: html }] },
+        }),
+      );
+    expect(
+      JSON.stringify(await call("add_conversation_note", { conversationId: CONVERSATION, body: "Checked." })),
+    ).not.toContain("opaque-capability");
+  });
+
+  it("encodes query parameters by the pinned style", async () => {
+    const { call } = setup();
+    await call("intercom_api_read", {
+      path: `/conversations/${CONVERSATION}`,
+      query: { include_part_types: ["note", "comment"] },
+    });
+    respond = () => Response.json({ type: "list", data: [] });
+    await call("intercom_api_read", {
+      path: "/content/search",
+      query: { query: "refund", states: ["published", "draft"] },
+    });
+    respond = () => Response.json({ type: "event.list", events: [] });
+    await call("intercom_api_read", { path: "/events", query: { filter: { user_id: "alice" }, type: "user" } });
+    expect(sent.map((request) => request.url.search)).toEqual([
+      "?include_part_types=note%2Ccomment",
+      "?query=refund&states=published%2Cdraft",
+      "?user_id=alice&type=user",
+    ]);
+    sent.length = 0;
+    await expect(
+      call("intercom_api_read", { path: `/conversations/${CONVERSATION}`, query: { include_part_types: ["a,b"] } }),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(0);
+  });
+
+  it("pages every conversation part oldest first and warns when an unpaged read hit the 500-part cap", async () => {
+    const { call } = setup();
+    const parts = (count: number, from = 0) =>
+      Array.from({ length: count }, (_, at) => ({ id: String(from + at + 1), part_type: "comment", body: "x" }));
+    respond = () =>
+      Response.json(
+        conversation({
+          conversation_parts: { type: "conversation_part.list", conversation_parts: parts(500), total_count: 500 },
+        }),
+      );
+    const capped = await call("intercom_api_read", { path: `/conversations/${CONVERSATION}` });
+    expect(capped.warnings?.join(" ")).toContain("query.page 1");
+    expect(capped.page).toBeUndefined();
+    respond = (request) => {
+      const page = Number(request.url.searchParams.get("page"));
+      return Response.json(
+        conversation({
+          conversation_parts: {
+            type: "conversation_part.list",
+            conversation_parts: parts(2, (page - 1) * 2),
+            total_count: 2,
+            pages: {
+              type: "pages",
+              page,
+              per_page: 2,
+              total_pages: 2,
+              next: page < 2 ? `https://api.intercom.io/conversations/${CONVERSATION}?page=${page + 1}` : null,
+            },
+          },
+        }),
+      );
+    };
+    const first = await call("intercom_api_read", {
+      path: `/conversations/${CONVERSATION}`,
+      query: { page: 1, per_page: 2 },
+    });
+    expect(first.warnings).toBeUndefined();
+    expect(first.page).toMatchObject({ hasMore: true, nextCursor: expect.any(String) });
+    const last = await call("intercom_api_read", {
+      path: `/conversations/${CONVERSATION}`,
+      query: { per_page: 2 },
+      cursor: first.page.nextCursor,
+    });
+    expect(last.page).toMatchObject({ hasMore: false });
+    expect(sent.slice(-2).map((request) => request.url.searchParams.get("page"))).toEqual(["1", "2"]);
+    expect(last.data.conversation_parts.conversation_parts.map((part: { id: string }) => part.id)).toEqual(["3", "4"]);
   });
 
   it("pages starting_after lists through a bound cursor and refuses withheld or unrelated families", async () => {
