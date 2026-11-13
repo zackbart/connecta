@@ -94,6 +94,16 @@ export interface ApiOAuthConfig {
   authorizationEndpoint: string;
   /** Where codes are exchanged and refresh tokens redeemed. Absolute https URL. */
   tokenEndpoint: string;
+  /**
+   * The authorization server's RFC 9207 issuer identifier, such as
+   * `"https://accounts.google.com"`, for a provider that sends `iss` on its
+   * authorization responses. Absolute https URL, without query or fragment,
+   * compared byte for byte. Set, every callback must carry exactly this `iss`
+   * and one without `iss` is refused, as RFC 9207 requires of a server known
+   * to send it. Unset, a callback carrying `iss` is refused. Either way the
+   * grant stays bound to `tokenEndpoint`.
+   */
+  issuer?: string;
   /** Trusted RFC 7009 endpoint; disconnect removes the local grant then attempts revocation once. */
   revocationEndpoint?: string;
   /** Revocation body encoding, default form. JSON omits the RFC 7009 token_type_hint. */
@@ -275,6 +285,7 @@ export const API_OPTIONS = optionsOf<ApiOptions>()({
     ...keys(
       "authorizationEndpoint",
       "tokenEndpoint",
+      "issuer",
       "clientId",
       "clientSecret",
       "tokenEndpointAuthMethod",

@@ -2904,6 +2904,14 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       typeof gmail
     >[1]);
 
+  /** The parameters Google's authorization response carries, RFC 9207 `iss` included. */
+  const googleCallback = (
+    code: string,
+    state: string,
+    scope: string,
+    iss: string | null = "https://accounts.google.com",
+  ) => new URLSearchParams({ state, ...(iss === null ? {} : { iss }), code, scope, authuser: "0", prompt: "consent" });
+
   /** Start, consent as `owner`, and finish one grant through the connector's own hooks. */
   async function connect(connector: Connector, ctx: () => ConnectorContext, owner: string): Promise<URL> {
     const started = await connector.startAuth!(ctx());
@@ -2913,7 +2921,8 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
     google.codes.set(code, owner);
     const state = url.searchParams.get("state")!;
     expect(await connector.verifyState!(state, ctx())).toBe(true);
-    await connector.finishAuth!(code, ctx(), new URLSearchParams({ code, state }));
+    const params = googleCallback(code, state, url.searchParams.get("scope")!);
+    await connector.finishAuth!(code, ctx(), params);
     return url;
   }
 
@@ -3326,14 +3335,15 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       const startReconnect = async () => {
         const started = await connector.startAuth!(alice(), { force: true });
         expect(started.state).toBe("auth_required");
-        const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
+        const authorization = new URL(started.authorizationUrl!).searchParams;
+        const state = authorization.get("state")!;
         const code = `4/code-alice-${google.codes.size}`;
         google.codes.set(code, "alice");
-        return { state, code };
+        return { state, code, scope: authorization.get("scope")! };
       };
-      const finish = async ({ state, code }: { state: string; code: string }) => {
+      const finish = async ({ state, code, scope }: { state: string; code: string; scope: string }) => {
         expect(await connector.verifyState!(state, alice())).toBe(true);
-        await connector.finishAuth!(code, alice(), new URLSearchParams({ code, state }));
+        await connector.finishAuth!(code, alice(), googleCallback(code, state, scope));
       };
       const bound = { state: "ok", account: "alice@org.example" };
 
@@ -3363,7 +3373,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       await connector.finishAuth!(
         pending.code,
         alice(),
-        new URLSearchParams({ code: pending.code, state: pending.state }),
+        googleCallback(pending.code, pending.state, pending.scope),
       ).catch(() => undefined);
       expect((await connector.status!(alice())).state).toBe("auth_required");
       expect(await connector.status!(alice())).not.toHaveProperty("account");
@@ -3409,14 +3419,15 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
         start: async () => {
           const started = await connector.startAuth!(ctx(), { force: true });
           expect(started.state).toBe("auth_required");
-          const state = new URL(started.authorizationUrl!).searchParams.get("state")!;
+          const authorization = new URL(started.authorizationUrl!).searchParams;
+          const state = authorization.get("state")!;
           const code = `4/code-alice-${google.codes.size}`;
           google.codes.set(code, "alice");
-          return { state, code };
+          return { state, code, scope: authorization.get("scope")! };
         },
-        finish: async ({ state, code }: { state: string; code: string }) => {
+        finish: async ({ state, code, scope }: { state: string; code: string; scope: string }) => {
           expect(await connector.verifyState!(state, ctx())).toBe(true);
-          await connector.finishAuth!(code, ctx(), new URLSearchParams({ code, state }));
+          await connector.finishAuth!(code, ctx(), googleCallback(code, state, scope));
         },
       });
       /**
@@ -3630,7 +3641,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           connecta.fetch(
             new Request(`${BASE}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...init.headers } }),
           );
-        const consent = async (token = "bob", pool = "team") => {
+        const consent = async (token = "bob", pool = "team", iss: string | null = "https://accounts.google.com") => {
           const handoff = await readJsonRpc(
             await connecta.fetch(
               mcpRpc(
@@ -3643,10 +3654,11 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           const link = new URL(JSON.parse(handoff.result.content[0].text).authorizationUrl);
           const started = await as(link.pathname + link.search, {}, token);
           expect(started.status).toBe(302);
-          const state = new URL(started.headers.get("Location")!).searchParams.get("state")!;
+          const authorization = new URL(started.headers.get("Location")!).searchParams;
           const code = `4/code-${token}-${google.codes.size}`;
           google.codes.set(code, token);
-          return as(`/oauth/callback/mail?code=${encodeURIComponent(code)}&state=${state}`, {}, token);
+          const params = googleCallback(code, authorization.get("state")!, authorization.get("scope")!, iss);
+          return as(`/oauth/callback/mail?${params}`, {}, token);
         };
         try {
           // Bob's id in another namespace is not bob: no entry, so no rules and no disclosure.
@@ -3692,6 +3704,19 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           expect(row.reconnectKeepsGrant).toBe(true);
 
           await signsInAs("bob", "bob@org.example");
+          for (const [iss, reason] of [
+            ["https://accounts.google.com.evil.example", "iss mismatch"],
+            ["https://oauth2.googleapis.com/token", "iss mismatch"],
+            [null, "missing iss"],
+          ] as const) {
+            const exchanges = google.tokenRequests.length;
+            const wrongIssuer = await consent("bob", "team", iss);
+            expect(wrongIssuer.status).toBe(400);
+            expect(await wrongIssuer.text()).toContain('data-oauth-callback="invalid_callback"');
+            expect(google.tokenRequests).toHaveLength(exchanges);
+            expect(warnings.at(-1)).toContain(`refused an OAuth callback for connector "mail" with 400: ${reason}`);
+            expect(warnings.at(-1)).not.toContain(iss ?? "accounts.google.com");
+          }
           const connected = await consent();
           expect(connected.status).toBe(200);
           expect((await config()).connectors.find((c) => c.id === "mail")!.connection).toEqual({

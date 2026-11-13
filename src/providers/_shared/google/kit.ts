@@ -378,6 +378,7 @@ export function googleDelegatedGrant(
 /** Google's OAuth 2.0 endpoints for web-server applications. */
 const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+const GOOGLE_ISSUER = "https://accounts.google.com";
 
 /**
  * OAuth mode's downstream grant: the product's exact scopes, its API origins
@@ -398,6 +399,7 @@ export function googleOAuth(
   return {
     authorizationEndpoint: GOOGLE_AUTHORIZATION_ENDPOINT,
     tokenEndpoint: GOOGLE_TOKEN_ENDPOINT,
+    issuer: GOOGLE_ISSUER,
     clientId: connection.client.clientId,
     clientSecret: connection.client.clientSecret,
     // Google documents client credentials in the token request body.
