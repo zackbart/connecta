@@ -100,7 +100,8 @@ export interface ApiOAuthConfig {
    * authorization responses. Absolute https URL, without query or fragment,
    * compared byte for byte. Set, every callback must carry exactly this `iss`
    * and one without `iss` is refused, as RFC 9207 requires of a server known
-   * to send it. Unset, a callback carrying `iss` is refused. Either way the
+   * to send it. Unset, no `iss` is required and one present must equal
+   * `tokenEndpoint`. Either way the
    * grant stays bound to `tokenEndpoint`.
    */
   issuer?: string;
