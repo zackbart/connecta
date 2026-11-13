@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here.
 
+## 0.47.1 — 2026-11-13
+
+Connecta 0.47.1 makes Google OAuth mode work. Google sends the RFC 9207 `iss` parameter on every authorization response, and Connecta compared it with the token endpoint, so every Google OAuth-mode consent since 0.45.0 ended on "Authorization could not be completed" and stored nothing. `api()` OAuth configuration now accepts an optional `issuer`, the Google providers declare `https://accounts.google.com`, and previously silent callback refusals log a value-free reason.
+
+Nothing is breaking. Deployments using Google OAuth mode should upgrade and connect their Google connectors; delegation mode and other connectors are unaffected.
+
+### Fixed
+
+- Google OAuth-mode consents now complete: Google's authorization responses carry the RFC 9207 issuer `iss=https://accounts.google.com`, which every callback was refusing as a mismatch with the token endpoint. `api()` OAuth gains an optional `oauth.issuer` that a callback's `iss` must equal exactly (a callback without `iss` is then refused); the Google products declare Google's issuer. Undeclared connectors are unchanged. OAuth callback refusals for issuer, principal, permission, parameter and handoff mismatches now log a value-free warning naming the reason.
+
 ## 0.47.0 — 2026-11-13
 
 Connecta 0.47.0 rounds out the Google Workspace family. Three new maintained providers, Calendar, People and Meet, join Gmail, Drive, Docs, Sheets, Slides and Forms, each in both Google modes: domain-wide delegation and OAuth. Calendar schedules, answers invitations and reports free/busy without ever turning an unknown answer into free time. People reads and edits contacts and contact groups, searches and copies "Other contacts", and searches and lists the Workspace directory, with sensitive fields withheld unless a deployment opts in. Meet creates meeting spaces and reads conference records, participants, recordings, transcripts and smart notes.
