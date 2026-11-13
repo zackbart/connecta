@@ -1061,6 +1061,50 @@ describe("sending and organizing mail", () => {
         foldedEncodedWords: message(
           `Subject: =?UTF-8?B?${btoa("See https://example.com/doc?token=[re")}?=\r\n\t =?ISO-8859-1?Q?dacted]?=\r\n${plain}`,
         ),
+        quotedPairDisplayName: message(
+          `Cc: "https://example.com/doc?token=[re\\dacted]" <b@church.example>\r\n${plain}`,
+        ),
+        quotedPairFilename: message(
+          entity(
+            'Content-Type: text/plain\r\nContent-Disposition: attachment; filename="https://example.com/doc?token=[re\\dacted]"',
+            "Hello",
+          ),
+        ),
+        quotedPairEncodedWord: message(
+          `Subject: "=?UTF-8?Q?https://example.com/doc=3Ftoken=3D[re\\dacted]?\\="\r\n${plain}`,
+        ),
+        zeroPaddedReferences: message(
+          entity(
+            "Content-Type: text/html",
+            '<a href="https://example.com/doc?token=&#0000000000091;redacted&#x000005D;">doc</a>',
+          ),
+        ),
+        quotedPairTab: message(`Cc: "https://example.com/a?t=[re\\\tdacted]" <b@church.example>\r\n${plain}`),
+        foldedDisplayName: message(`Cc: "https://example.com/a?t=[re\\dac\r\n\tted]" <b@church.example>\r\n${plain}`),
+        textBeforeAttribute: message(
+          entity("Content-Type: text/html", 'Text ="lead <a href="https://example.com/a?t=[re\tdacted]">doc</a>'),
+        ),
+        cssUrl: message(
+          entity(
+            "Content-Type: text/html",
+            '<style>body { background: url("https://example.com/a?t=[re\tdacted]") }</style>',
+          ),
+        ),
+        referencedTabBeforeParameter: message(
+          entity("Content-Type: text/html", '<a href="https://example.com/a?x=1&Tab;&t=[redacted]">doc</a>'),
+        ),
+        mixedRun: message(
+          entity(
+            "Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: base64",
+            btoa('<a href="https://example.com/a?[\t&Tab;\tredacted]">doc</a>'),
+          ),
+        ),
+        recipientWhitespace: message(
+          entity(
+            "Content-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable",
+            '<a href=3D"https://example.com/doc?token=3D[re\tdac&Tab;te\r\nd]">doc</a>',
+          ),
+        ),
       };
       const unreadable = {
         utf16: message(
@@ -1143,6 +1187,14 @@ describe("sending and organizing mail", () => {
           { body: "Hi", htmlBody: `<a href="https://example.com/doc?token=&#91;redacted&#93;">doc</a>` },
           { subject: "See https://example.com/doc?token==?UTF-8?Q?=5Bre?= =?UTF-8?Q?dacted=5D?=" },
           { subject: "=?ISO-2022-JP?Q?[re=1B(Bdacted]?=" },
+          { to: ['"https://example.com/doc?token=[re\\dacted]" <a@church.example>'] },
+          { body: "Hi", htmlBody: '<a href="https://example.com/doc?token=&#0000000000091;redacted&#93;">doc</a>' },
+          { body: "Hi", htmlBody: '<a href="https://example.com/doc?token=&lbrack;re\tdac&NewLine;ted&rsqb;">doc</a>' },
+          { to: ['"https://example.com/a?t=[re\\\tdacted]" <a@church.example>'] },
+          { body: "Hi", htmlBody: 'Text ="lead <a href="https://example.com/a?t=[re\tdacted]">doc</a>' },
+          { body: "Hi", htmlBody: '<style>body { background: url("https://example.com/a?t=[re\tdacted]") }</style>' },
+          { body: "Hi", htmlBody: '<a href="https://example.com/a?x=1&Tab;&t=[redacted]">doc</a>' },
+          { body: "Hi", htmlBody: '<a href="https://example.com/a?[\t&Tab;\tredacted]">doc</a>' },
         ])
           await expect(
             call(connection(), name, { to: ["a@church.example"], subject: "Hi", ...args }),
@@ -1153,6 +1205,7 @@ describe("sending and organizing mail", () => {
       route = sent;
       const readable = message(
         `Subject: =?UTF-8?Q?Caf=C3=A9?= =?ISO-8859-1?Q?_cr=E8me?= notes\r\n` +
+          `Cc: "O\\"Brien \\\\ [redacted] team" <b@church.example>\r\n` +
           `Content-Type: multipart/mixed;\r\n\tboundary="(outer) b";\r\n charset=us-ascii;\r\n\r\n` +
           `--(outer) b \t\r\n` +
           entity(
@@ -1177,12 +1230,23 @@ describe("sending and organizing mail", () => {
             btoa("https://example.com/doc?token=abc"),
           ),
           entity("Content-Type: message/rfc822", "Subject: inner\r\n\r\nText [redacted] away from a link\r\n"),
+          entity(
+            "Content-Type: text/html",
+            '<p title="Fish &amp; chips&#0000033;">See <a href="https://example.com/doc?token=abc&#0000038;x=1">\r\nthe\tredacted doc</a>\r\n[redacted]</p>',
+          ),
         ),
       );
       await expect(
         call(connection(), "gmail_api_write", { method: "POST", path: "/messages/send", body: { raw: mixed } }),
       ).resolves.toMatchObject({ status: 200, data: { id: "s1" } });
       expect(calls).toHaveLength(1);
+      for (const name of ["send_message", "create_draft"])
+        await call(connection(), name, {
+          to: ["a@church.example"],
+          subject: "Hi",
+          body: "https://example.com/a?t=1\n[redacted]",
+        });
+      expect(calls).toHaveLength(3);
     },
   );
 

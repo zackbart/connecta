@@ -1675,8 +1675,29 @@ every vendor ships one reviewed table through one mechanism
    form-encoded, raw/base64 bytes, multipart parts and named writes) refuses
    with `invalid_args` and zero dispatch when a URL destination's own query
    or fragment contains the exact `[redacted]` placeholder, plain or up to four
-   layers encoded. Upload admission reads decoded bytes and each multipart
-   string/blob. Vercel deployment `files[].data` with `encoding: "base64"`
+   layers encoded. A second reading can only add refusals: it reads numeric
+   character references with any number of leading zeros, decodes the WHATWG
+   named references that decode to ASCII (`&lbrack;`, `&rsqb;`, `&Tab;`,
+   `&NewLine;`; every other named reference decodes to a non-ASCII character,
+   which cannot spell the marker or a URL delimiter), and treats any
+   contiguous mix of ASCII tabs, line breaks and references to them as one
+   run. Inside a link's path, query or fragment, that reading crosses a run,
+   or a tab or line break that appears only once decoded (`%09`), as the
+   WHATWG URL parser strips it, only where stripping it would join the
+   marker: the decoded text before the run ends in a proper prefix of
+   `[redacted]` that the text after continues, or ends in a parameter with no
+   value yet (`?`, `&key`, `?key=`) and the text after holds only key
+   characters and `=` before the marker begins. Any other run ends that
+   reading's link, whatever HTML, CSS or MIME context surrounds it, so
+   `https://example.com/a?t=1` followed by a line `[redacted]` is admitted.
+   A line or tab that ends a link with a valueless parameter and is followed
+   by `[redacted]` or `key=[redacted]` is refused even in prose. Not
+   recognized: a literal tab or line break inside a link's scheme or
+   authority (`https:/\t/host`), between a parameter value and a following
+   marker (`?t=1\t[redacted]`), or before more than 256 characters of a key
+   that a literal run splits. Kit admission applies the same two readings.
+   Upload admission reads decoded bytes and each multipart string/blob.
+   Vercel deployment `files[].data` with `encoding: "base64"`
    and Cloudflare KV bulk `value` with `base64: true` pass through the same
    byte inspection with one decode, bounded by the field's own encoded length
    (decoded bytes are at most three quarters of encoded characters). Cloudflare
