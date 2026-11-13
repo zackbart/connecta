@@ -837,7 +837,7 @@ export class CatalogService {
   // reads still in flight and is kept for what the registry's cannot do: hold
   // the success for the rest of the request, recorded by the read itself
   // rather than by an asker, whose probe deadline may have ended its wait.
-  private readonly catalogs = new Map<string, { identity: string; read: SharedRead<ToolDef[]>; settledAt: number }>();
+  private readonly catalogs = new Map<string, { identity: string; read: SharedRead<ToolDef[]>; settled: boolean }>();
   // Key by the private source array, never connector id: a replacement read
   // gets new views and indexes. Each service belongs to one request and one
   // registry visibility view (caller/pool, hidden tools and classification).
@@ -954,7 +954,6 @@ export class CatalogService {
     revalidateExpired = false,
   ): Effect.Effect<ToolDef[], unknown> {
     return Effect.suspend(() => {
-      const askedAt = Date.now();
       // Authored static definitions never depend on a downstream cache or
       // credentials. Keep their discovery independent of credential reads.
       const identity = this.registry.getConnector(id)?.staticTools
@@ -994,20 +993,21 @@ export class CatalogService {
           (succeeded) => {
             const kept = this.catalogs.get(id);
             if (kept?.read !== started) return;
-            kept.settledAt = Date.now();
+            kept.settled = true;
             // Evicted before the read resumes anyone, so an asker that
             // retries on hearing of the failure starts a fresh read.
             if (!succeeded) this.catalogs.delete(id);
           },
           this.requestScope,
         );
-        retained = { identity, read: started, settledAt: Infinity };
+        retained = { identity, read: started, settled: false };
         this.catalogs.set(id, retained);
       }
       if (!revalidateExpired) return retained.read.join(callOptions.signal);
       const joined = retained;
+      const listedForThisCall = !joined.settled;
       return Effect.flatMap(joined.read.join(callOptions.signal), (tools) => {
-        if (joined.settledAt >= askedAt || catalogIsFresh(tools)) return Effect.succeed(tools);
+        if (listedForThisCall || catalogIsFresh(tools)) return Effect.succeed(tools);
         if (this.catalogs.get(id) === joined) this.catalogs.delete(id);
         return this.catalog(id, callOptions);
       });
