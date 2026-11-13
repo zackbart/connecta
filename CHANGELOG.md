@@ -4,13 +4,13 @@ All notable changes to this package are documented here.
 
 ## 0.48.0 — 2026-11-13
 
-Connecta 0.48.0 lets one agent endpoint mix read-only access with a few exact writes, and brings back Intercom as a maintained REST provider. A `readOnly: true` pool can now grant named writes in a new `writes` field, so an agent reads whole connectors but can only make the changes listed there. A pool's `unlisted` field keeps connectors callable while `@zackbart/connecta-eve` leaves them off the model's roster, and `connectaInstructions` takes `rosterMaxBytes`. Writable agent pools now list `execute_read_code` with the same contract as people's endpoints, and the Eve helper routes lookups there.
+Connecta 0.48.0 lets one agent endpoint mix read-only access with a few exact writes, and adds a maintained Intercom REST provider. A `readOnly: true` pool can now grant named writes in a new `writes` field, so an agent reads whole connectors but can only make the changes listed there. A pool's `unlisted` field keeps connectors callable while `@zackbart/connecta-eve` leaves them off the model's roster, and `connectaInstructions` takes `rosterMaxBytes`. Writable agent pools now list `execute_read_code` with the same contract as people's endpoints, and the Eve helper routes lookups there.
 
 `@zackbart/connecta/providers/intercom` is a new REST provider pinned to Intercom API 2.18, with reads through the search, details and read hatches and named conversation writes that always act as the deployment's configured teammate. The hosted Intercom MCP server remains a `remoteMcp()` connection; passing the old hosted preset's `auth` option to `intercom()` throws with that replacement.
 
 On security, a call whose admission depends on a write restriction now relists its connector's catalog when the copy its request retained has expired, so a downstream that reclassifies a tool from read to write mid-program can no longer have it dispatched past the restriction. Withheld-link handling recognizes more spellings of a copied `[redacted]` link and now matches whole parameter-name tokens, so ordinary parameters such as `keyword` or `postcode` keep their bytes in REST results.
 
-Nothing is breaking and no configuration change is required. Deployments that use neither agent pools nor Intercom can upgrade without changes.
+Nothing is breaking and no configuration change is required. Writable agent pools gain `execute_read_code` automatically; set `execute.readRoute: false` to keep the previous tool list.
 
 ### Added
 
@@ -21,7 +21,7 @@ Nothing is breaking and no configuration change is required. Deployments that us
 ### Fixed
 
 - Withholding credential-bearing links now matches whole parameter-name tokens. `token`, `access_token`, `api_key`, `apiKey`, `key`, `code`, `sig`, `client_secret` and `X-Amz-Signature` are still withheld, but ordinary parameters that merely contain a credential word, such as `keyword`, `country_code`, `postcode`, `monkey` and `author`, keep their bytes in every REST provider's results. Opaque fragments with no `name=value` pairs keep the previous conservative rule (#1408).
-- Withheld-link write admission recognizes more spellings of a copied `[redacted]` link: numeric character references with any number of leading zeros, the ASCII-valued HTML named references (`&Tab;`, `&NewLine;`, `&lbrack;`, `&rsqb;`), tabs and line breaks (written or referenced) that split the marker or separate it from a valueless parameter such as `?token=`, and RFC 5322 quoted-pairs in Gmail raw message headers such as display names and `filename="…"` parameters. A line break after a complete link still ends it, so prose that puts `[redacted]` on the next line is admitted. Every spelling refused before is still refused.
+- Withheld-link write admission recognizes more spellings of a copied `[redacted]` link: numeric character references with any number of leading zeros, the ASCII-valued HTML named references (`&Tab;`, `&NewLine;`, `&lbrack;`, `&rsqb;`), tabs and line breaks (written or referenced) that split the marker or separate it from a valueless parameter such as `?token=`, and RFC 5322 quoted-pairs in Gmail raw message headers such as display names and `filename="…"` parameters. A line break after a complete link still ends it, so prose that puts `[redacted]` on the next line is admitted. Every spelling refused before is still refused (#1403).
 
 ### Security
 
