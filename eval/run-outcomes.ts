@@ -77,6 +77,8 @@ const SCENARIOS: Record<string, string> = {
   "vercel-step2-env-recovery": "reconcile a committed environment update without exposing the secret",
   "google-drive-2": "distinguish direct permissions from inherited shared-drive access",
   "google-docs-7": "recover the created document id after its initial text failed to save",
+  "google-meet-2": "resolve a meeting code to its space and join that conference's attendees to user ids",
+  "google-meet-6": "reconcile a committed Meet settings change without sending it again",
   "quickbooks-accounting-journey": "actual company accounting, consent, restart, rotation, privacy and isolation",
   "quickbooks-write-journey": "actual names, CAS conflict, unsent invoices and read reconciliation",
 };

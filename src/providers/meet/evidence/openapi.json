@@ -1,0 +1,47 @@
+{
+  "documentation": "https://developers.google.com/workspace/meet/api/reference/rest",
+  "url": "https://meet.googleapis.com/$discovery/rest?version=v2",
+  "revision": "20261109",
+  "digest": "sha256:e9dbdd6710a8e4499775b173213fb30a59a8e7465edb7461a167ed51503e49cc",
+  "vendored": true,
+  "discovery": {
+    "pin": "discovery.json",
+    "format": "google-discovery-v1",
+    "summaries": {
+      "meet.spaces.create": "Create a meeting space (new Meet link) with access type, moderation and auto recording/transcript settings.",
+      "meet.spaces.get": "Get a meeting space by name or meeting code: join link, dial-in, access settings and active conference.",
+      "meet.spaces.patch": "Update meeting space settings: access type, entry points, moderation, auto recording/transcripts/notes.",
+      "meet.spaces.endActiveConference": "End the active conference (hang up the ongoing meeting) in a space the app created.",
+      "meet.spaces.members.create": "Add a meeting space member (co-host or knock-free attendee) by email.",
+      "meet.spaces.members.get": "Get one meeting space member: email, role and user.",
+      "meet.spaces.members.list": "List meeting space members: co-hosts and people who join without knocking.",
+      "meet.spaces.members.patch": "Change a meeting space member's role.",
+      "meet.spaces.members.batchUpdate": "Change several meeting space members' roles in one batch.",
+      "meet.spaces.members.delete": "Remove a member (co-host) from a meeting space.",
+      "meet.conferenceRecords.list": "List past and ongoing meetings (conference records), filterable by space, meeting code and time.",
+      "meet.conferenceRecords.get": "Get one conference record: space, start/end time and expiry.",
+      "meet.conferenceRecords.participants.list": "List meeting attendees (participants) with join/leave times; filter active ones.",
+      "meet.conferenceRecords.participants.get": "Get one meeting attendee: signed-in, anonymous or phone user.",
+      "meet.conferenceRecords.participants.participantSessions.list": "List an attendee's join/leave sessions in a meeting.",
+      "meet.conferenceRecords.participants.participantSessions.get": "Get one attendee join/leave session.",
+      "meet.conferenceRecords.recordings.list": "List meeting recordings with state and Drive MP4 file.",
+      "meet.conferenceRecords.recordings.get": "Get one meeting recording with state and Drive MP4 file.",
+      "meet.conferenceRecords.transcripts.list": "List meeting transcripts with state and Google Docs file.",
+      "meet.conferenceRecords.transcripts.get": "Get one meeting transcript with state and Google Docs file.",
+      "meet.conferenceRecords.transcripts.entries.list": "Read transcript entries: who said what and when, in spoken order.",
+      "meet.conferenceRecords.transcripts.entries.get": "Get one transcript entry: speaker, text, language and time.",
+      "meet.conferenceRecords.smartNotes.list": "List Gemini smart notes (meeting summaries) with state and Google Docs file.",
+      "meet.conferenceRecords.smartNotes.get": "Get one Gemini smart notes (meeting summary) with state and Google Docs file."
+    }
+  },
+  "options": {
+    "depth": 5,
+    "numericBounds": true,
+    "formats": true,
+    "maxEnum": 200,
+    "requestGraph": true,
+    "deprecations": true,
+    "allSuccessResponses": true,
+    "valueSafety": true
+  }
+}

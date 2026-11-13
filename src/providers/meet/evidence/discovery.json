@@ -1,0 +1,7 @@
+{
+  "documentation": "https://developers.google.com/workspace/meet/api/reference/rest",
+  "url": "https://meet.googleapis.com/$discovery/rest?version=v2",
+  "revision": "20261109",
+  "digest": "sha256:e9dbdd6710a8e4499775b173213fb30a59a8e7465edb7461a167ed51503e49cc",
+  "vendored": true
+}

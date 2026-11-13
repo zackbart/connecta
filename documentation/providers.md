@@ -247,6 +247,20 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
+<summary>Google Meet (22 tools)</summary>
+
+[Setup](#google-meet). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/meet/api/reference/rest).
+
+- **Named reads:** `get_conference_record`, `get_participant_session`, `get_participant`, `get_recording`, `get_smart_note`, `get_space`, `get_transcript_entry`, `get_transcript`, `list_conference_records`, `list_participant_sessions`, `list_participants`, `list_recordings`, `list_smart_notes`, `list_transcript_entries`, `list_transcripts`.
+- **Named writes:** `create_space`, `end_active_conference`, `update_space`.
+- **API reads:** `meet_api_details`, `meet_api_read`, `meet_api_search`.
+- **API writes:** `meet_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/meet).
+
+</details>
+
+<details>
 <summary>Overflow (17 tools)</summary>
 
 [Setup](#overflow). **API source:** Hand-authored endpoint contracts; [upstream endpoint checks](https://server.stage.overflow.co/api/docs/openapi.json). No vendored OpenAPI document.
@@ -1119,7 +1133,7 @@ send route. Drafts are written only through `create_draft` and `update_draft`.
 Gmail is the documented three-hatch exception to the four-hatch default.
 
 **OAuth mode.** Every Google product (`gmail`, `drive`, `docs`, `sheets`,
-`slides`, `forms`) alternatively connects Google accounts through Connecta's
+`slides`, `forms`, `meet`) alternatively connects Google accounts through Connecta's
 downstream OAuth grant. It needs no Workspace administrator and also serves
 consumer Google accounts:
 
@@ -1691,3 +1705,70 @@ other integrations sharing the app when configuring one. Intuit documents
 500 requests per minute per company and 10 per second per company/app in both
 environments; after HTTP 429, wait at least 60 seconds. Local admission is per
 runtime and cannot coordinate other deployments' spending.
+
+## Google Meet
+
+```ts
+import { meet } from "@zackbart/connecta/providers/meet";
+
+meet("meet", {
+  purpose: "Team meetings, attendance and transcripts",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => accounts[identity.principal?.id ?? ""],
+});
+```
+
+Enable the Google Meet REST API in a Google Cloud project. Create a service
+account without project IAM roles and store its JSON key as a deployment
+secret. A Workspace super administrator adds the key's numeric `client_id` to
+Admin console → Security → Access and data control → API controls → Manage
+Domain Wide Delegation (or extends the existing entry) with exactly
+`https://www.googleapis.com/auth/meetings.space.created,https://www.googleapis.com/auth/meetings.space.readonly,https://www.googleapis.com/auth/meetings.space.settings`.
+A grant can take up to 24 hours to apply. [OAuth mode](#gmail) instead takes
+`{ oauth, authScope }` and requests exactly those three scopes; enable the
+Google Meet REST API in the OAuth client's project. Google classifies
+`meetings.space.created` and `meetings.space.readonly` as sensitive, so an
+External consent screen needs Google's app verification for them;
+`meetings.space.settings` is non-sensitive.
+
+What each scope reaches, as Google documents it:
+
+- `meetings.space.created` creates spaces and reads and manages only the
+  spaces this OAuth client or service account created, including ending their
+  conferences and managing their members.
+- `meetings.space.readonly` reads every space, conference record, participant
+  and artifact the user can access.
+- `meetings.space.settings` reads and changes the settings of the user's own
+  spaces, including ones created in Calendar or the Meet app.
+
+`subject`, account mapping and refusals work as for the other Google products:
+calls without a mapped account fail `auth_required`, and no tool argument
+selects an account. A missing space or conference record and one the account
+cannot see are indistinguishable.
+
+`readOnly: true` omits and refuses `create_space`, `update_space`,
+`end_active_conference` and hatch writes. There is no configurable sensitive
+field set: attendee names, People user ids, partial phone numbers, dial-in
+PINs, SIP codes and transcript text are requested data on both named tools and
+the hatch. Meet cannot list a user's spaces; pair it with Calendar for the
+meeting codes in events. Reading recording, transcript and smart-note files
+needs a Drive or Docs connection and its scopes.
+
+Gated capabilities. Google produces recordings, transcripts, smart notes and
+attendance reports only where the organizer's Workspace edition and admin
+policy allow them; smart notes also need Gemini. Only the meeting organizer,
+not a co-host, sets auto recording, transcripts and smart notes, and
+moderation restrictions apply only while moderation is on. Conference records
+and transcript entries are deleted 30 days after a meeting ends. Space members
+(co-hosts and people who join without knocking) are reachable only through the
+hatch. As of Discovery revision 20261109 the reference marks no Meet method as
+Developer Preview; the drift record re-checks this.
+
+Named lists return Google's page sizes: conference records default 25 (at
+most 100), participants and sessions 100 (at most 250), recordings, transcripts
+and smart notes 10 (at most 100), transcript entries 25 (at most 50, with each
+entry's text cut at 3 KiB and `truncated: ["items[].text"]`). Results target
+192 KiB; vendor responses are bounded at 8 MiB. Hatch `query.pageSize` accepts
+1–500 and Google lowers it to each method's maximum. Google supplies no
+idempotency key, so a create, settings change or ended conference is attempted
+once. Set `callAdmission` for the deployment's shared quota.

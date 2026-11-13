@@ -15,6 +15,7 @@ import { docs } from "@zackbart/connecta/providers/docs";
 import { sheets } from "@zackbart/connecta/providers/sheets";
 import { slides } from "@zackbart/connecta/providers/slides";
 import { forms } from "@zackbart/connecta/providers/forms";
+import { meet } from "@zackbart/connecta/providers/meet";
 import { github } from "@zackbart/connecta/providers/github";
 import { stripe } from "@zackbart/connecta/providers/stripe";
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
@@ -142,7 +143,7 @@ function evalConnector(spec: ConnectorSpec, fixtures: EvalFixtures) {
     return deploy.connector(spec, options);
   }
   if (spec.google) {
-    const factory = { gmail, drive, docs, sheets, slides, forms }[spec.google.product];
+    const factory = { gmail, drive, docs, sheets, slides, forms, meet }[spec.google.product];
     if (spec.google.oauth) {
       const { authScope, ...oauth } = spec.google.oauth;
       return factory(spec.id, { ...options, oauth, authScope });

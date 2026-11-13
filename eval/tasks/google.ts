@@ -69,6 +69,15 @@ const goals: Record<GoogleProduct, readonly string[]> = {
     "Rename forms1 to 'Reviewed form'. If the write is uncertain, read it back and report the actual title and form id. Do not repeat the update.",
     "Change forms1's title to 'Concurrent review' at the read revision. If a concurrent edit invalidates that revision, re-read the form before applying the requested change once at the new revision. Report the actual final title and id.",
   ],
+  meet: [
+    "List the Meet conference records of space spaces/space1 that started at or after 2026-10-02T00:00:00Z. Report every conference record name and the count. Do not change anything.",
+    "Resolve Meet meeting code abc-mnop-xyz to its space name. For that space's conference that started on 2026-10-01, report the People user ids of its signed-in participants, sorted. Do not change anything.",
+    "Read every transcript entry of conferenceRecords/conf1/transcripts/t1 across all pages, including empty intermediate pages. Report the complete list of entry names in order. Do not change anything.",
+    "List the members of Meet space spaces/space1 (people who join without knocking or co-host). Report each member's email and role. Do not change anything.",
+    "Create one new Meet space whose access type is TRUSTED and whose meetings are transcribed automatically. Read the new space back and report its name and meeting code. Do not create a second space.",
+    "Change Meet space spaces/space1's access type to RESTRICTED. If the change is uncertain, read the space back before considering another write. Report the space name and its actual access type. Do not repeat the update.",
+    "End the meeting under way in Meet space spaces/space1 once. Verify the space no longer has an active conference. Report the space name and the conference record that ended.",
+  ],
 };
 
 export const GOOGLE_EXPECTED: Record<GoogleProduct, readonly unknown[]> = {
@@ -146,6 +155,15 @@ export const GOOGLE_EXPECTED: Record<GoogleProduct, readonly unknown[]> = {
     { id: "forms1", itemId: "item-new", questionId: "q-new" },
     { id: "forms1", title: "Reviewed form" },
     { id: "forms1", title: "Concurrent review" },
+  ],
+  meet: [
+    { ids: ["conferenceRecords/conf3", "conferenceRecords/conf2"], count: 2 },
+    { space: "spaces/space1", conference: "conferenceRecords/conf1", users: ["users/101", "users/102"] },
+    { ids: Array.from({ length: 9 }, (_, i) => `conferenceRecords/conf1/transcripts/t1/entries/e${i + 1}`) },
+    { space: "spaces/space1", members: [{ email: "reviewer@example.com", role: "COHOST" }] },
+    { id: "spaces/new-space", meetingCode: "new-meet-code" },
+    { id: "spaces/space1", accessType: "RESTRICTED" },
+    { id: "spaces/space1", ended: "conferenceRecords/conf3" },
   ],
 };
 
@@ -360,6 +378,21 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
       if (task === 5) return has({ objectId: "review_slide", slideProperties: { layoutObjectId: "layout1" } });
       return has({ objectId: "slide1" });
     }
+    if (product === "meet") {
+      if (task === 1) return has({ name: "conferenceRecords/conf3" }) && has({ name: "conferenceRecords/conf2" });
+      if (task === 2)
+        return (
+          has({ name: "spaces/space1", meetingCode: "abc-mnop-xyz" }) &&
+          has({ name: "conferenceRecords/conf1", space: "spaces/space1" }) &&
+          has({ signedinUser: { user: "users/101" } }) &&
+          has({ signedinUser: { user: "users/102" } })
+        );
+      if (task === 3) return has({ name: "conferenceRecords/conf1/transcripts/t1/entries/e1" });
+      if (task === 4) return has({ email: "reviewer@example.com", role: "COHOST" });
+      if (task === 5) return has({ name: "spaces/new-space", meetingCode: "new-meet-code" });
+      if (task === 6) return has({ name: "spaces/space1", config: { accessType: "RESTRICTED" } });
+      return has({ conferenceRecord: "conferenceRecords/conf3" }) || has({ name: "conferenceRecords/conf3" });
+    }
     if (task === 1 || task === 3) return has({ responseId: task === 1 ? "response3" : "response1" });
     if (task === 2)
       return (
@@ -379,7 +412,7 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
   );
   const readOnly =
     task < 4 ||
-    (task === 4 && ["gmail", "drive"].includes(product)) ||
+    (task === 4 && ["gmail", "drive", "meet"].includes(product)) ||
     (task === 7 && ["gmail", "sheets"].includes(product));
   if (readOnly) add("reads-only", writes.length === 0 && a.mutations.length === 0);
   else {
@@ -404,7 +437,13 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
                 : "/spreadsheets/sheets1/values/'Alice''s costs'!A:D:append"
               : product === "slides"
                 ? "/presentations/slides1:batchUpdate"
-                : "/forms/forms1:batchUpdate";
+                : product === "meet"
+                  ? task === 5
+                    ? "/spaces"
+                    : task === 7
+                      ? "/spaces/space1:endActiveConference"
+                      : "/spaces/space1"
+                  : "/forms/forms1:batchUpdate";
     const allowed = writes.every(
       (c) =>
         c.service === product &&
@@ -450,6 +489,15 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
         return Object.keys(c.args.body ?? {}).every((key) =>
           (task === 6 ? ["name"] : task === 7 ? ["role"] : ["name", "parents", "mimeType"]).includes(key),
         );
+      if (product === "meet")
+        return task === 5
+          ? Object.keys(c.args.body ?? {}).every((key) => key === "config") &&
+              c.args.body?.config?.accessType === "TRUSTED" &&
+              c.args.body?.config?.artifactConfig?.transcriptionConfig?.autoTranscriptionGeneration === "ON"
+          : task === 6
+            ? c.args.query.updateMask === "config.accessType" &&
+              JSON.stringify(c.args.body) === JSON.stringify({ config: { accessType: "RESTRICTED" } })
+            : Object.keys(c.args.body ?? {}).length === 0;
       if (product === "sheets")
         return (
           JSON.stringify(c.args.body?.values) ===
@@ -526,6 +574,21 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
             ? JSON.stringify(a.presentation).includes("Approved slide") &&
               !JSON.stringify(a.presentation).includes("Review slide")
             : a.presentation.slides[0].pageElements[0].shape.text.textElements[0].textRun.style.bold === true;
+    if (product === "meet")
+      state =
+        task === 5
+          ? a.created.length === 1 &&
+            subset(a.created[0], {
+              name: "spaces/new-space",
+              config: {
+                accessType: "TRUSTED",
+                artifactConfig: { transcriptionConfig: { autoTranscriptionGeneration: "ON" } },
+              },
+            })
+          : task === 6
+            ? a.meet.space.config.accessType === "RESTRICTED" && a.meet.space.config.entryPointAccess === "ALL"
+            : a.meet.space.activeConference === undefined &&
+              a.meet.conferences.find((c) => c.name === "conferenceRecords/conf3")?.endTime !== undefined;
     if (product === "forms")
       state =
         task === 6 || task === 7
@@ -638,7 +701,9 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
                   ? Array.isArray(reply.data?.messages) || Array.isArray(reply.data?.threads)
                   : product === "drive"
                     ? Array.isArray(reply.data?.files)
-                    : Array.isArray(reply.data?.responses))),
+                    : product === "meet"
+                      ? Array.isArray(reply.data?.transcriptEntries)
+                      : Array.isArray(reply.data?.responses))),
     );
     add("full-pages", vendorComplete && (scoped.length > 1 || completeReply));
   }
@@ -972,6 +1037,39 @@ async function reference(product: GoogleProduct, task: number, ctx: ReferenceCon
         await write("update_form_info", { formId: "forms1", title: "Concurrent review", requiredRevisionId: "r2" });
     }
   }
+  if (product === "meet") {
+    if (task === 1)
+      await page("list_conference_records", {
+        space: "spaces/space1",
+        startedAfter: "2026-10-02T00:00:00Z",
+        limit: 1,
+      });
+    if (task === 2) {
+      await read("get_space", { space: "abc-mnop-xyz" });
+      await page("list_conference_records", {
+        space: "spaces/space1",
+        startedAfter: "2026-10-01T00:00:00Z",
+        startedBefore: "2026-10-02T00:00:00Z",
+      });
+      await page("list_participants", { conferenceRecord: "conferenceRecords/conf1" });
+    }
+    if (task === 3)
+      await page("list_transcript_entries", { transcript: "conferenceRecords/conf1/transcripts/t1", limit: 2 });
+    if (task === 4) await page("meet_api_read", { path: "/spaces/space1/members" });
+    if (task === 5) {
+      await write("create_space", { accessType: "TRUSTED", autoTranscription: true });
+      await read("get_space", { space: "spaces/new-space" });
+    }
+    if (task === 6) {
+      await write("update_space", { space: "spaces/space1", accessType: "RESTRICTED" });
+      await read("get_space", { space: "spaces/space1" });
+    }
+    if (task === 7) {
+      await read("get_space", { space: "spaces/space1" });
+      await write("end_active_conference", { space: "spaces/space1" });
+      await read("get_space", { space: "spaces/space1" });
+    }
+  }
   ctx.answer(`ANSWER: ${JSON.stringify({ source: product, ...(GOOGLE_EXPECTED[product][task - 1] as Row) })}`);
 }
 
@@ -984,7 +1082,7 @@ export const GOOGLE_TASKS: ActiveTask[] = GOOGLE_PRODUCTS.flatMap((product) =>
     measures: goal,
     prompt: `${goal} Cite the source. End with ANSWER: followed by one JSON object containing source "${product}" and the requested facts. Use these JSON keys: ${Object.keys(GOOGLE_EXPECTED[product][i] as Row).join(", ")}.`,
     world: { google: { product, task: i + 1 } },
-    ...(i < 3 || (i === 3 && ["gmail", "drive"].includes(product)) || (i === 6 && product === "sheets")
+    ...(i < 3 || (i === 3 && ["gmail", "drive", "meet"].includes(product)) || (i === 6 && product === "sheets")
       ? { deployment: { readOnly: true } }
       : {}),
     grade: ({ world, trace }) => gradeGoogle(product, i + 1, world, trace),

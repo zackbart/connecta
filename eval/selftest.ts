@@ -436,7 +436,9 @@ async function play(
           if (JSON.stringify(again.map((c) => [c.id, c.pass])) !== JSON.stringify(current.map((c) => [c.id, c.pass])))
             throw new Error(`Google saved grades changed: ${task.id}`);
           if (
-            saved.world.calls.some((c) => ["gmail", "drive", "docs", "sheets", "slides", "forms"].includes(c.service))
+            saved.world.calls.some((c) =>
+              ["gmail", "drive", "docs", "sheets", "slides", "forms", "meet"].includes(c.service),
+            )
           ) {
             delete saved.world.google;
             let rejected = false;
@@ -561,7 +563,7 @@ async function play(
             ? {
                 code: use.input.code.replace(
                   task.id.startsWith("google-")
-                    ? /gmail|drive|docs|sheets|slides|forms/gi
+                    ? /gmail|drive|docs|sheets|slides|forms|meet/gi
                     : /tracker|ci|assets|oauth|supabase|revenuecat|github/gi,
                   "wrong_destination",
                 ),

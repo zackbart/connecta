@@ -61,6 +61,7 @@ const VENDOR_HOSTS = new Set([
   "sheets.googleapis.com",
   "slides.googleapis.com",
   "forms.googleapis.com",
+  "meet.googleapis.com",
   "oauth2.googleapis.com",
 ]);
 

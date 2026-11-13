@@ -44,7 +44,7 @@ export const CHECK_KINDS: Record<string, { route: string[]; outcome: string[] }>
         const task = i + 1;
         const readOnly =
           task < 4 ||
-          (task === 4 && ["gmail", "drive"].includes(product)) ||
+          (task === 4 && ["gmail", "drive", "meet"].includes(product)) ||
           (task === 7 && ["gmail", "sheets"].includes(product));
         return [
           `google-${product}-${task}`,

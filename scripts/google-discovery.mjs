@@ -34,6 +34,7 @@ const ROOTS = {
   sheets: "/v4",
   slides: "/v1",
   forms: "/v1",
+  meet: "/v2",
 };
 const GLOBALS = new Set(["fields", "prettyPrint"]);
 // Reviewed action vocabulary supplements original ids/nouns, never negates
@@ -161,6 +162,29 @@ export function normalizeDiscovery(discovery, { summaries = {} } = {}) {
     const originalVariables = variables(method.path);
     const flatVariables = variables(method.flatPath ?? method.path);
     const pathVariables = variables(path);
+    // The flatPath text a reserved `{+name}` covers. A resource name such as
+    // Meet's `v2/{+name}` spans literal and variable segments
+    // (`v2/spaces/{spacesId}`); its pattern describes the whole name, never one segment.
+    const covered = (name) => {
+      if (!method.flatPath || !method.path.includes(`{+${name}}`)) return undefined;
+      const order = [];
+      const source = method.path
+        .split(/(\{\+?[^}]+\})/)
+        .map((part) => {
+          const token = /^\{(\+?)([^}]+)\}$/.exec(part);
+          if (!token) return part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+          order.push(token[2]);
+          return token[1] ? "(.+)" : "([^/]+)";
+        })
+        .join("");
+      const match = new RegExp(`^${source}$`).exec(method.flatPath);
+      const text = match?.[order.indexOf(name) + 1];
+      return text === undefined || /^\{[^}]+\}$/.test(text) ? undefined : { text, names: variables(text) };
+    };
+    const segments = (name) => {
+      const names = covered(name)?.names;
+      return names?.length && names.every((segment) => pathVariables.includes(segment)) ? names : undefined;
+    };
     const pathName = (name) => {
       if (pathVariables.includes(name)) return name;
       const at = originalVariables.indexOf(name);
@@ -177,15 +201,28 @@ export function normalizeDiscovery(discovery, { summaries = {} } = {}) {
         ([name]) =>
           !["access_token", "oauth_token", "key", "callback", "upload_protocol", "uploadType", "alt"].includes(name),
       )
-      .map(([name, parameter]) => ({
-        name: parameter.location === "path" ? pathName(name) : name,
-        in: parameter.location,
-        required: parameter.required === true,
-        ...(parameter.deprecated === true ? { deprecated: true } : {}),
-        ...(parameter.description ? { description: parameter.description } : {}),
-        ...(parameter.repeated ? { style: "form", explode: true } : {}),
-        schema: parameter.repeated ? { type: "array", items: schemaOf(parameter) } : schemaOf(parameter),
-      }));
+      .flatMap(([name, parameter]) => {
+        const split = parameter.location === "path" ? segments(name) : undefined;
+        if (split)
+          return split.map((segment) => ({
+            name: segment,
+            in: "path",
+            required: true,
+            description: `Segment of the ${name} resource name ${covered(name).text}.`,
+            schema: { type: "string" },
+          }));
+        return [
+          {
+            name: parameter.location === "path" ? pathName(name) : name,
+            in: parameter.location,
+            required: parameter.required === true,
+            ...(parameter.deprecated === true ? { deprecated: true } : {}),
+            ...(parameter.description ? { description: parameter.description } : {}),
+            ...(parameter.repeated ? { style: "form", explode: true } : {}),
+            schema: parameter.repeated ? { type: "array", items: schemaOf(parameter) } : schemaOf(parameter),
+          },
+        ];
+      });
     const declared = parameters.filter((parameter) => parameter.in === "path").map((parameter) => parameter.name);
     if (JSON.stringify([...declared].sort()) !== JSON.stringify([...pathVariables].sort()))
       throw new Error(`Discovery path parameters do not match ${method.id}: ${path}`);
