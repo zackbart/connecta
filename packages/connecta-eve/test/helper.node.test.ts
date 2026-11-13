@@ -529,7 +529,7 @@ it("prefixes the server's text with the guide for each surface, from a real endp
   expect(lean).not.toContain("execute_code");
   // A read-only endpoint lists no write, so the guide names none.
   expect((await guide({ surface: "native", readOnly: true }))[0]).not.toContain("WRITE");
-  expect((await guide({ unlisted: ["billing"] }))[0]).toBe(META_GUIDE("connecta", "crm, tickets"));
+  expect((await guide({ unlisted: ["billing"] }))[0]).toBe(META_GUIDE("connecta", "crm, tickets", true));
   await localConnecta({ unlisted: ["billing"] }, async (url, token) => {
     const response = await fetch(`${url}/agent/assistant`, {
       method: "POST",

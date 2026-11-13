@@ -117,6 +117,7 @@ endpoint `execute_code` stays annotated as a write.
 | Endpoint                                        | Lists `execute_read_code`                     |
 | ----------------------------------------------- | --------------------------------------------- |
 | Writable `/mcp`, `/mcp/<pool>`, `/agent/<pool>` | Yes, unless `execute.readRoute: false`        |
+| Read-only pool with a `writes` grant            | Yes, unless `execute.readRoute: false`        |
 | Read-only endpoint, read-only agent pool        | No: `execute_code` is already read-only there |
 | Native pool                                     | No                                            |
 
@@ -129,8 +130,9 @@ runtime meets the same refusal. [Endpoint facts](#endpoint-facts) carry
 **Refusal.** Every call whose effective or source class is write is refused below
 the sandbox, before validation and dispatch, with `retryable: false` and a message
 naming `call_destructive_tool` and `execute_code`. Its code is
-`destructive_tool_requires_approval`, or `read_only_endpoint` for a read-only
-connector, which has no write route. A program can read and then attempt a write; it
+`destructive_tool_requires_approval`, including a write a read-only pool's `writes`
+grants, or `read_only_endpoint` for a write with no write route: one on a read-only
+connector, or one a read-only pool's `writes` does not grant. A program can read and then attempt a write; it
 gets that refusal with zero writes sent, and catching it or using
 `Promise.allSettled` changes nothing. A plain `"read"` override does not bring a source
 write here: a tool it serves as a read over a silent source is refused, though `call_tool`

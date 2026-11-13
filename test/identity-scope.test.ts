@@ -1143,6 +1143,7 @@ describe("pools serve exactly their tools", () => {
     expect(facts.result.capabilities.extensions["dev.connecta/endpoint"]).toEqual({
       surface: "meta",
       executeCode: true,
+      executeReadCode: true,
       readOnly: false,
       connectors: [{ id: "wiki", unlisted: true }, { id: "crm" }],
     });

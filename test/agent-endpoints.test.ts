@@ -521,6 +521,98 @@ describe("execute_read_code across endpoints", () => {
     await c.close();
   });
 
+  it("INV-2: a read-only pool granted exact writes lists the read route, which refuses the grant and every other write", async () => {
+    let deletes = 0;
+    let closes = 0;
+    const storage = memoryStorage();
+    const c = deployment({
+      storage,
+      connectors: [
+        ...connectors(() => deletes++),
+        api("tasks", {
+          description: "Tasks",
+          tools: [
+            {
+              name: "close",
+              description: "Close a task",
+              annotations: { readOnlyHint: false, destructiveHint: true },
+              handler: async () => {
+                closes++;
+                return { closed: true };
+              },
+            },
+          ],
+        }),
+      ],
+      executor: scriptedExecutor(async (fns) => {
+        const granted = ["notes", ["de", "lete"].join("")].join(".");
+        const attempts = await Promise.allSettled([
+          fns.call!(granted, {}),
+          fns.call!("notes.delete", {}),
+          fns.call!("tasks.close", {}),
+        ]);
+        return attempts.map((attempt) =>
+          attempt.status === "rejected" ? (attempt.reason as { code?: string }).code : "sent",
+        );
+      }),
+      pools: {
+        granted: { tools: ["notes", "tasks"], readOnly: true, writes: ["notes.delete"], members: ["agent:bot"] },
+      },
+    });
+    const bot = await issueAgentToken(storage, "bot");
+    const listed = (
+      await readJsonRpc(await c.fetch(new Request(`${BASE}/agent/granted`, mcpRpc("tools/list", {}, { token: bot }))))
+    ).result.tools.map((tool: { name: string }) => tool.name);
+    expect(listed).toHaveLength(7);
+    expect(listed).toContain("execute_read_code");
+    const initialized = (
+      await readJsonRpc(
+        await c.fetch(
+          new Request(
+            `${BASE}/agent/granted`,
+            mcpRpc(
+              "initialize",
+              { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "facts", version: "1" } },
+              { token: bot },
+            ),
+          ),
+        ),
+      )
+    ).result;
+    expect(initialized.capabilities.extensions["dev.connecta/endpoint"]).toMatchObject({
+      surface: "meta",
+      executeReadCode: true,
+      readOnly: false,
+    });
+
+    const read = (await rpc(c, "/agent/granted", bot, "execute_read_code", { code: "async () => program" })).result;
+    expect(read.structuredContent.result).toEqual([
+      "destructive_tool_requires_approval",
+      "destructive_tool_requires_approval",
+      "read_only_endpoint",
+    ]);
+    expect([deletes, closes]).toEqual([0, 0]);
+
+    const direct = await rpc(c, "/agent/granted", bot, "call_destructive_tool", {
+      address: "notes.delete",
+      args: {},
+      reason: "granted write",
+    });
+    expect(direct.result.isError).toBeFalsy();
+    expect(deletes).toBe(1);
+    const ungranted = await rpc(c, "/agent/granted", bot, "call_destructive_tool", {
+      address: "tasks.close",
+      args: {},
+      reason: "ungranted write",
+    });
+    expect(ungranted.result.structuredContent.error.code).toBe("read_only_endpoint");
+
+    const program = (await rpc(c, "/agent/granted", bot, "execute_code", { code: "async () => program" })).result;
+    expect(program.structuredContent.result).toEqual(["sent", "sent", "read_only_endpoint"]);
+    expect([deletes, closes]).toEqual([3, 0]);
+    await c.close();
+  });
+
   it("INV-3 INV-4: pages a direct read's handle and a read program's handle, under the existing bindings", async () => {
     let resultId = "";
     let oversized = false;
