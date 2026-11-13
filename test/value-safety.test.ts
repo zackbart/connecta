@@ -12,6 +12,7 @@ import {
   refuseWithheldBase64,
   refuseWithheldLinks,
   refuseWithheldUpload,
+  refuseWithheldValues,
   safe,
   validPath,
   valueSafety,
@@ -340,14 +341,57 @@ describe("pre-signed links in free text", () => {
     "https://file.notes.example/f/f/a.png?%5B%72%65%64%61%63%74%65%64%5D",
     "https://file.notes.example/f/f/a.png?&amp;#91;redacted&amp;#93;",
     "![a](https://file.notes.example/f/f/a\\).png?[redacted])",
+    '<a href="https://file.notes.example/a?t=&#0000000000091;redacted&#0000000093;">doc</a>',
+    "see https://file.notes.example/a?t=&#x00000000005B;redacted&#X0005d; now",
+    "https:&#00000000047;&#x000002F;file.notes.example/a&#0000000063;[redacted]",
+    '<a href="https://file.notes.example/a?t=&lbrack;re&Tab;dact&NewLine;ed&rsqb;">doc</a>',
+    '<a href="https://file.notes.example/a?t=[re\tdac\r\nted]">doc</a>',
+    'Text ="lead <a href="https://file.notes.example/a?t=[re\tdacted]">doc</a>',
+    '<style>body { background: url("https://file.notes.example/a?t=[re\tdacted]") }</style>',
+    "https://file.notes.example/a?t=\n[redacted]",
+    "https://file.notes.example/a?to\r\nken=\t[re&#9;dac&NewLine;ted]",
+    "https://file.notes.example/a#\t%5Bredacted%5D",
+    '<a href="https://file.notes.example/a?x=1&Tab;&t=[redacted]">doc</a>',
+    "https://file.notes.example/a?t=1&#9;[redacted]",
+    '<a href="https://file.notes.example/a?[\t&Tab;\tredacted]">doc</a>',
+    "https://file.notes.example/a?to\t&#x0A;\tken=[re%09dacted]",
+    `https://file.notes.example/a?${"k".repeat(300)}=\t[redacted]`,
+    "[doc](<https://file.notes.example/a?t=[re\tdacted]>) and more",
+    "https://file.notes.example/a?t=[re\ndacted]",
   ])("INV-5: finds the placeholder however it is encoded in %s", (text) => {
     expect(carriesWithheldLink({ text })).toBe(true);
+    expect(() => refuseWithheldLinks({ text }, "Vendor")).toThrow(expect.objectContaining({ code: "invalid_args" }));
+  });
+
+  it.each([
+    "Source: https://example.com/report?q=1\n[redacted] fields were omitted.",
+    "Source: https://example.com/report\r\n[redacted] fields were omitted.",
+    "Fish &amp; chips &NewLine; &#0000038; &lbrack;redacted&rsqb; https://example.com/menu?item=1 &copy; &Colon;",
+    '<a href="https://example.com/?q=redacted&amp;n=&#0000091;1&#93;&Tab;">the redacted report</a>',
+    "if a < b then\nhttps://example.com/?q=1\n[redacted] stays prose",
+    "https://example.com/a?t=1\n[redacted]",
+    "https://example.com/a?flag\nnote [redacted]",
+    "https://example.com/a?t=[re\tviewed]",
+  ])("INV-5: admits ordinary text with entities, line breaks and the word in %s", (text) => {
+    expect(carriesWithheldLink({ text })).toBe(false);
+    expect(() => refuseWithheldValues({ text }, "Vendor")).not.toThrow();
   });
 
   it.each([
     ["host names in one unbroken link", `https://${"file.notes.example/".repeat(200_000)}`],
     ["one Markdown destination of open parentheses", `[a](https://file.notes.example/${"(".repeat(2_000_000)}`],
     ["leading Markdown whitespace", `[a](${" ".repeat(2_000_000)}https://file.notes.example/a?b)[redacted]`],
+    [
+      "numeric references with long zero runs",
+      `https://file.notes.example/a?${"&#00000000000000000091;&#x0".repeat(100_000)}`,
+    ],
+    ["one reference of zeros", `https://file.notes.example/a?&#${"0".repeat(2_000_000)}91;redacted]`],
+    ["links ending at line breaks", "//a?t=\n".repeat(300_000)],
+    ["marker prefixes across many runs", "//a?t=\t[r\te\td\ta\tc\tt\te\tx ".repeat(60_000)],
+    ["long words after line breaks", `//a?\n${"b".repeat(300)}`.repeat(6_000)],
+    ["referenced line breaks in one query", `https://file.notes.example/a?t=${"[r&Tab;e&#10;".repeat(200_000)}`],
+    ["markers across literal runs", `https://file.notes.example/a?t=${"\t[redacted]&t=".repeat(20_000)}`],
+    ["markers across referenced runs", `https://file.notes.example/a?t=${"&#9;[redacted]&t=".repeat(20_000)}`],
   ])(
     "INV-5: scans %s in linear time",
     (_, text) => {
@@ -379,6 +423,38 @@ describe("global embedded REST URL policy (#812)", () => {
   ])("INV-5: withholds credential queries in %s", (_, input, expected) => {
     expect(withholdEmbeddedUrls(input)).toBe(expected);
     expect(withholdEmbeddedUrls(expected)).toBe(expected);
+  });
+
+  it.each([
+    "https://help.example/search?keyword=refund&country_code=US",
+    "https://help.example/locations?postcode=SW1A1AA",
+    "https://zoo.example/animals?monkey=capuchin&turkey=wild",
+    "https://blog.example/posts?author=alice&sort=newest#installation",
+    "https://help.example/proxy?url=https%3A%2F%2Fexample.com%2Farticle%3Fkey%3Dpublic",
+    "https://docs.example/a?zip_code=94107&keyboard=us#section=codes",
+  ])("INV-5: keeps an ordinary link whose parameter names only contain a credential word: %s", (link) => {
+    expect(withholdEmbeddedUrls(`see ${link} now`)).toBe(`see ${link} now`);
+    expect(valueSafety({ title: "Vendor", operations: {} }, () => index).redact({ link }, "GET", "/")).toEqual({
+      link,
+    });
+  });
+
+  it.each([
+    ["token", "https://files.example/a?token=PRIVATE"],
+    ["code", "https://app.example/callback?code=PRIVATE&state=s"],
+    ["key", "https://maps.example/js?key=PRIVATE"],
+    ["sig", "https://cdn.example/f.png?sig=PRIVATE"],
+    ["access_token", "https://api.example/me?access_token=PRIVATE"],
+    ["api_key", "https://api.example/v1?api_key=PRIVATE"],
+    ["apiKey", "https://api.example/v1?apiKey=PRIVATE"],
+    ["apikey", "https://api.example/v1?apikey=PRIVATE"],
+    ["x-api-key", "https://api.example/v1?x-api-key=PRIVATE"],
+    ["auth_code", "https://app.example/cb?auth_code=PRIVATE"],
+    ["client_secret", "https://app.example/cb?client_secret=PRIVATE"],
+    ["X-Amz-Signature", "https://bucket.example/o?X-Amz-Signature=PRIVATE"],
+    ["fragment access_token", "https://app.example/cb#access_token=PRIVATE&state=s"],
+  ])("INV-5: withholds the whole-token credential parameter %s", (_, link) => {
+    expect(withholdEmbeddedUrls(`see ${link} now`)).not.toContain("PRIVATE");
   });
 
   it("INV-5: applies globally through arrays and projections' source objects without changing the default vendor policy", () => {

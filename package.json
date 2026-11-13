@@ -115,6 +115,10 @@
       "types": "./dist/providers/granola/index.d.ts",
       "import": "./dist/providers/granola/index.js"
     },
+    "./providers/intercom": {
+      "types": "./dist/providers/intercom/index.d.ts",
+      "import": "./dist/providers/intercom/index.js"
+    },
     "./providers/meet": {
       "types": "./dist/providers/meet/index.d.ts",
       "import": "./dist/providers/meet/index.js"

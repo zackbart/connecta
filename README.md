@@ -24,7 +24,7 @@ Connecta supplies the service credentials, so the agent doesn't need them.
 
 ## What you can connect
 
-Maintained connections: <!-- providers:start -->Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Calendar, Google Docs, Google Drive, Google Forms, Google Meet, Google People (Contacts and directory), Google Sheets, Google Slides, Granola, Overflow, Planning Center, QuickBooks Online, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
+Maintained connections: <!-- providers:start -->Breeze ChMS, Church Community Builder, Cloudflare, GitHub, Gmail, Google Calendar, Google Docs, Google Drive, Google Forms, Google Meet, Google People (Contacts and directory), Google Sheets, Google Slides, Granola, Intercom, Overflow, Planning Center, QuickBooks Online, Stripe, Tithe.ly, and Vercel<!-- providers:end -->.
 
 A Google account can be connected once for every Google product it uses, with
 one sign-in per person.

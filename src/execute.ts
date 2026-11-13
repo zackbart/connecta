@@ -2312,7 +2312,7 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
  * program and tell similar connectors apart.
  */
 const READ_PROGRAM_DESCRIPTION = (hostLimits: { maxHostCalls: number }, inventory: string) =>
-  `Run a read-only JavaScript program without write approval: same sandbox and connecta API as ${META_ROUTES.program}, ${hostLimits.maxHostCalls} host calls. Use it for read work at an unknown address, joins, loops and reductions. Each call that can write is refused before dispatch with its next step, and catching the refusal sends nothing. search and describe list those tools with callable: false; ${META_ROUTES.write} and ${META_ROUTES.program} run them. Use async () => { ... } with connecta.search({ query }), connecta.describe({ address }), connecta.call(address, args), connecta.result(resultId, { page }), and return the answer.
+  `Run a read-only JavaScript program without write approval: same sandbox and connecta API as ${META_ROUTES.program}, ${hostLimits.maxHostCalls} host calls. Use it for read work at an unknown address, joins, loops and reductions. Each call that can write is refused before dispatch with its next step, and catching the refusal leaves it unsent. search and describe list those tools with callable: false; ${META_ROUTES.write} and ${META_ROUTES.program} run them. Use async () => { ... } with connecta.search({ query }), connecta.describe({ address }), connecta.call(address, args), connecta.result(resultId, { page }), and return the answer.
 ${inventory}`;
 
 const executeDescription = (

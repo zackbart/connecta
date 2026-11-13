@@ -12,7 +12,7 @@ Use your host's tool search, call a known operation directly, and follow its
 repair or authorization handoff. Use `execute_code` for combined work when
 listed; without code, page results through the listed `read_result` tool.
 
-Meta endpoints expose six top-level tools, plus `execute_read_code` on a writable `/mcp` or `/mcp/<pool>`. Read [the tool table](./meta-tools.md#the-meta-tools)
+Meta endpoints expose six top-level tools, plus `execute_read_code` on a writable `/mcp`, `/mcp/<pool>` or `/agent/<pool>`. Read [the tool table](./meta-tools.md#the-meta-tools)
 for exact arguments and result envelopes. Follow the endpoint's supplied
 instructions and `skills` usage guide for deployment-specific context.
 

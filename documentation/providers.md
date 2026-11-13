@@ -261,6 +261,20 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
+<summary>Intercom (12 tools)</summary>
+
+[Setup](#intercom). **API source:** [Reviewed HTML/documentation conversion](https://raw.githubusercontent.com/intercom/Intercom-OpenAPI/main/descriptions/2.18/api.intercom.io.yaml).
+
+- **Named reads:** None.
+- **Named writes:** `add_conversation_note`, `assign_conversation`, `close_conversation`, `open_conversation`, `reply_to_conversation`, `snooze_conversation`, `tag_conversation`, `unassign_conversation`, `untag_conversation`.
+- **API reads:** `intercom_api_details`, `intercom_api_read`, `intercom_api_search`.
+- **API writes:** None.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/intercom).
+
+</details>
+
+<details>
 <summary>Google Meet (22 tools)</summary>
 
 [Setup](#google-meet). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/meet/api/reference/rest).
@@ -1359,7 +1373,9 @@ client would, and every decoded part, header and attached message is checked
 for a withheld link before sending. It accepts identity, base64 and
 quoted-printable transfer encodings; US-ASCII, UTF-8, ISO-8859-n and
 windows-125n charsets; header encoded words, with whitespace between adjacent
-words dropped as clients drop it; and Content-Type, Content-Transfer-Encoding
+words dropped as clients drop it; RFC 5322 quoted-pairs in header values, such
+as a display name or `filename="…"` parameter, read both as written and
+unescaped; and Content-Type, Content-Transfer-Encoding
 and Content-Disposition values made of plain or quoted parameters. It refuses,
 sending nothing: comments in those headers, repeated or RFC 2231 extended
 parameters (`filename*=`; use an encoded word or an ASCII name), repeated
@@ -2048,3 +2064,93 @@ entry's text cut at 3 KiB and `truncated: ["items[].text"]`). Results target
 1–500 and Google lowers it to each method's maximum. Google supplies no
 idempotency key, so a create, settings change or ended conference is attempted
 once. Set `callAdmission` for the deployment's shared quota.
+
+## Intercom
+
+```ts
+import { intercom } from "@zackbart/connecta/providers/intercom";
+
+const teammates: Record<string, string> = { "alice@example.com": "1002" };
+const support = intercom("support", {
+  purpose: "Customer support inbox",
+  region: "eu",
+  admin: (identity) =>
+    identity.agent === "assistant" ? "1001" : teammates[identity.principal?.id ?? ""],
+});
+```
+
+Create a private app in the workspace's Intercom Developer Hub and copy its
+**access token** (Configure → Authentication). Save it in this connection's
+credential slot through the operator UI; configure an encrypted vault as
+described in [shared credentials](./auth.md#connect-a-shared-credential). The
+single-secret field is `value`, sent as `Authorization: Bearer`. The token is
+issued to the teammate who installed the app or last regenerated it, and
+Intercom limits its conversation reads to that teammate's conversation access
+as well as the app's scopes. Give the app read and write scopes for
+conversations, and read scopes for the contacts, companies, tickets, tags,
+teams, admins and help content the connection should read. OAuth is not
+supported; the connection is always one shared token.
+
+`region` selects the workspace's data-hosting host: `"us"` (default,
+`https://api.intercom.io`), `"eu"` (`https://api.eu.intercom.io`) or `"au"`
+(`https://api.au.intercom.io`). A token used against another region's host
+fails as an authentication error. Every request sends `Intercom-Version: 2.18`,
+the pinned contract, overriding the app's own version setting, and
+`Accept: application/json`.
+
+`admin` is the Intercom teammate every write acts as. A string is one numeric
+admin id for every caller. A function receives the admitted identity, a person
+or a declared agent (`identity.agent`), with the call's `signal`, and returns
+that caller's admin id or `undefined`, which refuses the write before anything
+is sent. It is never called for a call with no admitted caller or an open
+deployment's anonymous requests; those writes fail `auth_required`. Find admin
+ids with `GET /admins`. Every named write fills `admin_id` from this value;
+no tool takes an `admin_id` argument, and the read hatch refuses any request
+that names one. `admin` is required unless `readOnly: true`. The provider also
+accepts `purpose`, optional `title`, `instructions`, `maxResultBytes`,
+`members`, `callAdmission` and the common `readOnly` restriction.
+
+Named writes: `reply_to_conversation` and `close_conversation` are
+destructive. The customer receives a reply. A close sends Intercom's
+`skip_notifications`, but Intercom documents that flag only as disabling
+notifications, and a close can still trigger a satisfaction survey or a
+Closed-state workflow message. `add_conversation_note`, `open_conversation`,
+`snooze_conversation`, `assign_conversation`, `unassign_conversation`,
+`tag_conversation` and `untag_conversation` are writes; open, assign and
+unassign also skip notifications, and assigning or unassigning a closed
+conversation reopens it. There is
+no raw write hatch. A pool can grant the reads alone (`tools: ["support"]`
+with `readOnly: true`) or exact write addresses alone, such as
+`tools: ["support.add_conversation_note"]`.
+
+`intercom_api_read` covers the reviewed reads of the pinned 2.18 contract,
+including the read-only search POSTs for conversations, contacts, companies,
+tickets and calls. Auth tokens, data connectors, the conversation stream
+token, exports and downloads, the IP allowlist, teammate audit logs, Fin agent
+runtime endpoints and call recordings are refused. Attachment, file-attribute
+and call recording or transcript URLs are always withheld, and every string
+in an admitted response, including subjects, translations and open
+attribute maps, has credential-bearing link queries withheld while ordinary
+links remain. Contact details are returned as customer data. GET lists that
+page with `starting_after` return `page.nextCursor`; search bodies carry
+their own `pagination.starting_after`. A conversation read without
+`query.page` returns only its 500 newest parts and says so in `warnings`;
+`query.page: 1` pages every part oldest first through `page.nextCursor`.
+Query arrays the contract declares `explode: false` are sent comma-joined.
+
+Intercom's default limit for private apps is 10,000 calls per minute per
+workspace, shared by every private app, metered in 10-second windows. The
+default per-runtime admission is 1,667 calls in a rolling 10-second window
+with concurrency 8, Connecta's choice; other apps share the vendor allowance,
+so set `callAdmission` for the workspace's actual share. A 429 returns
+`rate_limited` with Retry-After when Intercom sends it, otherwise a 10-second
+hint. Requests have a 30-second deadline and an 8 MiB response ceiling.
+
+Intercom's hosted MCP server stays a separate generic connection for
+lookups: `remoteMcp()` at `https://mcp.intercom.com/mcp`
+(`https://mcp.eu.intercom.com/mcp` in Europe) under a distinct id, as in
+[the hosted MCP migration](./hosted-mcp-migration.md). `intercom()` refuses the
+removed hosted preset's `auth` option. See Intercom's
+[REST API overview](https://developers.intercom.com/docs/build-an-integration/learn-more/rest-apis),
+[authentication](https://developers.intercom.com/docs/build-an-integration/learn-more/authentication)
+and [rate limiting](https://developers.intercom.com/docs/references/rest-api/errors/rate-limiting).

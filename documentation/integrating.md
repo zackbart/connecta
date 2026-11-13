@@ -133,6 +133,9 @@ GitHub provides scoped App-authenticated repository reads, release writes and gu
 `remoteMcp()` entries, separate from maintained API providers.
 
 For Stripe API-key setup, see [Stripe setup](./providers.md#stripe).
+Intercom vendors its REST API with a shared access token; every conversation
+write acts as the teammate the deployment's `admin` names, never one a call
+chooses. See [Intercom setup](./providers.md#intercom).
 Prefer a restricted `rk_` key with only read permissions for read-only access;
 Stripe enforces it too.
 

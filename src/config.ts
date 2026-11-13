@@ -206,7 +206,7 @@ const execute = {
    */
   maxResultChars: whole({ min: 4_000, max: 1_000_000, default: D.execute.maxResultChars }),
   /**
-   * `false` stops listing `execute_read_code` on writable human endpoints. A
+   * `false` stops listing `execute_read_code` on writable meta endpoints. A
    * read program runs unprompted on hosts that auto-approve reads, so a deployment
    * that wants a person to see every program can turn it off. Default true.
    */

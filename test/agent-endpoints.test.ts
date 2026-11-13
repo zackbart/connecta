@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { accessTokens } from "../src/access-tokens.js";
+import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { api } from "../src/connectors/api.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector, InboundAuth, KVStorage } from "../src/types.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { scriptedExecutor } from "./fixtures/misc.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
@@ -427,24 +430,188 @@ describe("agent endpoint admission", () => {
 });
 
 describe("execute_read_code across endpoints", () => {
-  it("is listed at /mcp/<pool> and held from /agent/<pool>", async () => {
+  it("is listed at /mcp/<pool> and a writable /agent/<pool>, never a read-only or native agent pool", async () => {
+    const storage = memoryStorage();
+    const pools = {
+      "team-people": { tools: ["docs"], members: ["bob"] },
+      team: { tools: ["docs"], members: ["agent:bot"] },
+      readers: { tools: ["docs"], readOnly: true, members: ["agent:bot"] },
+      lean: { tools: ["docs"], surface: "native" as const, members: ["agent:bot"] },
+    };
+    const c = deployment({ storage, pools });
+    const off = deployment({ storage, pools, execute: { readRoute: false } });
+    const bot = await issueAgentToken(storage, "bot");
+    const send = async (app: Deployment, path: string, token: string, method: string, params: unknown) =>
+      (await readJsonRpc(await app.fetch(new Request(`${BASE}${path}`, mcpRpc(method, params, { token }))))).result;
+    const tools = async (path: string, token: string, app: Deployment = c) =>
+      (await send(app, path, token, "tools/list", {})).tools as { name: string; annotations?: object }[];
+    const facts = async (path: string, token: string, app: Deployment = c) =>
+      (
+        await send(app, path, token, "initialize", {
+          protocolVersion: "2025-11-25",
+          capabilities: {},
+          clientInfo: { name: "facts", version: "1" },
+        })
+      ).capabilities.extensions["dev.connecta/endpoint"];
+    const names = async (path: string, token: string, app: Deployment = c) =>
+      (await tools(path, token, app)).map((tool) => tool.name);
+
+    expect(await names("/mcp/team-people", "bob")).toContain("execute_read_code");
+    const agent = await tools("/agent/team", bot);
+    expect(agent).toHaveLength(7);
+    expect(agent.find((tool) => tool.name === "execute_read_code")?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(agent.find((tool) => tool.name === "execute_code")?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(await facts("/agent/team", bot)).toMatchObject({ surface: "meta", executeReadCode: true, readOnly: false });
+
+    const readers = await names("/agent/readers", bot);
+    expect(readers).toHaveLength(6);
+    expect(readers).not.toContain("execute_read_code");
+    expect(await facts("/agent/readers", bot)).toMatchObject({ executeReadCode: false, readOnly: true });
+    expect(await names("/agent/lean", bot)).not.toContain("execute_read_code");
+    expect(await facts("/agent/lean", bot)).toMatchObject({ surface: "native", executeReadCode: false });
+
+    const disabled = await names("/agent/team", bot, off);
+    expect(disabled).toHaveLength(6);
+    expect(disabled).not.toContain("execute_read_code");
+    expect(await facts("/agent/team", bot, off)).toMatchObject({ executeReadCode: false });
+    await c.close();
+    await off.close();
+  });
+
+  it("INV-2 INV-3: refuses every write a read program on an agent pool attempts, its address built at runtime, sending none", async () => {
+    let deletes = 0;
+    const storage = memoryStorage();
+    const events: ToolCallActivityEvent[] = [];
+    const c = deployment({
+      storage,
+      connectors: connectors(() => deletes++),
+      activity: activityHistory({ store: { record: (event) => void events.push(event) } }),
+      executor: scriptedExecutor(async (fns) => {
+        const read = await fns.call!("notes.search", {});
+        const address = ["notes", ["de", "lete"].join("")].join(".");
+        const attempts = await Promise.allSettled([fns.call!(address, {}), fns.call!("notes.delete", {})]);
+        return {
+          read,
+          refusals: attempts.map((attempt) =>
+            attempt.status === "rejected" ? (attempt.reason as { code?: string }).code : "sent",
+          ),
+        };
+      }),
+      pools: { team: { tools: ["notes"], members: ["agent:bot"] } },
+    });
+    const bot = await issueAgentToken(storage, "bot");
+    const program = (await rpc(c, "/agent/team", bot, "execute_read_code", { code: "async () => program" })).result;
+    expect(program.isError).toBeFalsy();
+    expect(program.structuredContent.result.refusals).toEqual([
+      "destructive_tool_requires_approval",
+      "destructive_tool_requires_approval",
+    ]);
+    expect(deletes).toBe(0);
+    await vi.waitFor(() => expect(events.length).toBeGreaterThan(0));
+    expect(new Set(events.map((event) => event.source))).toEqual(new Set(["execute_read_code"]));
+
+    expect(
+      (await rpc(c, "/agent/team", bot, "execute_code", { code: "async () => program" })).result.isError,
+    ).toBeFalsy();
+    expect(deletes).toBe(2);
+    await c.close();
+  });
+
+  it("INV-2: a read-only pool granted exact writes lists the read route, which refuses the grant and every other write", async () => {
+    let deletes = 0;
+    let closes = 0;
     const storage = memoryStorage();
     const c = deployment({
       storage,
+      connectors: [
+        ...connectors(() => deletes++),
+        api("tasks", {
+          description: "Tasks",
+          tools: [
+            {
+              name: "close",
+              description: "Close a task",
+              annotations: { readOnlyHint: false, destructiveHint: true },
+              handler: async () => {
+                closes++;
+                return { closed: true };
+              },
+            },
+          ],
+        }),
+      ],
+      executor: scriptedExecutor(async (fns) => {
+        const granted = ["notes", ["de", "lete"].join("")].join(".");
+        const attempts = await Promise.allSettled([
+          fns.call!(granted, {}),
+          fns.call!("notes.delete", {}),
+          fns.call!("tasks.close", {}),
+        ]);
+        return attempts.map((attempt) =>
+          attempt.status === "rejected" ? (attempt.reason as { code?: string }).code : "sent",
+        );
+      }),
       pools: {
-        "team-people": { tools: ["docs"], members: ["bob"] },
-        team: { tools: ["docs"], members: ["agent:bot"] },
+        granted: { tools: ["notes", "tasks"], readOnly: true, writes: ["notes.delete"], members: ["agent:bot"] },
       },
     });
     const bot = await issueAgentToken(storage, "bot");
-    const names = async (path: string, token: string) =>
-      (
-        await readJsonRpc(await c.fetch(new Request(`${BASE}${path}`, mcpRpc("tools/list", {}, { token }))))
-      ).result.tools.map((tool: { name: string }) => tool.name);
-    expect(await names("/mcp/team-people", "bob")).toContain("execute_read_code");
-    const agent = await names("/agent/team", bot);
-    expect(agent).toHaveLength(6);
-    expect(agent).not.toContain("execute_read_code");
+    const listed = (
+      await readJsonRpc(await c.fetch(new Request(`${BASE}/agent/granted`, mcpRpc("tools/list", {}, { token: bot }))))
+    ).result.tools.map((tool: { name: string }) => tool.name);
+    expect(listed).toHaveLength(7);
+    expect(listed).toContain("execute_read_code");
+    const initialized = (
+      await readJsonRpc(
+        await c.fetch(
+          new Request(
+            `${BASE}/agent/granted`,
+            mcpRpc(
+              "initialize",
+              { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "facts", version: "1" } },
+              { token: bot },
+            ),
+          ),
+        ),
+      )
+    ).result;
+    expect(initialized.capabilities.extensions["dev.connecta/endpoint"]).toMatchObject({
+      surface: "meta",
+      executeReadCode: true,
+      readOnly: false,
+    });
+
+    const read = (await rpc(c, "/agent/granted", bot, "execute_read_code", { code: "async () => program" })).result;
+    expect(read.structuredContent.result).toEqual([
+      "destructive_tool_requires_approval",
+      "destructive_tool_requires_approval",
+      "read_only_endpoint",
+    ]);
+    expect([deletes, closes]).toEqual([0, 0]);
+
+    const direct = await rpc(c, "/agent/granted", bot, "call_destructive_tool", {
+      address: "notes.delete",
+      args: {},
+      reason: "granted write",
+    });
+    expect(direct.result.isError).toBeFalsy();
+    expect(deletes).toBe(1);
+    const ungranted = await rpc(c, "/agent/granted", bot, "call_destructive_tool", {
+      address: "tasks.close",
+      args: {},
+      reason: "ungranted write",
+    });
+    expect(ungranted.result.structuredContent.error.code).toBe("read_only_endpoint");
+
+    const program = (await rpc(c, "/agent/granted", bot, "execute_code", { code: "async () => program" })).result;
+    expect(program.structuredContent.result).toEqual(["sent", "sent", "read_only_endpoint"]);
+    expect([deletes, closes]).toEqual([3, 0]);
     await c.close();
   });
 
@@ -479,6 +646,63 @@ describe("execute_read_code across endpoints", () => {
     expect((await page("/mcp/second")).isError).toBe(true);
     await c.close();
   });
+});
+
+describe("read programs revalidate expired catalogs", () => {
+  it.each(["/mcp/team-people", "/agent/team"])(
+    "INV-1 INV-9: %s refuses a remote MCP tool reclassified mid-program once its TTL lapses, without a notification",
+    async (path) => {
+      const run = async (catalogTtlMs: number, waitMs: number) => {
+        let destructive = false;
+        let listings = 0;
+        const sent: string[] = [];
+        const downstream = httpDownstream(
+          (server) =>
+            server.registerTool(
+              "sync",
+              {
+                description: "Sync team data",
+                annotations: destructive ? { readOnlyHint: false, destructiveHint: true } : { readOnlyHint: true },
+              },
+              async () => {
+                sent.push(destructive ? "write" : "read");
+                return { content: [{ type: "text", text: "ok" }] };
+              },
+            ),
+          {
+            catalogTtlMs,
+            capture: async (request) => {
+              if (request.method === "POST" && ((await request.json()) as { method?: string }).method === "tools/list")
+                listings++;
+            },
+          },
+        );
+        const storage = memoryStorage();
+        const c = deployment({
+          storage,
+          connectors: [remoteMcp("remote", { url: downstream.url, fetch: downstream.fetch })],
+          executor: scriptedExecutor(async (fns) => {
+            await fns.call!("remote.sync", {});
+            destructive = true;
+            await new Promise((resolve) => setTimeout(resolve, waitMs));
+            const [second] = await Promise.allSettled([fns.call!("remote.sync", {})]);
+            return second.status === "rejected" ? (second.reason as { code?: string }).code : "sent";
+          }),
+          pools: {
+            "team-people": { tools: ["remote"], members: ["bob"] },
+            team: { tools: ["remote"], members: ["agent:bot"] },
+          },
+        });
+        const token = path.startsWith("/agent/") ? await issueAgentToken(storage, "bot") : "bob";
+        const result = (await rpc(c, path, token, "execute_read_code", { code: "return sync" })).result;
+        await c.close();
+        return { second: result.structuredContent?.result, sent, listings };
+      };
+
+      expect(await run(1, 20)).toEqual({ second: "destructive_tool_requires_approval", sent: ["read"], listings: 2 });
+      expect(await run(60_000, 0)).toEqual({ second: "sent", sent: ["read", "write"], listings: 1 });
+    },
+  );
 });
 
 describe("human endpoints refuse agent tokens", () => {

@@ -1,0 +1,214 @@
+{
+  "format": 5,
+  "digest": "sha256:c2057e5dae84f8f33c14c1a157f65b1b7aca9db5c03cf30668070df66d98bb69",
+  "options": {},
+  "candidates": {
+    "GET /auth_tokens": {
+      "fields": [
+        "data",
+        "data[].description",
+        "data[].domain",
+        "data[].id",
+        "data[].name",
+        "data[].request_header_key"
+      ],
+      "named": true
+    },
+    "POST /auth_tokens": {
+      "fields": ["description", "domain", "id", "name", "request_header_key"],
+      "named": true
+    },
+    "GET /auth_tokens/{id}": {
+      "fields": ["description", "domain", "id", "name", "request_header_key"],
+      "named": true
+    },
+    "PATCH /auth_tokens/{id}": {
+      "fields": ["description", "domain", "id", "name", "request_header_key"],
+      "named": true
+    },
+    "GET /conversations": {
+      "fields": ["conversations[].source.email_message_metadata.email_address_headers"],
+      "named": false
+    },
+    "POST /conversations/redact": {
+      "fields": [
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "named": false
+    },
+    "POST /conversations/search": {
+      "fields": ["conversations[].source.email_message_metadata.email_address_headers"],
+      "named": false
+    },
+    "POST /conversations/stream/token": {
+      "fields": ["links", "links.revoke", "links.self", "stream.token"],
+      "named": true
+    },
+    "DELETE /conversations/stream/token": {
+      "fields": [],
+      "named": true
+    },
+    "GET /conversations/{conversation_id}": {
+      "fields": [
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "named": false
+    },
+    "PUT /conversations/{conversation_id}": {
+      "fields": [
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "named": false
+    },
+    "POST /conversations/{conversation_id}/parts": {
+      "fields": [
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "named": false
+    },
+    "POST /conversations/{conversation_id}/reply": {
+      "fields": [
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "named": false
+    },
+    "POST /conversations/{id}/merge": {
+      "fields": [
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "named": false
+    },
+    "GET /conversations/{id}/side_conversations": {
+      "fields": [
+        "side_conversations[].conversation_parts[].email_message_metadata.email_address_headers",
+        "side_conversations[].conversation_parts[].event_details.event.data.otp_email_verification_failed.reason"
+      ],
+      "named": false
+    },
+    "POST /data_connectors": {
+      "fields": ["bypass_authentication", "headers"],
+      "named": false
+    },
+    "GET /data_connectors/{data_connector_id}/execution_results": {
+      "fields": ["data[].request_url"],
+      "named": false
+    },
+    "GET /data_connectors/{data_connector_id}/execution_results/{id}": {
+      "fields": ["request_url"],
+      "named": false
+    },
+    "GET /data_connectors/{id}": {
+      "fields": ["bypass_authentication", "headers"],
+      "named": false
+    },
+    "PATCH /data_connectors/{id}": {
+      "fields": ["bypass_authentication", "headers"],
+      "named": false
+    },
+    "GET /data_connectors/{id}/versions": {
+      "fields": ["data[].definition.bypass_authentication", "data[].definition.headers"],
+      "named": false
+    },
+    "GET /data_connectors/{id}/versions/{version_id}": {
+      "fields": ["definition.bypass_authentication", "definition.headers"],
+      "named": false
+    },
+    "PATCH /data_connectors/{id}/versions/{version_id}": {
+      "fields": ["definition.bypass_authentication", "definition.headers"],
+      "named": false
+    },
+    "POST /tickets/{ticket_id}/linked_conversations": {
+      "fields": [
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "named": false
+    },
+    "DELETE /tickets/{ticket_id}/linked_conversations/{id}": {
+      "fields": [
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "named": false
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /calls": [
+        "data[].fin_recording_url",
+        "data[].fin_transcription_url",
+        "data[].recording_url",
+        "data[].transcription_url"
+      ],
+      "POST /calls/search": [
+        "data[].fin_recording_url",
+        "data[].fin_transcription_url",
+        "data[].recording_url",
+        "data[].transcription_url"
+      ],
+      "GET /calls/{call_id}": ["fin_recording_url", "fin_transcription_url", "recording_url", "transcription_url"],
+      "GET /conversations": [
+        "conversations[].source.attachments[].url",
+        "conversations[].source.email_message_metadata.email_address_headers",
+        "conversations[].ticket.custom_attributes.{}.value.url"
+      ],
+      "POST /conversations/search": [
+        "conversations[].source.attachments[].url",
+        "conversations[].source.email_message_metadata.email_address_headers",
+        "conversations[].ticket.custom_attributes.{}.value.url"
+      ],
+      "GET /conversations/{conversation_id}": [
+        "conversation_parts.conversation_parts[].attachments[].url",
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.attachments[].url",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "POST /conversations/{conversation_id}/parts": [
+        "conversation_parts.conversation_parts[].attachments[].url",
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.attachments[].url",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "POST /conversations/{conversation_id}/reply": [
+        "conversation_parts.conversation_parts[].attachments[].url",
+        "conversation_parts.conversation_parts[].email_message_metadata.email_address_headers",
+        "conversation_parts.conversation_parts[].event_details.event.data.otp_email_verification_failed.reason",
+        "source.attachments[].url",
+        "source.email_message_metadata.email_address_headers"
+      ],
+      "GET /conversations/{id}/side_conversations": [
+        "side_conversations[].conversation_parts[].attachments[].url",
+        "side_conversations[].conversation_parts[].email_message_metadata.email_address_headers",
+        "side_conversations[].conversation_parts[].event_details.event.data.otp_email_verification_failed.reason"
+      ],
+      "POST /tickets/search": [
+        "tickets[].ticket_attributes.{}.url",
+        "tickets[].ticket_attributes.{}[].url",
+        "tickets[].ticket_parts.ticket_parts[].attachments[].url"
+      ],
+      "GET /tickets/{ticket_id}": [
+        "ticket_attributes.{}.url",
+        "ticket_attributes.{}[].url",
+        "ticket_parts.ticket_parts[].attachments[].url"
+      ]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

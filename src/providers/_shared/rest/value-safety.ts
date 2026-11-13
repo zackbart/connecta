@@ -150,9 +150,24 @@ const ENV_CONTAINERS = ["env", "envs", "envvar", "envvars", "newenvvar", "oldenv
 const ENV_VALUE_FIELDS = ["value", "vsmValue", "legacyValue", "decryptedValue"];
 /** The fields of a labelled or typed secret record that hold what the label names. */
 const LABELLED_VALUE_FIELDS = [...ENV_VALUE_FIELDS, "args", "text"];
-/** Query parameters that carry a credential in a URL: either rule. */
-const URL_PARAM_CONTAINS = /token|secret|password|passwd|signature|^sig$|key|auth|code|jwt|credential|bypass/i;
-const URL_PARAM_SUFFIX = /(token|secret|password|passphrase|key|signature|sig|credential|auth|authorization|jwt)$/;
+const URL_PARAM_STRONG = /token|secret|password|passwd|passphrase|signature|jwt|credential|bypass|authorization/i;
+const URL_PARAM_WEAK = /key|auth|code|sig$/;
+const URL_PARAM_ORDINARY =
+  /keyword|keyboard|keynote|keyframe|monkey|turkey|donkey|hockey|jockey|whiskey|author|countrycode|postcode|postalcode|zipcode|areacode|currencycode|languagecode|localecode|statuscode|errorcode|barcode|unicode|geocode|encode|decode/g;
+
+function credentialParameter(name: string): boolean {
+  if (URL_PARAM_STRONG.test(name) || /^sig$/i.test(name)) return true;
+  return URL_PARAM_WEAK.test(name.toLowerCase().replace(/[_-]/g, "").replace(URL_PARAM_ORDINARY, " "));
+}
+
+function credentialFragment(fragment: string): boolean {
+  if (URL_PARAM_STRONG.test(fragment)) return true;
+  if (!fragment.includes("=")) return /key|code|auth/i.test(fragment);
+  return fragment.split(/[&;]/).some((pair) => {
+    const equals = pair.indexOf("=");
+    return equals > 0 && credentialParameter(pair.slice(pair.lastIndexOf("/", equals) + 1, equals));
+  });
+}
 const URL_SHAPE = /^[a-z][a-z0-9+.-]*:\/\//i;
 /** What makes a string text rather than one whole URL: whitespace, quotes, escapes, entities, Markdown. */
 const TEXT = /[\s<>"'`\\]|&(?:#|[a-z]+;)|\]\(/i;
@@ -428,12 +443,12 @@ function sanitizeUrl(value: string, credentials = true): string {
   }
   // A snapshot of the names: setting a parameter while iterating the live list is unsafe.
   for (const name of credentials ? Array.from(url.searchParams.keys()) : []) {
-    if (URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""))) {
+    if (credentialParameter(name)) {
       url.searchParams.set(name, REDACTED);
       changed = true;
     }
   }
-  if (credentials && url.hash && /token|secret|key|code|auth/i.test(url.hash)) {
+  if (credentials && url.hash && credentialFragment(decodeLinkText(url.hash.slice(1)))) {
     url.hash = "";
     changed = true;
   }
@@ -499,6 +514,55 @@ const NAMED: Readonly<Record<string, string>> = {
   rsqb: "]",
   period: ".",
 };
+
+/** The same escapes as a recipient decodes them: numeric references with any leading zeros, and named references up to 32 characters. */
+const RECIPIENT_ESCAPES =
+  /%([0-9a-f]{2})|&(?:#0*(\d{1,7})|#x0*([0-9a-f]{1,6})|([a-z][a-z0-9]{1,31}));?|\\u([0-9a-f]{4})|\\x([0-9a-f]{2})|\\(?=[^a-z0-9])/gi;
+/** WHATWG's ASCII-valued named references; every other one decodes to non-ASCII and cannot spell the marker or a URL delimiter. */
+const RECIPIENT_NAMED: Readonly<Record<string, string>> = {
+  amp: "&",
+  apos: "'",
+  ast: "*",
+  bsol: "\\",
+  colon: ":",
+  comma: ",",
+  commat: "@",
+  diacriticalgrave: "`",
+  dollar: "$",
+  equals: "=",
+  excl: "!",
+  fjlig: "fj",
+  grave: "`",
+  gt: ">",
+  hat: "^",
+  lbrace: "{",
+  lbrack: "[",
+  lcub: "{",
+  lowbar: "_",
+  lpar: "(",
+  lsqb: "[",
+  lt: "<",
+  midast: "*",
+  newline: "\n",
+  num: "#",
+  percnt: "%",
+  period: ".",
+  plus: "+",
+  quest: "?",
+  quot: '"',
+  rbrace: "}",
+  rbrack: "]",
+  rcub: "}",
+  rpar: ")",
+  rsqb: "]",
+  semi: ";",
+  sol: "/",
+  tab: "\t",
+  underbar: "_",
+  verbar: "|",
+  vert: "|",
+  verticalline: "|",
+};
 /** The longest scheme read back from its `:`. */
 const MAX_SCHEME = 32;
 const SCHEME_CHAR = /[a-z0-9+.-]/i;
@@ -513,12 +577,15 @@ function codePoint(value: number): string {
 }
 
 /** The character an escape's groups spell: percent, decimal, hex, name, `\u`, `\x`; a bare backslash spells nothing. */
-function unescaped(groups: ReadonlyArray<string | undefined>): string | undefined {
+function unescaped(
+  groups: ReadonlyArray<string | undefined>,
+  named: Readonly<Record<string, string>> = NAMED,
+): string | undefined {
   const [percent, decimal, hex, name, unicode, byte] = groups;
   if (percent !== undefined) return String.fromCharCode(Number.parseInt(percent, 16));
   if (decimal !== undefined) return codePoint(Number(decimal));
   if (hex !== undefined) return codePoint(Number.parseInt(hex, 16));
-  if (name !== undefined) return NAMED[name.toLowerCase()];
+  if (name !== undefined) return named[name.toLowerCase()];
   if (unicode !== undefined || byte !== undefined) return String.fromCharCode(Number.parseInt((unicode ?? byte)!, 16));
   return "";
 }
@@ -657,15 +724,23 @@ interface Link extends LinkSpan {
  * Read a destination once. Admission ends at its actual CommonMark close,
  * counting balanced and escaped parentheses, before inspecting its query.
  */
-function linkSpan(text: string, start: number, host: number, inline: boolean): LinkSpan {
+function linkSpan(text: string, start: number, host: number, inline: boolean, crossRuns: boolean): LinkSpan {
   let depth = 0;
   let escaped = false;
   let cut = -1;
   let open = "?";
   let end = start;
+  let crossing: Crossing | undefined;
   for (; end < text.length; end++) {
     const code = text.charCodeAt(end);
-    if (endsLink(code, text[end]!)) break;
+    if (endsLink(code, text[end]!)) {
+      if (!crossRuns || end < host || !isUrlWhitespace(code)) break;
+      crossing ??= { state: { matched: 0, segment: Segment.None }, fed: host };
+      const next = crossRun(text, end, host, crossing);
+      if (next < 0) break;
+      end = next - 1;
+      continue;
+    }
     if (inline) {
       if (escaped) escaped = false;
       else if (code === 0x5c) escaped = true;
@@ -692,7 +767,7 @@ function linkSpan(text: string, start: number, host: number, inline: boolean): L
  * delimiters. Redaction (`failClosed`) also reads a link whose scheme and
  * host redaction took; admission never does.
  */
-function* linkSpans(text: string, failClosed = false): Generator<Link> {
+function* linkSpans(text: string, failClosed = false, crossRuns = false): Generator<Link> {
   const markers = failClosed && redactionAltered(text);
   for (let at = 0; at < text.length; at++) {
     const char = text[at]!;
@@ -701,7 +776,7 @@ function* linkSpans(text: string, failClosed = false): Generator<Link> {
       // A placeholder opening a word stands where a link's scheme and host may have been.
       // Its run is read once, query or not, and the scan resumes after it.
       const host = marker + REDACTED.length;
-      const span = linkSpan(text, host, host, false);
+      const span = linkSpan(text, host, host, false, crossRuns);
       const start = at;
       at = Math.max(at, span.end - 1);
       yield { ...span, start, host };
@@ -713,7 +788,7 @@ function* linkSpans(text: string, failClosed = false): Generator<Link> {
         const angle = text[destination] === "<";
         const start = destination + (angle ? 1 : 0);
         const host = destinationHost(text, start) ?? start;
-        const span = linkSpan(text, start, host, !angle);
+        const span = linkSpan(text, start, host, !angle, crossRuns);
         at = Math.max(destination, span.end) - 1;
         yield { ...span, start, host };
         continue;
@@ -727,7 +802,7 @@ function* linkSpans(text: string, failClosed = false): Generator<Link> {
         if (SLASH.test(text)) {
           const authority = SLASH.lastIndex;
           const begin = authorityAt(text, authority);
-          const span = linkSpan(text, authority, authority, false);
+          const span = linkSpan(text, authority, authority, false, crossRuns);
           const start = begin >= 0 ? begin : at;
           at = span.end - 1;
           yield { ...span, start, host: authority };
@@ -752,7 +827,7 @@ function credentialQuery(text: string): boolean {
   if (fragment >= 0) {
     const words = decodeLinkText(decoded.slice(fragment + 1));
     // A fragment redaction altered cannot be read.
-    if (/token|secret|key|code|auth/i.test(words) || alteredFragment(words)) return true;
+    if (credentialFragment(words) || alteredFragment(words)) return true;
   }
   const query = fragment < 0 ? decoded : decoded.slice(0, fragment);
   for (let at = query[0] === "?" ? 1 : 0; at < query.length;) {
@@ -766,7 +841,7 @@ function credentialQuery(text: string): boolean {
     if (pair !== REDACTED && redactionAltered(equals < 0 ? pair : pair.slice(0, equals))) return true;
     if (equals < 0) continue;
     const name = pair.slice(0, equals);
-    if (!URL_PARAM_CONTAINS.test(name) && !URL_PARAM_SUFFIX.test(normalizedName(name))) continue;
+    if (!credentialParameter(name)) continue;
     if (pair.slice(equals + 1) !== REDACTED) return true;
   }
   return false;
@@ -934,10 +1009,14 @@ function mapStrings(value: unknown, cleanText: (text: string) => string, depth: 
  * would, through up to four layers of escaping (`%255B`, `&amp;#91;`). Each
  * round is one linear pass.
  */
-function decodeLinkText(text: string, percent = true): string {
+function decodeLinkText(text: string, percent = true, escapes = ESCAPES, named = NAMED): string {
   for (let round = 0; round < 4; round++) {
-    const next = text.replace(ESCAPES, (token, ...groups: Array<string | undefined>) =>
-      !percent && groups[0] !== undefined ? token : token === "\\" ? "" : (unescaped(groups.slice(0, 6)) ?? token),
+    const next = text.replace(escapes, (token, ...groups: Array<string | undefined>) =>
+      !percent && groups[0] !== undefined
+        ? token
+        : token === "\\"
+          ? ""
+          : (unescaped(groups.slice(0, 6), named) ?? token),
     );
     if (next === text) break;
     text = next;
@@ -955,12 +1034,157 @@ function decodeLinkText(text: string, percent = true): string {
  * a person's text. Every destination uses the same policy regardless of host.
  */
 export function carriesWithheldLink(value: unknown): boolean {
-  return carriesString(value, (text) => {
-    for (const { cut, end } of linkSpans(text)) {
-      if (cut >= 0 && decodeLinkText(text.slice(cut, end)).includes(REDACTED)) return true;
+  return carriesString(value, (source) => {
+    for (const { cut, end } of linkSpans(source)) {
+      if (cut >= 0 && decodeLinkText(source.slice(cut, end)).includes(REDACTED)) return true;
+    }
+    if (!RECIPIENT_SPELLING.test(source)) return false;
+    const text = recipientText(source);
+    for (const { cut, end } of linkSpans(text, false, true)) {
+      if (cut >= 0 && carriesMarker(decodeRecipient(text.slice(cut, end)))) return true;
     }
     return false;
   });
+}
+
+const RECIPIENT_SPELLING = /[&%\\\t\n\r]/;
+const LEADING_ZEROS = /&#(?:0+(?=\d)|(x)0+(?=[0-9a-f]))/gi;
+const WHITESPACE_REFERENCE = /&(?:tab;|newline;|#(?:9|1[03])(?!\d);?|#x[9ad](?![0-9a-f]);?)/gi;
+const URL_WHITESPACE = /[\t\n\r]/g;
+const LOOKAHEAD = 256;
+
+/**
+ * Text as a recipient's HTML parser hands it to a URL parser: numeric references
+ * without leading zeros, and references to a tab or line break as that character,
+ * so a run that mixes both is one run.
+ */
+function recipientText(text: string): string {
+  return text.replace(LEADING_ZEROS, (_, hex?: string) => `&#${hex ?? ""}`).replace(WHITESPACE_REFERENCE, "\t");
+}
+
+function decodeRecipient(text: string): string {
+  return decodeLinkText(text, true, RECIPIENT_ESCAPES, RECIPIENT_NAMED);
+}
+
+function withoutUrlWhitespace(text: string): string {
+  return text.replace(URL_WHITESPACE, "");
+}
+
+function isUrlWhitespace(code: number): boolean {
+  return code === 0x09 || code === 0x0a || code === 0x0d;
+}
+
+function isParameterDelimiter(char: string): boolean {
+  return char === "?" || char === "#" || char === "&" || char === ";";
+}
+
+const enum Segment {
+  None,
+  Key,
+  Equals,
+  Value,
+}
+
+/** Marker progress and the current parameter's shape, over decoded characters with crossed runs removed. */
+interface MarkerState {
+  matched: number;
+  segment: Segment;
+}
+
+/** Advance by one decoded character; true once the marker is complete. */
+function step(state: MarkerState, char: string): boolean {
+  if (char === REDACTED[state.matched]) state.matched++;
+  else state.matched = char === "[" ? 1 : 0;
+  if (isParameterDelimiter(char)) state.segment = Segment.Key;
+  else if (state.segment === Segment.Key)
+    state.segment = char === "=" ? Segment.Equals : char === "[" || char === "]" ? Segment.Value : Segment.Key;
+  else if (state.segment === Segment.Equals) state.segment = Segment.Value;
+  return state.matched === REDACTED.length;
+}
+
+function continuesMarker(text: string, from: number, to: number, matched: number): boolean {
+  let at = from;
+  while (at < to && matched < REDACTED.length && text[at] === REDACTED[matched]) {
+    at++;
+    matched++;
+  }
+  return at === to || matched === REDACTED.length;
+}
+
+/**
+ * Whether a URL parser stripping the run of tabs and line breaks before
+ * `text[from, to)` would join it into the marker: the run splits the marker,
+ * or follows a parameter with no value yet (`?`, `&key`, `?key=`) and the
+ * word holds only key characters and `=` before the marker begins.
+ */
+function crosses(state: MarkerState, text: string, from: number, to: number): boolean {
+  if (from >= to) return false;
+  if (state.matched > 0 && continuesMarker(text, from, to, state.matched)) return true;
+  if (state.segment !== Segment.Key && state.segment !== Segment.Equals) return false;
+  let at = from;
+  if (state.segment === Segment.Key) {
+    while (at < to && !"=[]".includes(text[at]!) && !isParameterDelimiter(text[at]!)) at++;
+    if (at === to) return false;
+    if (text[at] === "=" && ++at === to) return true;
+  }
+  return text[at] === "[" && continuesMarker(text, at, to, 0);
+}
+
+/**
+ * Whether decoded link text holds the marker, crossing only the runs
+ * `crosses` allows; any other run ends the reading. Each character is read at
+ * most twice: once looking ahead from a run, once stepping.
+ */
+function carriesMarker(text: string): boolean {
+  const state: MarkerState = { matched: 0, segment: Segment.None };
+  const end = text.length;
+  for (let at = 0; at < end;) {
+    if (!isUrlWhitespace(text.charCodeAt(at))) {
+      if (step(state, text[at]!)) return true;
+      at++;
+      continue;
+    }
+    let next = at;
+    while (next < end && isUrlWhitespace(text.charCodeAt(next))) next++;
+    let word = next;
+    while (word < end && !isUrlWhitespace(text.charCodeAt(word))) word++;
+    if (!crosses(state, text, next, word)) return false;
+    at = next;
+  }
+  return false;
+}
+
+/** The decoded words of a link read so far, fed once each; decoded tabs and line breaks pass through. */
+interface Crossing {
+  state: MarkerState;
+  fed: number;
+}
+
+function feed(state: MarkerState, decoded: string): boolean {
+  for (let at = 0; at < decoded.length; at++)
+    if (!isUrlWhitespace(decoded.charCodeAt(at)) && step(state, decoded[at]!)) return true;
+  return false;
+}
+
+/**
+ * The end of the literal run at `at` when the link continues across it. The
+ * link's decoded text before the run and the bounded word after it are each
+ * decoded once, so a link's crossings together read each source character at
+ * most twice.
+ */
+function crossRun(text: string, at: number, host: number, crossing: Crossing): number {
+  if (feed(crossing.state, decodeRecipient(text.slice(Math.max(host, crossing.fed), at)))) return -1;
+  let next = at;
+  while (next < text.length && isUrlWhitespace(text.charCodeAt(next))) next++;
+  let word = next;
+  while (word < text.length && word - next < LOOKAHEAD && !endsLink(text.charCodeAt(word), text[word]!)) word++;
+  const after = decodeRecipient(text.slice(next, word));
+  let stop = 0;
+  while (stop < after.length && !isUrlWhitespace(after.charCodeAt(stop))) stop++;
+  if (!crosses(crossing.state, after, 0, stop)) return -1;
+  feed(crossing.state, after);
+  crossing.fed = word;
+  return next;
 }
 
 function carriesString(value: unknown, inspect: (text: string) => boolean): boolean {
@@ -996,18 +1220,36 @@ function carriesString(value: unknown, inspect: (text: string) => boolean): bool
   return false;
 }
 
+function carriesWithheldValue(text: string, containment: boolean): boolean {
+  const decoded = decodeLinkText(text);
+  if (containment) return redactionAltered(text) || redactionAltered(decoded);
+  if (decoded === REDACTED) return true;
+  for (const candidate of [text, decoded])
+    for (const { start, end } of linkSpans(candidate))
+      if (redactionAltered(decodeLinkText(candidate.slice(start, end)))) return true;
+  return false;
+}
+
+function carriesRecipientValue(text: string, containment: boolean): boolean {
+  const decoded = decodeRecipient(text);
+  const stripped = withoutUrlWhitespace(decoded);
+  if (containment) return redactionAltered(stripped);
+  if (stripped === REDACTED) return true;
+  for (const candidate of [text, decoded])
+    for (const { start, end } of linkSpans(candidate, false, true))
+      if (carriesMarker(decodeRecipient(candidate.slice(start, end)))) return true;
+  return false;
+}
+
 /** Whole marker values and withheld destinations are refused; paths and queries also refuse containment. */
 export function refuseWithheldValues(value: unknown, title: string, containment = false): void {
   if (
-    !carriesString(value, (text) => {
-      const decoded = decodeLinkText(text);
-      if (containment) return redactionAltered(text) || redactionAltered(decoded);
-      if (decoded === REDACTED) return true;
-      for (const candidate of [text, decoded])
-        for (const { start, end } of linkSpans(candidate))
-          if (redactionAltered(decodeLinkText(candidate.slice(start, end)))) return true;
-      return false;
-    })
+    !carriesString(
+      value,
+      (text) =>
+        carriesWithheldValue(text, containment) ||
+        (RECIPIENT_SPELLING.test(text) && carriesRecipientValue(recipientText(text), containment)),
+    )
   )
     return;
   throw new ConnectorCallError(
