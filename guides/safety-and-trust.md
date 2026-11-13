@@ -51,8 +51,10 @@ explain how to check the service or retrieve retained output.
 
 A read-only pool hides tools marked as writes and refuses attempts to call
 them before sending anything. Guessing a tool name or asking from a program
-does not bypass it. A whole service connection can also be read-only; a
-writable pool cannot reopen that connection for writes.
+does not bypass it. A read-only pool can still name a few exact write actions
+it allows; every other write stays refused, including one a service adds
+later. A whole service connection can also be read-only; a writable pool
+cannot reopen that connection for writes.
 
 ```mermaid
 flowchart LR
@@ -60,7 +62,7 @@ flowchart LR
     Allowed -->|No| Refuse["Refuse"]
     Allowed -->|Yes| Write{"Marked as a write?"}
     Write -->|No| Run["Check inputs and send"]
-    Write -->|Yes| ReadOnly{"Pool or connection read-only?"}
+    Write -->|Yes| ReadOnly{"Connection read-only, or pool read-only without naming this write?"}
     ReadOnly -->|Yes| Refuse
     ReadOnly -->|No| Run
 ```

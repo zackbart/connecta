@@ -2128,19 +2128,21 @@ own guidance can read what this request reached:
   "readOnly": false,
   "connectors": [
     { "id": "crm", "title": "Customer records", "readFirst": "connector:crm" },
-    { "id": "tickets" }
+    { "id": "tickets" },
+    { "id": "warehouse", "unlisted": true }
   ]
 }
 ```
 
-| Field                    | Meaning                                                                                                            |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| `surface`                | `"meta"` or `"native"`: the surface this request is served                                                         |
-| `executeCode`            | Whether `execute_code` is listed. Always `true` on meta                                                            |
-| `readOnly`               | The effective policy: the endpoint is read-only, or every connector it reaches is                                  |
-| `connectors[].id`        | Each canonical connector id the caller's scope reaches, in registry order                                          |
-| `connectors[].title`     | Present only when the title says more than the id; normalized and capped as in the [inventory](#discovery-context) |
-| `connectors[].readFirst` | Present only for a required guide: the name to pass to `skills`                                                    |
+| Field                    | Meaning                                                                                                                      |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| `surface`                | `"meta"` or `"native"`: the surface this request is served                                                                   |
+| `executeCode`            | Whether `execute_code` is listed. Always `true` on meta                                                                      |
+| `readOnly`               | The effective policy: the endpoint is read-only, or every connector it reaches is. `false` on a read-only pool with `writes` |
+| `connectors[].id`        | Each canonical connector id the caller's scope reaches, in registry order                                                    |
+| `connectors[].title`     | Present only when the title says more than the id; normalized and capped as in the [inventory](#discovery-context)           |
+| `connectors[].readFirst` | Present only for a required guide: the name to pass to `skills`                                                              |
+| `connectors[].unlisted`  | `true` only for a connector the pool's `unlisted` names: keep it off the model's roster. It stays callable                   |
 
 The facts come from the admitted scope and deployment code, never from request
 arguments or `_meta`: a person on plain `/mcp` sees their one pool's connectors,

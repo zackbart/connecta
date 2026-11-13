@@ -79,7 +79,9 @@ export function describeConfigSources(
             ? provided(raw.pools?.[key!]?.owner)
             : field === "description"
               ? provided(raw.pools?.[key!]?.description)
-              : provided(raw.pools);
+              : field === "writes" || field === "unlisted"
+                ? provided(raw.pools?.[key!]?.[field])
+                : provided(raw.pools);
     else if (group === "modules" && key === "activity" && field === "store" && parts[3] !== "kind")
       // A store option such as retentionDays is set only when the store says so.
       source = factorySource(factorySources(raw.activity?.store), parts.slice(3)) ?? "default";

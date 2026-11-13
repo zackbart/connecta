@@ -78,6 +78,11 @@ export interface ConnectaInstructionsOptions extends Omit<ConnectaEndpointOption
   clientName?: string;
   /** How long fetched instructions are reused. Default ten minutes. */
   ttlMs?: number;
+  /**
+   * UTF-8 byte cap on the connector roster in Eve's guide. Titles drop first,
+   * then whole entries become `+N more`. Default 512.
+   */
+  rosterMaxBytes?: number;
   /** Fetch implementation, for tests. */
   fetch?: typeof fetch;
 }
@@ -218,7 +223,7 @@ function endpointFacts(value: unknown): EndpointFacts | undefined {
     readOnly: facts.readOnly === true,
     connectors: facts.connectors.flatMap((connector) => {
       const id = text(connector?.id);
-      if (!id) return [];
+      if (!id || (connector as { unlisted?: unknown }).unlisted === true) return [];
       const title = text(connector.title);
       const readFirst = text(connector.readFirst);
       return [{ id, ...(title ? { title } : {}), ...(readFirst ? { readFirst } : {}) }];
@@ -229,8 +234,8 @@ function endpointFacts(value: unknown): EndpointFacts | undefined {
 const ROSTER_MAX_BYTES = 512;
 
 /** Detail degrades before names do, as the server's own inventory does. */
-function connectorRoster(facts: EndpointFacts, prefix: string): string {
-  const fits = (line: string) => new TextEncoder().encode(line).length <= ROSTER_MAX_BYTES;
+function connectorRoster(facts: EndpointFacts, prefix: string, maxBytes: number): string {
+  const fits = (line: string) => new TextEncoder().encode(line).length <= maxBytes;
   const entry = ({ id, title, readFirst }: EndpointFacts["connectors"][number], withTitle: boolean) => {
     const notes = [
       ...(withTitle && title ? [title] : []),
@@ -254,12 +259,12 @@ function connectorRoster(facts: EndpointFacts, prefix: string): string {
  * names tools as MCP lists them; Eve adds the connection prefix and hides them
  * behind `eve__tool`, and its search covers listed tools only.
  */
-function eveGuide(connection: string, facts: EndpointFacts | undefined): string {
+function eveGuide(connection: string, facts: EndpointFacts | undefined, rosterMaxBytes: number): string {
   const prefix = `${connection}__`;
   if (!facts) {
     return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<tool>", input }). Names in this guidance and in nextAction omit the "${prefix}" prefix.`;
   }
-  const roster = facts.connectors.length ? connectorRoster(facts, prefix) : undefined;
+  const roster = facts.connectors.length ? connectorRoster(facts, prefix, rosterMaxBytes) : undefined;
   if (facts.surface === "meta") {
     return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<tool>", input }). Names in this guidance and in nextAction omit the "${prefix}" prefix. Go straight to ${prefix}execute_code without eve__search, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }. eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program.${roster ? ` Reachable: ${roster}.` : ""}`;
   }
@@ -389,6 +394,10 @@ async function fetchConnectaInstructions(
  */
 export function connectaInstructions(options: ConnectaInstructionsOptions = {}) {
   const ttlMs = options.ttlMs ?? 600_000;
+  const rosterMaxBytes = options.rosterMaxBytes ?? ROSTER_MAX_BYTES;
+  if (!Number.isSafeInteger(rosterMaxBytes) || rosterMaxBytes < 1) {
+    throw new Error(`Connecta rosterMaxBytes must be a positive integer, not ${String(rosterMaxBytes)}.`);
+  }
   const connection = options.connection ?? "connecta";
   if (!/^[A-Za-z0-9._-]+$/.test(connection)) {
     throw new Error(`Connecta connection "${connection}" must be the file name under agent/connections.`);
@@ -412,7 +421,7 @@ export function connectaInstructions(options: ConnectaInstructionsOptions = {}) 
         warnOnVersionSkew(endpoint, guidance.server);
       }
       // Eve's half comes first: it says how to read every name in Connecta's own text.
-      fresh = guidance && `${eveGuide(connection, guidance.facts)}\n${guidance.instructions}`;
+      fresh = guidance && `${eveGuide(connection, guidance.facts, rosterMaxBytes)}\n${guidance.instructions}`;
     } catch {
       // Eve's cancellation is not an endpoint failure: rethrowing keeps it out
       // of the memo and the backoff, which every session of this resolver shares.
@@ -447,7 +456,7 @@ export function connectaInstructions(options: ConnectaInstructionsOptions = {}) 
 }
 
 /** One explicitly selected Connecta guide projected as a deferred Eve skill. */
-export interface ConnectaSkillOptions extends Omit<ConnectaInstructionsOptions, "connection"> {
+export interface ConnectaSkillOptions extends Omit<ConnectaInstructionsOptions, "connection" | "rosterMaxBytes"> {
   /** Exact skills-tool name, for example `connector:crm`. */
   name: string;
   /** Short task selector Eve can search without loading the guide. */

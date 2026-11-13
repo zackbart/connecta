@@ -72,6 +72,10 @@ function grants(access: ConnectorAccess, ids: readonly string[]): OperatorGrant[
     });
 }
 
+/** A read-only pool's exact write grants, as addresses. */
+const writeAddresses = (access: ConnectorAccess): string[] =>
+  [...(access.writes ?? [])].flatMap(([id, tools]) => [...tools].filter(validName).map((tool) => `${id}.${tool}`));
+
 /** Whether a pool serves this connector at all. */
 const servesConnector = (pool: ResolvedPool, id: string) =>
   pool.access.connectorIds === "all" || pool.access.connectorIds.includes(id);
@@ -588,6 +592,8 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
       executeCode: pool.native?.executeCode !== false,
       owner: ownersVisible ? (pool.owner ?? null) : null,
       tools: grants(pool.access, allIds),
+      writes: writeAddresses(pool.access),
+      unlisted: [...(pool.unlisted ?? [])],
       members: pool.members.map((member) =>
         member.kind === "agent" ? { kind: "agent", name: member.name } : human(member),
       ),
@@ -840,6 +846,8 @@ function memberRead(
         executeCode: pool.native?.executeCode !== false,
         owner: null,
         tools: grants(pool.access, allIds),
+        writes: writeAddresses(pool.access),
+        unlisted: [],
         members: [],
       })),
       agents: [],

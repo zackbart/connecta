@@ -24,6 +24,8 @@ export interface EndpointGroup {
   tools: OperatorTool[];
   /** The matching matrix cell's subject, or null when the matrix has no cell. */
   runsAs: OperatorRunsAs | null;
+  /** The pool keeps this connector off its model's roster. */
+  unlisted: boolean;
 }
 
 export interface EndpointRow {
@@ -122,6 +124,8 @@ function endpointGroups(
   grants: OperatorGrant[],
   readOnly: boolean,
   pool: string | null,
+  writes: readonly string[] = [],
+  unlisted: readonly string[] = [],
 ): EndpointGroup[] {
   const cells = cellsFor(contract, pool);
   return (contract.config?.connectors ?? []).flatMap((config) => {
@@ -129,14 +133,20 @@ function endpointGroups(
     const grant = grants.find((g) => g.connectorId === config.id);
     if (!live || !grant) return [];
     const tools = live.tools.filter((tool) => {
-      if ((readOnly || config.readOnly) && tool.classification !== "read") return false;
+      if (
+        tool.classification !== "read" &&
+        (config.readOnly || (readOnly && !writes.includes(`${config.id}.${tool.name}`)))
+      )
+        return false;
       return (
         grant.tools === "all" ||
         grant.tools.some((g) => g.name === tool.name && (!g.requireReadOnly || tool.classification === "read"))
       );
     });
     // A granted connector with no complete catalog still needs a visible fix.
-    return [{ config, live, tools, runsAs: cells.get(config.id)?.runsAs ?? null }];
+    return [
+      { config, live, tools, runsAs: cells.get(config.id)?.runsAs ?? null, unlisted: unlisted.includes(config.id) },
+    ];
   });
 }
 
@@ -176,7 +186,7 @@ export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
     });
   }
   for (const pool of contract.pools) {
-    const groups = endpointGroups(contract, pool.tools, pool.readOnly, pool.name);
+    const groups = endpointGroups(contract, pool.tools, pool.readOnly, pool.name, pool.writes, pool.unlisted);
     rows.push({
       pool: pool.name,
       label: pool.name,

@@ -1031,6 +1031,13 @@ createConnecta({
     },
     calendar_bot: { tools: ["calendar.create_event"], members: ["agent:calendar-bot"] },
     reporting: { tools: ["tickets", "notes"], readOnly: true, members: analysts },
+    triage: {
+      tools: ["tickets", "notes", "crm"],
+      readOnly: true,
+      writes: ["tickets.add_comment"],
+      unlisted: ["crm"],
+      members: ["agent:calendar-bot"],
+    },
   },
   connectors, executor,
 });
@@ -1042,16 +1049,18 @@ warning says, every pool path answers the 404 because nobody can be a member,
 and every agent endpoint answers the machine-only 401 because no agent can be
 admitted.
 
-| Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses), with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers and the unique member pool to other people. Neither intersects with or widens anything.                                                                                                                                                |
-| Refusal      | A person with zero or several memberships at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer` (zero memberships), `ambiguous_pool` (several memberships), `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                            |
-| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                                                                                            |
-| Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                                                                                                 |
-| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` place the description before the rest of the MCP instructions; a maintainer at plain `/mcp` and a pool without one serve none. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                                                                    |
-| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, mixed people and agent membership (a `ConfigError` naming the pool), unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 UTF-16 code units of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. Remote catalogs are checked at lazy load. |
-| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                                                                                                 |
-| Drift        | No wildcards; pool tools are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                                                                                                    |
+| Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scope        | `/mcp/<pool>` and `/agent/<pool>` serve exactly the pool's `tools` (connector ids or exact `connector.tool` addresses) and `writes`, with the pool's `readOnly`, to its member people and member agents respectively. Plain `/mcp` serves the whole catalog to maintainers and the unique member pool to other people. Neither intersects with or widens anything.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Refusal      | A person with zero or several memberships at `/mcp`, a non-member, and an undeclared pool get an identical 404 status, body, and headers, after auth. The operator log records `not_maintainer` (zero memberships), `ambiguous_pool` (several memberships), `not_pool_member`, or `pool_not_declared`. Names are not anonymously enumerable; valid credentials cannot distinguish these cases by content.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` place the description before the rest of the MCP instructions; a maintainer at plain `/mcp` and a pool without one serve none. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Writes       | Optional `writes` on a pool whose effective `readOnly` is `true`: exact `connector.tool` addresses it serves as writes. Each is in the pool's scope without also appearing in `tools`. Every other write stays refused, including one a vendor adds later to the same connector. An entry whose tool classifies as a read is a read grant. See [writable and read-only endpoints](#writable-and-read-only-endpoints).                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| Unlisted     | Optional `unlisted`: connector ids in the pool's scope that endpoint facts mark `unlisted: true`, so a client such as `connecta-eve` keeps them off its model's roster. It is not access control: they stay callable at the same endpoint, and `execute_code`, search and Connecta's own instructions still name them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, mixed people and agent membership (a `ConfigError` naming the pool), unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 UTF-16 code units of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. `writes` throws (a `ConfigError` naming the pool) when the pool is writable, when it is empty, when an entry is a bare connector id or not an address, and when an address names an unknown connector or a tool absent from an `api()` static catalog. `unlisted` throws when it is empty, repeats an id, or names a connector outside the pool's `tools` and `writes`. Remote catalogs are checked at lazy load. |
+| Discovery    | Clerk's pool 401 names `/.well-known/oauth-protected-resource/mcp/<pool>` with the pool URL as `resource`, matching RFC 9728. Cloudflare Managed OAuth is application-level and needs no pool setup.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Drift        | No wildcards; pool `tools` and `writes` are exact names. Missing live tools are unreachable and warned once while in a bounded 1,024-entry FIFO.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 
 Pool descriptions are trimmed before validation. The remaining text must be
 1 to 500 UTF-16 code units (non-BMP characters such as emoji count as two units) and contain no C0 or C1 control characters (including tabs,
@@ -1119,6 +1128,8 @@ activity. Anyone else gets the same 404, and an agent token the machine-only
 [operator contract](./operator-ui.md#operator-data-contract). The public HTML
 shell carries no catalog data.
 
+### Writable and read-only endpoints
+
 Each endpoint is writable or read-only. The deployment's `readOnly` sets the
 plain `/mcp` endpoint for maintainers and is required: a deployment that omits it fails at
 construction and must choose `true` or `false`. A pool inherits it unless the
@@ -1130,6 +1141,33 @@ results, `connecta.search`, and `connecta.describe`, and `call_tool`,
 `call_destructive_tool`, and program writes are refused with
 `read_only_endpoint` before validation or dispatch. Reads, including reads
 through `call_destructive_tool`, still run.
+
+A read-only pool may name exact writes in `writes`, so one endpoint serves
+whole connectors read-only plus a few named writes. Its endpoints present as
+writable: they list `call_destructive_tool`, annotate `execute_code` as a write,
+list `execute_read_code` where a writable endpoint would, and report
+`readOnly: false` in endpoint facts. A granted write runs through
+`call_destructive_tool`, programs, and on a native pool its own write tool,
+exactly as on a writable endpoint, and never through `call_tool` or a read
+program. Every other write is treated as a read-only connector's would be:
+absent from `search_tools`, `connecta.search`, `connecta.describe`, and the
+native tool list, and refused with `read_only_endpoint` before validation or
+dispatch, on `/mcp/<pool>`, `/agent/<pool>`, and a person's plain `/mcp`. A
+write the vendor adds later is never in `writes`, so it stays refused. An exact
+write address in `tools` grants no write on a read-only pool; only `writes`
+does. A connector's own `readOnly: true` still refuses its writes there.
+
+```ts
+pools: {
+  assistant: {
+    tools: ["analytics", "code", "inbox"],
+    readOnly: true,
+    writes: ["tickets.save_issue", "tickets.save_comment"],
+    members: ["agent:assistant"],
+  },
+},
+```
+
 Guides are documentation, not discovery: provider `SKILL.md` and usage guides,
 surfaced through `queryAnalysis.guideSummary`, `skills`, `connecta.skill`, and
 skill `resources/read`, are the same on every endpoint and may name tools a
@@ -1244,7 +1282,8 @@ section holds the complete rules.
    constant that spreads the tier below it, and spread a user's highest tier
    into their personal pool's `tools`. A change to a tier then reaches every
    pool above it. Spread tool lists, not whole pools: `members`, `readOnly`,
-   and `owner` belong to each pool, and a spread pool would copy them.
+   `owner`, `writes`, and `unlisted` belong to each pool, and a spread pool
+   would copy them.
 5. **`owner` is the user's Workspace address.** Set `owner` on
    `<agent>-<user>` to that user's Google Workspace email address; it is
    checked as an address at construction, and it makes Workspace connectors
@@ -1282,6 +1321,12 @@ section holds the complete rules.
     `authScope: "personal"` connectors, on which each person acts as
     themselves. Keep them out of the tier: they are absent for agents,
     since an agent has no principal and a tier has no owner.
+11. **One pool holds reads, exact writes, and code-only connectors.** A
+    mostly read-only tier sets `readOnly: true`, lists whole connectors in
+    `tools`, and names each write it may make in `writes`; never split those
+    writes into a second pool. Connectors only the agent's own code calls go
+    in the same pool's `unlisted`, which keeps them off the model's roster
+    while they stay callable at the same endpoint.
 
 **Choosing the pool each turn**
 

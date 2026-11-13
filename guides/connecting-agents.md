@@ -12,7 +12,7 @@ has exact setup and verification steps.
 Imagine an agent named `assistant` that helps with CRM records and tickets.
 Its operator creates a pool with the actions needed for that job and adds
 the agent as a member. Agent pools contain only agents; people use separate
-pools that can share the same tool list. The pool can be read-only if updates must be impossible.
+pools that can share the same tool list. The pool can be read-only if updates must be impossible, or read-only except for a few named write actions.
 
 ```mermaid
 flowchart LR

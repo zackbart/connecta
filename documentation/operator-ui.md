@@ -445,8 +445,10 @@ The maintainer view carries:
 - `pools`: every declared pool with `humanPath` (`/mcp/<name>`), `agentPath`
   (`/agent/<name>`), `readOnly`, effective `surface` (`meta` or `native`),
   `executeCode` (whether code is enabled), `owner` (the Workspace address its agents act
-  as), its declared `tools` (never intersected; no `requireReadOnly` is ever
-  true), and its `members`, agents as `{ kind: "agent", name }`. Every listed
+  as), its declared `tools` (never intersected, with its `writes` merged in; no
+  `requireReadOnly` is ever true), `writes` (a read-only pool's exact write
+  grants as `connector.tool` addresses, `[]` when none), `unlisted` (connector
+  ids kept off the model's roster, `[]` when none), and its `members`, agents as `{ kind: "agent", name }`. Every listed
   person carries a `label` from the same directory lookup activity actor
   labels use, on an interactive read only, and `null` without a directory
   (Cloudflare Access) or an entry. An open deployment's anonymous maintainer
@@ -509,7 +511,7 @@ The maintainer view carries:
 The member view is exactly that member's projection: `config`,
 `configSources` and `root` are `null`, `live.connectors`, `agents` and
 `matrix` are empty, and `live.activity` is `"forbidden"`. `pools` lists only
-their pools, each with `owner: null` and `members: []`. With exactly one pool,
+their pools, each with `owner: null`, `unlisted: []` and `members: []`. With exactly one pool,
 its `humanPath` is `/mcp`, the address that serves them that pool, and the
 member's catalog reads carry that pool as plain `/mcp` would. `connectors` lists
 each connector in those pools with its title, the member's pools that serve

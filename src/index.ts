@@ -3,8 +3,9 @@ import { describeConfigSources } from "./config-value-sources.js";
 import { credentialTestRule, describeCredentialTestMismatch } from "./credential-rules.js";
 import { Registry } from "./registry.js";
 import { declaresSelfHostedClient } from "./auth/downstream-client-metadata.js";
-import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
+import { isConnectorId, parseConnectorAccess, parseWriteGrants, POOL_NAME_RE, withWrites } from "./connector-access.js";
 import type { ConnectorAccess } from "./connector-access.js";
+import type { ToolAccess } from "./registry.js";
 import type { IdentityReference } from "./types.js";
 import { assertsAgents } from "./agent-identity.js";
 import { ConfigError } from "./config-schema.js";
@@ -94,7 +95,7 @@ function resolvePools(
     } catch {
       throw new Error(`ConnectaConfig.pools.${name}: tools must be connector ids or connector.tool addresses`);
     }
-    if (access.connectorIds === "all" || access.connectorIds.length === 0) {
+    if (access.connectorIds === "all") {
       throw new Error(`ConnectaConfig.pools.${name}: a pool must name at least one connector or tool`);
     }
     for (const id of access.connectorIds) {
@@ -111,6 +112,14 @@ function resolvePools(
         }
       }
     }
+    const poolReadOnly = pool.readOnly ?? readOnly;
+    if (pool.writes !== undefined) {
+      access = withWrites(access, resolveWriteGrants(name, pool.writes, poolReadOnly, registry));
+    }
+    if (access.connectorIds.length === 0) {
+      throw new Error(`ConnectaConfig.pools.${name}: a pool must name at least one connector or tool`);
+    }
+    const unlisted = pool.unlisted === undefined ? undefined : resolveUnlisted(name, pool.unlisted, access);
     const path = `ConnectaConfig.pools.${name}.members`;
     if (pool.members.length === 0) {
       throw new ConfigError(`${path} is empty; a pool serves only its members, so list at least one.`);
@@ -125,8 +134,9 @@ function resolvePools(
       name,
       Object.freeze({
         access,
-        readOnly: pool.readOnly ?? readOnly,
+        readOnly: poolReadOnly,
         members: Object.freeze(resolvePoolMembers(pool.members, path, members)),
+        ...(unlisted ? { unlisted } : {}),
         ...(pool.owner !== undefined ? { owner: pool.owner.trim() } : {}),
         ...(pool.description !== undefined ? { description: pool.description.trim() } : {}),
         ...(pool.surface === "native" ? { native: { executeCode: pool.executeCode ?? true } } : {}),
@@ -134,6 +144,57 @@ function resolvePools(
     );
   }
   return resolved;
+}
+
+function resolveWriteGrants(
+  name: string,
+  writes: readonly unknown[],
+  readOnly: boolean,
+  registry: Registry,
+): ToolAccess {
+  const path = `ConnectaConfig.pools.${name}.writes`;
+  if (!readOnly) {
+    throw new ConfigError(
+      `${path} needs readOnly: true. A writable pool already serves every write its tools reach; list the exact addresses in tools instead.`,
+    );
+  }
+  if (writes.length === 0) throw new ConfigError(`${path} is empty; omit it instead.`);
+  const whole = writes.findIndex(isConnectorId);
+  if (whole >= 0) {
+    throw new ConfigError(
+      `${path}[${whole}] names the whole connector "${String(writes[whole])}". List exact connector.tool addresses, so a write the vendor adds later stays refused.`,
+    );
+  }
+  let grants: ToolAccess;
+  try {
+    grants = parseWriteGrants(writes);
+  } catch {
+    throw new ConfigError(`${path} must list exact connector.tool addresses.`);
+  }
+  for (const [id, tools] of grants) {
+    const connector = registry.getConnector(id);
+    if (!connector) throw new ConfigError(`${path}: unknown connector "${id}".`);
+    if (!connector.staticTools) continue;
+    const known = new Set(connector.staticTools.map((tool) => tool.name));
+    for (const tool of tools) {
+      if (!known.has(tool)) throw new ConfigError(`${path}: connector "${id}" has no tool "${tool}".`);
+    }
+  }
+  return grants;
+}
+
+function resolveUnlisted(name: string, value: readonly unknown[], access: ConnectorAccess): ReadonlySet<string> {
+  const path = `ConnectaConfig.pools.${name}.unlisted`;
+  if (value.length === 0) throw new ConfigError(`${path} is empty; omit it instead.`);
+  const ids = new Set<string>();
+  value.forEach((id, index) => {
+    if (typeof id !== "string" || access.connectorIds === "all" || !access.connectorIds.includes(id)) {
+      throw new ConfigError(`${path}[${index}] must be a connector id this pool's tools or writes reach.`);
+    }
+    if (ids.has(id)) throw new ConfigError(`${path}[${index}] repeats "${id}".`);
+    ids.add(id);
+  });
+  return ids;
 }
 
 /**

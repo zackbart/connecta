@@ -70,8 +70,12 @@ export interface OperatorPoolV2 {
   executeCode: boolean;
   /** Workspace address agents act as; null in the member view. */
   owner: string | null;
-  /** The pool's declared tools, unfiltered. */
+  /** The pool's declared tools, unfiltered, with its `writes` merged in. */
   tools: OperatorGrant[];
+  /** A read-only pool's exact write grants as `connector.tool` addresses; [] when none. */
+  writes: string[];
+  /** Connector ids kept off the model's roster. Maintainer view only; [] for members. */
+  unlisted: string[];
   /** Maintainer view only; [] for members. */
   members: OperatorMember[];
 }

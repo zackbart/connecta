@@ -117,12 +117,15 @@ export function connectorInventoryTitle(connector: Connector): string | undefine
  * host-specific guidance. Built only from the admitted scope and configuration:
  * `connectors` is the caller's registry view, the roster `execute_code` and
  * `authorize_connector` already describe, and nothing here loads a catalog.
+ * A connector the pool lists in `unlisted` carries `unlisted: true`, telling the
+ * client to keep it off its model's roster; it stays callable.
  */
 export function endpointExtension(
   connectors: readonly Connector[],
   native: boolean,
   executeCode: boolean,
   readOnly: boolean,
+  unlisted?: ReadonlySet<string>,
 ) {
   return {
     surface: native ? "native" : "meta",
@@ -134,6 +137,7 @@ export function endpointExtension(
         id: connector.id,
         ...(title ? { title } : {}),
         ...(connectorGuideRequired(connector) ? { readFirst: connectorSkillName(connector.id) } : {}),
+        ...(unlisted?.has(connector.id) ? { unlisted: true } : {}),
       };
     }),
   };

@@ -329,6 +329,26 @@ const pool = {
     }),
   ),
   /**
+   * Exact `connector.tool` write addresses a `readOnly: true` pool serves.
+   * Every other write stays refused, including one a vendor adds later. Each
+   * entry is in the pool's scope; a bare connector id, an address an `api()`
+   * catalog lacks, and `writes` on a writable pool throw.
+   */
+  writes: opaque<readonly string[]>({
+    check: (value, path) => {
+      if (!Array.isArray(value)) throw new ConfigError(`${path} must be an array of connector.tool addresses.`);
+    },
+  }),
+  /**
+   * Connector ids in this pool kept off the roster the endpoint facts give a
+   * client for its model. Not access control: calls still work.
+   */
+  unlisted: opaque<readonly string[]>({
+    check: (value, path) => {
+      if (!Array.isArray(value)) throw new ConfigError(`${path} must be an array of connector ids.`);
+    },
+  }),
+  /**
    * Who may open `/mcp/<name>`: principal ids in the namespace of the one
    * interactive auth provider, `{ namespace, id }`, or `"agent:<name>"` for a
    * declared agent. All members must be people or all must be agents. Required
