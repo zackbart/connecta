@@ -192,7 +192,7 @@ export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
       label: pool.name,
       path: pool.humanPath,
       agentPath: pool.members.some((member) => member.kind === "agent") ? pool.agentPath : null,
-      readOnly: pool.readOnly,
+      readOnly: pool.readOnly && pool.writes.length === 0,
       surface: pool.surface,
       executeCode: pool.executeCode,
       toolCount: toolCount(groups),
@@ -250,7 +250,11 @@ export function matrixColumns(contract: OperatorUiContractV2): MatrixColumn[] {
   if (contract.role !== "maintainer") return [];
   return [
     ...(contract.root ? [{ pool: null, path: contract.root.path, readOnly: contract.root.readOnly }] : []),
-    ...contract.pools.map((pool) => ({ pool: pool.name, path: pool.humanPath, readOnly: pool.readOnly })),
+    ...contract.pools.map((pool) => ({
+      pool: pool.name,
+      path: pool.humanPath,
+      readOnly: pool.readOnly && pool.writes.length === 0,
+    })),
   ];
 }
 

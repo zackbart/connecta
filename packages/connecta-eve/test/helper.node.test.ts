@@ -656,6 +656,15 @@ it("degrades the roster by bytes, sanitizes it, and treats malformed facts as ab
   expect(Buffer.byteLength(widened)).toBeGreaterThan(512);
   expect(Buffer.byteLength(widened)).toBeLessThanOrEqual(4096);
   expect(widened).toMatch(/; \+\d+ more$/);
+  const tiny = await turn(
+    connectaInstructions({
+      url: "https://connecta.example.com",
+      getToken: () => "cta",
+      fetch: discovering({ ...meta, connectors: [{ id: "crm" }] }),
+      rosterMaxBytes: 1,
+    }),
+  );
+  expect((tiny as { content: string }).content).not.toMatch(/Reachable:|more/);
   for (const rosterMaxBytes of [0, -1, 1.5, Number.NaN]) {
     expect(() => connectaInstructions({ rosterMaxBytes })).toThrow("rosterMaxBytes must be a positive integer");
   }

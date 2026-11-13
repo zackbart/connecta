@@ -72,7 +72,6 @@ function grants(access: ConnectorAccess, ids: readonly string[]): OperatorGrant[
     });
 }
 
-/** A read-only pool's exact write grants, as addresses. */
 const writeAddresses = (access: ConnectorAccess): string[] =>
   [...(access.writes ?? [])].flatMap(([id, tools]) => [...tools].filter(validName).map((tool) => `${id}.${tool}`));
 

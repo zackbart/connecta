@@ -251,7 +251,8 @@ function connectorRoster(facts: EndpointFacts, prefix: string, maxBytes: number)
   const entries = facts.connectors.map((connector) => entry(connector, false));
   let shown = 0;
   while (fits(`${entries.slice(0, shown + 1).join(", ")}; +${entries.length - shown - 1} more`)) shown++;
-  return `${entries.slice(0, shown).join(", ")}${shown ? "; " : ""}+${entries.length - shown} more`;
+  const line = `${entries.slice(0, shown).join(", ")}${shown ? "; " : ""}+${entries.length - shown} more`;
+  return fits(line) ? line : "";
 }
 
 /**
