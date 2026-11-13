@@ -781,18 +781,16 @@ describe("Access assertion verification without context", () => {
     for (const outage of outages) {
       const fetcher = vi.spyOn(globalThis, "fetch").mockImplementationOnce(outage);
       await refused(await auth.authorize(asserted(value), BASE));
-      // A failed read blocks key fetches for thirty seconds rather than retrying per request.
-      await refused(await auth.authorize(asserted(value), BASE));
       expect(fetcher).toHaveBeenCalledTimes(1);
       fetcher.mockRestore();
-      vi.setSystemTime(Date.now() + 30_001);
+      vi.setSystemTime(Date.now() + 1_001);
     }
     const fetcher = certs();
     await expect(auth.authorize(asserted(value), BASE)).resolves.toMatchObject({ ok: true, userId: "operator-1" });
     expect(fetcher).toHaveBeenCalledTimes(1);
   });
 
-  it("INV-7: ends a hanging key fetch at its own deadline and backs off before fetching again", async () => {
+  it("INV-7: ends a hanging key fetch at its own deadline, and callers during the backoff share the next attempt", async () => {
     const value = await token({ exp: now() + 7200 });
     vi.useFakeTimers();
     const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(
@@ -806,16 +804,119 @@ describe("Access assertion verification without context", () => {
     await vi.advanceTimersByTimeAsync(4_001);
     await refused(await pending);
     expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(true);
-    // A deadline is a failed read: no request starts another for thirty seconds.
-    for (let i = 0; i < 5; i++) await refused(await auth.authorize(asserted(value), BASE));
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(30_000);
     fetcher.mockImplementation(async () => Response.json({ keys: [{ ...publicCurrent, kid: "current" }] }));
-    await expect(auth.authorize(asserted(value), BASE)).resolves.toMatchObject({ ok: true });
+    const waiting = Array.from({ length: 5 }, () => auth.authorize(asserted(value), BASE));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(500);
+    for (const result of await Promise.all(waiting)) expect(result).toMatchObject({ ok: true });
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it("INV-7: repeated disconnects start at most two key fetches, charged to their starters until they fill the cache", async () => {
+  it("INV-4 INV-7: 20 concurrent assertions on a cold verifier share one key fetch and all verify", async () => {
+    const fetcher = certs();
+    const auth = cloudflareAccessAuth({ assertion });
+    const value = await token();
+    const results = await Promise.all(Array.from({ length: 20 }, () => auth.authorize(asserted(value), BASE)));
+    for (const result of results) expect(result).toEqual({ ok: true, userId: "operator-1", subjectId: "operator-1" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("INV-4 INV-7: a failed shared fetch fails its waiters together, leaves nothing running, and allows one new attempt", async () => {
+    vi.useFakeTimers();
+    const value = await token({ exp: now() + 7200 });
+    const auth = cloudflareAccessAuth({ assertion });
+    let fail!: () => void;
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = () => reject(new TypeError("network failure"));
+        }),
+    );
+    const failed = Array.from({ length: 20 }, () => auth.authorize(asserted(value), BASE));
+    await vi.advanceTimersByTimeAsync(10);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    fail();
+    for (const result of await Promise.all(failed)) await refused(result);
+    expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    fetcher.mockImplementation(async () => Response.json({ keys: [{ ...publicCurrent, kid: "current" }] }));
+    const recovered = await Promise.all(Array.from({ length: 20 }, () => auth.authorize(asserted(value), BASE)));
+    for (const result of recovered) expect(result).toMatchObject({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("INV-7: a waiter that leaves, starter or not, never aborts the shared fetch", async () => {
+    const auth = cloudflareAccessAuth({ assertion });
+    const value = await token();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetcher = vi.spyOn(globalThis, "fetch").mockImplementation(async (_url, init) => {
+      await gate;
+      init?.signal?.throwIfAborted();
+      return Response.json({ keys: [{ ...publicCurrent, kid: "current" }] });
+    });
+    const leaving = (controller: AbortController) =>
+      auth.authorize(
+        new Request(`${BASE}/mcp`, { headers: { "Cf-Access-Jwt-Assertion": value }, signal: controller.signal }),
+        BASE,
+      );
+    const starter = new AbortController();
+    const joiner = new AbortController();
+    const first = leaving(starter);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    const second = leaving(joiner);
+    const staying = auth.authorize(asserted(value), BASE);
+    starter.abort();
+    joiner.abort();
+    await refused(await first);
+    await refused(await second);
+    expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(false);
+    release();
+    await expect(staying).resolves.toMatchObject({ ok: true, userId: "operator-1" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("INV-4 INV-7: a fetch past its monotonic bounds is replaced, its waiters follow, and its late keys are discarded", async () => {
+    const retired = await token({ exp: now() + 7200 });
+    const rotated = await token({ exp: now() + 7200 }, { kid: "next" }, next.privateKey);
+    const auth = cloudflareAccessAuth({ assertion });
+    let releaseOld!: (response: Response) => void;
+    const fetcher = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            releaseOld = resolve;
+          }),
+      )
+      .mockImplementation(async () => Response.json({ keys: [{ ...publicNext, kid: "next" }] }));
+    const monotonic = performance.now.bind(performance);
+    let skipped = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => monotonic() + skipped);
+    const stranded = auth.authorize(asserted(rotated), BASE);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    const wall = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60_000);
+    const joined = auth.authorize(asserted(rotated), BASE);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    wall.mockRestore();
+    skipped = 5_001;
+    await expect(auth.authorize(asserted(rotated), BASE)).resolves.toMatchObject({ ok: true });
+    for (const result of await Promise.all([stranded, joined])) expect(result).toMatchObject({ ok: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    releaseOld(Response.json({ keys: [{ ...publicCurrent, kid: "current" }] }));
+    await vi.waitFor(() => expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(true));
+    await refused(await auth.authorize(asserted(retired), BASE));
+    await expect(auth.authorize(asserted(rotated), BASE)).resolves.toMatchObject({ ok: true });
+  });
+
+  it("INV-7: repeated disconnects start one key fetch, charged to its starter until it fills the cache", async () => {
     const deployment = makeDeployment({
       auth: cloudflareAccessAuth({ assertion }),
       maintainers: ["operator-1"],
@@ -849,10 +950,10 @@ describe("Access assertion verification without context", () => {
           () => {},
         );
       }
-      expect(fetcher).toHaveBeenCalledTimes(2);
-      // Each fetch outlives the caller that left, still charged and kept runnable.
-      for (const call of fetcher.mock.calls) expect(call[1]?.signal?.aborted).toBe(false);
-      expect(authenticationSnapshot().active).toBe(baseline + 2);
+      expect(fetcher).toHaveBeenCalledTimes(1);
+      // The fetch outlives every caller that left, still charged and kept runnable.
+      expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(false);
+      expect(authenticationSnapshot().active).toBe(baseline + 1);
       release();
       await Promise.all(kept);
       expect(authenticationSnapshot().active).toBe(baseline);
@@ -863,7 +964,7 @@ describe("Access assertion verification without context", () => {
       );
       expect(admitted.status).toBe(200);
       await admitted.body?.cancel();
-      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenCalledTimes(1);
     } finally {
       release();
       await deployment.close();

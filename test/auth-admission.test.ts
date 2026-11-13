@@ -27,6 +27,18 @@ function blocking() {
   };
 }
 
+async function drain(gate: ReturnType<typeof blocking>, pending: Promise<unknown>[]) {
+  let settled = false;
+  const all = Promise.all(pending).then(() => {
+    settled = true;
+  });
+  while (!settled) {
+    gate.release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  await all;
+}
+
 async function expectBusy(response: Response) {
   expect(response.status).toBe(503);
   expect(response.headers.get("Retry-After")).toBe("1");
@@ -37,12 +49,14 @@ async function expectBusy(response: Response) {
 }
 
 describe("inbound authentication admission", () => {
-  it("INV-6 INV-7: fast-refuses beyond 16 across providers with only a checked payload-free log", async () => {
+  it("INV-6 INV-7: queues 16 beyond the active bound and refuses only the excess with a checked payload-free log", async () => {
     const gate = blocking();
-    const pending = Array.from({ length: 16 }, () => gate.start());
+    const pending: Promise<unknown>[] = Array.from({ length: 32 }, () => gate.start());
     const warn = vi.fn();
     const outsider = { kind: "other", authorize: vi.fn(refused) };
     try {
+      expect(gate.finish).toHaveLength(16);
+      expect(authenticationSnapshot()).toMatchObject({ active: 16, limit: 16, queued: 16, queueLimit: 16 });
       const busy = await authenticate(outsider, request(), BASE, undefined, { ...silentLogger, warn });
       expect(busy.admitted).toBe(false);
       if (!busy.admitted) await expectBusy(busy.response);
@@ -50,11 +64,68 @@ describe("inbound authentication admission", () => {
       expect(warn.mock.calls).toEqual([
         ["[connecta] Authentication admission refused", { reason: "authentication_busy" }],
       ]);
+      gate.release();
+      await vi.waitFor(() => expect(gate.finish).toHaveLength(16));
+      expect(authenticationSnapshot()).toMatchObject({ active: 16, queued: 0 });
+      expect(vi.mocked(gate.provider.authorize)).toHaveBeenCalledTimes(32);
+    } finally {
+      await drain(gate, pending);
+    }
+    for (const result of (await Promise.all(pending)) as Array<{ admitted: boolean }>)
+      expect(result.admitted).toBe(true);
+    expect(authenticationSnapshot()).toMatchObject({ active: 0, queued: 0 });
+    expect((await authenticate(outsider, request(), BASE, undefined, silentLogger)).admitted).toBe(true);
+  });
+
+  it("INV-7: admits a burst of 24 concurrent authorizations against slow adapters", async () => {
+    const finish: Array<() => void> = [];
+    const slow: InboundAuth = {
+      kind: "test",
+      authorize: vi.fn(
+        () => new Promise<AuthResult>((resolve) => finish.push(() => resolve({ ok: true, userId: "alice" }))),
+      ),
+    };
+    const burst = Array.from({ length: 24 }, () => authenticate(slow, request(), BASE, undefined, silentLogger));
+    expect(finish).toHaveLength(16);
+    expect(authenticationSnapshot()).toMatchObject({ active: 16, queued: 8 });
+    finish.splice(0).forEach((resolve) => resolve());
+    await vi.waitFor(() => expect(finish).toHaveLength(8));
+    expect(authenticationSnapshot()).toMatchObject({ active: 8, queued: 0 });
+    finish.splice(0).forEach((resolve) => resolve());
+    const results = await Promise.all(burst);
+    expect(results.every((result) => result.admitted && result.result.ok)).toBe(true);
+    expect(slow.authorize).toHaveBeenCalledTimes(24);
+    expect(authenticationSnapshot()).toMatchObject({ active: 0, queued: 0 });
+  });
+
+  it("INV-7: a queued caller waits two seconds at most, and leaving frees its place without I/O", async () => {
+    vi.useFakeTimers();
+    const gate = blocking();
+    const pending: Promise<unknown>[] = Array.from({ length: 16 }, () => gate.start());
+    try {
+      const callers = Array.from({ length: 16 }, () => new AbortController());
+      const waiting = callers.map((caller) => gate.start(caller.signal));
+      expect(authenticationSnapshot()).toMatchObject({ active: 16, queued: 16 });
+      callers[3]!.abort();
+      await expect(waiting[3]).rejects.toBe(callers[3]!.signal.reason);
+      expect(authenticationSnapshot()).toMatchObject({ active: 16, queued: 15 });
+      const late = gate.start();
+      expect(authenticationSnapshot()).toMatchObject({ queued: 16 });
+      expect(gate.provider.authorize).toHaveBeenCalledTimes(16);
+      await vi.advanceTimersByTimeAsync(1_999);
+      expect(authenticationSnapshot()).toMatchObject({ queued: 16 });
+      await vi.advanceTimersByTimeAsync(1);
+      for (const result of await Promise.all([...waiting.filter((_, i) => i !== 3), late])) {
+        expect(result.admitted).toBe(false);
+        if (!result.admitted) await expectBusy(result.response);
+      }
+      expect(authenticationSnapshot()).toMatchObject({ active: 16, queued: 0 });
+      expect(gate.provider.authorize).toHaveBeenCalledTimes(16);
     } finally {
       gate.release();
       await Promise.all(pending);
+      vi.useRealTimers();
     }
-    expect((await authenticate(outsider, request(), BASE, undefined, silentLogger)).admitted).toBe(true);
   });
 
   it("INV-7: abort retains capacity until the adapter settles, and pre-abort invokes nothing", async () => {
@@ -63,15 +134,18 @@ describe("inbound authentication admission", () => {
     const old = gate.start(caller.signal);
     const finishOld = gate.finish.shift()!;
     caller.abort();
-    const pending = Array.from({ length: 15 }, () => gate.start());
+    const pending: Promise<unknown>[] = Array.from({ length: 15 }, () => gate.start());
     try {
       expect(gate.finish).toHaveLength(15);
-      const refusedWhileSettling = gate.start();
+      const queuedWhileSettling = gate.start();
+      pending.push(queuedWhileSettling);
       expect(gate.finish).toHaveLength(15);
-      expect((await refusedWhileSettling).admitted).toBe(false);
+      expect(authenticationSnapshot()).toMatchObject({ active: 16, queued: 1 });
       finishOld(refused());
       await old;
-      pending.push(gate.start());
+      await vi.waitFor(() => expect(gate.finish).toHaveLength(16));
+      expect(authenticationSnapshot()).toMatchObject({ active: 16, queued: 0 });
+      pending.push(...Array.from({ length: 16 }, () => gate.start()));
       const busy = await gate.start();
       expect(busy.admitted).toBe(false);
       if (!busy.admitted) await expectBusy(busy.response);
@@ -80,15 +154,14 @@ describe("inbound authentication admission", () => {
       expect(gate.provider.authorize).toHaveBeenCalledTimes(before);
     } finally {
       finishOld(refused());
-      gate.release();
       await old;
-      await Promise.all(pending);
+      await drain(gate, pending);
     }
   });
 
   it("INV-7: MCP, pools, operator APIs, and agent storage share the bound across deployments", async () => {
     const gate = blocking();
-    const pending = Array.from({ length: 16 }, () => gate.start());
+    const pending = Array.from({ length: 32 }, () => gate.start());
     const storage = memoryStorage();
     const get = vi.spyOn(storage, "get");
     const human = { kind: "test", interactiveOperator: true as const, authorize: vi.fn(refused) };
@@ -117,8 +190,7 @@ describe("inbound authentication admission", () => {
       }
       expect((await app.fetch(new Request(`${BASE}/mcp`, { method: "OPTIONS" }))).status).toBe(204);
     } finally {
-      gate.release();
-      await Promise.all(pending);
+      await drain(gate, pending);
       await app.close();
     }
   });
@@ -168,6 +240,8 @@ it.each(["access", "agent"] as const)(
         active,
         abandoned,
         limit: 16,
+        queued: 0,
+        queueLimit: 16,
         abandonedLimit: 16,
         abandonedSaturated: abandoned === 16,
         unreachableRelease: typeof FinalizationRegistry === "function",
@@ -186,8 +260,10 @@ it.each(["access", "agent"] as const)(
       await vi.advanceTimersByTimeAsync(1);
       await vi.waitFor(() => expect(finishes).toHaveLength(17));
       snapshot(16, 1);
-      expect((await start()).admitted).toBe(false);
-      await vi.advanceTimersByTimeAsync(5_000);
+      const queued = start();
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect((await queued).admitted).toBe(false);
+      await vi.advanceTimersByTimeAsync(3_000);
       for (const result of await Promise.all(wave)) {
         expect(result.admitted).toBe(true);
         if (result.admitted) expect(result.result.ok).toBe(false);

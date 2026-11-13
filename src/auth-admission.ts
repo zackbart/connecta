@@ -1,13 +1,16 @@
-import { Effect } from "effect";
+import { Duration, Effect, Exit } from "effect";
 import { authCall, AuthenticationWork, authProgram, authValue, hasAuthProgram, registerAuth } from "./auth/native.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import { runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { fromSignal, runEdge, withDeadlineEffect } from "./runtime/run.js";
+import { Settlement } from "./runtime/settlement.js";
 import type { AuthResult, InboundAuth, InboundAuthRuntimeContext, Logger } from "./types.js";
 
 // Shared by human and agent routes, even across deployments constructed in the
-// same loaded core. Isolate-wide state is counters and plain charge records:
-// no queue, requests, promises, signals, or I/O.
+// same loaded core. Isolate-wide state is counters, plain charge records and
+// queued settlements: no requests, signals, or I/O.
 const AUTHENTICATION_CONCURRENCY = 16;
+const QUEUE_LIMIT = 16;
+const QUEUE_WAIT_MS = 2_000;
 // Work still unsettled after its hard deadline plus grace leaves the active
 // pool for this allowance. Equal to the active limit: a partial wave of stalls
 // recovers while normal authentication continues, yet total outstanding work
@@ -28,6 +31,8 @@ let unreachable = 0;
 type Charge = { state: "active" | "abandoned" | "released" };
 // Overdue active charges waiting for abandoned room; at most the active limit.
 const overdue = new Set<Charge>();
+type Refusal = "authentication_busy" | "authentication_abandoned_saturated";
+const queue: Settlement<Refusal | undefined>[] = [];
 
 // The one release that is not a settlement. Each charge's token is reachable
 // only through the continuations attached to its adapter promise and native
@@ -49,6 +54,8 @@ export function authenticationSnapshot() {
   return {
     active,
     limit: AUTHENTICATION_CONCURRENCY,
+    queued: queue.length,
+    queueLimit: QUEUE_LIMIT,
     abandoned,
     abandonedLimit: ABANDONED_ALLOWANCE,
     abandonedSaturated: abandoned >= ABANDONED_ALLOWANCE,
@@ -84,7 +91,72 @@ function release(charge: Charge): boolean {
     overdue.delete(waiting);
     abandon(waiting);
   }
+  pump();
   return true;
+}
+
+function pump(): void {
+  while (queue.length > 0) {
+    if (abandoned >= ABANDONED_ALLOWANCE) {
+      queue.shift()!.settle(Exit.succeed("authentication_abandoned_saturated"));
+      continue;
+    }
+    if (active >= AUTHENTICATION_CONCURRENCY) return;
+    active++;
+    queue.shift()!.settle(Exit.succeed(undefined));
+  }
+}
+
+function leave(ticket: Settlement<Refusal | undefined>): boolean {
+  const index = queue.indexOf(ticket);
+  if (index < 0) return false;
+  queue.splice(index, 1);
+  return true;
+}
+
+function returnGrant(ticket: Settlement<Refusal | undefined>): void {
+  const outcome = ticket.outcome;
+  if (outcome && Exit.isSuccess(outcome) && outcome.value === undefined) {
+    active--;
+    pump();
+  }
+}
+
+// workerd throws when one request reads another request's AbortSignal, so a
+// waiter leaves the queue from its own abort listener and timer, and a grant
+// reaches it through its own Settlement (src/runtime/settlement.ts).
+function queued<A>(
+  signal: AbortSignal,
+  admitted: () => Effect.Effect<A, unknown>,
+  refused: (reason: Refusal) => Effect.Effect<A, unknown>,
+): Effect.Effect<A, unknown> {
+  const ticket = new Settlement<Refusal | undefined>();
+  queue.push(ticket);
+  const giveUp = (outcome: Effect.Effect<Refusal | undefined, unknown>) =>
+    Effect.suspend(() => (leave(ticket) ? outcome : ticket.wait()));
+  let heard = false;
+  return Effect.raceAllFirst([
+    ticket.wait(),
+    Effect.sleep(Duration.millis(QUEUE_WAIT_MS)).pipe(
+      Effect.andThen(giveUp(Effect.succeed<Refusal>("authentication_busy"))),
+    ),
+    fromSignal(signal).pipe(Effect.catch((reason) => giveUp(Effect.fail(reason)))),
+  ]).pipe(
+    Effect.flatMap((refusal) =>
+      Effect.suspend(() => {
+        heard = true;
+        if (refusal !== undefined) return refused(refusal);
+        if (!signal.aborted) return admitted();
+        returnGrant(ticket);
+        return Effect.fail(signal.reason);
+      }),
+    ),
+    Effect.onInterrupt(() =>
+      Effect.sync(() => {
+        if (!heard && !leave(ticket)) returnGrant(ticket);
+      }),
+    ),
+  );
 }
 
 type Lifetime = { track(pending: Promise<unknown>): void; deadline(ms: number): void };
@@ -131,10 +203,7 @@ const withAuthenticationDeadlineNative = /* @__PURE__ */ registerAuth(withAuthen
 });
 
 /** Shared capacity refusal: one checked log and retryable HTTP contract. */
-export function authenticationBusyResponse(
-  logger: Logger,
-  reason: "authentication_busy" | "authentication_abandoned_saturated" = "authentication_busy",
-): Response {
+function authenticationBusyResponse(logger: Logger, reason: Refusal): Response {
   logFailure(logger, "Authentication admission refused", failureRecord({ reason }));
   return Response.json(
     { error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true } },
@@ -193,16 +262,20 @@ const authenticateNative = /* @__PURE__ */ registerAuth(
           failureRecord({ reason: "authentication_unreachable" }),
         );
       }
-      if (active >= AUTHENTICATION_CONCURRENCY || abandoned >= ABANDONED_ALLOWANCE) {
-        // Callers see one retryable contract; the log and health tell an
-        // operator whether stalled bindings, not load, are refusing.
-        const reason = abandoned >= ABANDONED_ALLOWANCE ? "authentication_abandoned_saturated" : "authentication_busy";
-        return Effect.succeed({
-          admitted: false,
-          response: authenticationBusyResponse(logger, reason),
-        });
+      // Callers see one retryable contract; the log and health tell an
+      // operator whether stalled bindings, not load, are refusing.
+      const refused = (reason: Refusal) =>
+        Effect.sync(() => ({ admitted: false as const, response: authenticationBusyResponse(logger, reason) }));
+      if (abandoned >= ABANDONED_ALLOWANCE) return refused("authentication_abandoned_saturated");
+      if (active < AUTHENTICATION_CONCURRENCY && queue.length === 0) {
+        active++;
+        return admitted();
       }
-      active++;
+      if (queue.length >= QUEUE_LIMIT) return refused("authentication_busy");
+      return queued(request.signal, admitted, refused);
+    });
+
+    function admitted(): Effect.Effect<Awaited<ReturnType<typeof authenticate>>, unknown> {
       const charge: Charge = { state: "active" };
       // Held only by this scope's closures (see `collector`); the registry keeps
       // the record, and the token, as its own unregister key, only weakly.
@@ -226,7 +299,10 @@ const authenticateNative = /* @__PURE__ */ registerAuth(
       const lifetime: Lifetime = {
         deadline(ms) {
           clearTimeout(timer);
-          timer = setTimeout(() => abandon(charge), ms + SETTLEMENT_GRACE_MS);
+          timer = setTimeout(() => {
+            abandon(charge);
+            pump();
+          }, ms + SETTLEMENT_GRACE_MS);
         },
         track(pending) {
           remaining++;
@@ -263,6 +339,6 @@ const authenticateNative = /* @__PURE__ */ registerAuth(
         // Keep capacity charged until the underlying authorization settles.
         if (!asynchronous) finish();
       }
-    });
+    }
   },
 );

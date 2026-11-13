@@ -237,7 +237,8 @@ owns that setup and its isolation tradeoff.
 Public deployments require ingress rate limiting on all authenticated routes,
 including agent, operator, connection-start, and callback paths. Connecta's
 fixed bound of 16 active inbound authorizations per loaded core/process or
-isolate fast-refuses with retryable 503 `authentication_busy` and `Retry-After: 1`.
+isolate queues up to 16 more for at most two seconds, then refuses with
+retryable 503 `authentication_busy` and `Retry-After: 1`.
 A separate allowance of 16 abandoned operations holds stalled work after its
 hard deadline plus one second of grace. While it is full, new authentication
 receives the same 503, the log records `authentication_abandoned_saturated`,

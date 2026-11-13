@@ -290,8 +290,13 @@ Connecta admits at most **16 active inbound adapter authorizations** per
 loaded core in a process or Worker isolate. Human MCP endpoints, agent endpoints,
 operator APIs, connection starts (`/connect/<connector>`), and OAuth callbacks
 share this fixed bound, including network calls made inside an adapter's SDK.
-It has no queue and no configuration option. When full, a request receives HTTP
-503 with `Retry-After: 1`, `Cache-Control: no-store`, and
+It has no configuration option. A request that finds all 16 active slots taken
+waits in a first-in, first-out **queue of 16** for a slot, so a burst of up to
+32 near-simultaneous authorizations is admitted. A queued request does no I/O
+and holds no active slot. It leaves the queue when a slot frees, when its
+caller disconnects, or after **two seconds**, whichever comes first. A request
+that finds the queue full, or whose two seconds pass without a slot, receives
+HTTP 503 with `Retry-After: 1`, `Cache-Control: no-store`, and
 `error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true }`.
 The operator log records only the checked `authentication_busy` reason, never
 credentials or identity-provider diagnostics. Retry after the indicated delay;
@@ -310,7 +315,9 @@ stalled operations fills the allowance. While the allowance is full, no
 authorization starts, even when active slots are free. Overdue work that finds
 the allowance full keeps its active slot until an abandoned operation ends and
 makes room. A binding that never settles therefore fills the allowance and
-fails closed instead of accumulating I/O.
+fails closed instead of accumulating I/O. A full allowance never queues: it
+refuses new requests at once, and refuses any request already queued when it
+fills.
 
 Each charge ends exactly once, in one of two ways:
 
@@ -348,13 +355,16 @@ authentication return `authentication_busy`, visible on `/health`.
 A request refused because the allowance is full receives the same 503
 `authentication_busy` response and headers. The operator log records the
 checked reason `authentication_abandoned_saturated` instead. `GET /health`
-reports `admission.authentication` with `active`, `limit`, `abandoned`,
-`abandonedLimit`, `abandonedSaturated`, and `unreachableRelease`, for example:
+reports `admission.authentication` with `active`, `limit`, `queued`,
+`queueLimit`, `abandoned`, `abandonedLimit`, `abandonedSaturated`, and
+`unreachableRelease`, for example:
 
 ```json
 {
   "active": 0,
   "limit": 16,
+  "queued": 0,
+  "queueLimit": 16,
   "abandoned": 16,
   "abandonedLimit": 16,
   "abandonedSaturated": true,
@@ -498,8 +508,11 @@ against Vercel's fixed public JWKS, exact issuer/audience/subject consistency,
 the configured team/project/environment, required expiration and issued-at,
 and not-before when present, with 30 seconds of clock skew. External-user
 tokens carrying `external_sub` are refused. Public keys cache for five minutes;
-an unknown key can trigger one additional refresh per 30 seconds. Failed fetches
-back off for 30 seconds and never admit with expired cached keys. Each key fetch
+an unknown key can trigger one additional refresh per 30 seconds. At most one
+key fetch runs at a time, and concurrent requests wait for it rather than
+fetching again. A failed fetch refuses every request waiting for it and never
+admits with expired cached keys; the next fetch starts no sooner than one
+second later, shared by every request that arrives meanwhile. Each key fetch
 runs to completion under its own four-second deadline, inside the request's
 five-second authentication deadline. A caller that disconnects stops waiting
 but neither cancels nor discards the fetch, whose outcome alone fills the cache
@@ -507,9 +520,6 @@ or starts the backoff, so disconnects cannot start fetches faster than these
 bounds. The fetch stays charged to the request that started it until it
 settles. Neither token
 contents nor upstream errors enter activity; activity names the declared agent.
-If the two concurrent key-fetch slots are occupied on a cold or expired cache,
-the endpoint returns 503 with `Retry-After: 1`, rather than rejecting the credential
-with 401.
 
 Send the token as `Authorization: Bearer <OIDC token>` to
 `https://connecta.example.com/agent/assistant`. The inbound
@@ -2572,12 +2582,19 @@ failed a check. If that persists, check `teamDomain` and `audience`.
 
 Keys are cached per adapter for five minutes. Access rotates its signing key
 every six weeks and serves the new key beside the previous one, so an unknown
-`kid` refreshes the set, at most once every 30 seconds. A failed read blocks
-further reads for 30 seconds, at most two reads run at once, the body is capped
-at 64 KiB, and redirects are refused. Each read runs to completion under its own
-four-second deadline, even when the request that started it disconnects, and
-only its own outcome fills the cache or starts the backoff, so disconnects
-cannot start reads faster than these bounds.
+`kid` refreshes the set, at most once every 30 seconds. At most one read runs
+at a time per adapter. Every request that needs the keys while it runs waits
+for that read, within its own deadline, so a burst of fresh-isolate requests
+makes one read. When a read fails, every request waiting for it gets the same 503. The next read starts no sooner than one second later, and every request
+that arrives meanwhile waits for it instead of failing. The body is capped at
+64 KiB, and redirects are refused. Each read runs to completion under its own
+four-second deadline, even when every request waiting for it disconnects, and
+only its own outcome fills the cache or starts the one-second backoff, so
+disconnects cannot start reads faster than these bounds. A read still unsettled one
+second past its deadline, measured on the monotonic clock, is treated as
+gone, as when Cloudflare drops a cancelled invocation's I/O. The next request
+starts a replacement, everyone still waiting follows the replacement, and the
+old read's late result is discarded, never cached.
 
 A verified assertion proves that Access issued it for this application and
 person and that it has not expired. Unlike `ctx.access`, it does not prove that

@@ -86,8 +86,8 @@ function mockKeys(keys = [{ ...publicFirst, kid: "first" }]) {
   });
 }
 
-function auth(logger = silentLogger) {
-  return vercelAgentAuth([{ name: "assistant", vercel: { ...credential, environments: ["production"] } }], logger)!;
+function auth() {
+  return vercelAgentAuth([{ name: "assistant", vercel: { ...credential, environments: ["production"] } }])!;
 }
 const request = (value: string, path = "/agent/assistant") =>
   new Request(`${BASE}${path}`, {
@@ -237,64 +237,73 @@ describe("Vercel workload verification", () => {
     const later = Date.now() + 300_001;
     vi.spyOn(Date, "now").mockReturnValue(later);
     fetcher.mockRejectedValue(new Error("private upstream error"));
-    for (let i = 0; i < 3; i++) {
-      const result = await authorizeAgent(request(value), BASE, [provider], silentLogger);
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.response.status).toBe(401);
+    for (let round = 0; round < 2; round++) {
+      const results = await Promise.all(
+        [0, 1, 2].map(() => authorizeAgent(request(value), BASE, [provider], silentLogger)),
+      );
+      for (const result of results) {
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.response.status).toBe(401);
+      }
+      expect(fetcher).toHaveBeenCalledTimes(2 + round);
     }
-    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it("INV-4 INV-7: returns retryable 503 on key-fetch cap overflow with a cold or expired cache", async () => {
+  it("INV-4 INV-7: a replaced key fetch cannot restore a removed signing key", async () => {
+    const retired = await token();
+    const rotated = await token({}, { kid: "second" }, second.privateKey);
+    const provider = auth();
+    let releaseOld!: (response: Response) => void;
+    const fetcher = mockKeys([{ ...publicSecond, kid: "second" }]);
+    fetcher.mockImplementationOnce(
+      () =>
+        new Promise<Response>((resolve) => {
+          releaseOld = resolve;
+        }),
+    );
+    const monotonic = performance.now.bind(performance);
+    let skipped = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => monotonic() + skipped);
+    const stranded = provider.authorize(request(rotated), BASE);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    skipped = 5_001;
+    expect((await provider.authorize(request(rotated), BASE)).ok).toBe(true);
+    expect((await stranded).ok).toBe(true);
+    releaseOld(Response.json({ keys: [{ ...publicFirst, kid: "first" }] }));
+    await vi.waitFor(() => expect(fetcher.mock.calls[0]![1]?.signal?.aborted).toBe(true));
+    expect((await provider.authorize(request(retired), BASE)).ok).toBe(false);
+    expect((await provider.authorize(request(rotated), BASE)).ok).toBe(true);
+  });
+
+  it("INV-4 INV-7: concurrent callers share one key fetch with a cold or expired cache", async () => {
     const value = await token();
     const timestamp = Date.now();
     const clock = vi.spyOn(Date, "now");
     const fetcher = mockKeys();
-    const warn = vi.fn();
     for (const expired of [false, true]) {
-      warn.mockClear();
       clock.mockReturnValue(timestamp);
-      const provider = auth({ ...silentLogger, warn });
+      const provider = auth();
       if (expired) {
         expect((await provider.authorize(request(value), BASE)).ok).toBe(true);
         clock.mockReturnValue(timestamp + 300_001);
       }
       let release!: () => void;
-      let started!: () => void;
       const gate = new Promise<void>((resolve) => {
         release = resolve;
-      });
-      const twoLoads = new Promise<void>((resolve) => {
-        started = resolve;
       });
       let loads = 0;
       fetcher.mockImplementation(async (url, init) => {
         new Request(url, init);
-        if (++loads === 2) started();
+        loads++;
         await gate;
         return Response.json({ keys: [{ ...publicFirst, kid: "first" }] });
       });
       const pending = [0, 1, 2].map(() => authorizeAgent(request(value), BASE, [provider], silentLogger));
-      await twoLoads;
+      await vi.waitFor(() => expect(loads).toBe(1));
       release();
       const results = await Promise.all(pending);
-      expect(results.map((result) => (result.ok ? 200 : result.response.status))).toEqual([200, 200, 503]);
-      const overflow = results[2]!;
-      if (!overflow.ok) {
-        expect(overflow.response.headers.get("Retry-After")).toBe("1");
-        expect(overflow.response.headers.get("Cache-Control")).toBe("no-store");
-        expect(await overflow.response.json()).toEqual({
-          error: { code: "authentication_busy", message: "Authentication capacity reached.", retryable: true },
-        });
-      }
-      expect(warn.mock.calls).toEqual([
-        ["[connecta] Authentication admission refused", { reason: "authentication_busy" }],
-      ]);
-      expect(loads).toBe(2);
-      fetcher.mockImplementation(async (url, init) => {
-        new Request(url, init);
-        return Response.json({ keys: [{ ...publicFirst, kid: "first" }] });
-      });
+      expect(results.map((result) => result.ok)).toEqual([true, true, true]);
+      expect(loads).toBe(1);
     }
   });
 
