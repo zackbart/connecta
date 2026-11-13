@@ -1,0 +1,15 @@
+{
+  "url": "https://raw.githubusercontent.com/intercom/Intercom-OpenAPI/3603253f86c25395e2d70a59d28a879c94836a15/descriptions/2.18/api.intercom.io.yaml",
+  "revision": "2.18@3603253f86c2",
+  "digest": "sha256:c2057e5dae84f8f33c14c1a157f65b1b7aca9db5c03cf30668070df66d98bb69",
+  "latest": "https://raw.githubusercontent.com/intercom/Intercom-OpenAPI/main/descriptions/2.18/api.intercom.io.yaml",
+  "vendored": true,
+  "options": {
+    "depth": 3,
+    "descriptions": 160,
+    "maxEnum": 50,
+    "pathParams": "typed",
+    "numericBounds": true,
+    "valueSafety": true
+  }
+}

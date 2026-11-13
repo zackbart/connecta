@@ -1,8 +1,10 @@
 # Migrate hosted MCP presets
 
-Basecamp, Intercom, Linear, RevenueCat, and Wispr Flow no longer have provider
-subpath exports. Replace their imports and factories with `remoteMcp` from
-`@zackbart/connecta`. The remote server supplies its catalog at runtime.
+Basecamp, Intercom, Linear, RevenueCat, and Wispr Flow no longer have hosted
+MCP presets. Replace their imports and factories with `remoteMcp` from
+`@zackbart/connecta`. `@zackbart/connecta/providers/intercom` now exports a
+separate [REST provider](./providers.md#intercom), which refuses the old
+preset's options. The remote server supplies its catalog at runtime.
 Stripe, Vercel, Cloudflare, and GitHub also lose their hosted halves.
 The vendored Notion and Mixpanel API providers are removed in 0.35.0; connect
 their hosted servers through the generic entries below. The mappings below describe the

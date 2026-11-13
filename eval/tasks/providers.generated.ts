@@ -2,11 +2,13 @@
 import type { ProviderTasks } from "../support/provider-eval.js";
 import { evalTasks as tasks0 } from "../../src/providers/calendar/eval/tasks.js";
 import { evalTasks as tasks1 } from "../../src/providers/granola/eval/tasks.js";
-import { evalTasks as tasks2 } from "../../src/providers/people/eval/tasks.js";
+import { evalTasks as tasks2 } from "../../src/providers/intercom/eval/tasks.js";
+import { evalTasks as tasks3 } from "../../src/providers/people/eval/tasks.js";
 
 /** Provider-local tasks (src/providers/<name>/eval/tasks.ts) and any dedicated smoke Worker, in folder order. */
 export const PROVIDER_EVALS: readonly { name: string; worker?: string; tasks: ProviderTasks }[] = [
   { name: "calendar", tasks: tasks0 },
   { name: "granola", worker: "src/providers/granola/eval/worker.ts", tasks: tasks1 },
-  { name: "people", tasks: tasks2 },
+  { name: "intercom", tasks: tasks2 },
+  { name: "people", tasks: tasks3 },
 ];

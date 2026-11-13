@@ -2,11 +2,13 @@
 import type { ProviderDeploy } from "../support/provider-eval.js";
 import { evalDeploy as deploy0 } from "../../src/providers/calendar/eval/deploy.js";
 import { evalDeploy as deploy1 } from "../../src/providers/granola/eval/deploy.js";
-import { evalDeploy as deploy2 } from "../../src/providers/people/eval/deploy.js";
+import { evalDeploy as deploy2 } from "../../src/providers/intercom/eval/deploy.js";
+import { evalDeploy as deploy3 } from "../../src/providers/people/eval/deploy.js";
 
 /** Provider-local connectors (src/providers/<name>/eval/deploy.ts), by provider name. Node-free. */
 export const PROVIDER_DEPLOYS: Readonly<Record<string, ProviderDeploy>> = {
   "calendar": deploy0,
   "granola": deploy1,
-  "people": deploy2,
+  "intercom": deploy2,
+  "people": deploy3,
 };

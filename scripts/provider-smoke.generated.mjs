@@ -152,138 +152,151 @@ var fixture10 = {
   conventions: { verbs: ["granola"], nestedDescriptionExceptions: [], auth: "credential" }
 };
 
+// src/providers/intercom/fixtures.ts
+import { intercom } from "@zackbart/connecta/providers/intercom";
+var options11 = { purpose: "Support fixture", admin: "1001" };
+var fixture11 = {
+  name: "intercom",
+  options: options11,
+  cases: [{ "label": "padded-purpose", "options": { "purpose": "  Support fixture  " } }, { "label": "eu", "options": { "region": "eu" } }],
+  create(id = "fixture", overrides = {}) {
+    return intercom(id, { ...options11, ...overrides });
+  },
+  conventions: { "verbs": ["reply", "add", "close", "open", "snooze", "assign", "unassign", "tag", "untag", "intercom"], "nestedDescriptionExceptions": [], "auth": "credential" }
+};
+
 // src/providers/meet/fixtures.ts
 import { meet } from "@zackbart/connecta/providers/meet";
-var options11 = { "purpose": "Audit fixture", ...googleOptions };
-var fixture11 = {
+var options12 = { "purpose": "Audit fixture", ...googleOptions };
+var fixture12 = {
   name: "meet",
-  options: options11,
+  options: options12,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
-    return meet(id, { ...options11, ...overrides });
+    return meet(id, { ...options12, ...overrides });
   },
   conventions: { "verbs": ["get", "list", "create", "update", "end"], "nestedDescriptionExceptions": [], "auth": "delegated" }
 };
 
 // src/providers/overflow/fixtures.ts
 import { overflow } from "@zackbart/connecta/providers/overflow";
-var options12 = { "purpose": "Audit fixture", "environment": "production" };
-var fixture12 = {
+var options13 = { "purpose": "Audit fixture", "environment": "production" };
+var fixture13 = {
   name: "overflow",
-  options: options12,
+  options: options13,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "staging", "options": { "environment": "staging" } }],
   create(id = "fixture", overrides = {}) {
-    return overflow(id, { ...options12, ...overrides });
+    return overflow(id, { ...options13, ...overrides });
   },
   conventions: { "verbs": ["list", "get", "overflow"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // src/providers/people/fixtures.ts
 import { people } from "@zackbart/connecta/providers/people";
-var options13 = { "purpose": "Audit fixture", ...googleOptions };
-var fixture13 = {
+var options14 = { "purpose": "Audit fixture", ...googleOptions };
+var fixture14 = {
   name: "people",
-  options: options13,
+  options: options14,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "sensitive-returned", "options": { "sensitiveFields": "return" } }],
   create(id = "fixture", overrides = {}) {
-    return people(id, { ...options13, ...overrides });
+    return people(id, { ...options14, ...overrides });
   },
   conventions: { "verbs": ["search", "list", "get", "create", "update", "delete", "copy"], "nestedDescriptionExceptions": [], "auth": "delegated" }
 };
 
 // src/providers/planning-center/fixtures.ts
 import { planningCenter } from "@zackbart/connecta/providers/planning-center";
-var options14 = { "purpose": "Audit fixture" };
-var fixture14 = {
+var options15 = { "purpose": "Audit fixture" };
+var fixture15 = {
   name: "planning-center",
-  options: options14,
+  options: options15,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
-    return planningCenter(id, { ...options14, ...overrides });
+    return planningCenter(id, { ...options15, ...overrides });
   },
   conventions: { "verbs": ["list", "get", "search", "create", "update", "add", "run", "apply", "schedule", "pco"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // src/providers/quickbooks/fixtures.ts
 import { quickbooks } from "@zackbart/connecta/providers/quickbooks";
-var options15 = { purpose: "Accounting fixture", realmId: "123456789", environment: "sandbox", clientId: "fixture-client", clientSecret: "fixture-secret" };
-var fixture15 = {
+var options16 = { purpose: "Accounting fixture", realmId: "123456789", environment: "sandbox", clientId: "fixture-client", clientSecret: "fixture-secret" };
+var fixture16 = {
   name: "quickbooks",
-  options: options15,
+  options: options16,
   cases: [{ label: "writes", options: { readOnly: false } }, { label: "production", options: { environment: "production" } }, { label: "personal", options: { authScope: "personal" } }],
   create(id = "fixture", overrides = {}) {
-    return quickbooks(id, { ...options15, ...overrides });
+    return quickbooks(id, { ...options16, ...overrides });
   },
   conventions: { verbs: ["get", "search", "create", "update", "quickbooks"], nestedDescriptionExceptions: [], auth: "oauth" }
 };
 
 // src/providers/sheets/fixtures.ts
 import { sheets } from "@zackbart/connecta/providers/sheets";
-var options16 = { "purpose": "Audit fixture", ...googleOptions };
-var fixture16 = {
+var options17 = { "purpose": "Audit fixture", ...googleOptions };
+var fixture17 = {
   name: "sheets",
-  options: options16,
+  options: options17,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
-    return sheets(id, { ...options16, ...overrides });
+    return sheets(id, { ...options17, ...overrides });
   },
   conventions: { "verbs": ["get", "create", "add", "append", "update", "clear", "batch"], "nestedDescriptionExceptions": [], "auth": "delegated" }
 };
 
 // src/providers/slides/fixtures.ts
 import { slides } from "@zackbart/connecta/providers/slides";
-var options17 = { "purpose": "Audit fixture", ...googleOptions };
-var fixture17 = {
+var options18 = { "purpose": "Audit fixture", ...googleOptions };
+var fixture18 = {
   name: "slides",
-  options: options17,
+  options: options18,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }],
   create(id = "fixture", overrides = {}) {
-    return slides(id, { ...options17, ...overrides });
+    return slides(id, { ...options18, ...overrides });
   },
   conventions: { "verbs": ["get", "list", "create", "replace", "update", "delete", "batch"], "nestedDescriptionExceptions": [], "auth": "delegated" }
 };
 
 // src/providers/stripe/fixtures.ts
 import { stripe } from "@zackbart/connecta/providers/stripe";
-var options18 = { "purpose": "Audit fixture", "auth": { "type": "apiKey" }, "mode": "sandbox" };
-var fixture18 = {
+var options19 = { "purpose": "Audit fixture", "auth": { "type": "apiKey" }, "mode": "sandbox" };
+var fixture19 = {
   name: "stripe",
-  options: options18,
+  options: options19,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "production", "options": { "mode": "production" } }, { "label": "connect", "options": { "mode": "production", "connectedAccount": "acct_fixture" } }],
   create(id = "fixture", overrides = {}) {
-    return stripe(id, { ...options18, ...overrides });
+    return stripe(id, { ...options19, ...overrides });
   },
   conventions: { "verbs": ["get", "stripe"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // src/providers/tithely/fixtures.ts
 import { tithely } from "@zackbart/connecta/providers/tithely";
-var options19 = { "purpose": "Audit fixture", "environment": "live" };
-var fixture19 = {
+var options20 = { "purpose": "Audit fixture", "environment": "live" };
+var fixture20 = {
   name: "tithely",
-  options: options19,
+  options: options20,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "test", "options": { "environment": "test" } }],
   create(id = "fixture", overrides = {}) {
-    return tithely(id, { ...options19, ...overrides });
+    return tithely(id, { ...options20, ...overrides });
   },
   conventions: { "verbs": ["list", "get", "tithely"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // src/providers/vercel/fixtures.ts
 import { vercel } from "@zackbart/connecta/providers/vercel";
-var options20 = { "purpose": "Audit fixture", "auth": { "type": "token" } };
-var fixture20 = {
+var options21 = { "purpose": "Audit fixture", "auth": { "type": "token" } };
+var fixture21 = {
   name: "vercel",
-  options: options20,
+  options: options21,
   cases: [{ "label": "padded-purpose", "options": { "purpose": "  Audit fixture  " } }, { "label": "default", "options": {} }, { "label": "team", "options": { "teamId": "team_fixture" } }],
   create(id = "fixture", overrides = {}) {
-    return vercel(id, { ...options20, ...overrides });
+    return vercel(id, { ...options21, ...overrides });
   },
   conventions: { "verbs": ["list", "get", "upsert", "update", "delete", "vercel"], "nestedDescriptionExceptions": [], "auth": "credential" }
 };
 
 // provider-smoke.ts
-var fixtures = [fixture, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17, fixture18, fixture19, fixture20];
+var fixtures = [fixture, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17, fixture18, fixture19, fixture20, fixture21];
 export {
   fixtures
 };

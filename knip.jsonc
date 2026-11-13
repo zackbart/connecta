@@ -28,6 +28,7 @@
         "src/providers/github/index.ts",
         "src/providers/gmail/index.ts",
         "src/providers/granola/index.ts",
+        "src/providers/intercom/index.ts",
         "src/providers/meet/index.ts",
         "src/providers/overflow/index.ts",
         "src/providers/people/index.ts",
