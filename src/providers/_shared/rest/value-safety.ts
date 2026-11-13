@@ -150,9 +150,70 @@ const ENV_CONTAINERS = ["env", "envs", "envvar", "envvars", "newenvvar", "oldenv
 const ENV_VALUE_FIELDS = ["value", "vsmValue", "legacyValue", "decryptedValue"];
 /** The fields of a labelled or typed secret record that hold what the label names. */
 const LABELLED_VALUE_FIELDS = [...ENV_VALUE_FIELDS, "args", "text"];
-/** Query parameters that carry a credential in a URL: either rule. */
-const URL_PARAM_CONTAINS = /token|secret|password|passwd|signature|^sig$|key|auth|code|jwt|credential|bypass/i;
-const URL_PARAM_SUFFIX = /(token|secret|password|passphrase|key|signature|sig|credential|auth|authorization|jwt)$/;
+const URL_PARAM_STRONG = /token|secret|password|passwd|passphrase|signature|jwt|credential|bypass|authorization/i;
+const URL_PARAM_WEAK = new Set(["key", "keys", "code", "codes", "auth", "sig"]);
+const URL_PARAM_QUALIFIERS = new Set([
+  "x",
+  "api",
+  "access",
+  "auth",
+  "oauth",
+  "secret",
+  "private",
+  "session",
+  "signing",
+  "client",
+  "license",
+  "master",
+  "shared",
+  "sas",
+  "account",
+  "security",
+  "encryption",
+  "consumer",
+  "subscription",
+  "service",
+  "app",
+  "verification",
+  "otp",
+  "magic",
+  "login",
+  "reset",
+  "invite",
+  "url",
+  "hmac",
+  "request",
+  "upload",
+  "download",
+  "share",
+  "sharing",
+  "signed",
+]);
+const URL_PARAM_COMPACT = new RegExp(
+  `^x?(?:${[...URL_PARAM_QUALIFIERS].filter((word) => word !== "x").join("|")})+(?:key|keys|code|codes|sig)$`,
+);
+
+function credentialParameter(name: string): boolean {
+  if (URL_PARAM_STRONG.test(name)) return true;
+  const words = name
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const last = words.at(-1);
+  if (last === undefined) return false;
+  if (URL_PARAM_WEAK.has(last) && words.slice(0, -1).every((word) => URL_PARAM_QUALIFIERS.has(word))) return true;
+  return words.some((word) => URL_PARAM_COMPACT.test(word));
+}
+
+function credentialFragment(fragment: string): boolean {
+  if (URL_PARAM_STRONG.test(fragment)) return true;
+  if (!fragment.includes("=")) return /key|code|auth/i.test(fragment);
+  return fragment.split(/[&;]/).some((pair) => {
+    const equals = pair.indexOf("=");
+    return equals > 0 && credentialParameter(pair.slice(pair.lastIndexOf("/", equals) + 1, equals));
+  });
+}
 const URL_SHAPE = /^[a-z][a-z0-9+.-]*:\/\//i;
 /** What makes a string text rather than one whole URL: whitespace, quotes, escapes, entities, Markdown. */
 const TEXT = /[\s<>"'`\\]|&(?:#|[a-z]+;)|\]\(/i;
@@ -428,12 +489,12 @@ function sanitizeUrl(value: string, credentials = true): string {
   }
   // A snapshot of the names: setting a parameter while iterating the live list is unsafe.
   for (const name of credentials ? Array.from(url.searchParams.keys()) : []) {
-    if (URL_PARAM_CONTAINS.test(name) || URL_PARAM_SUFFIX.test(name.toLowerCase().replace(/[_-]/g, ""))) {
+    if (credentialParameter(name)) {
       url.searchParams.set(name, REDACTED);
       changed = true;
     }
   }
-  if (credentials && url.hash && /token|secret|key|code|auth/i.test(url.hash)) {
+  if (credentials && url.hash && credentialFragment(decodeLinkText(url.hash.slice(1)))) {
     url.hash = "";
     changed = true;
   }
@@ -752,7 +813,7 @@ function credentialQuery(text: string): boolean {
   if (fragment >= 0) {
     const words = decodeLinkText(decoded.slice(fragment + 1));
     // A fragment redaction altered cannot be read.
-    if (/token|secret|key|code|auth/i.test(words) || alteredFragment(words)) return true;
+    if (credentialFragment(words) || alteredFragment(words)) return true;
   }
   const query = fragment < 0 ? decoded : decoded.slice(0, fragment);
   for (let at = query[0] === "?" ? 1 : 0; at < query.length;) {
@@ -766,7 +827,7 @@ function credentialQuery(text: string): boolean {
     if (pair !== REDACTED && redactionAltered(equals < 0 ? pair : pair.slice(0, equals))) return true;
     if (equals < 0) continue;
     const name = pair.slice(0, equals);
-    if (!URL_PARAM_CONTAINS.test(name) && !URL_PARAM_SUFFIX.test(normalizedName(name))) continue;
+    if (!credentialParameter(name)) continue;
     if (pair.slice(equals + 1) !== REDACTED) return true;
   }
   return false;

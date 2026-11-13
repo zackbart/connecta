@@ -132,7 +132,20 @@ type and state labels), 30 in `contact` (including the open
 `body_markdown` for each translated locale), 3 in `internal_article`, 2 in
 `note` and 1 in `company_note`. Rather than enumerate them, the whole-response
 rule covers each one and any field added later. The global signing-parameter
-defense applies everywhere as well. Vendor error prose stays withheld; codes
+defense applies everywhere as well.
+
+The policy withholds a link only when a query parameter name is a credential
+as a whole token. Before #1408's round-2 fix, the shared matcher tested
+`key`, `code` and `auth` as substrings (and `key` as a name suffix), so
+`keyword`, `country_code`, `postcode`, `monkey` and `author` matched, and
+whole-response scanning withheld ordinary customer links such as a contact's
+`https://help.example/search?keyword=refund&country_code=US`. Words that
+never occur in ordinary names (`token`, `secret`, `password`, `signature`,
+`jwt`, `credential`, `authorization`, `bypass`) still match anywhere. `key`,
+`code`, `auth` and `sig` match only as the whole name, after credential
+qualifiers (`api_key`, `auth_code`, `x-api-key`) or compacted with them
+(`apikey`). Opaque fragments without `name=value` pairs keep the previous
+conservative substring rule. Vendor error prose stays withheld; codes
 and statuses pass.
 
 ## Query encoding

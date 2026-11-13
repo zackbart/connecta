@@ -382,6 +382,39 @@ describe("intercom", () => {
     ).not.toContain("opaque-capability");
   });
 
+  it("keeps ordinary customer links byte for byte, so a reply can forward them, while credential parameters go", async () => {
+    const ordinary = {
+      support_link: "https://help.example/search?keyword=refund&country_code=US",
+      postcode: "https://help.example/locations?postcode=SW1A1AA",
+      animals: "https://zoo.example/animals?monkey=capuchin",
+      anchor: "https://help.example/article/42?lang=en&sort=newest#installation",
+    };
+    const credentials = {
+      token: "https://files.example/report?token=opaque-capability",
+      numeric: "https://files.example/report?token=12345678901234567890",
+      code: "https://app.example/callback?code=opaque-capability",
+      signed: "https://bucket.example/o?X-Amz-Signature=opaque-capability",
+      quoted: JSON.stringify({ url: "https://files.example/report?token=opaque-capability" }),
+      nested: JSON.stringify({
+        nested: JSON.stringify({ url: "https://files.example/report?token=opaque-capability" }),
+      }),
+    };
+    const { call } = setup();
+    respond = () => Response.json({ type: "contact", id: "c1", custom_attributes: { ...ordinary, ...credentials } });
+    const contact = await call("intercom_api_read", { path: "/contacts/c1" });
+    for (const [name, link] of Object.entries(ordinary)) expect(contact.data.custom_attributes[name]).toBe(link);
+    const withheld = JSON.stringify(Object.keys(credentials).map((name) => contact.data.custom_attributes[name]));
+    expect(withheld).not.toContain("opaque-capability");
+    expect(withheld).not.toContain("12345678901234567890");
+    respond = () => Response.json(conversation());
+    sent.length = 0;
+    await call("reply_to_conversation", {
+      conversationId: CONVERSATION,
+      body: `Please use ${contact.data.custom_attributes.support_link}`,
+    });
+    expect(sent[0]!.body?.["body"]).toBe(`Please use ${ordinary.support_link}`);
+  });
+
   it("encodes query parameters by the pinned style", async () => {
     const { call } = setup();
     await call("intercom_api_read", {
