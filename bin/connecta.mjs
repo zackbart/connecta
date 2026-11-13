@@ -264,9 +264,7 @@ async function doctor() {
       throw new Error(
         `Native discovery degraded: ${surface.staleCatalogs.join(", ")} did not answer and listed from an older catalog. Inspect connector status.`,
       );
-    // A writable human endpoint also lists the read program route, unless the deployment turned it off.
-    // An agent endpoint never does, so seven tools there is a wrong surface.
-    readRoute = !native && !agent && actual.includes(READ_PROGRAM_TOOL);
+    readRoute = !native && actual.includes(READ_PROGRAM_TOOL);
     const expected = native
       ? ["authorize_connector", "skills", executeCode ? "execute_code" : "read_result"].sort()
       : [...META_TOOL_NAMES, ...(readRoute ? [READ_PROGRAM_TOOL] : [])].sort();

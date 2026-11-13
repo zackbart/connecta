@@ -125,11 +125,13 @@ export function endpointExtension(
   native: boolean,
   executeCode: boolean,
   readOnly: boolean,
+  executeReadCode: boolean,
   unlisted?: ReadonlySet<string>,
 ) {
   return {
     surface: native ? "native" : "meta",
     executeCode,
+    executeReadCode,
     readOnly,
     connectors: connectors.map((connector) => {
       const title = connectorInventoryTitle(connector);

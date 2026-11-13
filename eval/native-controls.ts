@@ -104,7 +104,7 @@ async function nativeControls() {
       mcp = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
       const tools = await mcp.listTools();
       const names = tools.map((tool) => tool.name);
-      assertSurface(names, arm);
+      assertSurface(names, arm, deployment.mcpUrl);
       for (const wrong of ["six", "code", "native", "native-no-code"] as Surface[]) {
         if (wrong !== arm) assert.throws(() => assertSurface(names, wrong));
       }
@@ -359,6 +359,7 @@ for (const target of ["node", "worker"] as const) {
       assertSurface(
         tools.map((tool) => tool.name),
         arm,
+        deployment.mcpUrl,
       );
       if (arm === "five") {
         assert.doesNotMatch(JSON.stringify([mcp.instructions, tools]), /search_tools/);

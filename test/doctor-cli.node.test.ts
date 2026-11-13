@@ -114,7 +114,8 @@ describe("connecta doctor's executor line", () => {
     expect(line).not.toContain("x".repeat(41));
   });
 
-  it("refuses a seventh tool at an agent endpoint, which holds the read program route back", async () => {
+  it("accepts the read program route at an agent endpoint and refuses any other extra tool", async () => {
+    let extra = "execute_read_code";
     const server = createServer(async (request, response) => {
       response.setHeader("Content-Type", "application/json");
       if (request.url === "/health") {
@@ -143,7 +144,7 @@ describe("connecta doctor's executor line", () => {
         };
       if (body.method === "tools/list")
         result = {
-          tools: [...META_TOOL_NAMES, "execute_read_code"].map((name) => ({
+          tools: [...META_TOOL_NAMES, extra].map((name) => ({
             name,
             inputSchema: { type: "object" },
           })),
@@ -156,11 +157,13 @@ describe("connecta doctor's executor line", () => {
     teardown.push(() => new Promise<void>((done) => server.close(() => done())));
     const address = server.address();
     if (!address || typeof address === "string") throw new Error("Expected TCP address");
-    await expect(
+    const doctor = () =>
       run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`, "--pool", "bots"], {
         env: { ...process.env, CONNECTA_TOKEN: `cta_${"a".repeat(43)}` },
-      }),
-    ).rejects.toThrow(/Unexpected MCP surface/);
+      });
+    expect((await doctor()).stdout).toContain("prescribed 7-tool surface");
+    extra = "rogue_tool";
+    await expect(doctor()).rejects.toThrow(/Unexpected MCP surface/);
   });
 
   it("auto-negotiates a legacy server and reports its negotiated revision", async () => {
@@ -466,7 +469,7 @@ describe("connecta doctor --config", () => {
         );
       }
       expect(dispatched).toBe(0);
-      expect(executions).toBe(2);
+      expect(executions).toBe(3);
       await expect(run(process.execPath, [CLI, "doctor", "--url", url], { env })).rejects.toThrow(
         "An agent token reaches only /agent/<pool>",
       );

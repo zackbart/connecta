@@ -233,8 +233,7 @@ async function mcpBattery(checks: SmokeCheck[], battery: Battery): Promise<void>
     let readRoute = false;
     await step(checks, "tools/list is exactly the meta-tools this endpoint serves", async () => {
       const names = (await live.listTools()).map((tool) => tool.name).sort();
-      // A writable human endpoint lists the read program route; an agent endpoint holds it back.
-      readRoute = !battery.mcpPath.startsWith("/agent/") && names.includes("execute_read_code");
+      readRoute = names.includes("execute_read_code");
       if (JSON.stringify(names) !== JSON.stringify(readRoute ? READ_TOOLS : SIX))
         throw new Error(`got ${names.join(", ")}`);
       return names.join(", ");

@@ -39,9 +39,9 @@ pools keep code available by default.
 ## The meta-tools
 
 Every deployment requires an executor. A meta endpoint's `tools/list` is exactly
-these six, plus `execute_read_code` on a writable `/mcp` or `/mcp/<pool>` unless
-`execute.readRoute` is `false` ([read programs](#read-programs)). A read-only
-endpoint and `/agent/<pool>` list six. This is the default; a pool may instead use the
+these six, plus `execute_read_code` on a writable `/mcp`, `/mcp/<pool>` or
+`/agent/<pool>` unless `execute.readRoute` is `false` ([read programs](#read-programs)).
+A read-only endpoint lists six. This is the default; a pool may instead use the
 [native tool surface](#native-tool-surface). No other configuration changes the
 list, so a client's cached meta-tool list never depends on
 the storage behind the deployment. `execute_code`
@@ -114,12 +114,17 @@ anything runs.
 that gates on annotations does not prompt for a read-only program. On a writable
 endpoint `execute_code` stays annotated as a write.
 
-| Endpoint                                | Lists `execute_read_code`                     |
-| --------------------------------------- | --------------------------------------------- |
-| Writable `/mcp`, writable `/mcp/<pool>` | Yes, unless `execute.readRoute: false`        |
-| Read-only endpoint                      | No: `execute_code` is already read-only there |
-| `/agent/<pool>`                         | No, for now                                   |
-| Native pool                             | No                                            |
+| Endpoint                                        | Lists `execute_read_code`                     |
+| ----------------------------------------------- | --------------------------------------------- |
+| Writable `/mcp`, `/mcp/<pool>`, `/agent/<pool>` | Yes, unless `execute.readRoute: false`        |
+| Read-only endpoint, read-only agent pool        | No: `execute_code` is already read-only there |
+| Native pool                                     | No                                            |
+
+On a writable `/agent/<pool>`, an agent host that reviews writes can let `call_tool`
+and `execute_read_code` run and review only `execute_code` and `call_destructive_tool`.
+Connecta enforces that split below the sandbox, so a program that builds an address at
+runtime meets the same refusal. [Endpoint facts](#endpoint-facts) carry
+`executeReadCode`, so a helper can send lookups to this route.
 
 **Refusal.** Every call whose effective or source class is write is refused below
 the sandbox, before validation and dispatch, with `retryable: false` and a message
@@ -2125,6 +2130,7 @@ own guidance can read what this request reached:
 {
   "surface": "meta",
   "executeCode": true,
+  "executeReadCode": true,
   "readOnly": false,
   "connectors": [
     { "id": "crm", "title": "Customer records", "readFirst": "connector:crm" },
@@ -2138,6 +2144,7 @@ own guidance can read what this request reached:
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
 | `surface`                | `"meta"` or `"native"`: the surface this request is served                                                                   |
 | `executeCode`            | Whether `execute_code` is listed. Always `true` on meta                                                                      |
+| `executeReadCode`        | Whether `execute_read_code` is listed ([read programs](#read-programs)). Always `false` on native                            |
 | `readOnly`               | The effective policy: the endpoint is read-only, or every connector it reaches is. `false` on a read-only pool with `writes` |
 | `connectors[].id`        | Each canonical connector id the caller's scope reaches, in registry order                                                    |
 | `connectors[].title`     | Present only when the title says more than the id; normalized and capped as in the [inventory](#discovery-context)           |

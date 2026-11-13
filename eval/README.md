@@ -553,10 +553,11 @@ checkout with the same model, CLI version, reasoning effort and repeat count.
 Run both arms in the same batch window. Historical baseline regrades help
 check the graders; they do not replace a fresh six-arm comparator.
 
-`--surface six` is the default and preserves the six 0.29 meta-tools and the
-normal deployment path through `/agent/<pool>`. `--surface read` serves the same
-host through a sibling person pool at `/mcp/<pool>`, the real route listing
-`execute_read_code`, after checking its machine token at `/agent/<pool>`. `--surface code` lists exactly `execute_code`, `skills`
+`--surface six` is the default and serves the normal deployment path through
+`/agent/<pool>`: the six 0.29 meta-tools, plus `execute_read_code` where the pool
+is writable. `--surface read` serves the same host through a sibling person pool
+at `/mcp/<pool>`, which also lists `execute_read_code`, after checking its machine
+token at `/agent/<pool>`. `--surface code` lists exactly `execute_code`, `skills`
 and `authorize_connector`. Calls to `call_tool`, `call_destructive_tool` and
 `search_tools` are refused before dispatch. Authorization remains a top-level
 tool until its program replacement exists.

@@ -1529,7 +1529,7 @@ omit write tools from `search_tools`, `connecta.search`, and
 `connecta.describe`, and refuse every write call through `call_tool`,
 `call_destructive_tool`, and programs with `read_only_endpoint` before
 validation or dispatch. Guides and skills are documentation and may still name
-those tools. Both modes keep `execute_code` and every other meta tool; [`execute_read_code`](./meta-tools.md#read-programs) is listed only on writable human endpoints.
+those tools. Both modes keep `execute_code` and every other meta tool; [`execute_read_code`](./meta-tools.md#read-programs) is listed only on writable meta endpoints.
 [Native pools](./meta-tools.md#native-tool-surface) list individual downstream
 tools and omit writes when read-only. They retain `execute_code` by default;
 `executeCode: false` replaces it with `read_result`. Approval belongs to the client.
