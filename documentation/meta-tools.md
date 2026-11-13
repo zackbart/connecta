@@ -140,6 +140,21 @@ runs it. `"read-repeatable"` is the exception, because the deployment accepted t
 may repeat the call, and a host can resend a whole read program: such a tool runs here
 unmarked, and a resent program can reach the vendor twice.
 
+**Freshness bound.** A program admits each call against the catalog its request
+retained, so calls made within a catalog's TTL see one consistent catalog and
+list nothing again. Once a retained catalog passes its TTL, the next call to that
+connector lists it again before admission and admits against the new listing: a tool
+the downstream has since reclassified as a write is refused as above, with nothing
+sent, whether or not the downstream sent `notifications/tools/list_changed`. A
+downstream's reclassification therefore reaches a running program no later than its
+catalog TTL (`ttlMs`, or `discovery.catalogTtlSeconds` for a listing without one); a
+catalog with a zero TTL is listed again before every call after its first. Every
+call surface admits this way, so `execute_code`, `call_tool` and
+`call_destructive_tool` admit a write as a write past the same bound. A relisting
+that fails transiently resolves the call through the bounded stale fallback in
+[architecture](./architecture.md#storage-credentials-and-connectors), so while a
+downstream cannot list, the bound extends by at most five minutes.
+
 **Discovery lists writes, marked.** `connecta.search` and `connecta.describe` return
 them with `callable: false`, and no other entry carries the field. Writes are not
 omitted because omission reads as absence, and a program that reduces a page keeps

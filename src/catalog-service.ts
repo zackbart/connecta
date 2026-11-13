@@ -837,7 +837,7 @@ export class CatalogService {
   // reads still in flight and is kept for what the registry's cannot do: hold
   // the success for the rest of the request, recorded by the read itself
   // rather than by an asker, whose probe deadline may have ended its wait.
-  private readonly catalogs = new Map<string, { identity: string; read: SharedRead<ToolDef[]> }>();
+  private readonly catalogs = new Map<string, { identity: string; read: SharedRead<ToolDef[]>; settledAt: number }>();
   // Key by the private source array, never connector id: a replacement read
   // gets new views and indexes. Each service belongs to one request and one
   // registry visibility view (caller/pool, hidden tools and classification).
@@ -948,8 +948,13 @@ export class CatalogService {
   // and deadline, so a short-deadline call that starts the read and a search
   // that joins it each end on their own terms, and the read is cancelled only
   // once every asker has gone.
-  private catalog(id: string, callOptions: ConnectorOperationOptions): Effect.Effect<ToolDef[], unknown> {
+  private catalog(
+    id: string,
+    callOptions: ConnectorOperationOptions,
+    admission = false,
+  ): Effect.Effect<ToolDef[], unknown> {
     return Effect.suspend(() => {
+      const askedAt = Date.now();
       // Authored static definitions never depend on a downstream cache or
       // credentials. Keep their discovery independent of credential reads.
       const identity = this.registry.getConnector(id)?.staticTools
@@ -987,18 +992,25 @@ export class CatalogService {
               }),
             ),
           (succeeded) => {
+            const kept = this.catalogs.get(id);
+            if (kept?.read !== started) return;
+            kept.settledAt = Date.now();
             // Evicted before the read resumes anyone, so an asker that
             // retries on hearing of the failure starts a fresh read.
-            if (!succeeded && this.catalogs.get(id)?.read === started) {
-              this.catalogs.delete(id);
-            }
+            if (!succeeded) this.catalogs.delete(id);
           },
           this.requestScope,
         );
-        retained = { identity, read: started };
+        retained = { identity, read: started, settledAt: Infinity };
         this.catalogs.set(id, retained);
       }
-      return retained.read.join(callOptions.signal);
+      if (!admission) return retained.read.join(callOptions.signal);
+      const joined = retained;
+      return Effect.flatMap(joined.read.join(callOptions.signal), (tools) => {
+        if (joined.settledAt >= askedAt || catalogIsFresh(tools)) return Effect.succeed(tools);
+        if (this.catalogs.get(id) === joined) this.catalogs.delete(id);
+        return this.catalog(id, callOptions);
+      });
     });
   }
 
@@ -1578,7 +1590,7 @@ export class CatalogService {
       }
       const { connector, toolName } = resolved;
       const started = Date.now();
-      return Effect.match(this.catalog(connector.id, callOptions), {
+      return Effect.match(this.catalog(connector.id, callOptions, true), {
         onFailure: (cause) => this.catalogLoadFailure(cause, started, connector, toolName),
         onSuccess: (tools): CatalogResolution => {
           const definition = tools.find((tool) => tool.name === toolName);

@@ -5,6 +5,7 @@
 import { describe, expect, it, vi } from "vitest";
 import * as lexicalCatalog from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
+import { markCatalogFreshness } from "../src/catalog-freshness.js";
 import { MAX_CATALOG_TOOLS } from "../src/catalog-limits.js";
 import { Effect } from "effect";
 import { runEdge } from "../src/runtime/run.js";
@@ -231,7 +232,7 @@ describe("request-scoped catalog cache", () => {
     const registry = makeRegistry([connectorWith({ id: "owned", tools: [original] })]);
     // Simulate a registry view that returns the same mutable listing.
     const view = Object.assign(Object.create(registry) as typeof registry, {
-      getTools: async () => [original],
+      getTools: async () => markCatalogFreshness([original], Infinity),
     });
     const service = new CatalogService(view, BASE);
     const loaded = await service.loadConnector("owned");

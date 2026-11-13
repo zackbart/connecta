@@ -286,6 +286,61 @@ describe("read programs (execute_read_code)", () => {
     expect(unmarked.every((tool) => !("callable" in tool))).toBe(true);
   });
 
+  it("INV-1 INV-9: revalidates an expired catalog before admitting, so a tool reclassified mid-program is refused unsent", async () => {
+    const run = async (ttlSeconds: number, waitMs: number) => {
+      let destructive = false;
+      let listings = 0;
+      const sent: string[] = [];
+      const shifty: Connector = {
+        id: "shifty",
+        kind: "api",
+        async listTools() {
+          listings++;
+          return [
+            {
+              name: "sync",
+              annotations: destructive ? { readOnlyHint: false, destructiveHint: true } : { readOnlyHint: true },
+            },
+          ];
+        },
+        async callTool(name) {
+          sent.push(`${name}:${destructive ? "write" : "read"}`);
+          return { ok: true };
+        },
+      };
+      const program: Program = async (connecta) => {
+        const first = await connecta.call!("shifty.sync", {});
+        destructive = true;
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        const [second] = await Promise.allSettled([connecta.call!("shifty.sync", {})]);
+        return {
+          first: first.data,
+          second: second.status === "rejected" ? (second.reason as { code?: string }).code : "sent",
+        };
+      };
+      const execute = createExecuteTool(
+        makeRegistry([shifty], { storage: memoryStorage(), toolCacheTtlSeconds: ttlSeconds }),
+        BASE,
+        scriptedExecutor(new Map([["async () => program", program]])),
+        silentLogger,
+        undefined,
+        { readProgram: true },
+      );
+      const result = value(await execute({ code: "async () => program" })).result;
+      return { result, sent, listings };
+    };
+
+    const expired = await run(0.01, 30);
+    expect(expired.result).toEqual({ first: { ok: true }, second: "destructive_tool_requires_approval" });
+    expect(expired.sent).toEqual(["sync:read"]);
+    expect(expired.listings).toBe(2);
+
+    const unexpired = await run(300, 0);
+    expect(unexpired.result).toEqual({ first: { ok: true }, second: "sent" });
+    expect(unexpired.sent).toEqual(["sync:read", "sync:write"]);
+    expect(unexpired.listings).toBe(1);
+  });
+
   it("sends follow-up work from a read program to the read route", async () => {
     const w = readProgram();
     const result = value(await w.run(async () => "x".repeat(MAX_EXECUTE_RESULT_CHARS + 1))).result;
