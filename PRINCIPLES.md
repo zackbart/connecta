@@ -64,8 +64,8 @@ links the executable checks.
   tool, annotated destructive and run on the `call_destructive_tool` route;
   a native name is bound to its classification, so a name a host holds for a
   read cannot run a write, however often it is resent. A writable endpoint
-  annotates `execute_code` as a write. A writable `/mcp` and `/mcp/<pool>` also
-  list `execute_read_code`, annotated read-only: below the sandbox it refuses every
+  annotates `execute_code` as a write. Writable `/mcp`, `/mcp/<pool>` and `/agent/<pool>`
+  also list `execute_read_code`, annotated read-only: below the sandbox it refuses every
   call whose effective or source class is write, before dispatch. Approval belongs
   to the host.
 - **INV-3: Generated code mints nothing.** No connectors, grants, downstream

@@ -132,7 +132,7 @@
       "id": "tools-list",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "The current meta-tools are listed, with execute_read_code on writable human endpoints; downstream pages assemble complete catalogs.",
+      "notes": "The current meta-tools are listed, with execute_read_code on writable meta endpoints; downstream pages assemble complete catalogs.",
       "evidence": ["test/server.test.ts", "test/remote-mcp-pagination.test.ts"]
     },
     {

@@ -130,9 +130,9 @@ export function readArmConfig<T extends ConnectaConfig>(config: T): T {
 }
 
 /**
- * Agent endpoints hold the seventh tool back, so the arm serves its host through
- * the human endpoint with the real tool list, instructions and enforcement. The
- * host's machine token is first checked against its real agent endpoint.
+ * The arm serves its host through the human endpoint with the real tool list,
+ * instructions and enforcement. The host's machine token is first checked
+ * against its real agent endpoint.
  */
 function withReadArm(connecta: Connecta): Connecta {
   return {

@@ -492,8 +492,8 @@ function discovering(
   );
 }
 
-const META_GUIDE = (name: string, reachable: string) =>
-  `Connecta tools are deferred: call eve__tool({ name: "${name}__<tool>", input }). Names in this guidance and in nextAction omit the "${name}__" prefix. Go straight to ${name}__execute_code without eve__search, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }. eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program. Reachable: ${reachable}.`;
+const META_GUIDE = (name: string, reachable: string, readCode = false) =>
+  `Connecta tools are deferred: call eve__tool({ name: "${name}__<tool>", input }). Names in this guidance and in nextAction omit the "${name}__" prefix. Go straight to ${name}__${readCode ? "execute_read_code for lookups" : "execute_code"} without eve__search, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }.${readCode ? ` It refuses writes: make changes with ${name}__execute_code, or ${name}__call_destructive_tool for one known write.` : ""} eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program. Reachable: ${reachable}.`;
 
 it("prefixes the server's text with the guide for each surface, from a real endpoint's facts", async () => {
   const guide = async (pool: Parameters<typeof localConnecta>[0], connection?: string) => {
@@ -507,12 +507,16 @@ it("prefixes the server's text with the guide for each surface, from a real endp
     return content.replace(/^Connecta guidance:\n/, "").split("\n");
   };
   const [meta, metaServer] = await guide({});
-  expect(meta).toBe(META_GUIDE("connecta", "crm, billing, tickets"));
-  expect(metaServer).toContain("execute_code");
-  expect(Buffer.byteLength(meta!)).toBeLessThanOrEqual(620);
+  expect(meta).toBe(META_GUIDE("connecta", "crm, billing, tickets", true));
+  expect(metaServer).toContain("Other read work: one execute_read_code program");
+  expect(Buffer.byteLength(meta!)).toBeLessThanOrEqual(740);
+  const [readOnly, readOnlyServer] = await guide({ readOnly: true });
+  expect(readOnly).toBe(META_GUIDE("connecta", "crm, billing, tickets"));
+  expect(readOnlyServer).not.toContain("execute_read_code");
+  expect(Buffer.byteLength(readOnly!)).toBeLessThanOrEqual(620);
   // A connection is named after its file, which the helper is told.
   const [renamed] = await guide({}, "workspace");
-  expect(renamed).toBe(META_GUIDE("workspace", "crm, billing, tickets"));
+  expect(renamed).toBe(META_GUIDE("workspace", "crm, billing, tickets", true));
   expect(renamed).not.toContain("connecta__");
   const [native, nativeServer] = await guide({ surface: "native" });
   // The guide comes first because it answers this server sentence for Eve, which refreshes its list.
@@ -525,7 +529,7 @@ it("prefixes the server's text with the guide for each surface, from a real endp
   expect(lean).not.toContain("execute_code");
   // A read-only endpoint lists no write, so the guide names none.
   expect((await guide({ surface: "native", readOnly: true }))[0]).not.toContain("WRITE");
-  expect((await guide({ unlisted: ["billing"] }))[0]).toBe(META_GUIDE("connecta", "crm, tickets"));
+  expect((await guide({ unlisted: ["billing"] }))[0]).toBe(META_GUIDE("connecta", "crm, tickets", true));
   await localConnecta({ unlisted: ["billing"] }, async (url, token) => {
     const response = await fetch(`${url}/agent/assistant`, {
       method: "POST",
@@ -585,12 +589,12 @@ it("keeps Eve's search from widening: the default description matches no capabil
         })),
       ).map((candidate: { name: string }) => candidate.name);
     const description = connectaConnection({ url }).description;
-    expect(result.tools).toHaveLength(6);
+    expect(result.tools.map((tool) => tool.name)).toContain("execute_read_code");
     for (const query of ["invoices", "get invoice", "send an email", "delete"]) {
       expect(search(query, description)).toEqual([]);
     }
     // Why the roster belongs in instructions: in the description, one word hits every tool.
-    expect(search("invoices", "CRM, invoices and tickets")).toHaveLength(6);
+    expect(search("invoices", "CRM, invoices and tickets")).toHaveLength(result.tools.length);
   });
 });
 
@@ -668,6 +672,7 @@ it("degrades the roster by bytes, sanitizes it, and treats malformed facts as ab
   for (const rosterMaxBytes of [0, -1, 1.5, Number.NaN]) {
     expect(() => connectaInstructions({ rosterMaxBytes })).toThrow("rosterMaxBytes must be a positive integer");
   }
+  expect(await content({ ...meta, executeReadCode: "yes", connectors: [] })).not.toContain("execute_read_code");
   for (const malformed of [
     undefined,
     "native",

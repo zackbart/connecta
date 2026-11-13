@@ -412,7 +412,6 @@ function serveMcp(
   readOnly = false,
   pool?: string,
   principalActor?: ActivityActor,
-  agentEndpoint = false,
 ): Effect.Effect<Response, unknown, Scope.Scope> {
   const sentSecrets = sentSecretsForRequest(requestScope);
   // Every McpServer the request builds is fresh and closes with its scope.
@@ -421,10 +420,8 @@ function serveMcp(
   const servers: McpServer[] = [];
   // A native pool lists its downstream tools directly (pools.<name>.surface).
   const native = pool !== undefined ? opts.pools.get(pool)?.native : undefined;
-  // Agent endpoints keep six tools until Eve is tested against the seventh. The
-  // eval arms that render other route names measure their own fixed surfaces.
-  const readRoute =
-    opts.config.execute.readRoute && !native && !readOnly && !agentEndpoint && opts.routes === META_ROUTES;
+  // The eval arms that render other route names measure their own fixed surfaces.
+  const readRoute = opts.config.execute.readRoute && !native && !readOnly && opts.routes === META_ROUTES;
   const createServer = authMethod((hint?: NativeRequestHint) =>
     authFlow<McpServer>(function* () {
       // A native pool's text uses the native contract's wording.
@@ -480,6 +477,7 @@ function serveMcp(
               native !== undefined,
               native?.executeCode ?? true,
               effectiveReadOnly,
+              readRoute,
               pool !== undefined ? opts.pools.get(pool)?.unlisted : undefined,
             ),
           },
@@ -1209,7 +1207,6 @@ export function createMcpRoute(opts: ServerOptions): {
                     namespace: authz.identity.principal.namespace,
                   }
                 : undefined,
-              agentEndpoint,
             ),
           );
         });

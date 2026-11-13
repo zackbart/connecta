@@ -47,7 +47,7 @@ words against every search query for every tool of the connection, so the defaul
 is a fixed neutral line. If you set one, describe the domain in prose, such as
 `"Member records, giving and event registration."`. Do not list connectors or
 operations: on a three-connector meta pool, `"CRM, invoices and tickets"` made the
-query `"invoices"` return all six routing tools, 9.4 KB measured, and tells the
+query `"invoices"` return every routing tool, 9.4 KB measured with six, and tells the
 model nothing about the operations behind them. The instructions carry the roster.
 A string such as
 `"Company tools through Connecta"` tells the model nothing, so the helper warns
@@ -230,6 +230,9 @@ The default policy is Eve's `never()`: authorized writes run unattended. Use a
 read-only Connecta pool when the agent must never write. For an interactive
 agent, add `gateWrites: true` to the connection to request user approval before
 any tool whose `readOnlyHint` is not `true`, including writable `execute_code`.
+On a writable meta pool, `call_tool` and `execute_read_code` stay read-only and
+unprompted; Connecta refuses every write they attempt before dispatch, so writes
+reach the gate only through `execute_code` and `call_destructive_tool`.
 `gateConnectaWrites` exports that policy for composition. An explicit Eve
 `approval`, either a policy or an approval configuration, takes precedence over
 `gateWrites`.
@@ -248,7 +251,9 @@ helper places an Eve guide before it, built from the endpoint's
 [facts](https://github.com/zackbart/connecta/blob/main/documentation/meta-tools.md#endpoint-facts):
 
 - **Meta pools:** call `eve__tool({ name: "connecta__execute_code", input })`
-  directly, with a short example program. `eve__search` sees the routing tools and
+  directly, with a short example program. When the facts say `execute_read_code`
+  is listed, lookups go to `connecta__execute_read_code` instead, and changes to
+  `connecta__execute_code` or `connecta__call_destructive_tool`. `eve__search` sees the routing tools and
   never a downstream operation, so its empty result does not mean a capability is
   missing. Reachable connectors are listed by id.
 - **Native pools:** a read is `connecta__<connector>__<tool>` and a write
@@ -260,7 +265,8 @@ helper places an Eve guide before it, built from the endpoint's
   list.
 - **Older servers without facts:** only the naming rule.
 
-The guide adds about 600 bytes with three connectors. Its roster stays under 512
+The guide adds about 600 bytes with three connectors, and about 730 with
+`execute_read_code`. Its roster stays under 512
 bytes: titles go first, then whole entries give way to a `+N more` count. Set
 `rosterMaxBytes` on `connectaInstructions` to change that cap; it must be a
 positive integer. Connectors the pool lists in `unlisted` never appear in the

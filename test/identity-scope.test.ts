@@ -239,7 +239,13 @@ describe("maintainers and plain /mcp", () => {
       return result.capabilities.extensions["dev.connecta/endpoint"];
     };
     const crm = { id: "crm", title: "Customer records", readFirst: "connector:crm" };
-    const team = { surface: "meta", executeCode: true, readOnly: false, connectors: [{ id: "notes" }, crm] };
+    const team = {
+      surface: "meta",
+      executeCode: true,
+      executeReadCode: true,
+      readOnly: false,
+      connectors: [{ id: "notes" }, crm],
+    };
     for (const method of ["server/discover", "initialize"] as const) {
       // A person's plain /mcp is their one pool, never the deployment's roster.
       expect(await facts("/mcp", "bob", method)).toEqual(team);
@@ -251,6 +257,7 @@ describe("maintainers and plain /mcp", () => {
       expect(await facts("/mcp", "carol", method)).toEqual({
         surface: "native",
         executeCode: true,
+        executeReadCode: false,
         readOnly: false,
         connectors: [{ id: "wiki" }],
       });
@@ -262,6 +269,7 @@ describe("maintainers and plain /mcp", () => {
       expect(await facts("/mcp/other", "alice", method)).toEqual({
         surface: "native",
         executeCode: false,
+        executeReadCode: false,
         readOnly: true,
         connectors: [{ id: "billing" }],
       });
@@ -1135,6 +1143,7 @@ describe("pools serve exactly their tools", () => {
     expect(facts.result.capabilities.extensions["dev.connecta/endpoint"]).toEqual({
       surface: "meta",
       executeCode: true,
+      executeReadCode: true,
       readOnly: false,
       connectors: [{ id: "wiki", unlisted: true }, { id: "crm" }],
     });

@@ -9,7 +9,7 @@ export const META_TOOLS = [
 ] as const;
 
 export type Surface = "six" | "read" | "five" | "code" | "native" | "native-no-code";
-/** The six plus the read program route, which a writable human endpoint lists. */
+/** The six plus the read program route, which a writable meta endpoint lists. */
 export const READ_TOOLS = [...META_TOOLS, "execute_read_code"].sort();
 export const FIVE_TOOLS = META_TOOLS.filter((name) => name !== "search_tools");
 export const CODE_TOOLS = ["authorize_connector", "execute_code", "skills"] as const;
@@ -21,18 +21,12 @@ export function parseSurface(value = "six"): Surface {
 }
 
 /**
- * `endpoint` is the URL the host connected to. A task reaching a person's endpoint
- * on the six arm also sees the read program route, which only agent endpoints hold back.
+ * `endpoint` is the URL the host connected to. A task reaching a writable endpoint
+ * on the six arm also sees the read program route.
  */
 export function assertSurface(names: string[], surface: Surface = "six", endpoint?: string): void {
   const actual = names.map((name) => name.replace(/^mcp__connecta__/, "")).sort();
-  if (
-    surface === "six" &&
-    endpoint !== undefined &&
-    !new URL(endpoint).pathname.startsWith("/agent/") &&
-    JSON.stringify(actual) === JSON.stringify(READ_TOOLS)
-  )
-    return;
+  if (surface === "six" && endpoint !== undefined && JSON.stringify(actual) === JSON.stringify(READ_TOOLS)) return;
   if (surface === "native" || surface === "native-no-code") {
     const local =
       surface === "native"

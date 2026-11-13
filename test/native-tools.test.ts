@@ -264,10 +264,17 @@ describe("native tool surface", () => {
       });
       if (modern) expect(listed.result).toMatchObject({ ttlMs: 300_000, cacheScope: "private" });
     }
-    // The meta pool on the same deployment keeps its six tools.
     const meta = await rpc(connecta, token, "meta", "tools/list", {});
     expect(meta.result.tools.map((tool: { name: string }) => tool.name).sort()).toEqual(
-      ["authorize_connector", "call_destructive_tool", "call_tool", "execute_code", "search_tools", "skills"].sort(),
+      [
+        "authorize_connector",
+        "call_destructive_tool",
+        "call_tool",
+        "execute_code",
+        "execute_read_code",
+        "search_tools",
+        "skills",
+      ].sort(),
     );
     expect(meta.result.ttlMs).toBe(3_600_000);
   });
@@ -868,7 +875,7 @@ describe("native tool surface", () => {
     const nocode = await rpc(connecta, token, "nocode", "initialize", initialize, false);
     expect(nocode.result.instructions).toBe(nativeInstructions(false));
     const meta = await rpc(connecta, token, "meta", "initialize", initialize, false);
-    expect(meta.result.instructions).toBe(endpointInstructions(undefined, undefined, false, ["crm"]));
+    expect(meta.result.instructions).toBe(endpointInstructions(undefined, undefined, false, ["crm"], true));
   });
 
   it("refuses a pool over the 1,000-tool native cap with a JSON-RPC error", async () => {
@@ -1356,7 +1363,7 @@ describe("previews of reads over the cap, by surface", () => {
     ).result;
     const { notice: seen, body } = notice(direct);
     expect(seen.rows).toMatchObject({ path: "people", count: 1_000, keys: ["id", "name", "active"] });
-    expect(seen.nextAction.tool).toBe("execute_code");
+    expect(seen.nextAction.tool).toBe("execute_read_code");
     expect(JSON.parse(body).has_more).toBe(false);
   });
 
@@ -1630,8 +1637,8 @@ describe("route names per surface", () => {
     const docsText =
       "Characters of text kept across all rendered tabs, 0 to 1000000; defaults to 20000. Connecta's cap. Longer text ends with a truncation marker. Above the default, ";
     expect(await descriptions("meta")).toEqual([
-      `${docsText}call directly (call_tool, connecta.result to page): execute_code carries at most 256 KiB per result.`,
-      "Whole-result byte budget. Raise only for a direct call_tool; execute_code cannot receive large results.",
+      `${docsText}call directly (call_tool, connecta.result to page): execute_read_code carries at most 256 KiB per result.`,
+      "Whole-result byte budget. Raise only for a direct call_tool; execute_read_code cannot receive large results.",
     ]);
     expect(await descriptions("native")).toEqual([
       `${docsText}call this tool directly and page with connecta.result in execute_code: execute_code carries at most 256 KiB per result.`,
