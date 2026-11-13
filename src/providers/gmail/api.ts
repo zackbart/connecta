@@ -1,10 +1,12 @@
 // Gmail's declared operations are confined to the delegated user's own mailbox.
 import { Effect, Schema } from "effect";
-import { encodedFieldProvenance, get, post, put, vendor, type EncodedFieldProvenance } from "../../http/vendor.js";
+import { encodedFieldProvenance, get, post, put, type EncodedFieldProvenance } from "../../http/vendor.js";
 import { googleErrors, type GoogleProduct } from "../_shared/google/kit.js";
+import { indexedVendor } from "../_shared/rest/kit.js";
 import { gmailSafety } from "./safety.js";
 import { ConnectorCallError } from "../../errors.js";
 import { GMAIL_SCOPES } from "./lib/constants.js";
+import { index } from "./lib/index.js";
 
 export const GMAIL: GoogleProduct = {
   provider: "Gmail",
@@ -30,8 +32,16 @@ const OPERATIONS = [
     query: { ...Page, includeSpamTrash: Schema.optionalKey(Schema.String) },
     success: Schema.Unknown,
   }),
-  get("getThread", "/threads/:id", { params: Id, query: Format, success: Schema.Unknown }),
-  get("getMessage", "/messages/:id", { params: Id, query: Format, success: Schema.Unknown }),
+  get("getThread", "/threads/:id", {
+    params: Id,
+    query: Format,
+    success: Schema.Unknown,
+  }),
+  get("getMessage", "/messages/:id", {
+    params: Id,
+    query: Format,
+    success: Schema.Unknown,
+  }),
   get("getAttachment", "/messages/:messageId/attachments/:id", {
     params: { messageId: Schema.String, ...Id },
     success: Schema.Unknown,
@@ -42,9 +52,20 @@ const OPERATIONS = [
   get("getProfile", "/profile", { success: Schema.Unknown }),
   get("listHistory", "/history", { query: Page, success: Schema.Unknown }),
   get("listDrafts", "/drafts", { query: Page, success: Schema.Unknown }),
-  get("getDraft", "/drafts/:id", { params: Id, query: Format, success: Schema.Unknown }),
-  post("createDraft", "/drafts", { payload: Schema.Unknown, success: Schema.Unknown }),
-  put("updateDraft", "/drafts/:id", { params: Id, payload: Schema.Unknown, success: Schema.Unknown }),
+  get("getDraft", "/drafts/:id", {
+    params: Id,
+    query: Format,
+    success: Schema.Unknown,
+  }),
+  post("createDraft", "/drafts", {
+    payload: Schema.Unknown,
+    success: Schema.Unknown,
+  }),
+  put("updateDraft", "/drafts/:id", {
+    params: Id,
+    payload: Schema.Unknown,
+    success: Schema.Unknown,
+  }),
 ] as const;
 
 // The manifest uses Discovery's path; transport stays fixed beneath users/me.
@@ -62,8 +83,16 @@ const bodyPaths = [
   // The normal MIME walk and a parsed forwarded-message walk each admit 20 levels.
   Array.from({ length: 41 }, (_, depth) => `${prefix}${".parts[*]".repeat(depth)}.body.data`),
 );
+const MANIFEST_BASE = "/gmail/v1/users/{userId}";
+const indexed = indexedVendor("Gmail", index, OPERATIONS);
 export const GmailApi = {
-  ...vendor({ name: "Gmail", manifestBase: "/gmail/v1/users/{userId}" }, ...OPERATIONS),
+  ...indexed,
+  manifestBase: MANIFEST_BASE,
+  // Every indexed route has a literal hatch verdict, so the whole pinned inventory is declared.
+  indexed: {
+    ...indexed.indexed!,
+    operations: index.ops.map((op) => `${op.method} ${MANIFEST_BASE}${op.path}`).sort(),
+  },
   // Legacy body reads accept optional sizes. Attachment projection instead checks
   // originalLength against the fresh part's required size and the download's optional size.
   encodedFields: [
@@ -88,8 +117,13 @@ export const GmailApi = {
 const bodyProvenance = new WeakMap<object, EncodedFieldProvenance>();
 /** Product-private metadata copied only by the result hook, before the projection validates attachment sizes. */
 export const gmailBodyProvenance = (body: object): EncodedFieldProvenance | undefined => bodyProvenance.get(body);
+const rawProvenance = new WeakMap<object, EncodedFieldProvenance>();
+/** A `format=raw` message's original byte count and whether the sent-secret boundary changed it. */
+export const gmailRawProvenance = (message: object): EncodedFieldProvenance | undefined => rawProvenance.get(message);
 export const result = (body: unknown) =>
   Effect.sync(() => {
+    const raw = encodedFieldProvenance(body, ["raw"]);
+    if (raw && body !== null && typeof body === "object") rawProvenance.set(body, raw);
     const visit = (node: unknown, path: (string | number)[]) => {
       if (node === null || typeof node !== "object") return;
       const provenance = encodedFieldProvenance(body, [...path, "data"]);
@@ -112,9 +146,12 @@ export const result = (body: unknown) =>
 const standardErrors = googleErrors(GMAIL, { standard: true });
 export const errors: ReturnType<typeof googleErrors> = {
   ...standardErrors,
-  meanings: { ...standardErrors.meanings!, conflicts: ["A thread changed before its content cursor"] },
+  meanings: {
+    ...standardErrors.meanings!,
+    conflicts: ["A thread changed before its content cursor"],
+  },
 };
-export const safety = gmailSafety(OPERATIONS);
+export const safety = gmailSafety();
 export const probe = {
   operation: listLabels,
   request: {},

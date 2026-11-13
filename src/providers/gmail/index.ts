@@ -1,8 +1,10 @@
 import { skill } from "./skill.generated.js";
 /**
- * Gmail, draft-only, as the signed-in Workspace user: search and read mail,
- * list labels, and create or update drafts — and nothing that sends, deletes,
- * or relabels. Hand-written against the Gmail API v1 reference
+ * Gmail, full read-write, as the signed-in Workspace user: search and read
+ * mail; send, reply and forward; draft; relabel, archive, trash and
+ * permanently delete; manage labels, filters and the vacation responder; and
+ * reach every other mailbox setting through the indexed hatch. Hand-written
+ * against the Gmail API v1 reference
  * (https://developers.google.com/workspace/gmail/api/reference/rest).
  *
  * Whose mailbox. In delegation mode, access is a service account with domain-wide delegation
@@ -12,12 +14,12 @@ import { skill } from "./skill.generated.js";
  * and no argument that names a mailbox — the transport is confined beneath
  * `users/me`, so the token's subject is the only mailbox any request reaches.
  *
- * Why draft-only. `gmail.compose` is the narrowest scope that can write a
- * draft, and Google lets it send too; the tool surface is what keeps this
- * connection from sending. Every indexed send route is explicitly refused, so
- * nothing reaches `drafts.send` or `messages.send`. A deployment that wants an
- * agent to send mail is choosing something this provider deliberately does
- * not offer.
+ * Why full access. Owners want an agent to work the mailbox as a person
+ * does, so the connection requests `https://mail.google.com/` (the only scope
+ * admitting permanent deletion) and both settings scopes. Every write is
+ * classified as one, and sends and permanent deletes are destructive and say
+ * so; the host owns approval. A deployment that wants less marks the
+ * connection `readOnly` or exposes only chosen tools through its pools.
  *
  * OAuth mode (`{ oauth, authScope }`) instead uses the downstream OAuth grant
  * of each connected Google account, or one shared account, with the same
@@ -44,7 +46,8 @@ import { GOOGLE_WORKSPACE_OPTIONS, type GoogleWorkspaceOptions } from "../_share
 import { errors, GMAIL, GmailApi, probe, result, safety } from "./api.js";
 import { GMAIL_API_BASE_URL, GMAIL_MAX_RESPONSE_BYTES } from "./lib/constants.js";
 import { googleHatchBinding } from "../_shared/google/hatch.js";
-import { index, verdicts, named, pages, refusalReasons } from "./lib/index.js";
+import { index, verdicts, named, pages } from "./lib/index.js";
+import { refuseWithheldRaw } from "./lib/raw.js";
 import { gmailTools } from "./tools.js";
 export { GMAIL_API_BASE_URL, GMAIL_SCOPES } from "./lib/constants.js";
 export type {
@@ -58,7 +61,7 @@ export type GmailOptions = GoogleWorkspaceOptions;
 // --- Construction -----------------------------------------------------------------
 
 /**
- * A maintained, draft-only Gmail connection acting as each signed-in
+ * A maintained, full read-write Gmail connection acting as each signed-in
  * Workspace user through a delegated service account.
  *
  * Setup, once per Workspace (shared with every Workspace provider):
@@ -74,7 +77,7 @@ export type GmailOptions = GoogleWorkspaceOptions;
  *    control → API controls → Manage Domain Wide Delegation → Add new. Paste
  *    the client ID and exactly these scopes, comma-separated
  *    ({@link GMAIL_SCOPES}):
- *    `https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/gmail.compose`.
+ *    `https://mail.google.com/,https://www.googleapis.com/auth/gmail.settings.basic,https://www.googleapis.com/auth/gmail.settings.sharing`.
  *    A new grant can take up to 24 hours to apply.
  * 6. Configure inbound auth: a `subject` function is never asked about an
  *    open deployment's anonymous requests, which fail `auth_required`.
@@ -82,29 +85,28 @@ export type GmailOptions = GoogleWorkspaceOptions;
  *
  * ```ts
  * gmail("mail", {
- *   purpose: "Staff email triage and reply drafting",
+ *   purpose: "Staff email triage and replies",
  *   serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
  *   subject: (identity) => mailboxes[identity.principal?.id ?? ""],
  * });
  * ```
  *
- * `gmail.compose` technically allows sending; this connection never does,
- * because no tool reaches a send method. Drafts are additive writes the host
+ * Sends, permanent deletes and every other mailbox change are writes the host
  * approves through call_destructive_tool or a program on a writable endpoint.
  */
 export const gmail = defineApiProvider<GmailOptions>({
   name: "gmail",
   title: "Gmail",
-  displayTitle: () => "Gmail (drafts only)",
+  displayTitle: () => "Gmail",
   readme: "Gmail",
   bundle: {
     baselineGzip: 379539,
-    note: "./providers/gmail measures 339,455 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). The combined Gmail/Docs merge snapshot over main f9bf5afb remeasures this standalone entry at 378,563 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9 (#703). The round-1 fix snapshot remeasures 379,199 B gzip before recording this additional fact, using the same toolchain; caps remain unchanged. Combined Gmail/Docs/Forms merge snapshot over main 84fb4eee measures 379,265 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703). Combined Google merge snapshot over main db979604 measures 379,539 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703).",
+    note: "./providers/gmail measures 339,455 B gzip standalone in F3 (#703), Node 22 CI static at 9420933711af5e42bf9d134d1b73bed114a48fa0 (run 39997464724, Run pnpm run check:build). This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899). The combined Gmail/Docs merge snapshot over main f9bf5afb remeasures this standalone entry at 378,563 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9 (#703). The round-1 fix snapshot remeasures 379,199 B gzip before recording this additional fact, using the same toolchain; caps remain unchanged. Combined Gmail/Docs/Forms merge snapshot over main 84fb4eee measures 379,265 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703). Combined Google merge snapshot over main db979604 measures 379,539 B gzip before recording these facts, Node 22.23.3, esbuild 0.28.1, neutral Worker conditions and gzip level 9; no cap changes (#703). Full read-write (#1398) measures 414,075 B against 400,989 B for main cbc920bf on the same local toolchain (Node 22.23.4, esbuild 0.28.2): +13,086 B for twenty-two named tools, the write hatch and the settings value-safety table; provider entries stay uncapped.",
   },
   skill,
   options: GOOGLE_WORKSPACE_OPTIONS,
   description: (options) =>
-    `Gmail as ${googleActor("gmail", options)}: read mail and write drafts, never send — ${options.purpose}`,
+    `Gmail as ${googleActor("gmail", options)}: read, send, organize and delete mail and manage settings — ${options.purpose}`,
   vendor: GmailApi,
   baseUrl: (options) => options.baseUrl?.trim() || GMAIL_API_BASE_URL,
   maxResponseBytes: GMAIL_MAX_RESPONSE_BYTES,
@@ -131,11 +133,10 @@ export const gmail = defineApiProvider<GmailOptions>({
       googleHatchBinding(connection, {
         index,
         review:
-          "Exactly eleven reviewed Gmail reads beneath users/me. Draft writes use named guarded MIME tools; sending/settings/media are never admitted.",
-        refusal: (op) => refusalReasons[`${op.method} ${op.path}`],
+          "All 79 reviewed Gmail methods beneath users/me with literal read, write and destructive verdicts; composed raw MIME is checked for withheld links before send.",
         refuse: (call) => {
-          const refused = refusalReasons[`${call.method} ${call.op.path}`];
-          if (refused) return refused;
+          const withheld = refuseWithheldRaw(call.body);
+          if (withheld) return withheld;
           if (call.query["maxResults"] !== undefined) {
             const count = Number(call.query["maxResults"]);
             if (!Number.isInteger(count) || count < 1 || count > 500)
@@ -145,13 +146,18 @@ export const gmail = defineApiProvider<GmailOptions>({
         },
       }),
     notes: () => ({
-      read: "Gmail is the three-hatch exception: there is no write hatch. Drafts use only create_draft/update_draft; sending is never available. Full MIME and raw-message fields retain decoded sent-secret safety. Use get_attachment for fresh immutable-part resolution and bounded decoded content.",
+      read: "Full MIME and raw-message fields retain decoded sent-secret safety. Use get_attachment for fresh immutable-part resolution and bounded decoded content.",
+      write:
+        "Prefer the named tools, which build RFC 2822 MIME, threading and merges. A raw body here is base64url RFC 2822 that you compose; messages/send and drafts/send send it immediately and irreversibly.",
     }),
   },
   result,
   safety: () => safety,
   probe,
-  blocks: { keys: ["writes"], select: (options) => (options.readOnly ? [] : ["writes"]) },
+  blocks: {
+    keys: ["writes"],
+    select: (options) => (options.readOnly ? [] : ["writes"]),
+  },
   guide: (options) => ({
     context: [
       `Purpose: ${options.purpose}`,
@@ -164,9 +170,9 @@ export const gmail = defineApiProvider<GmailOptions>({
               : "Each call uses the mailbox mapped from its admitted caller or pool owner.",
             "A missing subject fails auth_required; ask the operator to repair configuration after an auth failure.",
           ]),
-      ...(options.readOnly ? ["This connection is read-only; draft writes are refused."] : []),
+      ...(options.readOnly ? ["This connection is read-only; sends, drafts and every other change are refused."] : []),
     ],
-    summary: "Load for Gmail search, capped message bodies, threaded replies and drafts that never send.",
+    summary: "Load for Gmail search, bodies, sending, threaded replies, forwards, labels, trash, filters and vacation.",
     required: true,
   }),
   tools: gmailTools,

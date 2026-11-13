@@ -3,6 +3,16 @@
   "provider": "gmail",
   "generated": {
     "operations": [
+      "DELETE /gmail/v1/users/{userId}/drafts/{id}",
+      "DELETE /gmail/v1/users/{userId}/labels/{id}",
+      "DELETE /gmail/v1/users/{userId}/messages/{id}",
+      "DELETE /gmail/v1/users/{userId}/settings/cse/identities/{cseEmailAddress}",
+      "DELETE /gmail/v1/users/{userId}/settings/delegates/{delegateEmail}",
+      "DELETE /gmail/v1/users/{userId}/settings/filters/{id}",
+      "DELETE /gmail/v1/users/{userId}/settings/forwardingAddresses/{forwardingEmail}",
+      "DELETE /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+      "DELETE /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}",
+      "DELETE /gmail/v1/users/{userId}/threads/{id}",
       "GET /gmail/v1/users/{userId}/drafts",
       "GET /gmail/v1/users/{userId}/drafts/{id}",
       "GET /gmail/v1/users/{userId}/history",
@@ -12,16 +22,72 @@
       "GET /gmail/v1/users/{userId}/messages/{id}",
       "GET /gmail/v1/users/{userId}/messages/{messageId}/attachments/{id}",
       "GET /gmail/v1/users/{userId}/profile",
+      "GET /gmail/v1/users/{userId}/settings/autoForwarding",
+      "GET /gmail/v1/users/{userId}/settings/cse/identities",
+      "GET /gmail/v1/users/{userId}/settings/cse/identities/{cseEmailAddress}",
+      "GET /gmail/v1/users/{userId}/settings/cse/keypairs",
+      "GET /gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}",
+      "GET /gmail/v1/users/{userId}/settings/delegates",
+      "GET /gmail/v1/users/{userId}/settings/delegates/{delegateEmail}",
+      "GET /gmail/v1/users/{userId}/settings/filters",
+      "GET /gmail/v1/users/{userId}/settings/filters/{id}",
+      "GET /gmail/v1/users/{userId}/settings/forwardingAddresses",
+      "GET /gmail/v1/users/{userId}/settings/forwardingAddresses/{forwardingEmail}",
+      "GET /gmail/v1/users/{userId}/settings/imap",
+      "GET /gmail/v1/users/{userId}/settings/language",
+      "GET /gmail/v1/users/{userId}/settings/pop",
+      "GET /gmail/v1/users/{userId}/settings/sendAs",
+      "GET /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+      "GET /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo",
+      "GET /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}",
+      "GET /gmail/v1/users/{userId}/settings/vacation",
       "GET /gmail/v1/users/{userId}/threads",
       "GET /gmail/v1/users/{userId}/threads/{id}",
+      "PATCH /gmail/v1/users/{userId}/labels/{id}",
+      "PATCH /gmail/v1/users/{userId}/settings/cse/identities/{emailAddress}",
+      "PATCH /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
       "POST /gmail/v1/users/{userId}/drafts",
-      "PUT /gmail/v1/users/{userId}/drafts/{id}"
+      "POST /gmail/v1/users/{userId}/drafts/send",
+      "POST /gmail/v1/users/{userId}/labels",
+      "POST /gmail/v1/users/{userId}/messages",
+      "POST /gmail/v1/users/{userId}/messages/batchDelete",
+      "POST /gmail/v1/users/{userId}/messages/batchModify",
+      "POST /gmail/v1/users/{userId}/messages/import",
+      "POST /gmail/v1/users/{userId}/messages/send",
+      "POST /gmail/v1/users/{userId}/messages/{id}/modify",
+      "POST /gmail/v1/users/{userId}/messages/{id}/trash",
+      "POST /gmail/v1/users/{userId}/messages/{id}/untrash",
+      "POST /gmail/v1/users/{userId}/settings/cse/identities",
+      "POST /gmail/v1/users/{userId}/settings/cse/keypairs",
+      "POST /gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:disable",
+      "POST /gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:enable",
+      "POST /gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:obliterate",
+      "POST /gmail/v1/users/{userId}/settings/delegates",
+      "POST /gmail/v1/users/{userId}/settings/filters",
+      "POST /gmail/v1/users/{userId}/settings/forwardingAddresses",
+      "POST /gmail/v1/users/{userId}/settings/sendAs",
+      "POST /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo",
+      "POST /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}/setDefault",
+      "POST /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/verify",
+      "POST /gmail/v1/users/{userId}/stop",
+      "POST /gmail/v1/users/{userId}/threads/{id}/modify",
+      "POST /gmail/v1/users/{userId}/threads/{id}/trash",
+      "POST /gmail/v1/users/{userId}/threads/{id}/untrash",
+      "POST /gmail/v1/users/{userId}/watch",
+      "PUT /gmail/v1/users/{userId}/drafts/{id}",
+      "PUT /gmail/v1/users/{userId}/labels/{id}",
+      "PUT /gmail/v1/users/{userId}/settings/autoForwarding",
+      "PUT /gmail/v1/users/{userId}/settings/imap",
+      "PUT /gmail/v1/users/{userId}/settings/language",
+      "PUT /gmail/v1/users/{userId}/settings/pop",
+      "PUT /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+      "PUT /gmail/v1/users/{userId}/settings/vacation"
     ],
     "evidence": {
       "discovery.document.json": "sha256:bf66f903acb058f8380b96697dcc08c778a3929182f7ec07f246b77f51cf2d97",
       "discovery.json": "sha256:a2bd789138a168bef6ba8a5e41b7fd29dec6f27ea179c014dfddbfdd51eeafb9",
-      "openapi.json": "sha256:46cd7752c7def702bcf3db91a4f77c063ba8791769bb0851b78abf4ecdf956ed",
-      "value-safety.json": "sha256:0d7b5b81cbaf73d70b8c8a075521b4bb44d5e5df913bc5691c3121769054e3d2"
+      "openapi.json": "sha256:b4698b286b2c86315704cd428118563b215199375b50ddf22d32c080d632b6ac",
+      "value-safety.json": "sha256:05ac31f0ee82561b8632728bbebeb3c695b92095ae36ab056a636880dcf344a7"
     }
   },
   "checks": [
@@ -36,10 +102,61 @@
         "format": "google-discovery"
       },
       "scopes": [
-        "https://www.googleapis.com/auth/gmail.readonly",
-        "https://www.googleapis.com/auth/gmail.compose"
+        "https://mail.google.com/",
+        "https://www.googleapis.com/auth/gmail.settings.basic",
+        "https://www.googleapis.com/auth/gmail.settings.sharing"
       ],
       "endpoints": [
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/drafts/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:b41ba92039ce853bf85a75298897d58abed84507b4f225e033caa9990f07423a"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/labels/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:b41ba92039ce853bf85a75298897d58abed84507b4f225e033caa9990f07423a"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/messages/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:b41ba92039ce853bf85a75298897d58abed84507b4f225e033caa9990f07423a"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/settings/cse/identities/{cseEmailAddress}",
+          "specRevision": "20261019",
+          "contract": "sha256:590cfe828a28908296aaa7d1193a7a3c5653bfa87c90655fc497125feb79a92f"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/settings/delegates/{delegateEmail}",
+          "specRevision": "20261019",
+          "contract": "sha256:78f4f6b16d2d3d86cad012573f188879070054767650f80b9e0dc11d7a3d8711"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/settings/filters/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:b41ba92039ce853bf85a75298897d58abed84507b4f225e033caa9990f07423a"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/settings/forwardingAddresses/{forwardingEmail}",
+          "specRevision": "20261019",
+          "contract": "sha256:29a6a4061216e0a257e57a2573dbf83b16e5de746fb17a195c7a07df19d386df"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+          "specRevision": "20261019",
+          "contract": "sha256:b77cdc5b6987ac544747965777a286575ec43e15dbfb3a694e58b83eb9f219b5"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:e6b77552821127b24eacb7b68294b20a64128c229630dd722773bb11930c50e9"
+        },
+        {
+          "operation": "DELETE /gmail/v1/users/{userId}/threads/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:b41ba92039ce853bf85a75298897d58abed84507b4f225e033caa9990f07423a"
+        },
         {
           "operation": "GET /gmail/v1/users/{userId}/drafts",
           "specRevision": "20261019",
@@ -86,6 +203,101 @@
           "contract": "sha256:df5a5de014b48a49f4464ba2729c3f48d65253e7c16ec2722efe7d805884b0ed"
         },
         {
+          "operation": "GET /gmail/v1/users/{userId}/settings/autoForwarding",
+          "specRevision": "20261019",
+          "contract": "sha256:6b7a8ace44a4ce300ee9af243e1a6bc7b8b5955ead2f32361a0d77ba8b169b43"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/cse/identities",
+          "specRevision": "20261019",
+          "contract": "sha256:ea1923c5ba5bc1c9fbf0773a034974048e9896a76ffe974800f5799fc18502b7"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/cse/identities/{cseEmailAddress}",
+          "specRevision": "20261019",
+          "contract": "sha256:d62f85fbeddba700eaf4514a7d4e2d36460751e7f108dd58469718e973d5d44d"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/cse/keypairs",
+          "specRevision": "20261019",
+          "contract": "sha256:bbfa9dc859eff17eda7029671403f40e07cf43455507b7faabe9890d6c683cbc"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}",
+          "specRevision": "20261019",
+          "contract": "sha256:cad4558af7bfbbbff3d1c91efd5b458d5fdb261412eabd3d2e6c1b911069ce96"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/delegates",
+          "specRevision": "20261019",
+          "contract": "sha256:1fc0b12f970cfcc0d7b088f80f42c38891ca6e548b0d7cdebfc14993117c0bc7"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/delegates/{delegateEmail}",
+          "specRevision": "20261019",
+          "contract": "sha256:29a537b76e6684830d339b8711c3db78dde0627eb2ce2692dea2f0d25a803f69"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/filters",
+          "specRevision": "20261019",
+          "contract": "sha256:d38a3de056d0b6d2eb88a1d540a78e8a36f33d0f4988479c9c949ca7292a6d70"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/filters/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:ea51d13936e3be57980ce63e86823472dfc4c1bf6662793192c0ce3e2f28ae9c"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/forwardingAddresses",
+          "specRevision": "20261019",
+          "contract": "sha256:2f07aa2c7f1d54b42170b1dcd3080fcd2a5a4fe0831558569cb6fe0cfca6d94b"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/forwardingAddresses/{forwardingEmail}",
+          "specRevision": "20261019",
+          "contract": "sha256:638ec119b6eeb108611c65372288c1e316508e6954d475a8880eecedb0d227b5"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/imap",
+          "specRevision": "20261019",
+          "contract": "sha256:e9e84b140048dc11c48904bd740db1d85816bd02f32cb32864bb4d2f7d8ee2df"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/language",
+          "specRevision": "20261019",
+          "contract": "sha256:aad0b9e299af5e84a8ec7b8ddaa29b5a0763e0b5a906ec9df6b051151ebe2119"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/pop",
+          "specRevision": "20261019",
+          "contract": "sha256:2f9bc09c6ca95e7ffcd11e48bf49ed701130b98c646f90bcbc683eb9a7481fda"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/sendAs",
+          "specRevision": "20261019",
+          "contract": "sha256:48fd837b48aa6280789616d9d20b4de750e2bea365d54009f8ffd38ff2c78ba3"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+          "specRevision": "20261019",
+          "contract": "sha256:046301316a049d7d9f2c0c6dc8bcb617ab2b4cf94bc1faa84f9c1f9e3b2a11b7"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo",
+          "specRevision": "20261019",
+          "contract": "sha256:add65318a4a0223515c36f94a99c41939c2aa5f0853f5c2afdeebfca21054fd7"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:399684ca8ee708fd67832b76d520fae42ab84028f454b1c0e65a0e70190fbe61"
+        },
+        {
+          "operation": "GET /gmail/v1/users/{userId}/settings/vacation",
+          "specRevision": "20261019",
+          "contract": "sha256:1cdf060093cec8ef27d1fec96419956b454e362b27df0f55de3f4344d420a7ab"
+        },
+        {
           "operation": "GET /gmail/v1/users/{userId}/threads",
           "specRevision": "20261019",
           "contract": "sha256:8355c6f416e03262594915a0da51deb2da82cd5b08f334371967153fddd88056"
@@ -96,14 +308,199 @@
           "contract": "sha256:badfddbba2a67a76fec84d34f2c5ef30f1c6a4843f19b7231658b2f59107c518"
         },
         {
+          "operation": "PATCH /gmail/v1/users/{userId}/labels/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:b8fd75edde10b90c8dcfa39c7bc8090bc6e555ca67dbe18586e8715122108327"
+        },
+        {
+          "operation": "PATCH /gmail/v1/users/{userId}/settings/cse/identities/{emailAddress}",
+          "specRevision": "20261019",
+          "contract": "sha256:b9501f5f88ff2bfa9142f93bf08e56dd3b4aa07b80c7bc1a7ca204e1dc503c16"
+        },
+        {
+          "operation": "PATCH /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+          "specRevision": "20261019",
+          "contract": "sha256:3aad67bbc4cf6483bd2c886cbdc686a021bd4eb75194b82ac80e0fff27fda7ec"
+        },
+        {
           "operation": "POST /gmail/v1/users/{userId}/drafts",
           "specRevision": "20261019",
           "contract": "sha256:9cbac4eb5dbb560eb012c0b48df971e8ec80958338931f2b70bda9dc2b3daf81"
         },
         {
+          "operation": "POST /gmail/v1/users/{userId}/drafts/send",
+          "specRevision": "20261019",
+          "contract": "sha256:364c4959c6c1a5e85008970f3ef87acee2d437254e0ca357a2b9d7b5d5a5e795"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/labels",
+          "specRevision": "20261019",
+          "contract": "sha256:f1ff94aafd1429d865f3546fa11072390019c307454dfbd9c130336a5609038a"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/messages",
+          "specRevision": "20261019",
+          "contract": "sha256:804af27c4f5ff58e9b0b32696a79a57e94d766ad7c2609f0b33544abc4306217"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/messages/batchDelete",
+          "specRevision": "20261019",
+          "contract": "sha256:b3ec51fb099e4a1ac3cfc3367d52cfa43612b91822c89551440055b367683dc1"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/messages/batchModify",
+          "specRevision": "20261019",
+          "contract": "sha256:7dc59ee52ff976227c3f7242903330352b9b467379a1df0c78e281df3ce0f5b5"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/messages/import",
+          "specRevision": "20261019",
+          "contract": "sha256:977de629fc2c6df0b2683efc909086d2191213a06d4b00ac8145c63d0b2e80ca"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/messages/send",
+          "specRevision": "20261019",
+          "contract": "sha256:a80d02969f61ab83bf0f4b335a9b26fb58ec18bbad03b41696d4651020159fba"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/messages/{id}/modify",
+          "specRevision": "20261019",
+          "contract": "sha256:0310afc255b8bfb147c4dbd7e60d8deccf4a42d2d54e601105a89baefb783b4c"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/messages/{id}/trash",
+          "specRevision": "20261019",
+          "contract": "sha256:2cac896868544541abf430b3e78e454d87ce4b490d28fd6b0e7b5444a67ad231"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/messages/{id}/untrash",
+          "specRevision": "20261019",
+          "contract": "sha256:2cac896868544541abf430b3e78e454d87ce4b490d28fd6b0e7b5444a67ad231"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/cse/identities",
+          "specRevision": "20261019",
+          "contract": "sha256:88e651bf61f6eb53c0219bc5c508f1148c506bf975f01fe5e620cd96f3fedb92"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/cse/keypairs",
+          "specRevision": "20261019",
+          "contract": "sha256:f0144626538776dfaa9e9651daf3e8386495ffc81cfe2cd819614bbb3025133c"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:disable",
+          "specRevision": "20261019",
+          "contract": "sha256:41cf73f410b9341df53b011b759dedafe61c052991e7e38b207cab013f7feb71"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:enable",
+          "specRevision": "20261019",
+          "contract": "sha256:cfe650deb9bbf75340d583d64d0341ab61df6beca449fda93e6bfc928955486a"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/cse/keypairs/{keyPairId}:obliterate",
+          "specRevision": "20261019",
+          "contract": "sha256:9b29612d5fc35e41a0d0ee1f5f0a80f789a77e080aacdccfa6bd9116edb642e2"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/delegates",
+          "specRevision": "20261019",
+          "contract": "sha256:2f41e37d899d0085a97e0915a49408f1034b37637bf573584fec96925834749f"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/filters",
+          "specRevision": "20261019",
+          "contract": "sha256:cbf57fdf2f33e70c7f738b187362049191d56c941a6db93afe77a0a1db9b9a78"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/forwardingAddresses",
+          "specRevision": "20261019",
+          "contract": "sha256:b3cc2ff298935eabc13f507e328af4b19c265bd79a0c6ec3a680248a3d0cf60f"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/sendAs",
+          "specRevision": "20261019",
+          "contract": "sha256:856593b9557584d9ad00e04a52b0c06a8b1394964e824b52adff24da387b6866"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo",
+          "specRevision": "20261019",
+          "contract": "sha256:6671b2db3250fb4d350b930ab51fd76d32d50a06e0a648f7109b9b91cab5da63"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/smimeInfo/{id}/setDefault",
+          "specRevision": "20261019",
+          "contract": "sha256:e6b77552821127b24eacb7b68294b20a64128c229630dd722773bb11930c50e9"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}/verify",
+          "specRevision": "20261019",
+          "contract": "sha256:b77cdc5b6987ac544747965777a286575ec43e15dbfb3a694e58b83eb9f219b5"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/stop",
+          "specRevision": "20261019",
+          "contract": "sha256:cdec26144ae38db069579fc0eb865adae9f9e9526f4d1c60e673a9b7e6d2eb35"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/threads/{id}/modify",
+          "specRevision": "20261019",
+          "contract": "sha256:931a7afc4f0ddabd2071e469dfa67b344c51fd0d909e5ef9a7197799c723ca7e"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/threads/{id}/trash",
+          "specRevision": "20261019",
+          "contract": "sha256:60029163f60ce12a322f30e38ae25e1c2051a83be457a7b4b1a2fdbb6d7d29c0"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/threads/{id}/untrash",
+          "specRevision": "20261019",
+          "contract": "sha256:60029163f60ce12a322f30e38ae25e1c2051a83be457a7b4b1a2fdbb6d7d29c0"
+        },
+        {
+          "operation": "POST /gmail/v1/users/{userId}/watch",
+          "specRevision": "20261019",
+          "contract": "sha256:985d2155de9e579ceae21d4a80ad247869c050ba89eaa63fcd7d1ca50c0e9f22"
+        },
+        {
           "operation": "PUT /gmail/v1/users/{userId}/drafts/{id}",
           "specRevision": "20261019",
           "contract": "sha256:aca8b1ba77ee4b3f59166cb97716ba1baea4a6f36d4346e8d1eefd47a750d344"
+        },
+        {
+          "operation": "PUT /gmail/v1/users/{userId}/labels/{id}",
+          "specRevision": "20261019",
+          "contract": "sha256:b8fd75edde10b90c8dcfa39c7bc8090bc6e555ca67dbe18586e8715122108327"
+        },
+        {
+          "operation": "PUT /gmail/v1/users/{userId}/settings/autoForwarding",
+          "specRevision": "20261019",
+          "contract": "sha256:b56aa6dde8ab6bd585f2894f8a9ef7b29c8ead08544075b14d3d78b935fc03ae"
+        },
+        {
+          "operation": "PUT /gmail/v1/users/{userId}/settings/imap",
+          "specRevision": "20261019",
+          "contract": "sha256:a768d888f5b783e9a9cbf30f96629ef468211e64955f4f85ca2c037034cc0807"
+        },
+        {
+          "operation": "PUT /gmail/v1/users/{userId}/settings/language",
+          "specRevision": "20261019",
+          "contract": "sha256:bae5163d6b7d36155b75c9b6340388655cf3c58730a5ea39b32221c54dd9433b"
+        },
+        {
+          "operation": "PUT /gmail/v1/users/{userId}/settings/pop",
+          "specRevision": "20261019",
+          "contract": "sha256:a389dce8210ced21517ce69c5fde34e3b02465340d98375bd7bbc542a910e277"
+        },
+        {
+          "operation": "PUT /gmail/v1/users/{userId}/settings/sendAs/{sendAsEmail}",
+          "specRevision": "20261019",
+          "contract": "sha256:3aad67bbc4cf6483bd2c886cbdc686a021bd4eb75194b82ac80e0fff27fda7ec"
+        },
+        {
+          "operation": "PUT /gmail/v1/users/{userId}/settings/vacation",
+          "specRevision": "20261019",
+          "contract": "sha256:ee214e4fffa78a0eabb27e80962cdddd93c6f576599beee4c55ca071e261c315"
         }
       ]
     },
@@ -131,14 +528,15 @@
         "tokenEndpointAuthMethod": "client_secret_post",
         "pkce": "S256",
         "scopes": [
-          "https://www.googleapis.com/auth/gmail.readonly",
-          "https://www.googleapis.com/auth/gmail.compose"
+          "https://mail.google.com/",
+          "https://www.googleapis.com/auth/gmail.settings.basic",
+          "https://www.googleapis.com/auth/gmail.settings.sharing"
         ],
         "revocationEndpoint": "not configured: https://oauth2.googleapis.com/revoke",
         "revocationSource": "https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke"
       },
       "reason": "OAuth mode's authorization-code grant against Google's web-server flow has no machine-readable contract. Compare the authorization and token endpoints, body client authentication, S256 PKCE support and the requested scopes with the page; confirm revocation still ends every grant the person gave the Google Cloud project, including its other OAuth clients, which is why no revocation endpoint is configured.",
-      "lastVerified": "2026-11-12"
+      "lastVerified": "2026-11-13"
     },
     {
       "type": "manual",

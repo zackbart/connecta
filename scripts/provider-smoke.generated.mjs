@@ -131,9 +131,12 @@ var fixture9 = {
     return gmail(id, { ...options9, ...overrides });
   },
   assertSmoke(connector) {
-    if (connector.staticTools?.some((tool) => /send/.test(tool.name))) throw new Error("Gmail provider published a send tool");
+    for (const name of ["send_message", "forward_message", "send_draft", "delete_message", "batch_delete_messages"]) {
+      const tool = connector.staticTools?.find((entry) => entry.name === name);
+      if (tool?.annotations?.destructiveHint !== true) throw new Error(`Gmail provider must publish ${name} as destructive`);
+    }
   },
-  conventions: { "verbs": ["search", "list", "get", "create", "update"], "nestedDescriptionExceptions": [], "auth": "delegated" }
+  conventions: { "verbs": ["search", "list", "get", "create", "update", "send", "forward", "delete", "trash", "restore", "batch"], "nestedDescriptionExceptions": [], "auth": "delegated" }
 };
 
 // src/providers/granola/fixtures.ts

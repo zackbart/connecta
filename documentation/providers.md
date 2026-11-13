@@ -111,7 +111,7 @@ manual vendor review; its read hatch cannot execute arbitrary query SQL.
 These generated reference catalogs separate named workflows from API tools
 and reads from writes. API search/details inspect indexed contracts, including
 refused operations. Raw read/write calls accept only reviewed operations within
-configured scope and safety rules. Gmail has no generic write tool.
+configured scope and safety rules.
 
 Addresses use your connector ID: Stripe configured as `billing` exposes
 `billing.stripe_api_read`. Configuration, credentials and read-only policy affect
@@ -233,14 +233,14 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Gmail (12 tools)</summary>
+<summary>Gmail (35 tools)</summary>
 
 [Setup](#gmail). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/gmail/api/reference/rest).
 
-- **Named reads:** `get_attachment`, `get_draft`, `get_message`, `get_thread`, `list_drafts`, `list_labels`, `search_threads`.
-- **Named writes:** `create_draft`, `update_draft`.
+- **Named reads:** `get_attachment`, `get_draft`, `get_message`, `get_thread`, `get_vacation`, `list_drafts`, `list_filters`, `list_labels`, `search_threads`.
+- **Named writes:** `batch_delete_messages`, `batch_update_message_labels`, `create_draft`, `create_filter`, `create_label`, `delete_draft`, `delete_filter`, `delete_label`, `delete_message`, `delete_thread`, `forward_message`, `restore_message`, `restore_thread`, `send_draft`, `send_message`, `trash_message`, `trash_thread`, `update_draft`, `update_label`, `update_message_labels`, `update_thread_labels`, `update_vacation`.
 - **API reads:** `gmail_api_details`, `gmail_api_read`, `gmail_api_search`.
-- **API writes:** None.
+- **API writes:** `gmail_api_write`.
 
 **Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/gmail).
 
@@ -484,11 +484,9 @@ in 32 KiB pages/chunks when necessary. The summary has its separate 300-unit
 search budget; ranking uses the indexed language, not attached refusal prose.
 
 Use `_api_details` with the indexed method and path when a refused method lies
-outside the call tool's schema. For example, `gmail_api_details` with
-`method: "POST", path: "/messages/send"` explains the sending refusal; Gmail's
-read hatch still has no method argument and there is no Gmail write hatch.
-`forms_api_details` likewise explains `DELETE /forms/{formId}/watches/{watchId}`
-even though DELETE remains absent from the Forms write schema. GitHub
+outside the call tool's schema. For example, `forms_api_details` explains
+`DELETE /forms/{formId}/watches/{watchId}` even though DELETE remains absent
+from the Forms write schema. GitHub
 `PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge` also remains outside its raw
 write schema; inspect its refusal and named alternative through details. All such calls
 remain refused before authentication or downstream I/O.
@@ -1137,8 +1135,12 @@ Gmail API, create a service account with no IAM roles, and provide its JSON
 key as a deployment secret. A Workspace super administrator grants the
 service account's numeric client id exactly these scopes in Admin console →
 Security → Access and data control → API controls → Domain-wide delegation:
-`https://www.googleapis.com/auth/gmail.readonly` and
-`https://www.googleapis.com/auth/gmail.compose`. Changes can take up to 24 hours.
+`https://mail.google.com/`,
+`https://www.googleapis.com/auth/gmail.settings.basic` and
+`https://www.googleapis.com/auth/gmail.settings.sharing`. Changes can take up
+to 24 hours. Full mailbox access is the only Gmail scope that permits permanent
+deletion; the settings scopes admit filters, vacation, IMAP/POP and language
+(`basic`) and forwarding, delegates and send-as aliases (`sharing`).
 If key creation is blocked, an organization policy administrator must review
 `iam.disableServiceAccountKeyCreation` for that project.
 
@@ -1146,7 +1148,7 @@ If key creation is blocked, an organization policy administrator must review
 import { gmail } from "@zackbart/connecta/providers/gmail";
 
 gmail("mail", {
-  purpose: "Read mail and prepare reply drafts",
+  purpose: "Triage, answer and organize staff mail",
   serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
   subject: (identity) => mailboxes[identity.principal?.id ?? ""],
 });
@@ -1156,9 +1158,17 @@ Map admitted callers to Workspace addresses in deployment code. A fixed
 `subject: "alice@example.com"` instead shares that mailbox with every caller.
 Anonymous callers cannot use a subject function. No tool argument selects a
 mailbox. Both modes retain ownerless-pool hiding and the endpoint's read-only
-policy. `gmail.compose` technically permits sending; this provider admits no
-send route. Drafts are written only through `create_draft` and `update_draft`.
-Gmail is the documented three-hatch exception to the four-hatch default.
+policy. The connection is full read-write by default: an agent can send,
+reply and forward mail, send and delete drafts, relabel, archive, trash and
+permanently delete messages and threads, manage labels, filters and the
+vacation responder, and change every other mailbox setting through
+`gmail_api_write`, including forwarding, delegates and send-as aliases. Every
+write is classified as one. Sends, relabels, trash and permanent deletes, and
+changes to filters, delivery, forwarding, push watches, identity or security
+settings are destructive; only creating drafts and labels, inserting messages
+and restoring from trash are plain writes. To
+offer less, set `readOnly: true` on the connection, or list only chosen tools
+(for example `mail.search_threads`, `mail.create_draft`) in a pool.
 
 **OAuth mode.** Every Google product (`gmail`, `drive`, `docs`, `sheets`,
 `slides`, `forms`, `meet`, `people`,
@@ -1168,7 +1178,7 @@ consumer Google accounts:
 
 ```ts
 gmail("mail", {
-  purpose: "Read mail and prepare reply drafts",
+  purpose: "Triage, answer and organize staff mail",
   oauth: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET },
   authScope: "personal",
 });
@@ -1210,7 +1220,7 @@ connected:
 ```ts
 const oauth = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET };
 gmail("mail", {
-  purpose: "Read mail and prepare reply drafts",
+  purpose: "Triage, answer and organize staff mail",
   oauth,
   authScope: "personal",
   accounts: {
@@ -1266,11 +1276,31 @@ Connection tab (`ConnectorStatus.account`); activity never records it.
 
 Named reads return projected records or `{ items, page }`; `fields` narrows a
 record or each list item. Size cuts appear in `truncated`. The pinned index
-contains 79 methods and admits eleven reads. Settings, forwarding,
-delegation, CSE, S/MIME, watches, mailbox mutation and every send method are
-refused. Full MIME JSON crosses the same decoded sent-secret safety boundary.
-Use the named attachment tool for immutable part identity, charset rendering,
-one-MiB download bounds and decoded-size validation.
+contains 79 methods and admits every one: GETs read through `gmail_api_read`,
+and every other method writes through `gmail_api_write`. A composed base64url
+`raw` message is admitted only in MIME the connection reads exactly as a mail
+client would, and every decoded part, header and attached message is checked
+for a withheld link before sending. It accepts identity, base64 and
+quoted-printable transfer encodings; US-ASCII, UTF-8, ISO-8859-n and
+windows-125n charsets; header encoded words, with whitespace between adjacent
+words dropped as clients drop it; and Content-Type, Content-Transfer-Encoding
+and Content-Disposition values made of plain or quoted parameters. It refuses,
+sending nothing: comments in those headers, repeated or RFC 2231 extended
+parameters (`filename*=`; use an encoded word or an ASCII name), repeated
+headers, other charsets (ISO-2022-JP, Shift_JIS, EUC, GB, Big5, UTF-16/32,
+UTF-7), text that is invalid in its charset, a line that begins with a part
+boundary but is not an exact delimiter, header lines that are not fields, bare
+carriage returns, nesting over 8 levels or 256 parts, more than 4,096 encoded
+words, and more than 16 MiB of decoded content. Full MIME
+JSON crosses the same decoded sent-secret safety boundary. Settings reads
+withhold send-as SMTP passwords, S/MIME private keys and their passwords, and
+client-side encryption wrapped keys. Use the named attachment tool for
+immutable part identity, charset rendering, one-MiB download bounds and
+decoded-size validation. `forward_message` forwards originals up to 3 MiB in
+one request, unchanged except that their `Bcc` and `Resent-Bcc` headers are
+removed, whatever whitespace precedes the colon; an original whose header block
+breaks a line with a bare carriage return is refused. Forward a larger or
+refused message in Gmail.
 
 A hatch read has three layers: the direct-call delivery contains the tool's
 `{ status, data, page? }` result, whose `data` is Google's JSON. In a program:

@@ -13,7 +13,7 @@ export const ALICE = "alice@example.com",
 export const DOC_PARAGRAPHS = 600;
 export const ATTACHMENT = Buffer.from([0, 1, 2, 3, 128, 255, 13, 10]);
 const SCOPES: Record<GoogleProduct, string[]> = {
-  gmail: ["gmail.readonly", "gmail.compose"],
+  gmail: ["https://mail.google.com/", "gmail.settings.basic", "gmail.settings.sharing"],
   drive: ["drive"],
   docs: ["documents"],
   sheets: ["spreadsheets"],
@@ -21,6 +21,8 @@ const SCOPES: Record<GoogleProduct, string[]> = {
   forms: ["forms.body", "forms.responses.readonly"],
   meet: ["meetings.space.created", "meetings.space.readonly", "meetings.space.settings"],
 };
+/** Google's scope URL for a short name; full-mailbox access has its own origin. */
+const scopeUrl = (scope: string) => (scope.startsWith("https://") ? scope : `https://www.googleapis.com/auth/${scope}`);
 const HOSTS = new Set([
   "gmail.googleapis.com",
   "www.googleapis.com",
@@ -161,6 +163,8 @@ interface GoogleAccount {
   revisions: Row[];
   messages: Row[];
   drafts: Row[];
+  /** Mail Gmail sent, as the decoded RFC 2822 source of each send. */
+  sent: Row[];
   document: Row;
   spreadsheet: Row;
   presentation: Row;
@@ -410,6 +414,7 @@ export function googleState() {
         { id: "draft1", message: { ...message(9), id: "dm1", threadId: "t1" } },
         { id: "draft-inline", message: { ...message(10, true), id: "dm2", threadId: "t1" } },
       ],
+      sent: [],
       document: {
         documentId: "docs1",
         title: "docs review",
@@ -739,7 +744,7 @@ export class FakeGoogle {
   consent(authorizationUrl: string, subject: string): URL {
     const url = new URL(authorizationUrl);
     const scopes = (url.searchParams.get("scope") ?? "").split(" ").sort();
-    const product = SCOPES[this.options.product].map((s) => `https://www.googleapis.com/auth/${s}`).sort();
+    const product = SCOPES[this.options.product].map(scopeUrl).sort();
     if (
       `${url.origin}${url.pathname}` !== GOOGLE_AUTHORIZATION_ENDPOINT ||
       url.searchParams.get("client_id") !== this.oauthClient.clientId ||
@@ -828,7 +833,7 @@ export class FakeGoogle {
       .split(" ")
       .sort();
     const allowed = Object.values(SCOPES).some(
-      (set) => JSON.stringify(set.map((s) => `https://www.googleapis.com/auth/${s}`).sort()) === JSON.stringify(scopes),
+      (set) => JSON.stringify(set.map(scopeUrl).sort()) === JSON.stringify(scopes),
     );
     if (
       !head ||
@@ -883,10 +888,7 @@ export class FakeGoogle {
   async handle(request: Request, subject: string, scopes: string[]): Promise<Response> {
     const url = new URL(request.url);
     const product = url.hostname === "www.googleapis.com" ? "drive" : (url.hostname.split(".")[0] as GoogleProduct);
-    if (
-      !GOOGLE_PRODUCTS.includes(product) ||
-      !SCOPES[product].every((s) => scopes.includes(`https://www.googleapis.com/auth/${s}`))
-    )
+    if (!GOOGLE_PRODUCTS.includes(product) || !SCOPES[product].every((s) => scopes.includes(scopeUrl(s))))
       throw new Error("Google fake refused destination/scope mismatch");
     const prefix = {
       gmail: "/gmail/v1/users/me",
@@ -1073,6 +1075,26 @@ export class FakeGoogle {
         if (/\/attachments\//.test(path)) return { size: ATTACHMENT.length, data: ATTACHMENT.toString("base64url") };
         if (path.startsWith("/messages/")) return a.messages.find((m) => m.id === path.split("/")[2]) ?? {};
         if (path.startsWith("/drafts/")) return a.drafts.find((d) => d.id === path.split("/")[2]) ?? {};
+      }
+      if (method === "POST" && path === "/messages/send") {
+        mutate();
+        const id = `sent${a.sent.length + 1}`;
+        const threadId = typeof body.threadId === "string" ? body.threadId : id;
+        a.sent.push({ id, threadId, source: Buffer.from(String(body.raw), "base64url").toString("latin1") });
+        return { id, threadId, labelIds: ["SENT"] };
+      }
+      const relabel = /^\/messages\/([^/]+)\/(modify|trash|untrash)$/.exec(path);
+      if (method === "POST" && relabel) {
+        const found = a.messages.find((m) => m.id === relabel[1]);
+        if (!found)
+          return Response.json({ error: { code: 404, status: "NOT_FOUND", message: "Not Found" } }, { status: 404 });
+        mutate();
+        const add: string[] =
+          relabel[2] === "trash" ? ["TRASH"] : relabel[2] === "modify" ? (body.addLabelIds ?? []) : [];
+        const remove: string[] =
+          relabel[2] === "untrash" ? ["TRASH"] : relabel[2] === "modify" ? (body.removeLabelIds ?? []) : [];
+        found.labelIds = [...new Set([...found.labelIds.filter((l: string) => !remove.includes(l)), ...add])];
+        return { id: found.id, threadId: found.threadId, labelIds: found.labelIds };
       }
       if ((method === "POST" && path === "/drafts") || (method === "PUT" && path === "/drafts/draft1")) {
         mutate();

@@ -7,11 +7,15 @@ export const GMAIL_API_BASE_URL = "https://gmail.googleapis.com/gmail/v1/users/m
 /**
  * Exactly the scopes this connection requests, and exactly what the Admin
  * console's domain-wide delegation entry must list (comma-separated there).
- * `gmail.compose` technically permits sending; the tool surface does not.
+ * Full mailbox access, including permanent deletion, plus the two settings
+ * scopes: `gmail.settings.basic` for filters, vacation, IMAP/POP and language,
+ * and `gmail.settings.sharing` for forwarding, delegates and send-as aliases,
+ * whose writes no other scope admits.
  */
 export const GMAIL_SCOPES = [
-  "https://www.googleapis.com/auth/gmail.readonly",
-  "https://www.googleapis.com/auth/gmail.compose",
+  "https://mail.google.com/",
+  "https://www.googleapis.com/auth/gmail.settings.basic",
+  "https://www.googleapis.com/auth/gmail.settings.sharing",
 ] as const;
 
 /** A full thread without attachment bodies; Gmail's message cap is 25 MB. */
