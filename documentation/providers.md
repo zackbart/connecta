@@ -233,14 +233,14 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Gmail (12 tools)</summary>
+<summary>Gmail (35 tools)</summary>
 
 [Setup](#gmail). **API source:** [Google Discovery conversion](https://developers.google.com/workspace/gmail/api/reference/rest).
 
-- **Named reads:** `get_attachment`, `get_draft`, `get_message`, `get_thread`, `list_drafts`, `list_labels`, `search_threads`.
-- **Named writes:** `create_draft`, `update_draft`.
+- **Named reads:** `get_attachment`, `get_draft`, `get_message`, `get_thread`, `get_vacation`, `list_drafts`, `list_filters`, `list_labels`, `search_threads`.
+- **Named writes:** `batch_delete_messages`, `batch_update_message_labels`, `create_draft`, `create_filter`, `create_label`, `delete_draft`, `delete_filter`, `delete_label`, `delete_message`, `delete_thread`, `forward_message`, `restore_message`, `restore_thread`, `send_draft`, `send_message`, `trash_message`, `trash_thread`, `update_draft`, `update_label`, `update_message_labels`, `update_thread_labels`, `update_vacation`.
 - **API reads:** `gmail_api_details`, `gmail_api_read`, `gmail_api_search`.
-- **API writes:** None.
+- **API writes:** `gmail_api_write`.
 
 **Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/gmail).
 
@@ -1137,8 +1137,12 @@ Gmail API, create a service account with no IAM roles, and provide its JSON
 key as a deployment secret. A Workspace super administrator grants the
 service account's numeric client id exactly these scopes in Admin console →
 Security → Access and data control → API controls → Domain-wide delegation:
-`https://www.googleapis.com/auth/gmail.readonly` and
-`https://www.googleapis.com/auth/gmail.compose`. Changes can take up to 24 hours.
+`https://mail.google.com/`,
+`https://www.googleapis.com/auth/gmail.settings.basic` and
+`https://www.googleapis.com/auth/gmail.settings.sharing`. Changes can take up
+to 24 hours. Full mailbox access is the only Gmail scope that permits permanent
+deletion; the settings scopes admit filters, vacation, IMAP/POP and language
+(`basic`) and forwarding, delegates and send-as aliases (`sharing`).
 If key creation is blocked, an organization policy administrator must review
 `iam.disableServiceAccountKeyCreation` for that project.
 
@@ -1146,7 +1150,7 @@ If key creation is blocked, an organization policy administrator must review
 import { gmail } from "@zackbart/connecta/providers/gmail";
 
 gmail("mail", {
-  purpose: "Read mail and prepare reply drafts",
+  purpose: "Triage, answer and organize staff mail",
   serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
   subject: (identity) => mailboxes[identity.principal?.id ?? ""],
 });
@@ -1156,9 +1160,14 @@ Map admitted callers to Workspace addresses in deployment code. A fixed
 `subject: "alice@example.com"` instead shares that mailbox with every caller.
 Anonymous callers cannot use a subject function. No tool argument selects a
 mailbox. Both modes retain ownerless-pool hiding and the endpoint's read-only
-policy. `gmail.compose` technically permits sending; this provider admits no
-send route. Drafts are written only through `create_draft` and `update_draft`.
-Gmail is the documented three-hatch exception to the four-hatch default.
+policy. The connection is full read-write by default: an agent can send,
+reply and forward mail, send and delete drafts, relabel, archive, trash and
+permanently delete messages and threads, manage labels, filters and the
+vacation responder, and change every other mailbox setting through
+`gmail_api_write`, including forwarding, delegates and send-as aliases. Every
+write is classified as one; sends and permanent deletes are destructive. To
+offer less, set `readOnly: true` on the connection, or list only chosen tools
+(for example `mail.search_threads`, `mail.create_draft`) in a pool.
 
 **OAuth mode.** Every Google product (`gmail`, `drive`, `docs`, `sheets`,
 `slides`, `forms`, `meet`, `people`,
@@ -1168,7 +1177,7 @@ consumer Google accounts:
 
 ```ts
 gmail("mail", {
-  purpose: "Read mail and prepare reply drafts",
+  purpose: "Triage, answer and organize staff mail",
   oauth: { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET },
   authScope: "personal",
 });
@@ -1210,7 +1219,7 @@ connected:
 ```ts
 const oauth = { clientId: env.GOOGLE_CLIENT_ID, clientSecret: env.GOOGLE_CLIENT_SECRET };
 gmail("mail", {
-  purpose: "Read mail and prepare reply drafts",
+  purpose: "Triage, answer and organize staff mail",
   oauth,
   authScope: "personal",
   accounts: {
@@ -1266,11 +1275,15 @@ Connection tab (`ConnectorStatus.account`); activity never records it.
 
 Named reads return projected records or `{ items, page }`; `fields` narrows a
 record or each list item. Size cuts appear in `truncated`. The pinned index
-contains 79 methods and admits eleven reads. Settings, forwarding,
-delegation, CSE, S/MIME, watches, mailbox mutation and every send method are
-refused. Full MIME JSON crosses the same decoded sent-secret safety boundary.
-Use the named attachment tool for immutable part identity, charset rendering,
-one-MiB download bounds and decoded-size validation.
+contains 79 methods and admits every one: GETs read through `gmail_api_read`,
+and every other method writes through `gmail_api_write`, which checks a
+composed base64url `raw` message for withheld links before sending. Full MIME
+JSON crosses the same decoded sent-secret safety boundary. Settings reads
+withhold send-as SMTP passwords, S/MIME private keys and their passwords, and
+client-side encryption wrapped keys. Use the named attachment tool for
+immutable part identity, charset rendering, one-MiB download bounds and
+decoded-size validation. `forward_message` forwards originals up to 3 MiB in
+one request; forward a larger message in Gmail.
 
 A hatch read has three layers: the direct-call delivery contains the tool's
 `{ status, data, page? }` result, whose `data` is Google's JSON. In a program:

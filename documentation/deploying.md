@@ -343,6 +343,28 @@ Authenticated MCP bodies now default to 4 MiB through
 to 4 MiB. Configure both core and `listen(..., { maxBodyBytes })` if a deployment
 must accept larger bodies. Smaller platform or proxy limits still apply.
 
+Gmail connections now request full mailbox access and both settings scopes
+(`https://mail.google.com/`, `https://www.googleapis.com/auth/gmail.settings.basic`
+and `https://www.googleapis.com/auth/gmail.settings.sharing`) and can send,
+delete and change settings by default. Re-grant before upgrading. Until then,
+in delegation mode every Gmail call fails `provider_permission_denied`; in
+OAuth mode an old grant still reads mail, but sends, mailbox changes and
+settings fail `provider_permission_denied`:
+
+- **Delegation mode:** a Workspace super administrator opens Admin console →
+  Security → Access and data control → API controls → Domain-wide delegation,
+  edits the service account's client id entry, and replaces
+  `gmail.readonly` and `gmail.compose` with exactly those three scopes. Keep the
+  other Workspace products' scopes on the entry. Changes can take up to 24 hours.
+- **OAuth mode:** each person reconnects a personal connection, and a maintainer
+  reconnects a shared one, from the member Connect page or the
+  `authorize_connector` handoff, consenting to the new scopes. An External
+  consent screen may need Google's verification for these scopes.
+
+To keep an agent from sending or deleting, set `readOnly: true` on the Gmail
+connection or list only the tools it may use in its pool; see
+[Gmail](./providers.md#gmail).
+
 After a dispatched write reports an unknown outcome, read the target before
 making another write. Programs retain that outcome even when guest code catches
 the error; see [Writes](./code-mode.md#writes). Provider

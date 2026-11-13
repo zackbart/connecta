@@ -6,7 +6,7 @@ export function threadingIds(value: string | undefined, legacyPhrases = false): 
   const fail = (): never => {
     throw new ConnectorCallError(
       "invalid_args",
-      "The copied Message-ID, In-Reply-To or References header is malformed or withheld. No draft was changed; repair its threading in Gmail.",
+      "The copied Message-ID, In-Reply-To or References header is malformed or withheld. Nothing was saved or sent; repair its threading in Gmail.",
     );
   };
   // Unfold before parsing; a bare CR/LF, control, non-ASCII or withheld lane

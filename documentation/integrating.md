@@ -116,8 +116,8 @@ Google Workspace
 providers require administrator-managed domain-wide delegation and a deployment
 mapping from admitted identity to the downstream account; an agent acts as its
 pool's `owner` instead ([auth guide](auth.md#pool-owners-for-google-workspace)).
-A request must not choose its own account. Gmail never sends mail, and Drive never permanently
-deletes files. Google Docs setup and hatch limits are in
+A request must not choose its own account. Gmail sends and permanently deletes mail as
+destructive writes the host approves, and Drive never permanently deletes files. Google Docs setup and hatch limits are in
 [Google Docs setup](./providers.md#google-docs). Slides setup is in
 [Google Slides setup](./providers.md#google-slides). Meet setup, its three scopes
 and the capabilities Google gates are in [Google Meet setup](./providers.md#google-meet).

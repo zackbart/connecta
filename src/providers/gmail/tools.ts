@@ -6,13 +6,14 @@ import { Effect, Option } from "effect";
 import { defined, type ApiTool } from "../../connectors/api-connector.js";
 import { ConnectorCallError } from "../../errors.js";
 import { Refusal, toConnectorCallError, type HttpFailure } from "../../http/errors.js";
+import type { ArgumentProblems } from "../../http/argument-problems.js";
 import type { CallServices } from "../../http/services.js";
 import type { Connection } from "../../http/vendor.js";
 import type { ConnectorContext } from "../../types.js";
 import { googleClient, type GoogleClient } from "../_shared/google/kit.js";
 import { RESULT_BUDGET_BYTES, clampText, jsonBytes } from "../_shared/google/result-size.js";
 import { encodeForAgent, redactBeforeCut, redactSentSecrets } from "../../sent-secrets.js";
-import { errors, gmailBodyProvenance } from "./api.js";
+import { errors, gmailBodyProvenance, gmailRawProvenance } from "./api.js";
 import { read, write } from "../../http/tools.js";
 import { boundCursor } from "../../http/paging.js";
 import { selectFields } from "../../http/fields.js";
@@ -26,6 +27,7 @@ interface GmailToolProgram {
   readonly description: string;
   readonly annotations: NonNullable<ApiTool["annotations"]>;
   readonly writeSteps?: Readonly<Record<string, "once">>;
+  readonly check?: (args: JsonRecord, problems: ArgumentProblems) => void;
   readonly run: (args: JsonRecord, ctx: ConnectorContext) => Effect.Effect<unknown, HttpFailure, CallServices>;
 }
 
@@ -43,6 +45,11 @@ const SUMMARY_CONCURRENCY = 5;
 /** A full thread without attachment bodies; Gmail's message cap is 25 MB. */
 
 const MAX_RECIPIENTS = 100;
+/**
+ * Connecta's own bound on a forwarded original: its raw bytes travel base64url
+ * inside one JSON send request, so a larger message is forwarded in Gmail.
+ */
+const MAX_FORWARD_BYTES = 3 * 1024 * 1024;
 /** Gmail cannot range-read attachment JSON, so text and binary downloads are bounded. */
 const MAX_ATTACHMENT_BYTES = 1024 * 1024;
 /** Same direct-call ceiling and minimum result budget as Drive content reads. */
@@ -245,7 +252,11 @@ function readBody(
     if (!data && attachmentId) {
       const size = typeof stored["size"] === "number" ? stored["size"] : undefined;
       if (max === 0) {
-        return { body: "[… body not read; raise maxBodyChars to read it]", bodyTruncated: true, bodyFormat: format };
+        return {
+          body: "[… body not read; raise maxBodyChars to read it]",
+          bodyTruncated: true,
+          bodyFormat: format,
+        };
       }
       if (!messageId || size === undefined || size > MAX_STORED_BODY_BYTES) {
         return {
@@ -478,13 +489,23 @@ function readAttachment(
       mimeType: clip(text(part["mimeType"]) ?? "application/octet-stream", FIELD_BYTES, "mimeType"),
       size,
     });
-    const unavailable = (note: string) => ({ ...base, format: "unavailable", contentTruncated: false, note });
+    const unavailable = (note: string) => ({
+      ...base,
+      format: "unavailable",
+      contentTruncated: false,
+      note,
+    });
     const isText =
       mime.startsWith("text/") ||
       ["application/json", "application/xml", "message/rfc822"].includes(mime) ||
       mime.endsWith("+json") ||
       mime.endsWith("+xml");
-    let envelope = { ...base, format: isText ? "text" : "base64", content: "", contentTruncated: false };
+    let envelope = {
+      ...base,
+      format: isText ? "text" : "base64",
+      content: "",
+      contentTruncated: false,
+    };
     const fitting = Math.floor(Math.max(0, maxBytes - jsonBytes(envelope)) / 4) * 3;
     const limit = isText ? MAX_ATTACHMENT_BYTES : Math.min(MAX_ATTACHMENT_BYTES, fitting);
     const tooLarge = () =>
@@ -523,7 +544,10 @@ function readAttachment(
       const { bytes, changed } = content;
       if (bytes.length > limit) return tooLarge();
       if (!isText)
-        return { ...envelope, content: encodeForAgent(ctx, changed ? new TextEncoder().encode("[redacted]") : bytes) };
+        return {
+          ...envelope,
+          content: encodeForAgent(ctx, changed ? new TextEncoder().encode("[redacted]") : bytes),
+        };
       const rendered = decodeBytes(ctx, part, bytes);
       decoded = rendered.text;
       if (mime === "message/rfc822" && !decoded.trim()) {
@@ -541,7 +565,11 @@ function readAttachment(
         ? characters.slice(0, maxChars).join("") + marker(characters.length - maxChars)
         : decoded;
     if (jsonBytes({ ...envelope, content: byChars }) <= maxBytes) {
-      return { ...envelope, content: byChars, contentTruncated: characters.length > maxChars };
+      return {
+        ...envelope,
+        content: byChars,
+        contentTruncated: characters.length > maxChars,
+      };
     }
     // Reserve the longest marker, then clamp only the original prefix. A text
     // cut by both limits still has one marker, counted in the result's budget.
@@ -622,7 +650,10 @@ function projectMessage(
     const truncated: string[] = [];
     const clip = clipper(ctx, truncated);
     const headerOf = (name: string, field = name.toLowerCase()) => clip(header(payload, name), HEADER_BYTES, field);
-    const { omittedIds, ...messageIds } = ids({ id: [message["id"]], threadId: [message["threadId"]] });
+    const { omittedIds, ...messageIds } = ids({
+      id: [message["id"]],
+      threadId: [message["threadId"]],
+    });
     const projected = compact({
       truncated,
       ...messageIds,
@@ -647,14 +678,23 @@ function projectMessage(
       attachmentsOmitted: attachments.omitted > 0 ? attachments.omitted : undefined,
       omittedIds,
     });
-    if (!("text" in read)) return finish({ ...projected, body: read.body, bodyTruncated: read.bodyTruncated });
+    if (!("text" in read))
+      return finish({
+        ...projected,
+        body: read.body,
+        bodyTruncated: read.bodyTruncated,
+      });
     // Cap by the caller's characters, then by bytes: cut, measure the finished
     // result, and cut again by exactly what it is over, until it fits. Every
     // field is counted as sent — `false` is a byte longer than `true` — so a
     // body at the exact boundary is not a byte over.
     const byCharacters = capped(ctx, read.text, maxBodyChars);
     const build = (body: string) =>
-      finish({ ...projected, body, bodyTruncated: byCharacters.bodyTruncated || body !== byCharacters.body });
+      finish({
+        ...projected,
+        body,
+        bodyTruncated: byCharacters.bodyTruncated || body !== byCharacters.body,
+      });
     let body = byCharacters.body;
     let result = build(body);
     for (let round = 0; round < 8; round += 1) {
@@ -710,7 +750,10 @@ function callKey(tool: string, shape: Record<string, unknown>): Promise<string> 
 }
 /** A cursor of connecta's own claims; Gmail's page token, its only downstream text, arrives redacted. */
 function encodeCursor(ctx: ConnectorContext, claims: CursorClaims): string {
-  return encodeForAgent(ctx, JSON.stringify(claims), { url: true, claims: true });
+  return encodeForAgent(ctx, JSON.stringify(claims), {
+    url: true,
+    claims: true,
+  });
 }
 /** The claims of a cursor this call may resume, or a refusal saying why not. */
 function openCursor(cursor: unknown, tool: string, call: string): CursorClaims | undefined {
@@ -761,7 +804,13 @@ async function cursorAfter(
   tool: string,
   call: string,
 ): Promise<string> {
-  return encodeCursor(ctx, { v: 1, t: tool, c: call, n: seen, f: await digest(JSON.stringify(ids.slice(0, seen))) });
+  return encodeCursor(ctx, {
+    v: 1,
+    t: tool,
+    c: call,
+    n: seen,
+    f: await digest(JSON.stringify(ids.slice(0, seen))),
+  });
 }
 /** A page object whose cursor is as long as any this connection issues. */
 const RESERVED_PAGE = { hasMore: true, nextCursor: "x".repeat(4096) };
@@ -820,7 +869,11 @@ function projectDraftSummary(ctx: ConnectorContext, value: unknown): JsonRecord 
   const payload = asRecord(message["payload"]);
   return compact({
     truncated,
-    ...ids({ draftId: [draft["id"]], messageId: [message["id"]], threadId: [message["threadId"]] }),
+    ...ids({
+      draftId: [draft["id"]],
+      messageId: [message["id"]],
+      threadId: [message["threadId"]],
+    }),
     subject: clip(header(payload, "Subject"), FIELD_BYTES, "subject"),
     to: clip(header(payload, "To"), FIELD_BYTES, "to"),
     updatedAt: isoFromMillis(message["internalDate"]),
@@ -845,7 +898,10 @@ function unlessGone<T>(
   return Effect.suspend(read).pipe(
     Effect.catch((failure) =>
       (failure._tag === "StatusFailure" &&
-        toConnectorCallError(failure, errors, { classification: "read", dispatches: [] }).code === "not_found") ||
+        toConnectorCallError(failure, errors, {
+          classification: "read",
+          dispatches: [],
+        }).code === "not_found") ||
       (failure._tag === "Refusal" && failure.error.code === "not_found")
         ? Effect.succeed(undefined)
         : Effect.fail(failure),
@@ -1003,7 +1059,7 @@ interface Composition {
  * the draft already had — a send-as alias the user chose in Gmail — and no
  * argument can set one, so an agent cannot forge a sender.
  */
-function buildRawMessage(message: Composition): string {
+function headerLines(message: Composition): string[] {
   const lines: string[] = [];
   for (const [name, list] of [
     ["From", message.from],
@@ -1025,33 +1081,84 @@ function buildRawMessage(message: Composition): string {
   if (message.inReplyTo) lines.push(`In-Reply-To: ${message.inReplyTo}`);
   if (message.references) lines.push(`References: ${message.references}`);
   lines.push("MIME-Version: 1.0");
+  return lines;
+}
+/** The text entity: plain text alone, or plain and HTML as multipart/alternative. */
+function textEntity(message: Composition): string[] {
   const plain = [
     'Content-Type: text/plain; charset="UTF-8"',
     "Content-Transfer-Encoding: base64",
     "",
     base64Lines(message.body),
   ];
-  if (message.htmlBody === undefined) {
-    lines.push(...plain);
-  } else {
-    const boundary = `connecta-${crypto.randomUUID()}`;
-    lines.push(
-      `Content-Type: multipart/alternative; boundary="${boundary}"`,
-      "",
-      `--${boundary}`,
-      ...plain,
-      `--${boundary}`,
-      'Content-Type: text/html; charset="UTF-8"',
-      "Content-Transfer-Encoding: base64",
-      "",
-      base64Lines(message.htmlBody),
-      `--${boundary}--`,
-    );
+  if (message.htmlBody === undefined) return plain;
+  const boundary = `connecta-${crypto.randomUUID()}`;
+  return [
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    ...plain,
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    "Content-Transfer-Encoding: base64",
+    "",
+    base64Lines(message.htmlBody),
+    `--${boundary}--`,
+  ];
+}
+function base64url(bytes: Uint8Array): string {
+  return base64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+function buildRawMessage(message: Composition): string {
+  const lines = [...headerLines(message), ...textEntity(message)];
+  return base64url(new TextEncoder().encode(`${lines.join("\r\n")}\r\n`));
+}
+/**
+ * A forward: the note as the first entity, then the original's exact RFC 5322
+ * bytes as a `message/rfc822` attachment, so every header, body and file it
+ * carried arrives unchanged. RFC 2046 section 5.2.1 permits only identity
+ * encodings for that entity, so the bytes are embedded as they are.
+ */
+function buildForwardMessage(message: Composition, original: Uint8Array, filename: string): string {
+  let binary = "";
+  for (let at = 0; at < original.length; at += 0x8000)
+    binary += String.fromCharCode(...original.subarray(at, at + 0x8000));
+  let boundary: string;
+  do boundary = `connecta-${crypto.randomUUID()}`;
+  while (binary.includes(boundary));
+  const eightBit = original.some((byte) => byte > 0x7f);
+  const head = [
+    ...headerLines(message),
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    ...textEntity(message),
+    `--${boundary}`,
+    `Content-Type: message/rfc822; name="${filename}"`,
+    `Content-Disposition: attachment; filename="${filename}"`,
+    `Content-Transfer-Encoding: ${eightBit ? "8bit" : "7bit"}`,
+    "",
+    "",
+  ].join("\r\n");
+  const tail = `${binary.endsWith("\r\n") ? "" : "\r\n"}--${boundary}--\r\n`;
+  const encoder = new TextEncoder();
+  const parts = [encoder.encode(head), original, encoder.encode(tail)];
+  const bytes = new Uint8Array(parts.reduce((total, part) => total + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.length;
   }
-  return base64(new TextEncoder().encode(`${lines.join("\r\n")}\r\n`))
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  return base64url(bytes);
+}
+/** An ASCII attachment name from a subject; quoting never needs an escape. */
+function emlName(subject: string | undefined): string {
+  const name = (subject ?? "")
+    .replace(/[^A-Za-z0-9 ._-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+  return `${name || "Forwarded message"}.eml`;
 }
 /** At most this many ancestors ride in References; the newest are kept. */
 const MAX_REFERENCES = 20;
@@ -1062,6 +1169,8 @@ interface Threading {
   /** Defaults a reply takes from the message it answers. */
   subject?: string | undefined;
   recipients?: () => string[];
+  /** Gmail's estimate of the answered message's size, for a forward's bound. */
+  size?: number | undefined;
 }
 /** What update_draft keeps from the draft it replaces, unless restated. */
 interface Kept extends Threading {
@@ -1072,7 +1181,12 @@ interface Kept extends Threading {
   replyTo?: string[];
 }
 /** Threading for a reply: the answered message's thread, ids, and sender. */
-function replyThreading(client: GoogleClient, messageId: string): Effect.Effect<Threading, HttpFailure, CallServices> {
+function replyThreading(
+  client: GoogleClient,
+  messageId: string,
+  prefix: "Re" | "Fwd" = "Re",
+  step = "reply",
+): Effect.Effect<Threading, HttpFailure, CallServices> {
   return Effect.gen(function* () {
     const message = asRecord(
       yield* client.json(
@@ -1085,7 +1199,7 @@ function replyThreading(client: GoogleClient, messageId: string): Effect.Effect<
             metadataHeaders: ["Message-ID", "References", "Subject", "From", "Reply-To"],
           },
         },
-        { effect: "read", step: "reply" },
+        { effect: "read", step },
       ),
     );
     const payload = asRecord(message["payload"]);
@@ -1097,7 +1211,13 @@ function replyThreading(client: GoogleClient, messageId: string): Effect.Effect<
       threadId: text(message["threadId"]),
       inReplyTo: id,
       references: chain.length > 0 ? chain.join("\r\n ") : undefined,
-      subject: subject === undefined ? undefined : /^re:/i.test(subject) ? subject : `Re: ${subject}`,
+      subject:
+        subject === undefined
+          ? undefined
+          : new RegExp(`^${prefix}:`, "i").test(subject)
+            ? subject
+            : `${prefix}: ${subject}`,
+      size: typeof message["sizeEstimate"] === "number" ? message["sizeEstimate"] : undefined,
       // Parsed only when the caller did not name recipients, so a sender header
       // this connection cannot read never blocks a reply addressed explicitly.
       recipients: () =>
@@ -1122,7 +1242,11 @@ function oneLine(value: string | undefined): string | undefined {
 function projectSavedDraft(value: unknown): JsonRecord {
   const draft = asRecord(value);
   const message = asRecord(draft["message"]);
-  const saved = ids({ draftId: [draft["id"]], messageId: [message["id"]], threadId: [message["threadId"]] });
+  const saved = ids({
+    draftId: [draft["id"]],
+    messageId: [message["id"]],
+    threadId: [message["threadId"]],
+  });
   return compact({
     ...saved,
     saved: true,
@@ -1174,6 +1298,107 @@ function unrebuildable(payload: JsonRecord): string[] {
   visit(payload, 0);
   return found;
 }
+/**
+ * The message Gmail sent. Gmail answered 2xx, so the mail left whatever the
+ * answer looks like: an id that cannot be carried still reads as sent, never
+ * as a failure that invites sending it again.
+ */
+function projectSent(value: unknown): JsonRecord {
+  const message = asRecord(value);
+  const sent = ids({
+    messageId: [message["id"]],
+    threadId: [message["threadId"]],
+  });
+  return compact({
+    ...sent,
+    ...labelsOf(labelIdsOf(message)),
+    sent: true,
+    note:
+      sent["messageId"] === undefined
+        ? "Gmail sent the message but returned no id this connection can carry. Find it with search_threads (in:sent); do not send it again."
+        : undefined,
+  });
+}
+/** One message's labels after a change Gmail applied. */
+function projectRelabeled(value: unknown): JsonRecord {
+  const message = asRecord(value);
+  return compact({
+    ...ids({ messageId: [message["id"]], threadId: [message["threadId"]] }),
+    ...labelsOf(labelIdsOf(message)),
+  });
+}
+/** A thread's labels after a change: the union across its messages. */
+function projectThreadLabels(value: unknown, threadId: string): JsonRecord {
+  const thread = asRecord(value);
+  const messages = asArray(thread["messages"]).map(asRecord);
+  const labels = new Set<string>();
+  for (const message of messages) for (const id of labelIdsOf(message)) labels.add(id);
+  return compact({
+    threadId: idOf(thread["id"]) ?? threadId,
+    messageCount: messages.length,
+    ...labelsOf([...labels]),
+  });
+}
+function projectLabel(ctx: ConnectorContext, value: unknown): JsonRecord {
+  const label = asRecord(value);
+  const truncated: string[] = [];
+  const color = asRecord(label["color"]);
+  return compact({
+    truncated,
+    ...ids({ id: [label["id"], LABEL_ID_BYTES] }),
+    name: clipper(ctx, truncated)(text(label["name"]), FIELD_BYTES, "name"),
+    type: label["type"] === "system" ? "system" : label["type"] === "user" ? "user" : undefined,
+    messageListVisibility: text(label["messageListVisibility"]),
+    labelListVisibility: text(label["labelListVisibility"]),
+    color:
+      text(color["backgroundColor"]) || text(color["textColor"])
+        ? compact({
+            backgroundColor: text(color["backgroundColor"]),
+            textColor: text(color["textColor"]),
+          })
+        : undefined,
+  });
+}
+function projectFilter(value: unknown): JsonRecord {
+  const filter = asRecord(value);
+  return compact({
+    ...ids({ id: [filter["id"]] }),
+    criteria: asRecord(filter["criteria"]),
+    action: asRecord(filter["action"]),
+  });
+}
+const VACATION_FIELDS = [
+  "enableAutoReply",
+  "responseSubject",
+  "responseBodyPlainText",
+  "responseBodyHtml",
+  "restrictToContacts",
+  "restrictToDomain",
+] as const;
+/** Gmail's vacation times are epoch milliseconds; agents read and write ISO 8601. */
+function projectVacation(value: unknown): JsonRecord {
+  const settings = asRecord(value);
+  return compact({
+    ...Object.fromEntries(VACATION_FIELDS.map((name) => [name, settings[name]])),
+    startTime: isoFromMillis(settings["startTime"]),
+    endTime: isoFromMillis(settings["endTime"]),
+  });
+}
+function millisFromIso(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const millis = Date.parse(value);
+  if (!Number.isFinite(millis))
+    throw new ConnectorCallError("invalid_args", "A vacation time is not a valid ISO 8601 time.");
+  return String(millis);
+}
+/** At least one of the named arguments, for a write that would otherwise change nothing. */
+function requireOne(args: JsonRecord, problems: ArgumentProblems, names: readonly string[], expected: string): void {
+  const present = names.some((name) =>
+    Array.isArray(args[name]) ? (args[name] as unknown[]).length > 0 : args[name] !== undefined,
+  );
+  if (!present) problems.add(`/${names[0]}`, expected);
+}
+const unique = (values: unknown): string[] => [...new Set(asArray(values).map(String))];
 // --- Tools ------------------------------------------------------------------------
 /** Each request a read sends names a step, so a deployment serving it as a write sends each once. */
 const indexedSteps = (prefix: string, count: number) =>
@@ -1199,7 +1424,12 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
         retryable: false,
       });
     const token = rawToken;
-    const cursor = encodeCursor(ctx, { v: 1, t: tool, c: call, p: redactSentSecrets(ctx, token) });
+    const cursor = encodeCursor(ctx, {
+      v: 1,
+      t: tool,
+      c: call,
+      p: redactSentSecrets(ctx, token),
+    });
     if (cursor.length > MAX_CURSOR_LENGTH) {
       throw new ConnectorCallError(
         "connector_call_failed",
@@ -1214,9 +1444,10 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
       const reply = args["replyToMessageId"] ? yield* replyThreading(client, String(args["replyToMessageId"])) : kept;
       // What the caller states wins; then what the draft already had; then
       // what a reply defaults to. A new draft has nothing kept.
+      const to = addressList(args["to"]);
       const raw = buildRawMessage({
         from: kept.from ?? [],
-        to: addressList(args["to"]) ?? (kept.to?.length ? kept.to : reply.recipients?.()) ?? [],
+        to: (to?.length ? to : undefined) ?? (kept.to?.length ? kept.to : reply.recipients?.()) ?? [],
         cc: addressList(args["cc"]) ?? kept.cc ?? [],
         bcc: addressList(args["bcc"]) ?? kept.bcc ?? [],
         replyTo: kept.replyTo ?? [],
@@ -1276,7 +1507,10 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
                         method: "GET",
                         path: `/threads/${encodeURIComponent(String(row["id"]))}`,
                         template: "/threads/{id}",
-                        query: { format: "metadata", metadataHeaders: ["Subject", "From", "Date"] },
+                        query: {
+                          format: "metadata",
+                          metadataHeaders: ["Subject", "From", "Date"],
+                        },
                       },
                       { step: `row${index}` },
                     ),
@@ -1293,7 +1527,10 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
     },
     {
       name: "get_thread",
-      writeSteps: { thread: "once", ...indexedSteps("body", MAX_THREAD_MESSAGES) },
+      writeSteps: {
+        thread: "once",
+        ...indexedSteps("body", MAX_THREAD_MESSAGES),
+      },
       description:
         "Read a Gmail thread's messages and follow page.nextCursor until page.hasMore is false. Returns headers, capped plain-text bodies and attachment metadata; use get_attachment for attachment content.",
       annotations: readOnly,
@@ -1312,7 +1549,10 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
           );
           const max = bodyChars(args, DEFAULT_THREAD_BODY_CHARS);
           const call = yield* Effect.promise(() =>
-            callKey("get_thread", { threadId: args["threadId"], maxBodyChars: max }),
+            callKey("get_thread", {
+              threadId: args["threadId"],
+              maxBodyChars: max,
+            }),
           );
           const claims = openCursor(args["cursor"], "get_thread", call);
           const all = asArray(thread["messages"]);
@@ -1323,7 +1563,12 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
           // until the next would not fit. A message alone is projected to fit
           // beside the wrapper, so a page holds at least one and paging ends.
           const threadId = idOf(thread["id"]) ?? args["threadId"];
-          let bytes = jsonBytes({ id: threadId, messageCount: all.length, messages: [], page: RESERVED_PAGE });
+          let bytes = jsonBytes({
+            id: threadId,
+            messageCount: all.length,
+            messages: [],
+            page: RESERVED_PAGE,
+          });
           const room = RESULT_BUDGET_BYTES - bytes;
           const messages: JsonRecord[] = [];
           let next = start;
@@ -1385,7 +1630,13 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
       annotations: readOnly,
       run: (args, ctx) =>
         Effect.gen(function* () {
-          const listing = asRecord(yield* client.json({ method: "GET", path: "/labels", template: "/labels" }));
+          const listing = asRecord(
+            yield* client.json({
+              method: "GET",
+              path: "/labels",
+              template: "/labels",
+            }),
+          );
           const all = asArray(listing["labels"]);
           // Gmail's labels endpoint is unpaged. Return that list once rather
           // than re-downloading it to serve artificial ten-row pages. The
@@ -1394,7 +1645,11 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
           // A label whose id is too long to use is left out and counted, never
           // returned with a cut id that would name nothing.
           let omitted = 0;
-          let bytes = jsonBytes({ labels: [], labelsOmitted: all.length, page: { hasMore: false } });
+          let bytes = jsonBytes({
+            labels: [],
+            labelsOmitted: all.length,
+            page: { hasMore: false },
+          });
           let next = 0;
           while (next < all.length) {
             const label = asRecord(all[next]);
@@ -1453,7 +1708,10 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
               { step: "list" },
             ),
           );
-          const rows = asArray(listing["drafts"]).map((row, index) => ({ row: asRecord(row), index }));
+          const rows = asArray(listing["drafts"]).map((row, index) => ({
+            row: asRecord(row),
+            index,
+          }));
           const drafts = yield* mapLimited(rows, SUMMARY_CONCURRENCY, ({ row, index }) =>
             unlessGone(() =>
               Effect.gen(function* () {
@@ -1536,7 +1794,11 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
             method: "POST",
             path: "/drafts",
             template: "/drafts",
-            body: yield* compose(args, ctx, { threadId: undefined, inReplyTo: undefined, references: undefined }),
+            body: yield* compose(args, ctx, {
+              threadId: undefined,
+              inReplyTo: undefined,
+              references: undefined,
+            }),
           });
           return projectSavedDraft(draft);
         }),
@@ -1558,7 +1820,12 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
           // thread, In-Reply-To, and References. Any other header is not.
           const existing = asRecord(
             yield* client.json(
-              { method: "GET", path: draftPath, template: "/drafts/{id}", query: { format: "full" } },
+              {
+                method: "GET",
+                path: draftPath,
+                template: "/drafts/{id}",
+                query: { format: "full" },
+              },
               { effect: "read", step: "existing" },
             ),
           );
@@ -1584,7 +1851,11 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
             subject: oneLine(header(payload, "Subject")),
             from: addressEntries("The draft's From", oneLine(header(payload, "From"))),
             replyTo: addressEntries("The draft's Reply-To", oneLine(header(payload, "Reply-To"))),
-            ...defined({ to: keep("To", "to"), cc: keep("Cc", "cc"), bcc: keep("Bcc", "bcc") }),
+            ...defined({
+              to: keep("To", "to"),
+              cc: keep("Cc", "cc"),
+              bcc: keep("Bcc", "bcc"),
+            }),
           };
           const draft = yield* client.json({
             method: "PUT",
@@ -1593,6 +1864,523 @@ function declarations(client: GoogleClient): GmailToolProgram[] {
             body: yield* compose(args, ctx, kept),
           });
           return projectSavedDraft(draft);
+        }),
+    },
+    {
+      name: "send_message",
+      writeSteps: { reply: "once", write: "once" },
+      description:
+        "Send an email now, new or as a threaded reply (replyToMessageId sets threadId, In-Reply-To, References and Re: subject). Irreversible: a sent message cannot be recalled.",
+      // Destructive: the mail leaves the mailbox at once and cannot be unsent.
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      check: (args, problems) =>
+        requireOne(
+          args,
+          problems,
+          ["to", "cc", "bcc", "replyToMessageId"],
+          "at least one recipient in to, cc or bcc, or replyToMessageId",
+        ),
+      run: (args, ctx) =>
+        Effect.gen(function* () {
+          const { message } = yield* compose(args, ctx, {
+            threadId: undefined,
+            inReplyTo: undefined,
+            references: undefined,
+          });
+          const sent = yield* client.json({
+            method: "POST",
+            path: "/messages/send",
+            template: "/messages/send",
+            body: message,
+          });
+          return projectSent(sent);
+        }),
+    },
+    {
+      name: "forward_message",
+      writeSteps: { original: "once", raw: "once", write: "once" },
+      description:
+        "Forward a Gmail message now, in its thread, with the original attached as an .eml carrying all its attachments. Irreversible: a sent message cannot be recalled.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          const messageId = String(args["messageId"]);
+          const original = yield* replyThreading(client, messageId, "Fwd", "original");
+          const tooLarge = () =>
+            new ConnectorCallError(
+              "invalid_args",
+              `This message is larger than the ${MAX_FORWARD_BYTES} bytes this connection forwards in one request. Nothing was sent; forward it in Gmail.`,
+            );
+          if (original.size !== undefined && original.size > MAX_FORWARD_BYTES) throw tooLarge();
+          const fetched = asRecord(
+            yield* client.json(
+              {
+                method: "GET",
+                path: `/messages/${encodeURIComponent(messageId)}`,
+                template: "/messages/{id}",
+                query: { format: "raw" },
+              },
+              { effect: "read", step: "raw" },
+            ),
+          );
+          const raw = fetched["raw"];
+          if (typeof raw !== "string")
+            throw new ConnectorCallError("connector_call_failed", "Gmail returned no raw message to forward.", {
+              retryable: false,
+            });
+          // A forward must carry exactly what was received: a value the sent-secret
+          // boundary replaced would leave the original altered, so nothing is sent.
+          if (gmailRawProvenance(fetched)?.changed || raw.includes("[redacted]"))
+            throw new ConnectorCallError(
+              "invalid_args",
+              "This message contains a value this connection withholds, so it cannot be forwarded unchanged. Nothing was sent; forward it in Gmail.",
+            );
+          let bytes: Uint8Array;
+          try {
+            bytes = decodeBase64url(raw, true);
+          } catch {
+            throw new ConnectorCallError("connector_call_failed", "Gmail returned an invalid raw message.", {
+              retryable: false,
+            });
+          }
+          if (bytes.length > MAX_FORWARD_BYTES) throw tooLarge();
+          const forwarded = buildForwardMessage(
+            {
+              from: [],
+              to: addressList(args["to"]) ?? [],
+              cc: addressList(args["cc"]) ?? [],
+              bcc: addressList(args["bcc"]) ?? [],
+              replyTo: [],
+              subject: args["subject"] ?? original.subject,
+              body: String(args["body"] ?? ""),
+              htmlBody: typeof args["htmlBody"] === "string" ? args["htmlBody"] : undefined,
+              inReplyTo: original.inReplyTo,
+              references: original.references,
+            },
+            bytes,
+            emlName(oneLine(original.subject?.replace(/^fwd:\s*/i, ""))),
+          );
+          const sent = yield* client.json({
+            method: "POST",
+            path: "/messages/send",
+            template: "/messages/send",
+            body: compact({ raw: forwarded, threadId: original.threadId }),
+          });
+          return projectSent(sent);
+        }),
+    },
+    {
+      name: "send_draft",
+      description:
+        "Send a saved Gmail draft now by its stable draft id, exactly as saved; Gmail then removes the draft. Irreversible: a sent message cannot be recalled.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          return projectSent(
+            yield* client.json({
+              method: "POST",
+              path: "/drafts/send",
+              template: "/drafts/send",
+              body: { id: args["draftId"] },
+            }),
+          );
+        }),
+    },
+    {
+      name: "delete_draft",
+      description: "Delete a Gmail draft permanently; it skips the trash and cannot be recovered. Never sends it.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          yield* client.json({
+            method: "DELETE",
+            path: `/drafts/${encodeURIComponent(args["draftId"])}`,
+            template: "/drafts/{id}",
+          });
+          return { draftId: args["draftId"], deleted: true };
+        }),
+    },
+    {
+      name: "update_message_labels",
+      description:
+        "Add or remove label ids on one Gmail message: remove INBOX to archive, UNREAD to mark read; add STARRED to star. Never trashes or deletes.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      check: (args, problems) =>
+        requireOne(args, problems, ["addLabelIds", "removeLabelIds"], "a label id in addLabelIds or removeLabelIds"),
+      run: (args) =>
+        Effect.gen(function* () {
+          return projectRelabeled(
+            yield* client.json({
+              method: "POST",
+              path: `/messages/${encodeURIComponent(args["messageId"])}/modify`,
+              template: "/messages/{id}/modify",
+              body: compact({
+                addLabelIds: args["addLabelIds"],
+                removeLabelIds: args["removeLabelIds"],
+              }),
+            }),
+          );
+        }),
+    },
+    {
+      name: "update_thread_labels",
+      description:
+        "Add or remove label ids on every message in a Gmail thread: remove INBOX to archive, UNREAD to mark read; add STARRED to star. Never trashes or deletes.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      check: (args, problems) =>
+        requireOne(args, problems, ["addLabelIds", "removeLabelIds"], "a label id in addLabelIds or removeLabelIds"),
+      run: (args) =>
+        Effect.gen(function* () {
+          return projectThreadLabels(
+            yield* client.json({
+              method: "POST",
+              path: `/threads/${encodeURIComponent(args["threadId"])}/modify`,
+              template: "/threads/{id}/modify",
+              body: compact({
+                addLabelIds: args["addLabelIds"],
+                removeLabelIds: args["removeLabelIds"],
+              }),
+            }),
+            args["threadId"],
+          );
+        }),
+    },
+    {
+      name: "batch_update_message_labels",
+      description:
+        "Add or remove the same label ids on up to 1,000 Gmail messages at once. Gmail returns no per-message result, only success; read messages back to verify.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      check: (args, problems) =>
+        requireOne(args, problems, ["addLabelIds", "removeLabelIds"], "a label id in addLabelIds or removeLabelIds"),
+      run: (args) =>
+        Effect.gen(function* () {
+          const messageIds = unique(args["messageIds"]);
+          yield* client.json({
+            method: "POST",
+            path: "/messages/batchModify",
+            template: "/messages/batchModify",
+            body: compact({
+              ids: messageIds,
+              addLabelIds: args["addLabelIds"],
+              removeLabelIds: args["removeLabelIds"],
+            }),
+          });
+          return { updated: messageIds.length };
+        }),
+    },
+    {
+      name: "trash_message",
+      description:
+        "Move a Gmail message to the trash, where Gmail deletes it for good after 30 days; restore_message undoes it. Never deletes permanently itself.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          return projectRelabeled(
+            yield* client.json({
+              method: "POST",
+              path: `/messages/${encodeURIComponent(args["messageId"])}/trash`,
+              template: "/messages/{id}/trash",
+            }),
+          );
+        }),
+    },
+    {
+      name: "restore_message",
+      description:
+        "Restore (untrash) a trashed Gmail message with its labels. Cannot recover a message already deleted permanently.",
+      // Additive: brings back exactly what was there, losing nothing.
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      run: (args) =>
+        Effect.gen(function* () {
+          return projectRelabeled(
+            yield* client.json({
+              method: "POST",
+              path: `/messages/${encodeURIComponent(args["messageId"])}/untrash`,
+              template: "/messages/{id}/untrash",
+            }),
+          );
+        }),
+    },
+    {
+      name: "trash_thread",
+      description:
+        "Move every message in a Gmail thread to the trash, where Gmail deletes them for good after 30 days; restore_thread undoes it. Never deletes permanently itself.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          return projectThreadLabels(
+            yield* client.json({
+              method: "POST",
+              path: `/threads/${encodeURIComponent(args["threadId"])}/trash`,
+              template: "/threads/{id}/trash",
+            }),
+            args["threadId"],
+          );
+        }),
+    },
+    {
+      name: "restore_thread",
+      description:
+        "Restore (untrash) every message in a trashed Gmail thread. Cannot recover messages already deleted permanently.",
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      run: (args) =>
+        Effect.gen(function* () {
+          return projectThreadLabels(
+            yield* client.json({
+              method: "POST",
+              path: `/threads/${encodeURIComponent(args["threadId"])}/untrash`,
+              template: "/threads/{id}/untrash",
+            }),
+            args["threadId"],
+          );
+        }),
+    },
+    {
+      name: "delete_message",
+      description:
+        "Permanently delete a Gmail message, skipping the trash. Irreversible and unrecoverable; trash_message keeps it recoverable for 30 days.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          yield* client.json({
+            method: "DELETE",
+            path: `/messages/${encodeURIComponent(args["messageId"])}`,
+            template: "/messages/{id}",
+          });
+          return { messageId: args["messageId"], deleted: true };
+        }),
+    },
+    {
+      name: "delete_thread",
+      description:
+        "Permanently delete every message in a Gmail thread, skipping the trash. Irreversible and unrecoverable; trash_thread keeps it recoverable for 30 days.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          yield* client.json({
+            method: "DELETE",
+            path: `/threads/${encodeURIComponent(args["threadId"])}`,
+            template: "/threads/{id}",
+          });
+          return { threadId: args["threadId"], deleted: true };
+        }),
+    },
+    {
+      name: "batch_delete_messages",
+      description:
+        "Permanently delete up to 1,000 Gmail messages, skipping the trash. Irreversible and unrecoverable; trash_message keeps a message recoverable instead.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          const messageIds = unique(args["messageIds"]);
+          yield* client.json({
+            method: "POST",
+            path: "/messages/batchDelete",
+            template: "/messages/batchDelete",
+            body: { ids: messageIds },
+          });
+          return { deleted: messageIds.length };
+        }),
+    },
+    {
+      name: "create_label",
+      description:
+        "Create a Gmail user label; a slash in its name nests it. Applies it to nothing: use update_message_labels or update_thread_labels.",
+      // Additive: a new label changes no message.
+      annotations: { readOnlyHint: false, destructiveHint: false },
+      run: (args, ctx) =>
+        Effect.gen(function* () {
+          return projectLabel(
+            ctx,
+            yield* client.json({
+              method: "POST",
+              path: "/labels",
+              template: "/labels",
+              body: compact({
+                name: args["name"],
+                messageListVisibility: args["messageListVisibility"],
+                labelListVisibility: args["labelListVisibility"],
+                color: args["color"],
+              }),
+            }),
+          );
+        }),
+    },
+    {
+      name: "update_label",
+      description:
+        "Rename or restyle a Gmail user label; every message keeps it. System labels such as INBOX cannot change.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      check: (args, problems) =>
+        requireOne(
+          args,
+          problems,
+          ["name", "messageListVisibility", "labelListVisibility", "color"],
+          "name, a visibility or color to change",
+        ),
+      run: (args, ctx) =>
+        Effect.gen(function* () {
+          return projectLabel(
+            ctx,
+            yield* client.json({
+              method: "PATCH",
+              path: `/labels/${encodeURIComponent(args["labelId"])}`,
+              template: "/labels/{id}",
+              body: compact({
+                name: args["name"],
+                messageListVisibility: args["messageListVisibility"],
+                labelListVisibility: args["labelListVisibility"],
+                color: args["color"],
+              }),
+            }),
+          );
+        }),
+    },
+    {
+      name: "delete_label",
+      description: "Delete a Gmail user label and remove it from every message; the messages stay. Irreversible.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          yield* client.json({
+            method: "DELETE",
+            path: `/labels/${encodeURIComponent(args["labelId"])}`,
+            template: "/labels/{id}",
+          });
+          return { labelId: args["labelId"], deleted: true };
+        }),
+    },
+    {
+      name: "list_filters",
+      description:
+        "List the mailbox's Gmail filters with their match criteria and actions in one bounded reply; truncated reports any omitted.",
+      annotations: readOnly,
+      run: () =>
+        Effect.gen(function* () {
+          const listing = asRecord(
+            yield* client.json({
+              method: "GET",
+              path: "/settings/filters",
+              template: "/settings/filters",
+            }),
+          );
+          const all = asArray(listing["filter"]);
+          const filters: JsonRecord[] = [];
+          let bytes = jsonBytes({
+            filters: [],
+            filtersOmitted: all.length,
+            page: { hasMore: false },
+          });
+          let next = 0;
+          while (next < all.length) {
+            const row = projectFilter(all[next]);
+            const size = jsonBytes(row) + (filters.length > 0 ? 1 : 0);
+            if (bytes + size > RESULT_BUDGET_BYTES) break;
+            filters.push(row);
+            bytes += size;
+            next += 1;
+          }
+          return compact({
+            filters,
+            filtersOmitted: next < all.length ? all.length - next : undefined,
+            page: { hasMore: false },
+          });
+        }),
+    },
+    {
+      name: "create_filter",
+      description:
+        "Create a Gmail filter that labels, archives, marks read, forwards or trashes future matching messages. Never changes messages already received.",
+      // Destructive: it acts on every future match, including forwarding it out.
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      check: (args, problems) => {
+        if (!Object.values(asRecord(args["criteria"])).some((value) => value !== undefined))
+          problems.add("/criteria", "at least one criterion");
+        requireOne(
+          asRecord(args["action"]),
+          problems,
+          ["addLabelIds", "removeLabelIds", "forward"],
+          "at least one action in action",
+        );
+      },
+      run: (args) =>
+        Effect.gen(function* () {
+          return projectFilter(
+            yield* client.json({
+              method: "POST",
+              path: "/settings/filters",
+              template: "/settings/filters",
+              body: { criteria: args["criteria"], action: args["action"] },
+            }),
+          );
+        }),
+    },
+    {
+      name: "delete_filter",
+      description: "Delete a Gmail filter permanently; messages it already changed stay changed.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      run: (args) =>
+        Effect.gen(function* () {
+          yield* client.json({
+            method: "DELETE",
+            path: `/settings/filters/${encodeURIComponent(args["filterId"])}`,
+            template: "/settings/filters/{id}",
+          });
+          return { filterId: args["filterId"], deleted: true };
+        }),
+    },
+    {
+      name: "get_vacation",
+      description:
+        "Read the Gmail vacation auto-reply: whether it is on, its subject and message, who it answers, and its ISO 8601 start and end times.",
+      annotations: readOnly,
+      run: () =>
+        Effect.gen(function* () {
+          return projectVacation(
+            yield* client.json({
+              method: "GET",
+              path: "/settings/vacation",
+              template: "/settings/vacation",
+            }),
+          );
+        }),
+    },
+    {
+      name: "update_vacation",
+      writeSteps: { existing: "once", write: "once" },
+      description:
+        "Change the Gmail vacation auto-reply, keeping every setting not stated. While on, Gmail answers incoming messages automatically on the person's behalf.",
+      annotations: { readOnlyHint: false, destructiveHint: true },
+      check: (args, problems) =>
+        requireOne(args, problems, [...VACATION_FIELDS, "startTime", "endTime"], "at least one setting to change"),
+      run: (args) =>
+        Effect.gen(function* () {
+          // Gmail's update replaces every setting, so unstated ones are read first and kept.
+          const existing = asRecord(
+            yield* client.json(
+              {
+                method: "GET",
+                path: "/settings/vacation",
+                template: "/settings/vacation",
+              },
+              { effect: "read", step: "existing" },
+            ),
+          );
+          const merged = compact({
+            ...Object.fromEntries(
+              VACATION_FIELDS.map((name) => [name, args[name] !== undefined ? args[name] : existing[name]]),
+            ),
+            startTime: args["startTime"] !== undefined ? millisFromIso(args["startTime"]) : existing["startTime"],
+            endTime: args["endTime"] !== undefined ? millisFromIso(args["endTime"]) : existing["endTime"],
+          });
+          return projectVacation(
+            yield* client.json({
+              method: "PUT",
+              path: "/settings/vacation",
+              template: "/settings/vacation",
+              body: merged,
+            }),
+          );
         }),
     },
   ];
@@ -1613,10 +2401,14 @@ function standardResult(value: unknown, tool: GmailToolName): JsonRecord {
         if (child === true) cuts.add(target(key === "bodyTruncated" ? "body" : "content"));
       } else if (key === "omittedIds") {
         for (const name of asArray(child)) cuts.add(target(String(name)));
-      } else if (["labelIdsOmitted", "attachmentsOmitted", "labelsOmitted"].includes(key)) {
+      } else if (["labelIdsOmitted", "attachmentsOmitted", "labelsOmitted", "filtersOmitted"].includes(key)) {
         if (Number(child) > 0)
           cuts.add(
-            target(key === "labelsOmitted" && tool === "list_labels" ? "items[]" : key.replace("Omitted", "") + "[]"),
+            target(
+              (key === "labelsOmitted" && tool === "list_labels") || key === "filtersOmitted"
+                ? "items[]"
+                : key.replace("Omitted", "") + "[]",
+            ),
           );
       } else if (key === "nextCursor" && child === null) {
         // A terminal page has no cursor.
@@ -1632,7 +2424,9 @@ function standardResult(value: unknown, tool: GmailToolName): JsonRecord {
         ? "drafts"
         : tool === "list_labels"
           ? "labels"
-          : undefined;
+          : tool === "list_filters"
+            ? "filters"
+            : undefined;
   const shaped = key ? { ...raw, items: raw[key] } : raw;
   if (key) delete shaped[key];
   const result = asRecord(visit(shaped, ""));
@@ -1640,17 +2434,18 @@ function standardResult(value: unknown, tool: GmailToolName): JsonRecord {
   return result;
 }
 
-/** Gmail only reads mail and saves drafts. Sending has no dispatch path. */
+/** Gmail's curated reads and writes, each a kit read or write over the indexed client. */
 export function gmailTools({ connection }: { connection: Connection }): ApiTool[] {
   return declarations(googleClient(connection, index)).map((declaration) => {
     const name = declaration.name;
-    const isList = name === "search_threads" || name === "list_labels" || name === "list_drafts";
+    const isList = ["search_threads", "list_labels", "list_drafts", "list_filters"].includes(name);
     const spec = {
       name,
       description: declaration.description,
       input: inputs[name],
       output: outputs[name],
       ...(declaration.writeSteps ? { writeSteps: declaration.writeSteps } : {}),
+      ...(declaration.check ? { check: declaration.check } : {}),
       run: (supplied: JsonRecord) =>
         Effect.gen(function* () {
           const active = yield* Effect.serviceOption(Operation);
@@ -1688,6 +2483,9 @@ export function gmailTools({ connection }: { connection: Connection }): ApiTool[
     };
     return declaration.annotations.readOnlyHint === true
       ? read(connection, spec)
-      : write(connection, { ...spec, destructive: declaration.annotations.destructiveHint !== false });
+      : write(connection, {
+          ...spec,
+          destructive: declaration.annotations.destructiveHint !== false,
+        });
   });
 }

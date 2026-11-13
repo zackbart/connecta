@@ -38,7 +38,7 @@ import { deliveredReducedCount, deliveredValues } from "./tasks/correctness.js";
 import { previewResult } from "../src/result-preview.js";
 import { NO_CODE_CAPABILITY_MISMATCHES, taskForSurface } from "./tasks/surface.js";
 import { INJECTED_SECRET } from "./fakes/services.js";
-import { ALICE } from "./fakes/google.js";
+import { ALICE, BOB } from "./fakes/google.js";
 import { GMAIL_SCOPES } from "@zackbart/connecta/providers/gmail";
 import { noCodeDecisionLines, WORKER_COMPARISON } from "./worker-comparison-plan.js";
 import type { Surface } from "./agent/surface.js";
@@ -655,6 +655,111 @@ async function run() {
     record(
       "control: a person connects their own Google account and reads it through personal OAuth Gmail",
       pass,
+      detail,
+    );
+  }
+
+  // Gmail is full read-write (#1398). A threaded reply and an archive each
+  // reach the vendor exactly once, graded on the fake mailbox's sent mail and
+  // labels and on the physical write ledger. The same grade fails before
+  // either write and after a repeat, and refused routes send nothing.
+  {
+    const world = new World({ google: { product: "gmail", task: 1 } });
+    await world.start();
+    const deployment = await startNodeDeployment(world.connectorSpecs(), {});
+    const session = await connectMcp(deployment.mcpUrl, { Authorization: `Bearer ${deployment.token}` });
+    const mailbox = world.google.state.accounts[ALICE];
+    const writes = (tool?: string) =>
+      world.ledger.calls.filter(
+        (call) => call.service === "gmail" && call.kind === "write" && (tool === undefined || call.tool === tool),
+      );
+    const REPLY = "Approved; see you at 7.";
+    const sentOnce = () => {
+      const sends = writes("POST /messages/send");
+      const sent = mailbox.sent[0];
+      if (sends.length !== 1 || mailbox.sent.length !== 1 || !sent) return false;
+      const source = String(sent.source).replace(/\r\n[ \t]+/g, " ");
+      const [head = "", ...rest] = source.split("\r\n\r\n");
+      const lines = head.split("\r\n");
+      return (
+        sent.threadId === "t1" &&
+        (sends[0]!.args as Record<string, any>).subject === ALICE &&
+        lines.includes(`To: ${ALICE}`) &&
+        lines.includes("Subject: Re: Budget 1") &&
+        lines.includes("In-Reply-To: <m1@example.com>") &&
+        lines.includes("References: <root@example.com> <m1@example.com>") &&
+        Buffer.from(rest.join("\r\n\r\n"), "base64").toString() === REPLY
+      );
+    };
+    const archivedOnce = () => {
+      const labels = mailbox.messages.find((message) => message.id === "m1")?.labelIds ?? [];
+      return (
+        writes("POST /messages/m1/modify").length === 1 &&
+        !labels.includes("INBOX") &&
+        !labels.includes("UNREAD") &&
+        mailbox.messages.filter((message) => message.id !== "m1").every((message) => message.labelIds.includes("INBOX"))
+      );
+    };
+    const withheld = Buffer.from(`To: ${BOB}\r\n\r\nhttps://example.com/doc?token=[redacted]\r\n`).toString(
+      "base64url",
+    );
+    const outcomes: Record<string, boolean> = {};
+    let detail = "";
+    try {
+      const refused = await Promise.all([
+        session.call("call_tool", { address: "gmail.send_message", args: { replyToMessageId: "m1", body: REPLY } }),
+        session.call("call_tool", { address: "gmail.gmail_api_read", args: { path: "/messages/send" } }),
+        session.call("call_destructive_tool", {
+          address: "gmail.gmail_api_write",
+          args: { method: "POST", path: "/messages/send", body: { raw: withheld } },
+        }),
+        session.call("call_destructive_tool", { address: "gmail.send_message", args: { body: REPLY } }),
+      ]);
+      outcomes["refused"] =
+        refused.every((reply) => reply.isError) && writes().length === 0 && mailbox.sent.length === 0;
+      outcomes["noop"] = !sentOnce() && !archivedOnce();
+      const send = await session.call("call_destructive_tool", {
+        address: "gmail.send_message",
+        args: { replyToMessageId: "m1", body: REPLY },
+      });
+      const archive = await session.call("call_destructive_tool", {
+        address: "gmail.update_message_labels",
+        args: { messageId: "m1", removeLabelIds: ["INBOX", "UNREAD"] },
+      });
+      outcomes["send"] = !send.isError && send.text.includes("sent1") && sentOnce();
+      outcomes["archive"] = !archive.isError && archivedOnce();
+      await session.call("call_destructive_tool", {
+        address: "gmail.send_message",
+        args: { replyToMessageId: "m1", body: REPLY },
+      });
+      await session.call("call_destructive_tool", {
+        address: "gmail.update_message_labels",
+        args: { messageId: "m1", removeLabelIds: ["INBOX", "UNREAD"] },
+      });
+      outcomes["repeat"] = !sentOnce() && !archivedOnce();
+      detail = `${writes()
+        .map((call) => call.tool)
+        .join(", ")}; ${JSON.stringify(outcomes)}`;
+    } catch (error) {
+      detail = error instanceof Error ? error.message : String(error);
+    } finally {
+      await Promise.allSettled([session.close(), deployment.close(), world.stop()]);
+    }
+    record("gmail-reply-send-once: a threaded reply reaches Gmail exactly once", outcomes["send"] === true, detail);
+    record(
+      "gmail-archive-once: archiving and marking read reaches Gmail exactly once",
+      outcomes["archive"] === true,
+      detail,
+    );
+    record("control: the Gmail send and archive grades fail before either write", outcomes["noop"] === true, detail);
+    record(
+      "control: the Gmail send and archive grades fail when each write repeats",
+      outcomes["repeat"] === true,
+      detail,
+    );
+    record(
+      "control: refused Gmail routes (read-only route, read hatch, withheld raw link, no recipient) send nothing",
+      outcomes["refused"] === true,
       detail,
     );
   }

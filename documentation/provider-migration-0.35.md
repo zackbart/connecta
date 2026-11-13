@@ -675,7 +675,9 @@ there is no `gmail_api_write`. Draft writes remain exclusively in
 `create_draft` and `update_draft`; sending is never available. All nine named
 tools remain. Write classifications and host approval routes stay the same.
 The index displays all 79 pinned methods but admits only eleven reviewed
-reads; refused draft operations point to the guarded named tools.
+reads; refused draft operations point to the guarded named tools. A later
+release makes Gmail full read-write and adds `gmail_api_write`; see
+[Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment).
 
 - Replace `get_message({ messageId, raw: true })` with
   `gmail_api_read({ path: "/messages/{id}", query: { format: "full" } })`.

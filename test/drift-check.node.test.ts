@@ -298,12 +298,14 @@ describe("maintainer drift check", { timeout: CASE_TIMEOUT_MS }, () => {
                       userId: { type: "string", location: "path", required: true, enumDescriptions: ["prose"] },
                     },
                     response: { $ref: "Draft" },
-                    // Dropping leaves the draft write on full-mailbox access
-                    // alone, which no delegated grant here includes.
+                    // Dropping leaves the draft write on a modify-only scope,
+                    // which no delegated grant here includes.
                     scopes:
-                      dropScope !== undefined && endpoint.method === "POST"
-                        ? ["https://mail.google.com/"]
-                        : [...manifest.scopes, "https://mail.google.com/"],
+                      dropScope !== undefined &&
+                      endpoint.method === "POST" &&
+                      endpoint.path === "/gmail/v1/users/{userId}/drafts"
+                        ? ["https://www.googleapis.com/auth/gmail.modify"]
+                        : [...manifest.scopes, "https://www.googleapis.com/auth/gmail.modify"],
                   },
                 },
               },

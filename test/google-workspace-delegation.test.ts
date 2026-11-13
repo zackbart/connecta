@@ -92,6 +92,18 @@ import { scriptedExecutor } from "./fixtures/misc.js";
 import { issueAgentToken } from "./helpers/agent-tokens.js";
 import { accessTokens } from "../src/access-tokens.js";
 
+/** The search_tools hits for "labels" in one Gmail connector, best first. */
+const LABEL_HITS = [
+  "list_labels",
+  "update_message_labels",
+  "update_thread_labels",
+  "batch_update_message_labels",
+  "delete_label",
+  "create_label",
+  "update_label",
+  "restore_message",
+];
+
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
 
 const keys = (await crypto.subtle.generateKey(
@@ -1066,10 +1078,11 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           result.structuredContent.tools.map((tool) => tool.address);
         const group = { agentPool: "group-agents" };
 
-        expect(addresses(await rpc(assistant, group, "search_tools", { query: "labels" }))).toEqual([
-          "shared_mail.list_labels",
-          "shared_mail.gmail_api_search",
-        ]);
+        // Every Gmail label tool matches; only the fixed-subject connector's appear.
+        const labelHits = (connector: string) => LABEL_HITS.map((tool) => `${connector}.${tool}`);
+        expect(addresses(await rpc(assistant, group, "search_tools", { query: "labels" }))).toEqual(
+          labelHits("shared_mail"),
+        );
         const called = await rpc(assistant, group, "call_tool", { address: "mail.list_labels", args: {} });
         const ghost = await rpc(assistant, group, "call_tool", { address: "ghost.list_labels", args: {} });
         expect(called.isError).toBe(true);
@@ -1106,7 +1119,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         );
         const program = (await rpc(assistant, group, "execute_code", { code: "async () => null" })).structuredContent
           .result;
-        expect(program.search).toEqual(["shared_mail.list_labels", "shared_mail.gmail_api_search"]);
+        expect(program.search).toEqual(labelHits("shared_mail"));
         // Byte-for-byte what a connector that never existed gets, name aside.
         const asGhost = (value: unknown) => JSON.stringify(value).replaceAll('"mail.', '"ghost.');
         expect(asGhost(program.describe)).toBe(JSON.stringify(program.describeGhost));
@@ -1116,12 +1129,16 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "labels" }))).toEqual([
           "mail.list_labels",
           "shared_mail.list_labels",
-          "mail.gmail_api_search",
-          "shared_mail.gmail_api_search",
+          "mail.update_message_labels",
+          "mail.update_thread_labels",
+          "mail.batch_update_message_labels",
+          "shared_mail.update_message_labels",
+          "shared_mail.update_thread_labels",
+          "shared_mail.batch_update_message_labels",
         ]);
         expect(
           addresses(await rpc(assistant, { agentPool: "assistant-alice" }, "search_tools", { query: "labels" })),
-        ).toEqual(["mail.list_labels", "mail.gmail_api_search"]);
+        ).toEqual(labelHits("mail"));
         expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "form" }))).toContain(
           "forms.get_form",
         );
@@ -1155,7 +1172,8 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       {
         name: "off-page aggregate counts",
         args: { query: "labels", offset: 10_000 },
-        expected: { tools: [], total: 4, hasMore: false },
+        // Ten label tools and the operation index per Gmail connector.
+        expected: { tools: [], total: 20, hasMore: false },
       },
       {
         name: "fixed-subject guide control",
@@ -1243,7 +1261,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
               ),
             ),
           );
-          expect(fresh.result.structuredContent).toMatchObject({ tools: [], total: 2, hasMore: false });
+          expect(fresh.result.structuredContent).toMatchObject({ tools: [], total: 10, hasMore: false });
         }
         const page = await run(ownerless);
         if (name === "fixed-subject guide control") {

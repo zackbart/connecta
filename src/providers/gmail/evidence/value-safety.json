@@ -70,6 +70,10 @@
       "fields": ["nextPageToken"],
       "named": false
     },
+    "PATCH /settings/cse/identities/{emailAddress}": {
+      "fields": [],
+      "named": true
+    },
     "GET /settings/cse/keypairs": {
       "fields": [
         "cseKeyPairs[].privateKeyMetadata",
@@ -77,7 +81,7 @@
         "cseKeyPairs[].privateKeyMetadata[].kaclsKeyMetadata",
         "nextPageToken"
       ],
-      "named": false
+      "named": true
     },
     "POST /settings/cse/keypairs": {
       "fields": [
@@ -85,7 +89,7 @@
         "privateKeyMetadata[].hardwareKeyMetadata",
         "privateKeyMetadata[].kaclsKeyMetadata"
       ],
-      "named": false
+      "named": true
     },
     "GET /settings/cse/keypairs/{keyPairId}": {
       "fields": [
@@ -93,7 +97,7 @@
         "privateKeyMetadata[].hardwareKeyMetadata",
         "privateKeyMetadata[].kaclsKeyMetadata"
       ],
-      "named": false
+      "named": true
     },
     "POST /settings/cse/keypairs/{keyPairId}:disable": {
       "fields": [
@@ -101,7 +105,7 @@
         "privateKeyMetadata[].hardwareKeyMetadata",
         "privateKeyMetadata[].kaclsKeyMetadata"
       ],
-      "named": false
+      "named": true
     },
     "POST /settings/cse/keypairs/{keyPairId}:enable": {
       "fields": [
@@ -109,7 +113,11 @@
         "privateKeyMetadata[].hardwareKeyMetadata",
         "privateKeyMetadata[].kaclsKeyMetadata"
       ],
-      "named": false
+      "named": true
+    },
+    "POST /settings/cse/keypairs/{keyPairId}:obliterate": {
+      "fields": [],
+      "named": true
     },
     "GET /settings/sendAs": {
       "fields": ["sendAs[].signature", "sendAs[].smtpMsa.password"],
@@ -137,7 +145,7 @@
     },
     "POST /settings/sendAs/{sendAsEmail}/smimeInfo": {
       "fields": ["encryptedKeyPassword", "pem", "pkcs12"],
-      "named": false
+      "named": true
     },
     "GET /settings/sendAs/{sendAsEmail}/smimeInfo/{id}": {
       "fields": ["encryptedKeyPassword", "pem", "pkcs12"],
@@ -163,5 +171,81 @@
       "fields": ["messages[].payload.headers"],
       "named": false
     }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /drafts": ["drafts[].message.payload.headers", "nextPageToken"],
+      "POST /drafts": ["message.payload.headers"],
+      "POST /drafts/send": ["payload.headers"],
+      "GET /drafts/{id}": ["message.payload.headers"],
+      "PUT /drafts/{id}": ["message.payload.headers"],
+      "GET /history": [
+        "history[].labelsAdded[].message.payload.headers",
+        "history[].labelsRemoved[].message.payload.headers",
+        "history[].messagesAdded[].message.payload.headers",
+        "history[].messagesDeleted[].message.payload.headers",
+        "history[].messages[].payload.headers",
+        "nextPageToken"
+      ],
+      "GET /messages": ["messages[].payload.headers", "nextPageToken"],
+      "POST /messages": ["payload.headers"],
+      "POST /messages/import": ["payload.headers"],
+      "POST /messages/send": ["payload.headers"],
+      "GET /messages/{id}": ["payload.headers"],
+      "POST /messages/{id}/modify": ["payload.headers"],
+      "POST /messages/{id}/trash": ["payload.headers"],
+      "POST /messages/{id}/untrash": ["payload.headers"],
+      "GET /threads": ["nextPageToken", "threads[].messages[].payload.headers"],
+      "GET /threads/{id}": ["messages[].payload.headers"],
+      "POST /threads/{id}/modify": ["messages[].payload.headers"],
+      "POST /threads/{id}/trash": ["messages[].payload.headers"],
+      "POST /threads/{id}/untrash": ["messages[].payload.headers"],
+      "GET /settings/cse/identities": ["nextPageToken"],
+      "GET /settings/cse/keypairs": [
+        "cseKeyPairs[].privateKeyMetadata",
+        "cseKeyPairs[].privateKeyMetadata[].hardwareKeyMetadata",
+        "cseKeyPairs[].privateKeyMetadata[].kaclsKeyMetadata",
+        "cseKeyPairs[].privateKeyMetadata[].kaclsKeyMetadata.kaclsData",
+        "nextPageToken"
+      ],
+      "POST /settings/cse/keypairs": [
+        "privateKeyMetadata",
+        "privateKeyMetadata[].hardwareKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata.kaclsData"
+      ],
+      "GET /settings/cse/keypairs/{keyPairId}": [
+        "privateKeyMetadata",
+        "privateKeyMetadata[].hardwareKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata.kaclsData"
+      ],
+      "POST /settings/cse/keypairs/{keyPairId}:disable": [
+        "privateKeyMetadata",
+        "privateKeyMetadata[].hardwareKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata.kaclsData"
+      ],
+      "POST /settings/cse/keypairs/{keyPairId}:enable": [
+        "privateKeyMetadata",
+        "privateKeyMetadata[].hardwareKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata",
+        "privateKeyMetadata[].kaclsKeyMetadata.kaclsData"
+      ],
+      "GET /settings/sendAs": ["sendAs[].signature", "sendAs[].smtpMsa.password"],
+      "POST /settings/sendAs": ["signature", "smtpMsa.password"],
+      "GET /settings/sendAs/{sendAsEmail}": ["signature", "smtpMsa.password"],
+      "PUT /settings/sendAs/{sendAsEmail}": ["signature", "smtpMsa.password"],
+      "PATCH /settings/sendAs/{sendAsEmail}": ["signature", "smtpMsa.password"],
+      "GET /settings/sendAs/{sendAsEmail}/smimeInfo": [
+        "smimeInfo[].encryptedKeyPassword",
+        "smimeInfo[].pem",
+        "smimeInfo[].pkcs12"
+      ],
+      "POST /settings/sendAs/{sendAsEmail}/smimeInfo": ["encryptedKeyPassword", "pem", "pkcs12"],
+      "GET /settings/sendAs/{sendAsEmail}/smimeInfo/{id}": ["encryptedKeyPassword", "pem", "pkcs12"]
+    },
+    "resources": {},
+    "bindings": {}
   }
 }
