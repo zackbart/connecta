@@ -261,7 +261,12 @@ helper places an Eve guide before it, built from the endpoint's
 - **Older servers without facts:** only the naming rule.
 
 The guide adds about 600 bytes with three connectors. Its roster stays under 512
-bytes: titles go first, then whole entries give way to a `+N more` count. Names
+bytes: titles go first, then whole entries give way to a `+N more` count. Set
+`rosterMaxBytes` on `connectaInstructions` to change that cap; it must be a
+positive integer. Connectors the pool lists in `unlisted` never appear in the
+roster or the guide, so connectors only the agent's own code calls cost the
+model nothing; they stay callable at the same endpoint. Connecta's own
+instructions and `execute_code` inventory still name them. Names
 in Connecta's text and in `nextAction` stay unprefixed, and the guide says so.
 The helper warns once per endpoint when a server named `connecta` is on a
 different major or minor release from the helper.

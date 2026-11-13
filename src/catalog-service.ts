@@ -1002,14 +1002,18 @@ export class CatalogService {
     });
   }
 
+  private servesWrite(connector: Connector | undefined, toolName: string): boolean {
+    return !this.readOnly && connector !== undefined && !this.registry.refusesWrite(connector, toolName);
+  }
+
   private searchView(
     id: string,
     tools: ToolDef[],
     includeWrites: boolean,
     safety: CatalogSearchArgs["safety"],
   ): ToolDef[] {
-    const readOnly = !includeWrites && (this.readOnly || this.registry.getConnector(id)?.readOnly === true);
-    const key = `${readOnly}:${safety ?? "all"}`;
+    const connector = this.registry.getConnector(id);
+    const key = `${includeWrites}:${safety ?? "all"}`;
     let views = this.searchViews.get(tools);
     if (!views) {
       views = new Map();
@@ -1017,7 +1021,12 @@ export class CatalogService {
     }
     let view = views.get(key);
     if (!view) {
-      view = toolsForSafety(readOnly ? tools.filter((tool) => tool.classification === "read") : tools, safety ?? "all");
+      view = toolsForSafety(
+        includeWrites
+          ? tools
+          : tools.filter((tool) => tool.classification === "read" || this.servesWrite(connector, tool.name)),
+        safety ?? "all",
+      );
       carryLexicalCatalog(tools, view);
       const stale = catalogStaleness(tools);
       if (stale) markCatalogStale(view, stale);
@@ -1526,8 +1535,7 @@ export class CatalogService {
     tools: ToolDef[],
   ): CatalogResolution {
     // The same view discovery serves: a read-only scope never names a write here.
-    const visible =
-      this.readOnly || connector.readOnly === true ? tools.filter((tool) => tool.classification === "read") : tools;
+    const visible = tools.filter((tool) => tool.classification === "read" || this.servesWrite(connector, tool.name));
     const suggestions = hasControlCharacters(toolName) ? [] : describeSuggestions(connector.id, toolName, visible);
     return {
       ok: false,
@@ -1830,7 +1838,7 @@ export class CatalogService {
                 original.success,
                 toolTerms.filter((term) => !connectorTerms.has(term)).join(" "),
                 safety,
-                this.readOnly,
+                (toolName) => !this.servesWrite(connector, toolName),
               );
               // At most one ready call per connector: its first hatch's top operation.
               const ready = vocabulary.ready[0];

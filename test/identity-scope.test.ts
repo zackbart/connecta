@@ -1024,6 +1024,158 @@ describe("pools serve exactly their tools", () => {
     expect(calls).toEqual(["read", "read"]);
     await c.close();
   });
+
+  it("INV-2: a read-only pool serves exactly its granted writes and refuses every other, a later vendor write included (#1409)", async () => {
+    let tools: ToolDef[] = [
+      { name: "find", annotations: { readOnlyHint: true } },
+      { name: "save", annotations: { readOnlyHint: false } },
+      { name: "drop", annotations: { readOnlyHint: false, destructiveHint: true } },
+    ];
+    const calls: string[] = [];
+    const crm: Connector = {
+      id: "crm",
+      kind: "api",
+      description: "Customer records",
+      async listTools() {
+        return tools;
+      },
+      async callTool(name) {
+        calls.push(name);
+        return { ok: name };
+      },
+    };
+    let program: (fns: Record<string, (...args: unknown[]) => Promise<unknown>>) => Promise<unknown> = async () => null;
+    const c = deployment({
+      connectors: [...teamConnectors(), crm],
+      executor: scriptedExecutor((fns) => program(fns)),
+      pools: {
+        team: { tools: ["crm", "wiki"], readOnly: true, writes: ["crm.save"], unlisted: ["wiki"], members: ["bob"] },
+        native: { tools: ["crm"], readOnly: true, writes: ["crm.save"], surface: "native", members: ["carol"] },
+      },
+    });
+    const call = (path: string, user: User, name: string, address: string) =>
+      rpc(c, path, user, name, { address, args: {}, ...(name === "call_destructive_tool" ? { reason: "test" } : {}) });
+    const code = (outcome: any) => JSON.stringify(outcome).match(/"code":"([a-z_]+)"/u)?.[1];
+    const search = async (path: string, user: User) =>
+      JSON.stringify(await rpc(c, path, user, "search_tools", { connector: "crm", query: "", limit: 20 }));
+    const list = async (path: string, user: User) =>
+      (
+        (await readJsonRpc(
+          await c.fetch(
+            request(path, user, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+              body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+            }),
+          ),
+        )) as any
+      ).result.tools as Array<{ name: string; annotations?: { destructiveHint?: boolean } }>;
+
+    const meta = await list("/mcp/team", "bob");
+    expect(meta.map((tool) => tool.name)).toContain("call_destructive_tool");
+    expect(meta.find((tool) => tool.name === "execute_code")?.annotations?.destructiveHint).toBe(true);
+    for (const path of ["/mcp/team", "/mcp"]) {
+      const found = await search(path, "bob");
+      expect(found).toContain("crm.find");
+      expect(found).toContain("crm.save");
+      expect(found).not.toContain("crm.drop");
+      expect((await call(path, "bob", "call_destructive_tool", "crm.save")).result.isError).toBeFalsy();
+      expect(code(await call(path, "bob", "call_destructive_tool", "crm.drop"))).toBe("read_only_endpoint");
+      expect(code(await call(path, "bob", "call_tool", "crm.save"))).toBe("destructive_tool_requires_approval");
+    }
+    expect(calls).toEqual(["save", "save"]);
+
+    const described = (address: string, fns: Record<string, (...args: unknown[]) => Promise<unknown>>) =>
+      fns.describe!({ address }).then((value: any) => (value.tools[0].error ? "absent" : "shown"));
+    const refusal = (error: unknown) =>
+      String(error).includes("this endpoint is read-only") ? "refused" : String(error);
+    program = async (fns) => ({
+      described: await described("crm.save", fns),
+      hidden: await described("crm.drop", fns),
+      saved: await fns.call!("crm.save", {}).then(() => "sent", refusal),
+      dropped: await fns.call!("crm.drop", {}).then(() => "sent", refusal),
+    });
+    const ran = (await rpc(c, "/mcp/team", "bob", "execute_code", { code: "async () => null" })).result;
+    expect(ran.structuredContent.result).toEqual({
+      described: "shown",
+      hidden: "absent",
+      saved: "sent",
+      dropped: "refused",
+    });
+    expect(calls).toEqual(["save", "save", "save"]);
+
+    const nativeNames = (await list("/mcp/native", "carol")).map((tool) => tool.name);
+    const nativeSave = nativeNames.find((name) => name.startsWith("crm__") && name.endsWith("save"));
+    expect(nativeSave).toBeDefined();
+    expect(nativeNames.some((name) => name.endsWith("drop"))).toBe(false);
+    expect((await rpc(c, "/mcp/native", "carol", nativeSave!, {})).result.isError).toBeFalsy();
+    expect(calls).toEqual(["save", "save", "save", "save"]);
+
+    tools = [...tools, { name: "purge", annotations: { readOnlyHint: false, destructiveHint: true } }];
+    await c.registry.invalidateStored("crm");
+    expect(await search("/mcp/team", "bob")).not.toContain("crm.purge");
+    expect(code(await call("/mcp/team", "bob", "call_destructive_tool", "crm.purge"))).toBe("read_only_endpoint");
+    expect((await list("/mcp/native", "carol")).some((tool) => tool.name.endsWith("purge"))).toBe(false);
+    expect(calls).toEqual(["save", "save", "save", "save"]);
+
+    const facts = (await readJsonRpc(
+      await c.fetch(
+        request("/mcp/team", "bob", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "t", version: "1" } },
+          }),
+        }),
+      ),
+    )) as any;
+    expect(facts.result.capabilities.extensions["dev.connecta/endpoint"]).toEqual({
+      surface: "meta",
+      executeCode: true,
+      readOnly: false,
+      connectors: [{ id: "wiki", unlisted: true }, { id: "crm" }],
+    });
+    expect((await call("/mcp/team", "bob", "call_tool", "wiki.read")).result.isError).toBeFalsy();
+    expect(c.describeConfig().pools.find((pool) => pool.name === "team")).toMatchObject({
+      readOnly: true,
+      writes: ["crm.save"],
+      unlisted: ["wiki"],
+    });
+    await c.close();
+  });
+
+  it("INV-11: refuses write grants that name a whole connector, a missing tool, or a writable pool, and unlisted ids outside the pool (#1409)", () => {
+    const pool = (fields: Record<string, unknown>) => () =>
+      deployment({ pools: { team: { tools: ["wiki"], readOnly: true, members: ["bob"], ...fields } } });
+    const refusals: Array<[Record<string, unknown>, string]> = [
+      [{ writes: ["notes"] }, 'ConnectaConfig.pools.team.writes[0] names the whole connector "notes"'],
+      [{ writes: ["notes.nope"] }, 'ConnectaConfig.pools.team.writes: connector "notes" has no tool "nope".'],
+      [{ writes: ["ghost.save"] }, 'ConnectaConfig.pools.team.writes: unknown connector "ghost".'],
+      [{ writes: ["notes.delete"], readOnly: false }, "ConnectaConfig.pools.team.writes needs readOnly: true."],
+      [{ writes: [] }, "ConnectaConfig.pools.team.writes is empty; omit it instead."],
+      [{ writes: "notes.delete" }, "ConnectaConfig.pools.team.writes must be an array"],
+      [
+        { unlisted: ["billing"] },
+        "ConnectaConfig.pools.team.unlisted[0] must be a connector id this pool's tools or writes reach.",
+      ],
+      [{ unlisted: ["wiki", "wiki"] }, 'ConnectaConfig.pools.team.unlisted[1] repeats "wiki".'],
+    ];
+    for (const [fields, message] of refusals) {
+      expect(pool(fields)).toThrow(ConfigError);
+      expect(pool(fields)).toThrow(message);
+    }
+    const inherited = deployment({
+      readOnly: true,
+      pools: { team: { tools: [], writes: ["notes.delete", "notes.search"], unlisted: ["notes"], members: ["bob"] } },
+    });
+    expect(inherited.describeConfig().pools[0]).toMatchObject({
+      readOnly: true,
+      writes: ["notes.delete", "notes.search"],
+    });
+  });
 });
 
 describe("member references at construction", () => {

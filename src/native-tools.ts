@@ -609,7 +609,8 @@ export class NativeSurface {
                 entry !== null &&
                 entry.name === name &&
                 !self.options.catalogErrors.includes(entry.connector.id) &&
-                (!(self.options.readOnly || entry.connector.readOnly) || entry.tool.classification === "read")
+                (entry.tool.classification === "read" ||
+                  !(self.options.readOnly || self.registry.refusesWrite(entry.connector, entry.tool.name)))
                   ? [entry]
                   : [],
               );

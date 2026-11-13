@@ -24,8 +24,12 @@ export type Member = { kind: "human"; namespace: string; id: string } | { kind: 
 export interface ResolvedPool {
   /** Resolved: the pool's own `readOnly`, else the deployment's. */
   readOnly: boolean;
-  /** Exactly the pool's `tools`; nothing intersects or widens it. */
+  /**
+   * Exactly the pool's `tools` and `writes`; nothing intersects or widens it.
+   * `access.writes` is present only on a read-only pool that grants writes.
+   */
   access: ConnectorAccess;
+  unlisted?: ReadonlySet<string>;
   /** Non-empty and homogeneous: all people or all agents. */
   members: readonly Member[];
   /** Trimmed `owner`: the Workspace address agents in this pool act as. */
@@ -35,6 +39,9 @@ export interface ResolvedPool {
   /** Present for a native pool; absent is the six meta-tools. */
   native?: { executeCode: boolean };
 }
+
+export const presentsReadOnly = (pool: Pick<ResolvedPool, "readOnly" | "access">): boolean =>
+  pool.readOnly && pool.access.writes === undefined;
 
 const AGENT_PREFIX = "agent:";
 

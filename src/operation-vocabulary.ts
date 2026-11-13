@@ -26,7 +26,7 @@ type Vocabulary = (
   query: string,
   visible: ReadonlySet<string>,
   safety: string | undefined,
-  readOnly: boolean,
+  refusesWrite: (route: string) => boolean,
   synonyms?: Groups,
 ) => { matched: boolean; ready: Array<Ready & { route: string }> };
 /** Ready calls one vocabulary offers a search: only its top-ranked operation. */
@@ -116,7 +116,7 @@ export function registerOperationVocabulary(tool: object, rows: () => Iterable<R
   let postings: Map<string, number[]> | undefined;
   const routes: Array<Pick<Row, "route" | "write"> & { ready?: Ready & Resource }> = [];
   const cache = new Map<string, readonly number[]>();
-  tools.set(tool, (query, visible, safety, readOnly, synonyms) => {
+  tools.set(tool, (query, visible, safety, refusesWrite, synonyms) => {
     const none = { matched: false, ready: [] };
     if (query.length > OPERATION_VOCABULARY_BOUNDS.queryChars) return none;
     const wanted = terms(query);
@@ -169,7 +169,7 @@ export function registerOperationVocabulary(tool: object, rows: () => Iterable<R
     // The same endpoint, safety and visibility checks decide both answers.
     const admitted = found.filter((id) => {
       const row = routes[id]!;
-      if (row.write && readOnly) return false;
+      if (row.write && (row.route === undefined || refusesWrite(row.route))) return false;
       if ((safety === "readOnly" && row.write) || (safety === "approvalRequired" && !row.write)) return false;
       return row.route !== undefined && visible.has(row.route);
     });
@@ -242,7 +242,7 @@ export function operationVocabularyMatches(
   catalog: readonly ToolDef[],
   query: string,
   safety: string | undefined,
-  readOnly: boolean,
+  refusesWrite: (toolName: string) => boolean,
 ): { tools: ToolDef[]; ready: Array<Ready & { tool: ToolDef }> } {
   const registered = connectors.get(connector);
   const tools: ToolDef[] = [];
@@ -252,7 +252,7 @@ export function operationVocabularyMatches(
   const synonyms = groupsOf(connector);
   for (const tool of catalog) {
     const vocabulary = tool.classification === "read" ? registered.get(tool.name) : undefined;
-    const found = vocabulary?.(query, visible, safety, readOnly || connector.readOnly === true, synonyms);
+    const found = vocabulary?.(query, visible, safety, refusesWrite, synonyms);
     if (!found?.matched) continue;
     tools.push(tool);
     for (const { route, ...call } of found.ready) {

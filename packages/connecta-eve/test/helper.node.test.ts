@@ -525,6 +525,26 @@ it("prefixes the server's text with the guide for each surface, from a real endp
   expect(lean).not.toContain("execute_code");
   // A read-only endpoint lists no write, so the guide names none.
   expect((await guide({ surface: "native", readOnly: true }))[0]).not.toContain("WRITE");
+  expect((await guide({ unlisted: ["billing"] }))[0]).toBe(META_GUIDE("connecta", "crm, tickets"));
+  await localConnecta({ unlisted: ["billing"] }, async (url, token) => {
+    const response = await fetch(`${url}/agent/assistant`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: { name: "call_tool", arguments: { address: "billing.get_invoice", args: {} } },
+      }),
+    });
+    const { result } = (await response.json()) as { result: { isError?: boolean; content: { text: string }[] } };
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0]!.text).toContain("ok");
+  });
 });
 
 it("reads the same facts through the legacy initialize fallback", async () => {
@@ -611,6 +631,43 @@ it("degrades the roster by bytes, sanitizes it, and treats malformed facts as ab
   const omitted = Number(/; \+(\d+) more$/.exec(roster)?.[1]);
   expect(roster.split(", ").length + omitted).toBe(300);
   expect(await content({ ...meta, connectors: [] })).not.toContain("Reachable:");
+  const guided17 = [
+    ...Array.from({ length: 15 }, (_, index) => ({ id: `customer_support_records_${index}` })),
+    ...["ledger", "warehouse"].map((id) => ({ id, readFirst: `connector:${id}` })),
+  ];
+  expect(await content({ ...meta, connectors: guided17 })).toMatch(/; \+\d+ more\.\n/);
+  const listed = await content({
+    ...meta,
+    connectors: guided17.map((connector) => ("readFirst" in connector ? { ...connector, unlisted: true } : connector)),
+  });
+  const kept = /Reachable: (.*)\.\n/.exec(listed)?.[1] ?? "";
+  expect(kept).not.toMatch(/more$|ledger|warehouse/);
+  expect(kept.split(", ")).toHaveLength(15);
+  expect(Buffer.byteLength(kept)).toBeLessThanOrEqual(512);
+  const wide = await turn(
+    connectaInstructions({
+      url: "https://connecta.example.com",
+      getToken: () => "cta",
+      fetch: discovering({ ...meta, connectors: many }),
+      rosterMaxBytes: 4096,
+    }),
+  );
+  const widened = /Reachable: (.*)\.\n/.exec((wide as { content: string }).content)?.[1] ?? "";
+  expect(Buffer.byteLength(widened)).toBeGreaterThan(512);
+  expect(Buffer.byteLength(widened)).toBeLessThanOrEqual(4096);
+  expect(widened).toMatch(/; \+\d+ more$/);
+  const tiny = await turn(
+    connectaInstructions({
+      url: "https://connecta.example.com",
+      getToken: () => "cta",
+      fetch: discovering({ ...meta, connectors: [{ id: "crm" }] }),
+      rosterMaxBytes: 1,
+    }),
+  );
+  expect((tiny as { content: string }).content).not.toMatch(/Reachable:|more/);
+  for (const rosterMaxBytes of [0, -1, 1.5, Number.NaN]) {
+    expect(() => connectaInstructions({ rosterMaxBytes })).toThrow("rosterMaxBytes must be a positive integer");
+  }
   for (const malformed of [
     undefined,
     "native",

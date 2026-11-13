@@ -51,7 +51,10 @@ const MANAGE_ACTIONS = {
 /** The trusted projection a member response must match, value for value. */
 export interface MemberViewExpectation {
   pools: Array<
-    Pick<OperatorPoolV2, "name" | "humanPath" | "agentPath" | "readOnly" | "surface" | "executeCode" | "tools">
+    Pick<
+      OperatorPoolV2,
+      "name" | "humanPath" | "agentPath" | "readOnly" | "surface" | "executeCode" | "tools" | "writes"
+    >
   >;
   connectors: OperatorMemberConnector[];
 }
@@ -134,7 +137,7 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
     ];
   });
   return {
-    pools: pools.map(({ name, humanPath, agentPath, readOnly, surface, executeCode, tools }) => ({
+    pools: pools.map(({ name, humanPath, agentPath, readOnly, surface, executeCode, tools, writes }) => ({
       name,
       humanPath: pools.length === 1 ? "/mcp" : humanPath,
       agentPath,
@@ -142,6 +145,7 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
       surface,
       executeCode,
       tools,
+      writes,
     })),
     connectors,
   };
@@ -306,9 +310,12 @@ export function expectMemberViewWithholds(response: unknown, expected: MemberVie
       "executeCode",
       "owner",
       "tools",
+      "writes",
+      "unlisted",
       "members",
     ]);
     expect(pool.owner, `pools[${i}].owner`).toBeNull();
+    expect(pool.unlisted, `pools[${i}].unlisted`).toEqual([]);
     expect(pool.members, `pools[${i}].members`).toEqual([]);
     oneOf(pool.surface, ["meta", "native"], `pools[${i}].surface`);
     oneOf(pool.executeCode, [true, false], `pools[${i}].executeCode`);

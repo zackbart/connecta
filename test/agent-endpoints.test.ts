@@ -371,6 +371,8 @@ describe("agent endpoint admission", () => {
       pools: {
         readers: { tools: ["notes"], readOnly: true, members: ["agent:bot"] },
         writers: { tools: ["notes"], readOnly: false, members: ["agent:bot"] },
+        granted: { tools: ["notes", "wiki"], readOnly: true, writes: ["notes.delete"], members: ["agent:bot"] },
+        exact: { tools: ["notes.delete"], readOnly: true, members: ["agent:bot"] },
       },
     });
     const bot = await issueAgentToken(storage, "bot");
@@ -382,6 +384,13 @@ describe("agent endpoint admission", () => {
     const written = await rpc(c, "/agent/writers", bot, "call_destructive_tool", { address: "notes.delete", args: {} });
     expect(written.result.isError).toBeFalsy();
     expect(deleted.count).toBe(1);
+    expect(await searchText(c, "/agent/granted", bot)).toContain("notes.delete");
+    const granted = await rpc(c, "/agent/granted", bot, "call_destructive_tool", { address: "notes.delete", args: {} });
+    expect(granted.result.isError).toBeFalsy();
+    expect(deleted.count).toBe(2);
+    const exact = await rpc(c, "/agent/exact", bot, "call_destructive_tool", { address: "notes.delete", args: {} });
+    expect(JSON.stringify(exact)).toContain("read_only_endpoint");
+    expect(deleted.count).toBe(2);
     await c.close();
   });
 

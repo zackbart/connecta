@@ -1640,7 +1640,7 @@ function metaToolsForRequest(
                     !(
                       dependency.access === "catalog" ||
                       (dependency.classification === "read" && tool.classification === "read") ||
-                      (opts.readOnly !== true && connector.readOnly !== true)
+                      (opts.readOnly !== true && !registry.refusesWrite(connector, tool.name))
                     )
                   )
                     return false;

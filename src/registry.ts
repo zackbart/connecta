@@ -305,6 +305,12 @@ export interface RegistryView {
   getConnector(id: string): Connector | undefined;
   /** Only whole-connector grants authorize resource reads. */
   getResourceConnector(id: string): Connector | undefined;
+  /**
+   * Whether this view refuses a write to `toolName` on `connector` before the
+   * endpoint's own `readOnly`: the connector is read-only, or a read-only
+   * pool's exact `writes` omit it. A caller ORs this with the endpoint policy.
+   */
+  refusesWrite(connector: Connector, toolName: string): boolean;
   resolveAddress(address: string): { connector: Connector; toolName: string } | null;
   getTools(
     id: string,
@@ -389,6 +395,7 @@ export type ToolAccess = ReadonlyMap<string, ReadonlySet<string>>;
 export interface RegistryScope {
   connectorIds: "all" | readonly string[];
   toolAccess?: ToolAccess;
+  writes?: ToolAccess;
   subjectKey?: string;
   principalKey?: string;
   endpoint?: string;
@@ -834,6 +841,10 @@ export class Registry implements RegistryView {
 
   getResourceConnector(id: string): Connector | undefined {
     return this.getConnector(id);
+  }
+
+  refusesWrite(connector: Connector): boolean {
+    return connector.readOnly === true;
   }
 
   canReadConnectorSkills(id: string): boolean {
@@ -1754,6 +1765,11 @@ class ScopedRegistryView implements RegistryView {
     return this.getConnector(id);
   }
 
+  refusesWrite(connector: Connector, toolName: string): boolean {
+    const writes = this.scope.writes;
+    return connector.readOnly === true || (writes !== undefined && writes.get(connector.id)?.has(toolName) !== true);
+  }
+
   resolveAddress(address: string): { connector: Connector; toolName: string } | null {
     const parsed = splitAddress(address);
     if (!parsed) return null;
@@ -1892,6 +1908,11 @@ class ScopedRegistryView implements RegistryView {
             throw new Error(`Unknown connector "${args[0]}"`);
           }
           const tools = yield* registryProgram(registry, "getTools", args[0], args[1], args[2], args[3], self.scope);
+          const writes = self.scope.writes?.get(args[0]);
+          if (writes && !self.scope.toolAccess?.has(args[0])) {
+            const present = new Set(tools.map((tool) => tool.name));
+            for (const name of writes) if (!present.has(name)) self.root.noteAbsentGrant(args[0], name);
+          }
           const granted = self.scope.toolAccess?.get(args[0]);
           if (!granted) return tools;
           // Every consumer — search, describe, call_tool, and a program's

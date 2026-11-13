@@ -33,6 +33,7 @@ import { ExecutorAdmissionError, type AdmissionController, type AdmissionLease }
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
 import type { ConnectorAccess } from "../connector-access.js";
+import { presentsReadOnly } from "../membership.js";
 import type { ConnectorCaller } from "../connector-caller.js";
 import { ENDPOINT_EXTENSION, endpointExtension, endpointInstructions } from "../skills.js";
 import {
@@ -479,6 +480,7 @@ function serveMcp(
               native !== undefined,
               native?.executeCode ?? true,
               effectiveReadOnly,
+              pool !== undefined ? opts.pools.get(pool)?.unlisted : undefined,
             ),
           },
         },
@@ -937,7 +939,7 @@ export function createMcpRoute(opts: ServerOptions): {
             // Exactly one membership routes; none or several fail closed.
             const [match, ...more] = personPools(opts, admitted.identity);
             return match && !more.length
-              ? { pool: match[0], access: match[1].access, readOnly: match[1].readOnly }
+              ? { pool: match[0], access: match[1].access, readOnly: presentsReadOnly(match[1]) }
               : undefined;
           }
           const pool = agentEndpoint
@@ -949,7 +951,7 @@ export function createMcpRoute(opts: ServerOptions): {
             ? {
                 pool: poolName,
                 access: pool.access,
-                readOnly: pool.readOnly,
+                readOnly: presentsReadOnly(pool),
                 ...(pool.owner !== undefined ? { poolOwner: pool.owner } : {}),
               }
             : undefined;
@@ -1078,6 +1080,7 @@ export function createMcpRoute(opts: ServerOptions): {
               // Connector members narrow every endpoint, plain /mcp for maintainers included.
               viewer: authz.identity,
               ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
+              ...(access.writes ? { writes: access.writes } : {}),
               ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
               ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
               endpoint: new URL(request.url).pathname,
@@ -1154,7 +1157,7 @@ export function createMcpRoute(opts: ServerOptions): {
                             tool &&
                             (dependency.access === "catalog" ||
                               (dependency.classification === "read" && tool.classification === "read") ||
-                              !currentReadOnly)
+                              (!currentReadOnly && !view.refusesWrite(resolved.connector, tool.name)))
                           )
                         )
                           return false;

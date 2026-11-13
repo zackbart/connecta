@@ -245,7 +245,9 @@ function describedPools(app: ReturnType<typeof createTestConnecta>): OperatorPoo
     surface: pool.surface,
     executeCode: pool.executeCode,
     owner: pool.owner,
-    tools: poolGrants(pool.tools),
+    tools: poolGrants([...pool.tools, ...pool.writes]),
+    writes: pool.writes,
+    unlisted: pool.unlisted,
     members: (pool.members ?? []).map(member),
   }));
 }
@@ -454,6 +456,8 @@ describe("operator contract v2 server", () => {
         surface: "meta",
         executeCode: true,
         owner: "team@example.com",
+        writes: [],
+        unlisted: [],
         tools: [
           { connectorId: "wiki", tools: [{ name: "read", requireReadOnly: false }] },
           { connectorId: "mail", tools: "all" },
@@ -474,6 +478,8 @@ describe("operator contract v2 server", () => {
         surface: "meta",
         executeCode: true,
         owner: null,
+        writes: [],
+        unlisted: [],
         tools: [
           { connectorId: "wiki", tools: "all" },
           { connectorId: "hidden", tools: "all" },

@@ -283,6 +283,12 @@ function EndpointTools({ endpoint, health }: { endpoint: EndpointRow; health: Co
               <tr key={group.config.id}>
                 <td>
                   <ConnectorName group={group} health={health} />
+                  {group.unlisted ? (
+                    <span className="meta" title="Kept off the model's roster; still callable">
+                      {" "}
+                      · unlisted
+                    </span>
+                  ) : null}
                 </td>
                 <td className="endpoint-runs-as">
                   <RunsAs

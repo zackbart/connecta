@@ -122,11 +122,15 @@ export interface ConnectaConfigDescription {
    * `members` are resolved references in declaration order. `owner` is the
    * Workspace address agents act as, or null. `description` is the trimmed
    * text the pool's endpoints add to their MCP instructions, or null.
+   * `writes` are a read-only pool's exact write grants and `unlisted` the
+   * connector ids its roster leaves out, each [] when unset.
    */
   pools: Array<{
     name: string;
     path: string;
     tools: string[];
+    writes: string[];
+    unlisted: string[];
     members: DescribedMember[];
     readOnly: boolean;
     surface: "meta" | "native";
@@ -466,6 +470,8 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       name,
       path: `/mcp/${name}`,
       tools: pool.tools.map(String),
+      writes: (pool.writes ?? []).map(String),
+      unlisted: (pool.unlisted ?? []).map(String),
       members: (input.pools.get(name)?.members ?? []).map(describedMember),
       owner: input.pools.get(name)?.owner ?? null,
       description: input.pools.get(name)?.description ?? null,

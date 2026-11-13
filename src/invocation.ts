@@ -889,7 +889,7 @@ export class InvocationService {
           const refusal = writeRefusal(
             target.definition.classification,
             context.source,
-            context.readOnly || connectorReadOnly,
+            context.readOnly || this.registry.refusesWrite(target.connector, target.toolName),
           );
           if (refusal === "read_only_endpoint") {
             return framingError(

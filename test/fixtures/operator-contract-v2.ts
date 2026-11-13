@@ -92,6 +92,8 @@ const config: ConnectaConfigDescription = {
       executeCode: true,
       owner: "ada@workspace.example",
       description: null,
+      writes: [],
+      unlisted: [],
     },
     {
       name: "support",
@@ -105,6 +107,8 @@ const config: ConnectaConfigDescription = {
       executeCode: true,
       owner: "support@workspace.example",
       description: null,
+      writes: [],
+      unlisted: [],
     },
     {
       name: "team",
@@ -119,6 +123,8 @@ const config: ConnectaConfigDescription = {
       executeCode: true,
       owner: null,
       description: null,
+      writes: [],
+      unlisted: [],
     },
   ],
   modules: {
@@ -178,6 +184,8 @@ const pools: OperatorPoolV2[] = [
     surface: "meta",
     executeCode: true,
     owner: "ada@workspace.example",
+    writes: [],
+    unlisted: [],
     tools: [
       { connectorId: "gmail", tools: "all" },
       { connectorId: "github", tools: [{ name: "read", requireReadOnly: false }] },
@@ -192,6 +200,8 @@ const pools: OperatorPoolV2[] = [
     surface: "meta",
     executeCode: true,
     owner: "support@workspace.example",
+    writes: [],
+    unlisted: [],
     tools: [
       { connectorId: "github", tools: [{ name: "read", requireReadOnly: false }] },
       { connectorId: "drive", tools: [{ name: "search", requireReadOnly: true }] },
@@ -207,6 +217,8 @@ const pools: OperatorPoolV2[] = [
     surface: "meta",
     executeCode: true,
     owner: null,
+    writes: [],
+    unlisted: [],
     tools: [
       { connectorId: "slack", tools: "all" },
       { connectorId: "notes", tools: "all" },
