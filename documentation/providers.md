@@ -275,6 +275,20 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
+<summary>Google People (Contacts and directory) (22 tools)</summary>
+
+[Setup](#google-people-contacts-and-directory). **API source:** [Google Discovery conversion](https://developers.google.com/people/api/rest).
+
+- **Named reads:** `get_contact_group`, `get_people`, `get_person`, `list_contact_groups`, `list_contacts`, `list_directory`, `list_other_contacts`, `search_contacts`, `search_directory`, `search_other_contacts`.
+- **Named writes:** `copy_other_contact`, `create_contact_group`, `create_contact`, `delete_contact_group`, `delete_contact`, `update_contact_group_members`, `update_contact_group`, `update_contact`.
+- **API reads:** `people_api_details`, `people_api_read`, `people_api_search`.
+- **API writes:** `people_api_write`.
+
+**Contributor evidence (optional):** [contracts, adapters and review](https://github.com/zackbart/connecta/tree/main/src/providers/people).
+
+</details>
+
+<details>
 <summary>Planning Center (27 tools)</summary>
 
 [Setup](#planning-center). **API source:** Composed upstream OpenAPI contracts: [/people/v2](https://developer.planning.center/docs/#/people/2026-06-04), [/services/v2](https://developer.planning.center/docs/#/services/2018-11-01), [/groups/v2](https://developer.planning.center/docs/#/groups/2023-07-10), [/check-ins/v2](https://developer.planning.center/docs/#/check-ins/2025-05-28), [/calendar/v2](https://developer.planning.center/docs/#/calendar/2026-06-22), [/registrations/v2](https://developer.planning.center/docs/#/registrations/2025-05-01), [/giving/v2](https://developer.planning.center/docs/#/giving/2019-10-18), [/publishing/v2](https://developer.planning.center/docs/#/publishing/2024-03-25), [/webhooks/v2](https://developer.planning.center/docs/#/webhooks/2022-10-20), [/api/v2](https://developer.planning.center/docs/#/api/2026-09-24).
@@ -1133,7 +1147,7 @@ send route. Drafts are written only through `create_draft` and `update_draft`.
 Gmail is the documented three-hatch exception to the four-hatch default.
 
 **OAuth mode.** Every Google product (`gmail`, `drive`, `docs`, `sheets`,
-`slides`, `forms`, `meet`) alternatively connects Google accounts through Connecta's
+`slides`, `forms`, `meet`, `people`) alternatively connects Google accounts through Connecta's
 downstream OAuth grant. It needs no Workspace administrator and also serves
 consumer Google accounts:
 
@@ -1566,6 +1580,76 @@ body and `result.page` carries continuation. Resource keys, decryption JWTs and
 private download destinations remain withheld on named and hatch responses.
 A 404 does not prove absence. Auxiliary lookup failures send no move; an actual
 write failure can have an unknown outcome and requires a read before repetition.
+
+## Google People (Contacts and directory)
+
+```ts
+import { people } from "@zackbart/connecta/providers/people";
+
+people("contacts", {
+  purpose: "Resolve the people in mail and meetings",
+  serviceAccount: env.GOOGLE_SERVICE_ACCOUNT_JSON,
+  subject: (identity) => accounts[identity.principal?.id ?? ""],
+});
+```
+
+Enable the People API in a Google Cloud project. Create a service account
+without project IAM roles, enable domain-wide delegation, and store its JSON
+key as a deployment secret. A Workspace super administrator must add the key's
+numeric `client_id` to Admin console → Security → Access and data control →
+API controls → Manage Domain Wide Delegation, with exactly
+`https://www.googleapis.com/auth/contacts,https://www.googleapis.com/auth/contacts.other.readonly,https://www.googleapis.com/auth/directory.readonly,https://www.googleapis.com/auth/user.emails.read,https://www.googleapis.com/auth/user.phonenumbers.read,https://www.googleapis.com/auth/user.addresses.read,https://www.googleapis.com/auth/user.birthday.read,https://www.googleapis.com/auth/user.organization.read,https://www.googleapis.com/auth/userinfo.profile`
+(`PEOPLE_SCOPES`). A grant can take up to 24 hours to apply. If key creation is
+disabled by `iam.disableServiceAccountKeyCreation`, an organization policy
+administrator must permit it for the project. [OAuth mode](#gmail) instead
+takes `{ oauth, authScope }` and requests exactly those nine scopes; enable the
+People API in the OAuth client's project. Google treats `contacts` and the
+`user.*` scopes as sensitive, so an External consent screen may need
+verification.
+
+`subject` and pool owners work as for the other Google products: one fixed
+Workspace address or a function from the admitted identity, and calls without
+a mapped account fail `auth_required`. No tool argument selects an account.
+Each logical call resolves its subject once.
+
+The connection reads the user's own contacts and contact groups, the "Other
+contacts" Gmail saved from interactions, the user's own profile at
+`people/me`, and the Workspace directory. Directory tools work only for Google
+Workspace accounts. A personal Google account, or a domain that hides its
+directory, fails with `connector_call_failed` or
+`provider_permission_denied` and says so. Searches send Google's documented
+empty-query warm-up request first, then the search. Each counts as one request
+against `callAdmission`.
+
+`sensitiveFields` (`"drop"` by default, or `"return"`) decides whether results
+carry `PEOPLE_SENSITIVE_FIELDS`:
+
+- addresses, age ranges and birthdays;
+- notes (`biographies`) and events;
+- external ids, genders and relations;
+- custom fields (`userDefined`).
+
+With `"drop"`, they leave every named and hatch result, and named reads refuse
+to request them. No tool argument changes the choice. Photo and cover-photo
+URLs are vendor-minted image destinations, and `clientData` holds other
+applications' private storage, so both are always withheld. Names, emails,
+phone numbers, organizations and memberships are the requested data.
+
+`readOnly: true` omits and refuses writes. Named reads ask Google for names,
+email addresses, phone numbers and organizations unless `personFields` names
+others. Lists return 25 people by default, at most 100. Searches return at most
+30, Google's cap, with no continuation. Updates replace each whole field they
+name, at the etag a read returned; a stale etag is refused. Creates, copies and
+group creation are additive writes. Google supplies no idempotency key, so an
+uncertain create is never resent. The hatch reaches all 24 indexed methods,
+including:
+
+- batch contact create, update and delete;
+- contact photo update and delete, with base64 photo bytes checked before
+  upload;
+- group batch reads.
+
+Vendor responses are bounded at 8 MiB.
 
 ## QuickBooks Online
 

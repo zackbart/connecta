@@ -1140,7 +1140,7 @@ both. The removed `trust` option fails construction with a message naming
 ### Pool owners for Google Workspace
 
 An agent has no Workspace account. On a Workspace connector (`gmail()`,
-`drive()`, `sheets()`, `slides()`, `forms()`, `docs()`, `meet()`) whose
+`drive()`, `sheets()`, `slides()`, `forms()`, `docs()`, `meet()`, `people()`) whose
 `subject` is a mapping function, the caller decides whose account a call opens. This applies
 to delegation mode only: a Workspace connector in OAuth mode (`{ oauth,
 authScope }`) has no subject, ignores pool owners and follows its `authScope`

@@ -11,15 +11,16 @@ import { fixture as fixture7, createAuthored as authored7 } from "../src/provide
 import { fixture as fixture8, createAuthored as authored8 } from "../src/providers/granola/fixtures.js";
 import { fixture as fixture9, createAuthored as authored9 } from "../src/providers/meet/fixtures.js";
 import { fixture as fixture10, createAuthored as authored10 } from "../src/providers/overflow/fixtures.js";
-import { fixture as fixture11, createAuthored as authored11 } from "../src/providers/planning-center/fixtures.js";
-import { fixture as fixture12, createAuthored as authored12 } from "../src/providers/quickbooks/fixtures.js";
-import { fixture as fixture13, createAuthored as authored13 } from "../src/providers/sheets/fixtures.js";
-import { fixture as fixture14, createAuthored as authored14 } from "../src/providers/slides/fixtures.js";
-import { fixture as fixture15, createAuthored as authored15 } from "../src/providers/stripe/fixtures.js";
-import { fixture as fixture16, createAuthored as authored16 } from "../src/providers/tithely/fixtures.js";
-import { fixture as fixture17, createAuthored as authored17 } from "../src/providers/vercel/fixtures.js";
+import { fixture as fixture11, createAuthored as authored11 } from "../src/providers/people/fixtures.js";
+import { fixture as fixture12, createAuthored as authored12 } from "../src/providers/planning-center/fixtures.js";
+import { fixture as fixture13, createAuthored as authored13 } from "../src/providers/quickbooks/fixtures.js";
+import { fixture as fixture14, createAuthored as authored14 } from "../src/providers/sheets/fixtures.js";
+import { fixture as fixture15, createAuthored as authored15 } from "../src/providers/slides/fixtures.js";
+import { fixture as fixture16, createAuthored as authored16 } from "../src/providers/stripe/fixtures.js";
+import { fixture as fixture17, createAuthored as authored17 } from "../src/providers/tithely/fixtures.js";
+import { fixture as fixture18, createAuthored as authored18 } from "../src/providers/vercel/fixtures.js";
 
-export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17];
+export const providerFixtures = [fixture0, fixture1, fixture2, fixture3, fixture4, fixture5, fixture6, fixture7, fixture8, fixture9, fixture10, fixture11, fixture12, fixture13, fixture14, fixture15, fixture16, fixture17, fixture18];
 
 export const providerKinds: Readonly<Record<string, string>> = {
   "breeze": "api",
@@ -33,6 +34,7 @@ export const providerKinds: Readonly<Record<string, string>> = {
   "granola": "api",
   "meet": "api",
   "overflow": "api",
+  "people": "api",
   "planning-center": "api",
   "quickbooks": "api",
   "sheets": "api",
@@ -54,11 +56,12 @@ export const authoredFixtures: Readonly<Record<string, (() => Pick<Connector, "l
   "granola": authored8,
   "meet": authored9,
   "overflow": authored10,
-  "planning-center": authored11,
-  "quickbooks": authored12,
-  "sheets": authored13,
-  "slides": authored14,
-  "stripe": authored15,
-  "tithely": authored16,
-  "vercel": authored17,
+  "people": authored11,
+  "planning-center": authored12,
+  "quickbooks": authored13,
+  "sheets": authored14,
+  "slides": authored15,
+  "stripe": authored16,
+  "tithely": authored17,
+  "vercel": authored18,
 };

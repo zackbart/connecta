@@ -1,0 +1,200 @@
+{
+  "format": 5,
+  "digest": "sha256:532f281096109fa10e94c6b79bc78811326bed61a43d0ccc1efec476e5b64caf",
+  "options": {},
+  "candidates": {
+    "GET /contactGroups": {
+      "fields": [
+        "contactGroups[].clientData[].value",
+        "contactGroups[].metadata.deleted",
+        "nextPageToken",
+        "nextSyncToken"
+      ],
+      "named": false
+    },
+    "POST /contactGroups": {
+      "fields": ["clientData[].value", "metadata.deleted"],
+      "named": false
+    },
+    "GET /contactGroups/{contactGroupsId}": {
+      "fields": ["clientData[].value", "metadata.deleted"],
+      "named": false
+    },
+    "PUT /contactGroups/{contactGroupsId}": {
+      "fields": ["clientData[].value", "metadata.deleted"],
+      "named": false
+    },
+    "GET /contactGroups:batchGet": {
+      "fields": ["responses[].contactGroup.clientData[].value", "responses[].contactGroup.metadata.deleted"],
+      "named": false
+    },
+    "GET /otherContacts": {
+      "fields": [
+        "nextPageToken",
+        "nextSyncToken",
+        "otherContacts[].clientData[].value",
+        "otherContacts[].userDefined[].value"
+      ],
+      "named": false
+    },
+    "POST /otherContacts/{otherContactsId}:copyOtherContactToMyContactsGroup": {
+      "fields": ["clientData[].value", "userDefined[].value"],
+      "named": false
+    },
+    "GET /otherContacts:search": {
+      "fields": ["results[].person.clientData[].value", "results[].person.userDefined[].value"],
+      "named": false
+    },
+    "GET /people/{peopleId}": {
+      "fields": ["clientData[].value", "userDefined[].value"],
+      "named": false
+    },
+    "GET /people/{peopleId}/connections": {
+      "fields": [
+        "connections[].clientData[].value",
+        "connections[].userDefined[].value",
+        "nextPageToken",
+        "nextSyncToken"
+      ],
+      "named": false
+    },
+    "DELETE /people/{peopleId}:deleteContactPhoto": {
+      "fields": ["person.clientData[].value", "person.userDefined[].value"],
+      "named": false
+    },
+    "PATCH /people/{peopleId}:updateContact": {
+      "fields": ["clientData[].value", "userDefined[].value"],
+      "named": false
+    },
+    "PATCH /people/{peopleId}:updateContactPhoto": {
+      "fields": ["person.clientData[].value", "person.userDefined[].value"],
+      "named": false
+    },
+    "POST /people:batchCreateContacts": {
+      "fields": ["createdPeople[].person.clientData[].value", "createdPeople[].person.userDefined[].value"],
+      "named": false
+    },
+    "GET /people:batchGet": {
+      "fields": ["responses[].person.clientData[].value", "responses[].person.userDefined[].value"],
+      "named": false
+    },
+    "POST /people:batchUpdateContacts": {
+      "fields": ["updateResult{}.person.clientData[].value", "updateResult{}.person.userDefined[].value"],
+      "named": false
+    },
+    "POST /people:createContact": {
+      "fields": ["clientData[].value", "userDefined[].value"],
+      "named": false
+    },
+    "GET /people:listDirectoryPeople": {
+      "fields": ["nextPageToken", "nextSyncToken", "people[].clientData[].value", "people[].userDefined[].value"],
+      "named": false
+    },
+    "GET /people:searchContacts": {
+      "fields": ["results[].person.clientData[].value", "results[].person.userDefined[].value"],
+      "named": false
+    },
+    "GET /people:searchDirectoryPeople": {
+      "fields": ["nextPageToken", "people[].clientData[].value", "people[].userDefined[].value"],
+      "named": false
+    }
+  },
+  "reviewed": {
+    "operations": {
+      "GET /people/{peopleId}": ["clientData[].value", "coverPhotos[].url", "photos[].url", "userDefined[].value"],
+      "GET /people/{peopleId}/connections": [
+        "connections[].clientData[].value",
+        "connections[].coverPhotos[].url",
+        "connections[].photos[].url",
+        "connections[].userDefined[].value",
+        "nextPageToken",
+        "nextSyncToken"
+      ],
+      "GET /people:batchGet": [
+        "responses[].person.clientData[].value",
+        "responses[].person.coverPhotos[].url",
+        "responses[].person.photos[].url",
+        "responses[].person.userDefined[].value"
+      ],
+      "GET /people:searchContacts": [
+        "results[].person.clientData[].value",
+        "results[].person.coverPhotos[].url",
+        "results[].person.photos[].url",
+        "results[].person.userDefined[].value"
+      ],
+      "GET /people:searchDirectoryPeople": [
+        "nextPageToken",
+        "people[].clientData[].value",
+        "people[].coverPhotos[].url",
+        "people[].photos[].url",
+        "people[].userDefined[].value"
+      ],
+      "GET /people:listDirectoryPeople": [
+        "nextPageToken",
+        "nextSyncToken",
+        "people[].clientData[].value",
+        "people[].coverPhotos[].url",
+        "people[].photos[].url",
+        "people[].userDefined[].value"
+      ],
+      "POST /people:createContact": ["clientData[].value", "coverPhotos[].url", "photos[].url", "userDefined[].value"],
+      "PATCH /people/{peopleId}:updateContact": [
+        "clientData[].value",
+        "coverPhotos[].url",
+        "photos[].url",
+        "userDefined[].value"
+      ],
+      "POST /people:batchCreateContacts": [
+        "createdPeople[].person.clientData[].value",
+        "createdPeople[].person.coverPhotos[].url",
+        "createdPeople[].person.photos[].url",
+        "createdPeople[].person.userDefined[].value"
+      ],
+      "POST /people:batchUpdateContacts": [
+        "updateResult{}.person.clientData[].value",
+        "updateResult{}.person.coverPhotos[].url",
+        "updateResult{}.person.photos[].url",
+        "updateResult{}.person.userDefined[].value"
+      ],
+      "PATCH /people/{peopleId}:updateContactPhoto": [
+        "person.clientData[].value",
+        "person.coverPhotos[].url",
+        "person.photos[].url",
+        "person.userDefined[].value"
+      ],
+      "DELETE /people/{peopleId}:deleteContactPhoto": [
+        "person.clientData[].value",
+        "person.coverPhotos[].url",
+        "person.photos[].url",
+        "person.userDefined[].value"
+      ],
+      "GET /contactGroups": ["contactGroups[].clientData[].value", "nextPageToken", "nextSyncToken"],
+      "GET /contactGroups/{contactGroupsId}": ["clientData[].value"],
+      "GET /contactGroups:batchGet": ["responses[].contactGroup.clientData[].value"],
+      "POST /contactGroups": ["clientData[].value"],
+      "PUT /contactGroups/{contactGroupsId}": ["clientData[].value"],
+      "GET /otherContacts": [
+        "nextPageToken",
+        "nextSyncToken",
+        "otherContacts[].clientData[].value",
+        "otherContacts[].coverPhotos[].url",
+        "otherContacts[].photos[].url",
+        "otherContacts[].userDefined[].value"
+      ],
+      "GET /otherContacts:search": [
+        "results[].person.clientData[].value",
+        "results[].person.coverPhotos[].url",
+        "results[].person.photos[].url",
+        "results[].person.userDefined[].value"
+      ],
+      "POST /otherContacts/{otherContactsId}:copyOtherContactToMyContactsGroup": [
+        "clientData[].value",
+        "coverPhotos[].url",
+        "photos[].url",
+        "userDefined[].value"
+      ]
+    },
+    "resources": {},
+    "bindings": {}
+  }
+}

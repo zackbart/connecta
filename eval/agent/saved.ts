@@ -134,7 +134,8 @@ export function restoreGradeInputs(saved: SavedGradeInputs): { world: World; tra
   for (const name of Object.keys(PROVIDER_FAKES) as ProviderFakeName[]) {
     const saved = state[name];
     if (saved) {
-      requireEvidence(PROVIDER_FAKES[name].saved(saved), name);
+      // Each fake checks its own state; the union of fakes cannot correlate name and state statically.
+      requireEvidence((PROVIDER_FAKES[name].saved as (state: object) => boolean)(saved), name);
       Object.assign(world.fakes[name].state, structuredClone(saved));
     } else if (state.calls.some((c) => c.service === name))
       throw new Error(`Incomplete saved grading evidence: ${name}`);

@@ -150,6 +150,11 @@ Tithe.ly's option works the same way; see [Tithe.ly](./providers.md#tithely).
 For delegated Google Forms setup, scopes, response privacy and refused publish/watch
 operations, see [Google Forms setup](./providers.md#google-forms).
 
+Google People's `sensitiveFields` option controls contact addresses, birthdays,
+notes and the other personal fields it names; see
+[Google People setup](./providers.md#google-people-contacts-and-directory) for
+scopes, the three address books and directory limits.
+
 ## Another remote MCP server
 
 Declare its endpoint and intended auth mode. This fragment uses a server-stored

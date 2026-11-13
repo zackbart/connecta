@@ -6,6 +6,7 @@ import { drive } from "../src/providers/drive/index.js";
 import { forms } from "../src/providers/forms/index.js";
 import { meet } from "../src/providers/meet/index.js";
 import { gmail } from "../src/providers/gmail/index.js";
+import { people } from "../src/providers/people/index.js";
 import { sheets } from "../src/providers/sheets/index.js";
 import { slides } from "../src/providers/slides/index.js";
 import { stripe } from "../src/providers/stripe/index.js";
@@ -45,6 +46,7 @@ describe.each([
   ["slides", slides],
   ["forms", forms],
   ["meet", meet],
+  ["people", people],
 ] as const)("%s in OAuth mode", (_name, factory) => {
   it.each(["shared", "personal"] as const)(
     "INV-11: accepts and retains connector members with %s auth, refusing an empty list (#1377)",

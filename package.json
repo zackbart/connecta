@@ -119,6 +119,10 @@
       "types": "./dist/providers/overflow/index.d.ts",
       "import": "./dist/providers/overflow/index.js"
     },
+    "./providers/people": {
+      "types": "./dist/providers/people/index.d.ts",
+      "import": "./dist/providers/people/index.js"
+    },
     "./providers/planning-center": {
       "types": "./dist/providers/planning-center/index.d.ts",
       "import": "./dist/providers/planning-center/index.js"

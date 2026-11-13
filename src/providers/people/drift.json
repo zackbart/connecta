@@ -1,0 +1,214 @@
+{
+  "version": 2,
+  "provider": "people",
+  "generated": {
+    "operations": [
+      "DELETE /v1/contactGroups/{contactGroupsId}",
+      "DELETE /v1/people/{peopleId}:deleteContact",
+      "GET /v1/contactGroups",
+      "GET /v1/contactGroups/{contactGroupsId}",
+      "GET /v1/otherContacts",
+      "GET /v1/otherContacts:search",
+      "GET /v1/people/{peopleId}",
+      "GET /v1/people/{peopleId}/connections",
+      "GET /v1/people:batchGet",
+      "GET /v1/people:listDirectoryPeople",
+      "GET /v1/people:searchContacts",
+      "GET /v1/people:searchDirectoryPeople",
+      "PATCH /v1/people/{peopleId}:updateContact",
+      "POST /v1/contactGroups",
+      "POST /v1/contactGroups/{contactGroupsId}/members:modify",
+      "POST /v1/otherContacts/{otherContactsId}:copyOtherContactToMyContactsGroup",
+      "POST /v1/people:createContact",
+      "PUT /v1/contactGroups/{contactGroupsId}"
+    ],
+    "evidence": {
+      "discovery.document.json": "sha256:532f281096109fa10e94c6b79bc78811326bed61a43d0ccc1efec476e5b64caf",
+      "discovery.json": "sha256:a6a250077f979db0f19430c6336c4dd6c004bf9dd9afff4986a0ee956604ed56",
+      "openapi.json": "sha256:ec69b8203989190e5355f36ead3182068d9c8b4fbbf0a49bdaf85fb75a7f5884",
+      "value-safety.json": "sha256:7522b8f790035adf3c0cb231c20b63e7287fae8120b9b27d76c02a2b5099ce9a"
+    }
+  },
+  "checks": [
+    {
+      "type": "endpoints",
+      "specification": {
+        "url": "https://people.googleapis.com/$discovery/rest?version=v1",
+        "format": "google-discovery"
+      },
+      "scopes": [
+        "https://www.googleapis.com/auth/contacts",
+        "https://www.googleapis.com/auth/contacts.other.readonly",
+        "https://www.googleapis.com/auth/directory.readonly",
+        "https://www.googleapis.com/auth/user.emails.read",
+        "https://www.googleapis.com/auth/user.phonenumbers.read",
+        "https://www.googleapis.com/auth/user.addresses.read",
+        "https://www.googleapis.com/auth/user.birthday.read",
+        "https://www.googleapis.com/auth/user.organization.read",
+        "https://www.googleapis.com/auth/userinfo.profile"
+      ],
+      "endpoints": [
+        {
+          "operation": "GET /v1/people/{peopleId}",
+          "specRevision": "20261111",
+          "contract": "sha256:235b3f24677f820331d41e7d611092e6b8a09f131896d10cdd5e98ce112105c6"
+        },
+        {
+          "operation": "GET /v1/people/{peopleId}/connections",
+          "specRevision": "20261111",
+          "contract": "sha256:0b3469c2f13041d53c9628f9561ea298ef2c4d048c69edb332e2fa442a234c80"
+        },
+        {
+          "operation": "GET /v1/people:batchGet",
+          "specRevision": "20261111",
+          "contract": "sha256:ef3c32cfe4c3921157cfb1484e025f9f407c9f9e289b1561f27357e6bed47901"
+        },
+        {
+          "operation": "GET /v1/people:searchContacts",
+          "specRevision": "20261111",
+          "contract": "sha256:1458bf6ef905157578b1ea645afc753b88e5200edf6f0123c0d388d3bb4b4747"
+        },
+        {
+          "operation": "POST /v1/people:createContact",
+          "specRevision": "20261111",
+          "contract": "sha256:d74a1aa5bc1cfe6f34d965d636316b9642f237ea2de8a19c5ac275539ef71a68"
+        },
+        {
+          "operation": "PATCH /v1/people/{peopleId}:updateContact",
+          "specRevision": "20261111",
+          "contract": "sha256:ce46d0ea064948187e80f19fc9d3f3c63b5276d84341f1478744724848d74b78"
+        },
+        {
+          "operation": "DELETE /v1/people/{peopleId}:deleteContact",
+          "specRevision": "20261111",
+          "contract": "sha256:b33a49e31c7a5b38caf767160781334906d138d29c3bce626fae2c0927778331"
+        },
+        {
+          "operation": "GET /v1/contactGroups",
+          "specRevision": "20261111",
+          "contract": "sha256:e1378d45993febcadeafdd0865b2154444fa01114369a3c1e7d3ac629df43f9f"
+        },
+        {
+          "operation": "GET /v1/contactGroups/{contactGroupsId}",
+          "specRevision": "20261111",
+          "contract": "sha256:9b6f3958aea65be8cb9e216e8617be44cafeb9cab68e4bb140616899b35bd3fd"
+        },
+        {
+          "operation": "POST /v1/contactGroups",
+          "specRevision": "20261111",
+          "contract": "sha256:6dd9ab8f96152d99b431f5c515f0d1479b20847d39c8a9c574239942fc7e7440"
+        },
+        {
+          "operation": "PUT /v1/contactGroups/{contactGroupsId}",
+          "specRevision": "20261111",
+          "contract": "sha256:dc9e29b929d94b6232564305e474fd815080e3425290f95859effd911cdac13d"
+        },
+        {
+          "operation": "DELETE /v1/contactGroups/{contactGroupsId}",
+          "specRevision": "20261111",
+          "contract": "sha256:0d5356d2cf1b9d69e2cab82b44a84f2d9d4ffd357caa78b5ef24c5365bc3a355"
+        },
+        {
+          "operation": "POST /v1/contactGroups/{contactGroupsId}/members:modify",
+          "specRevision": "20261111",
+          "contract": "sha256:df2c39c7698bd11ad668ccb63a0995bffc3fd9a980c42ae4d43023fbe1ee788a"
+        },
+        {
+          "operation": "GET /v1/otherContacts",
+          "specRevision": "20261111",
+          "contract": "sha256:02c9077d53affc9ff498e08afb46f0f164b5e72534a9d64043120dfc22601495"
+        },
+        {
+          "operation": "GET /v1/otherContacts:search",
+          "specRevision": "20261111",
+          "contract": "sha256:a7e9c2cd3182af76e9bf13a53ef7511e69150a5255aea726d411dd6ae31cc4e9"
+        },
+        {
+          "operation": "POST /v1/otherContacts/{otherContactsId}:copyOtherContactToMyContactsGroup",
+          "specRevision": "20261111",
+          "contract": "sha256:2d638ec1d48cab80b1acd5a50432c9cb903a3243db17a5666d03e7ca642d9892"
+        },
+        {
+          "operation": "GET /v1/people:searchDirectoryPeople",
+          "specRevision": "20261111",
+          "contract": "sha256:b4be777dc16abb92aaccc44fe914c11eadd8e868611daf7a75e2d0614c40ad17"
+        },
+        {
+          "operation": "GET /v1/people:listDirectoryPeople",
+          "specRevision": "20261111",
+          "contract": "sha256:7f851ff0bed6d6dc30df855d8e34a607d18155f11cb028f63779c0f6df972955"
+        }
+      ]
+    },
+    {
+      "type": "openapi-index",
+      "source": "evidence/openapi.json"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/people/api/rest/v1/people/searchContacts",
+      "evidence": {
+        "warmup": "an empty query before searching",
+        "methods": [
+          "people.searchContacts",
+          "otherContacts.search"
+        ],
+        "maxPageSize": 30
+      },
+      "reason": "The search warm-up request is documented only in method prose. Compare that both searchContacts and otherContacts.search still ask clients to send a request with an empty query before searching so the search cache is updated, and that pageSize is still capped at 30.",
+      "lastVerified": "2026-11-13"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/identity/protocols/oauth2/web-server",
+      "evidence": {
+        "authorizationEndpoint": "https://accounts.google.com/o/oauth2/v2/auth",
+        "tokenEndpoint": "https://oauth2.googleapis.com/token",
+        "tokenEndpointAuthMethod": "client_secret_post",
+        "pkce": "S256",
+        "scopes": [
+          "https://www.googleapis.com/auth/contacts",
+          "https://www.googleapis.com/auth/contacts.other.readonly",
+          "https://www.googleapis.com/auth/directory.readonly",
+          "https://www.googleapis.com/auth/user.emails.read",
+          "https://www.googleapis.com/auth/user.phonenumbers.read",
+          "https://www.googleapis.com/auth/user.addresses.read",
+          "https://www.googleapis.com/auth/user.birthday.read",
+          "https://www.googleapis.com/auth/user.organization.read",
+          "https://www.googleapis.com/auth/userinfo.profile"
+        ],
+        "revocationEndpoint": "not configured: https://oauth2.googleapis.com/revoke",
+        "revocationSource": "https://developers.google.com/identity/protocols/oauth2/web-server#tokenrevoke"
+      },
+      "reason": "OAuth mode's authorization-code grant against Google's web-server flow has no machine-readable contract. Compare the authorization and token endpoints, body client authentication, S256 PKCE support and the requested scopes with the page; confirm revocation still ends every grant the person gave the Google Cloud project, including its other OAuth clients, which is why no revocation endpoint is configured.",
+      "lastVerified": "2026-11-13"
+    },
+    {
+      "type": "manual",
+      "source": "https://developers.google.com/identity/openid-connect/openid-connect",
+      "evidence": {
+        "scopes": [
+          "openid",
+          "email"
+        ],
+        "jwks": "https://www.googleapis.com/oauth2/v3/certs",
+        "issuers": [
+          "https://accounts.google.com",
+          "accounts.google.com"
+        ],
+        "audience": "the OAuth client id",
+        "signature": "RS256",
+        "claims": [
+          "email",
+          "email_verified",
+          "hd"
+        ],
+        "authorizationParams": {
+          "prompt": "select_account consent"
+        }
+      },
+      "reason": "OAuth mode's accounts restriction reads the signed-in account from the ID token in Google's token response, and Google publishes that contract only as prose. Compare the JWKS URL, the two issuer spellings, aud as the client id, RS256 signing, email_verified, and hd as the claim that attests a Google Workspace domain (absent for consumer accounts), and confirm prompt still accepts space-delimited select_account and consent.",
+      "lastVerified": "2026-11-13"
+    }
+  ]
+}
