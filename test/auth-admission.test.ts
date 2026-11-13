@@ -78,15 +78,21 @@ describe("inbound authentication admission", () => {
   });
 
   it("INV-7: admits a burst of 24 concurrent authorizations against slow adapters", async () => {
+    const finish: Array<() => void> = [];
     const slow: InboundAuth = {
       kind: "test",
       authorize: vi.fn(
-        () => new Promise<AuthResult>((resolve) => setTimeout(() => resolve({ ok: true, userId: "alice" }), 50)),
+        () => new Promise<AuthResult>((resolve) => finish.push(() => resolve({ ok: true, userId: "alice" }))),
       ),
     };
-    const results = await Promise.all(
-      Array.from({ length: 24 }, () => authenticate(slow, request(), BASE, undefined, silentLogger)),
-    );
+    const burst = Array.from({ length: 24 }, () => authenticate(slow, request(), BASE, undefined, silentLogger));
+    expect(finish).toHaveLength(16);
+    expect(authenticationSnapshot()).toMatchObject({ active: 16, queued: 8 });
+    finish.splice(0).forEach((resolve) => resolve());
+    await vi.waitFor(() => expect(finish).toHaveLength(8));
+    expect(authenticationSnapshot()).toMatchObject({ active: 8, queued: 0 });
+    finish.splice(0).forEach((resolve) => resolve());
+    const results = await Promise.all(burst);
     expect(results.every((result) => result.admitted && result.result.ok)).toBe(true);
     expect(slow.authorize).toHaveBeenCalledTimes(24);
     expect(authenticationSnapshot()).toMatchObject({ active: 0, queued: 0 });

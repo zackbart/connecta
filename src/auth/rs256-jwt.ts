@@ -172,14 +172,16 @@ const readKeysNative = /* @__PURE__ */ registerAuth(readKeys, function (url: str
  * after it, joined by everyone who arrives meanwhile. Each fetch runs to
  * completion under its own four-second deadline: a caller that leaves stops
  * waiting but neither cancels nor discards it, so disconnects cannot start
- * fetches faster than these bounds. The lookup resolves the key, or undefined
- * for an unknown `kid`; it throws when it cannot read the set.
+ * fetches faster than these bounds. A fetch still unsettled a second past its
+ * deadline on the monotonic clock is replaced: its waiters wait for the
+ * replacement, and its own late outcome is discarded. The lookup resolves the
+ * key, or undefined for an unknown `kid`; it throws when it cannot read the set.
  */
 export function jwksKeys(url: string): (kid: string, signal: AbortSignal) => Promise<JsonWebKey | undefined> {
   let cache: { expires: number; keys: Map<string, JsonWebKey> } | undefined;
   let refreshAfter = 0;
   let retryAfter = 0;
-  let pending: { outcome: Settlement<void, unknown>; abandonAfter: number } | undefined;
+  let pending: { outcomes: Settlement<void, unknown>[]; abandonAfter: number } | undefined;
 
   function load(signal: AbortSignal): Promise<void> {
     return runEdge(authProgram<void>(loadNative, [signal]));
@@ -189,32 +191,35 @@ export function jwksKeys(url: string): (kid: string, signal: AbortSignal) => Pro
       Effect.suspend(() => {
         if (signal.aborted) return Effect.fail(signal.reason);
         const now = Date.now();
+        const elapsed = performance.now();
         // workerd drops a cancelled invocation's I/O without running its
         // callbacks, so a fetch that outlived every bound is no longer running.
-        if (pending && now > pending.abandonAfter) {
-          pending.outcome.settle(Exit.fail(new Error("JWKS unavailable")));
-          pending = undefined;
-        }
+        const superseded = pending && elapsed > pending.abandonAfter ? pending.outcomes : [];
+        if (superseded.length > 0) pending = undefined;
         if (!pending) {
           const delay = Math.max(0, retryAfter - now);
+          const outcome = new Settlement<void, unknown>();
           const started = {
-            outcome: new Settlement<void, unknown>(),
-            abandonAfter: now + delay + FETCH_DEADLINE_MS + 1_000,
+            outcomes: [outcome, ...superseded],
+            abandonAfter: elapsed + delay + FETCH_DEADLINE_MS + 1_000,
           };
           pending = started;
           const read = withDeadlineEffect((own) => authCall<Map<string, JsonWebKey>>(readKeys, [url, own]), {
             timeoutMs: FETCH_DEADLINE_MS,
             timeoutError: new Error("JWKS fetch timed out"),
           });
-          // Detached from every caller: only its own deadline ends it, and
-          // every exit, interruption included, records its outcome.
+          // Detached from every caller: only its own deadline ends it. Every
+          // exit, interruption included, records its outcome unless a newer
+          // fetch has replaced it, and a replaced fetch changes nothing.
           const fetched = (delay > 0 ? Effect.sleep(Duration.millis(delay)).pipe(Effect.andThen(read)) : read).pipe(
             Effect.onExit((exit) =>
               Effect.sync(() => {
-                if (pending === started) pending = undefined;
+                if (pending !== started) return;
+                pending = undefined;
                 if (Exit.isSuccess(exit)) cache = { expires: Date.now() + CACHE_MS, keys: exit.value };
                 else retryAfter = Date.now() + RETRY_MS;
-                started.outcome.settle(Exit.isSuccess(exit) ? Exit.void : Exit.fail(new Error("JWKS unavailable")));
+                const result = Exit.isSuccess(exit) ? Exit.void : Exit.fail(new Error("JWKS unavailable"));
+                for (const waiting of started.outcomes) waiting.settle(result);
               }),
             ),
           );
@@ -225,7 +230,7 @@ export function jwksKeys(url: string): (kid: string, signal: AbortSignal) => Pro
           );
           if (work._tag === "Some") work.value.track(settlement);
         }
-        return Effect.raceAllFirst([pending.outcome.wait(), fromSignal(signal)]);
+        return Effect.raceAllFirst([pending.outcomes[0]!.wait(), fromSignal(signal)]);
       }),
     );
   });

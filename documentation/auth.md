@@ -2590,7 +2590,11 @@ that arrives meanwhile waits for it instead of failing. The body is capped at
 64 KiB, and redirects are refused. Each read runs to completion under its own
 four-second deadline, even when every request waiting for it disconnects, and
 only its own outcome fills the cache or starts the one-second backoff, so
-disconnects cannot start reads faster than these bounds.
+disconnects cannot start reads faster than these bounds. A read still unsettled one
+second past its deadline, measured on the monotonic clock, is treated as
+gone, as when Cloudflare drops a cancelled invocation's I/O. The next request
+starts a replacement, everyone still waiting follows the replacement, and the
+old read's late result is discarded, never cached.
 
 A verified assertion proves that Access issued it for this application and
 person and that it has not expired. Unlike `ctx.access`, it does not prove that
