@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here.
 
+## 0.48.1 — 2026-11-13
+
+Connecta 0.48.1 keeps bursts of concurrent session starts from failing. When every authentication slot on a Worker isolate is taken, a request now waits briefly in a bounded queue instead of getting an immediate `authentication_busy` 503, and Cloudflare Access and Vercel workload verification share one in-flight key-set fetch, with a short shared backoff after a failed fetch instead of 30 seconds of refusals. `/health` reports the queue's depth and limit.
+
+Nothing is breaking and no configuration change is required. Every refusal contract is unchanged.
+
+### Fixed
+
+- Concurrent session starts on one Worker isolate no longer fail on a burst. Requests that find all 16 authentication slots taken wait in a first-in, first-out queue of 16 for up to two seconds instead of getting an immediate `authentication_busy` 503, and `/health` reports `admission.authentication.queued` and `queueLimit`. Cloudflare Access assertion verification and Vercel workload verification share one in-flight key-set fetch per adapter instead of refusing a third concurrent caller, and a failed fetch backs off for one second, shared by every waiting caller, instead of failing every request for 30 seconds. The active bound, the abandoned allowance and its fail-closed saturation, and every refusal contract are unchanged. (#1420)
+
 ## 0.48.0 — 2026-11-13
 
 Connecta 0.48.0 lets one agent endpoint mix read-only access with a few exact writes, adds a maintained Intercom REST provider, and connects one Google account to every Google product with a single consent through `googleAccount()` from `@zackbart/connecta/google-account`. A `readOnly: true` pool can now grant named writes in a new `writes` field, so an agent reads whole connectors but can only make the changes listed there. A pool's `unlisted` field keeps connectors callable while `@zackbart/connecta-eve` leaves them off the model's roster, and `connectaInstructions` takes `rosterMaxBytes`. Writable agent pools now list `execute_read_code` with the same contract as people's endpoints, and the Eve helper routes lookups there.
