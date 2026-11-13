@@ -185,6 +185,13 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
     ? callbackRegistry.contextFor(id, baseUrl, {}, context.defer ? { defer: context.defer } : {})
     : opts.registry.contextFor(id, baseUrl, {}, context.defer ? { defer: context.defer } : {});
   const refused = () => html("invalid_callback", opts);
+  const refusedBecause = (reason: string) => {
+    opts.config.logger.warn(
+      `[connecta] refused an OAuth callback for connector ${loggableValue(id)} with 400: ${reason}. ` +
+        "No authorization code was exchanged.",
+    );
+    return refused();
+  };
   if (!connector || !connector.finishAuth) {
     await equalizeRefusalCost(connectorContext, state);
     return refused();
@@ -209,8 +216,10 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
         return browserIdentity.response;
       return refused();
     }
-    if (!expectedPrincipalKey || browserIdentity.principalKey !== expectedPrincipalKey) return refused();
-    if (!mayManageConnector(opts, browserIdentity, connector)) return refused();
+    if (!expectedPrincipalKey) return refusedBecause("unknown state");
+    if (browserIdentity.principalKey !== expectedPrincipalKey) return refusedBecause("another person started it");
+    if (!mayManageConnector(opts, browserIdentity, connector))
+      return refusedBecause("this person may not manage the connector");
     // CSRF / login-fixation guard: this route is intentionally public, so verify
     // the `state` matches the flow connecta started BEFORE exchanging the code.
     if (!connector.verifyState) {
@@ -249,28 +258,34 @@ async function finishOAuthCallback(context: RouteContext): Promise<Response> {
     }
     // Error responses are callbacks too: neither their code nor their copy is
     // interpreted until the state and the consent's issuer have been validated.
-    if (["state", "iss", "code", "error"].some((name) => url.searchParams.getAll(name).length > 1)) return refused();
+    if (["state", "iss", "code", "error"].some((name) => url.searchParams.getAll(name).length > 1))
+      return refusedBecause("repeated OAuth parameter");
+    let parametersMatch: boolean;
     try {
-      if (
-        connector.verifyCallbackParameters &&
-        !(await connector.verifyCallbackParameters(url.searchParams, connectorContext))
-      )
-        return refused();
-      const issuer = url.searchParams.get("iss");
-      if (connector.verifyCallbackIssuer) {
-        if (!(await connector.verifyCallbackIssuer(issuer, connectorContext))) return refused();
-      } else if (issuer !== null) {
-        // A custom connector with no issuer validator cannot vouch for this response.
-        return refused();
-      }
+      parametersMatch =
+        !connector.verifyCallbackParameters ||
+        (await connector.verifyCallbackParameters(url.searchParams, connectorContext));
     } catch {
-      return refused();
+      parametersMatch = false;
     }
+    if (!parametersMatch) return refusedBecause("configured parameter mismatch");
+    const issuer = url.searchParams.get("iss");
+    let issuerMatches: boolean;
+    try {
+      // A custom connector with no issuer validator cannot vouch for a response naming one.
+      issuerMatches = connector.verifyCallbackIssuer
+        ? await connector.verifyCallbackIssuer(issuer, connectorContext)
+        : issuer === null;
+    } catch {
+      issuerMatches = false;
+    }
+    if (!issuerMatches) return refusedBecause(issuer === null ? "missing iss" : "iss mismatch");
     if (error === null && !code) return refused();
     if (error !== null && !connector.consumeAuthError) return refused();
     {
       try {
-        if (!(await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey))) return refused();
+        if (!(await opts.registry.consumeOAuthHandoff(id, state, expectedPrincipalKey)))
+          return refusedBecause("handoff missing, expired or used");
       } catch (err) {
         logFailure(
           opts.config.logger,

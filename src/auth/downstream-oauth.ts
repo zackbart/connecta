@@ -329,17 +329,16 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /** Validate RFC 9207 against the server this consent selected. */
   validateCallbackIssuer(issuer: string | null): void {
-    if (
-      !this.callback ||
-      (issuer === null
-        ? this.callback.flow.binding?.issRequired === true
-        : this.flowValue(issuer) !== this.flowValue(this.callback.flow.binding?.issuer))
-    ) {
+    if (!this.callback || !this.callbackIssuerMatches(issuer, this.callback.flow.binding)) {
       throw new ConnectorCallError(
         "connector_call_failed",
         `Connector "${this.connectorId}" authorization callback issuer does not match its consent; nothing was exchanged.`,
       );
     }
+  }
+
+  protected callbackIssuerMatches(issuer: string | null, binding: FlowBinding | undefined): boolean {
+    return issuer === null ? binding?.issRequired !== true : this.flowValue(issuer) === this.flowValue(binding?.issuer);
   }
 
   // --- flow records ---------------------------------------------------------

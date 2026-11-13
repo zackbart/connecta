@@ -1198,7 +1198,10 @@ all of them; keep its id and secret in deployment secrets.
 
 The grant requests exactly the product's scopes listed in its section, sends the
 client credentials in the token request body, uses S256 PKCE, and sends the
-access token only to the product's API origin. `authScope: "personal"` stores a
+access token only to the product's API origin. Google's authorization responses
+carry the RFC 9207 issuer `iss=https://accounts.google.com`; every callback must
+carry exactly that value, and one with another or no `iss` is refused before any
+code exchange, with a warning naming the issuer as the reason. `authScope: "personal"` stores a
 grant per signed-in person: each connects their own account from the
 `authorize_connector` handoff or the member Connect page, and agents never see
 the connection. `"shared"` stores one grant a maintainer connects, such as a

@@ -44,6 +44,7 @@ export interface GoogleOptions {
 
 /** Google's OAuth 2.0 web-server endpoints, as the fake answers them. */
 const GOOGLE_AUTHORIZATION_ENDPOINT = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_ISSUER = "https://accounts.google.com";
 
 function paragraph(text: string, startIndex = 1): Row {
   return {
@@ -762,9 +763,12 @@ export class FakeGoogle {
     this.codes.set(code, { subject, scopes, redirectUri, challenge: url.searchParams.get("code_challenge")! });
     this.state.oauth.push({ kind: "consent", subject, scopes });
     const callback = new URL(redirectUri);
-    callback.searchParams.set("code", code);
     callback.searchParams.set("state", url.searchParams.get("state")!);
+    callback.searchParams.set("iss", GOOGLE_ISSUER);
+    callback.searchParams.set("code", code);
     callback.searchParams.set("scope", scopes.join(" "));
+    callback.searchParams.set("authuser", "0");
+    callback.searchParams.set("prompt", "consent");
     return callback;
   }
 

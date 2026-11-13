@@ -418,6 +418,9 @@ describe("api() oauth construction", () => {
     ],
     ["a token header with an invalid name", { tokenRequestHeaders: { "Bad Name": "x" } }, /invalid header name/],
     ["a multi-line token header", { tokenRequestHeaders: { Accept: "a\r\nX-Injected: 1" } }, /single-line string/],
+    ["a cleartext issuer", { issuer: "http://issuer.provider.test" }, /issuer must be an absolute https URL/],
+    ["an issuer with a query", { issuer: "https://issuer.provider.test?tenant=1" }, /issuer must be an absolute/],
+    ["an issuer that is not a string", { issuer: 7 }, /issuer must be an absolute/],
   ])("refuses %s", (_label, oauth, message) => {
     expect(build(oauth)).toThrow(message);
   });
@@ -685,6 +688,53 @@ describe("api() oauth callback exchange", () => {
     expect(provider.tokenRequests).toHaveLength(0);
     expect((await storedGrant(storage, scopes.connector("ccb")))?.body?.tokens).toBeUndefined();
     expect((await connector.status!(ctx())).state).toBe("auth_required");
+  });
+
+  it("INV-4 INV-5: a declared RFC 9207 issuer must arrive exactly as iss, while an undeclared one refuses any iss", async () => {
+    const ISSUER = "https://issuer.provider.test";
+    const finish = async (connector: Connector, iss: string | undefined) => {
+      const provider = fakeProvider();
+      install(provider);
+      const storage = memoryStorage();
+      const registry = makeRegistry([connector], { storage });
+      const ctx = () => registry.contextFor("ccb", BASE);
+      const begun = await connector.startAuth!(ctx());
+      const state = new URL(begun.authorizationUrl!).searchParams.get("state")!;
+      const code = provider.consent(begun.authorizationUrl!);
+      const callback = ctx();
+      expect(await connector.verifyState!(state, callback)).toBe(true);
+      const params = new URLSearchParams({ code, state, ...(iss === undefined ? {} : { iss }) });
+      const issuerAccepted = await connector.verifyCallbackIssuer!(params.get("iss"), callback).catch(() => false);
+      const outcome = await connector.finishAuth!(code, callback, params).then(
+        () => "connected",
+        (error: unknown) => String(error),
+      );
+      return {
+        issuerAccepted,
+        outcome,
+        exchanges: provider.tokenRequests.length,
+        status: await connector.status!(ctx()),
+      };
+    };
+    const declared = () => ccb({ oauth: { ...OAUTH, issuer: ISSUER } });
+    for (const iss of [undefined, "https://wrong.example", `${ISSUER}/`, TOKEN]) {
+      const refused = await finish(declared(), iss);
+      expect(refused.issuerAccepted).toBe(false);
+      expect(refused.outcome).toMatch(/issuer does not match its consent; nothing was exchanged/);
+      expect(refused.exchanges).toBe(0);
+      expect(refused.status.state).toBe("auth_required");
+    }
+    expect(await finish(declared(), ISSUER)).toEqual({
+      issuerAccepted: true,
+      outcome: "connected",
+      exchanges: 1,
+      status: { state: "ok" },
+    });
+
+    const undeclared = await finish(ccb(), ISSUER);
+    expect(undeclared.issuerAccepted).toBe(false);
+    expect(undeclared.exchanges).toBe(0);
+    expect((await finish(ccb(), undefined)).outcome).toBe("connected");
   });
 
   it("INV-4 INV-5: connects only the configured company after valid state, with no exchange on refused callbacks", async () => {

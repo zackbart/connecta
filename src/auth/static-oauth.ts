@@ -47,6 +47,7 @@ import {
   KvOAuthProvider,
   refreshCoordinatorsByPartition,
 } from "./downstream-oauth.js";
+import type { FlowBinding } from "./downstream-oauth/consent.js";
 import { authView } from "./native-call.js";
 import {
   authCall,
@@ -185,6 +186,7 @@ interface StaticOAuthSettings {
    * leaves the old tokens unsent until a consent replaces them.
    */
   identity: string;
+  callbackIssuer?: string;
 }
 
 /** Structural mistakes throw here, where they are written. */
@@ -210,6 +212,10 @@ function settingsFor(id: string, config: ApiOAuthConfig, authScope: "shared" | "
     invalid(`revocationRequestFormat requires an endpoint and form or json.`);
   if (tokenEndpoint.search) {
     invalid(`tokenEndpoint must not carry a query.`);
+  }
+  if (config.issuer !== undefined) {
+    if (typeof config.issuer !== "string" || configuredUrl(id, "issuer", config.issuer).search)
+      invalid(`issuer must be an absolute https URL without a query or fragment.`);
   }
   if (typeof config.clientId !== "string" || config.clientId.trim() === "") {
     invalid(`clientId must be a non-empty string.`);
@@ -310,6 +316,7 @@ function settingsFor(id: string, config: ApiOAuthConfig, authScope: "shared" | "
     apiOrigins,
     serverUrl: new URL(origins[0]!),
     identity: tokenEndpoint.href,
+    ...(config.issuer !== undefined ? { callbackIssuer: config.issuer } : {}),
     ...(config.account !== undefined
       ? { account: accountRestriction(config.account, authScope, `[connecta] connector "${id}" oauth.account`) }
       : {}),
@@ -376,6 +383,11 @@ class StaticOAuthProvider extends KvOAuthProvider {
       clientId: this.settings.clientId,
       tokenEndpoint: this.settings.tokenEndpoint.href,
     };
+  }
+
+  protected override callbackIssuerMatches(issuer: string | null, binding: FlowBinding | undefined): boolean {
+    const declared = this.settings.callbackIssuer;
+    return declared === undefined ? super.callbackIssuerMatches(issuer, binding) : issuer === declared;
   }
 
   private configuredClientInformation(): StoredOAuthClientInformation {
