@@ -4,7 +4,7 @@ All notable changes to this package are documented here.
 
 ## 0.48.1 — 2026-11-13
 
-Connecta 0.48.1 keeps bursts of concurrent session starts from failing. When every authentication slot on a Worker isolate is taken, a request now waits briefly in a bounded queue instead of getting an immediate `authentication_busy` 503, and Cloudflare Access and Vercel workload verification share one in-flight key-set fetch, with a short shared backoff after a failed fetch instead of 30 seconds of refusals. `/health` reports the queue's depth and limit.
+Connecta 0.48.1 keeps bursts of concurrent session starts from failing. When every authentication slot in a Worker isolate or Node process is taken, a request now waits briefly in a bounded queue instead of getting an immediate `authentication_busy` 503. Cloudflare Access assertions, Vercel workload tokens and the Google OAuth-mode ID-token check share one in-flight key-set fetch per adapter instead of refusing a third concurrent caller, and after a failed fetch, requests that need the key set wait out a one-second shared backoff instead of 30 seconds of refusals. `/health` reports the queue's depth and limit.
 
 Nothing is breaking and no configuration change is required. Every refusal contract is unchanged.
 
