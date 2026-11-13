@@ -140,6 +140,38 @@ runs it. `"read-repeatable"` is the exception, because the deployment accepted t
 may repeat the call, and a host can resend a whole read program: such a tool runs here
 unmarked, and a resent program can reach the vendor twice.
 
+**Freshness bound.** A program admits each call against the catalog its request
+retained, so calls made within a catalog's TTL see one consistent catalog and
+list nothing again. A call whose admission depends on a write restriction the
+host's approval does not cover first lists its connector again when the retained
+catalog has passed its TTL, and admits against the new listing. Such calls are:
+
+- every call from a read program;
+- every call from `execute_code` on a read-only endpoint;
+- a call from writable `execute_code` or `call_destructive_tool` to a tool on a
+  `readOnly` connector, or, on a `readOnly: true` pool with `writes`, to a tool
+  that pool does not grant.
+
+A tool the downstream has since reclassified as a write is then refused, with
+`destructive_tool_requires_approval` or `read_only_endpoint`, and nothing is
+sent, whether or not the downstream sent `notifications/tools/list_changed`.
+Concurrent calls share one relisting. A downstream's reclassification therefore
+reaches such a call no later than its catalog TTL (`ttlMs`, or
+`discovery.catalogTtlSeconds` for a listing without one).
+
+Two costs follow, only for those calls. A catalog with a zero TTL, which is the
+MCP SDK server's default, is listed again before every such call after the
+request's first to that connector, one `tools/list` round trip each. A relisting
+that fails transiently resolves the call through the bounded stale fallback in
+[architecture](./architecture.md#storage-credentials-and-connectors), so while a
+downstream cannot list, the bound extends by at most five minutes.
+
+Every other call keeps the catalog its request retained, with no relisting:
+writable `execute_code` and `call_destructive_tool` to an unrestricted connector
+or a granted write, whose host approval covers the whole program or call, and
+`call_tool`, which makes one call per request against a catalog that call itself
+read.
+
 **Discovery lists writes, marked.** `connecta.search` and `connecta.describe` return
 them with `callable: false`, and no other entry carries the field. Writes are not
 omitted because omission reads as absence, and a program that reduces a page keeps

@@ -828,6 +828,20 @@ auth partition. Partial walks, permission and auth failures do not use this
 fallback, and a refusal keeps later failures from using it until a listing succeeds.
 Resources require unexpired inventories.
 
+**Admission freshness.** A request retains each connector's catalog for its
+remaining calls. A call whose admission depends on a write restriction the
+host's approval does not cover asks `resolve` to revalidate: any call from
+`execute_read_code` or from `execute_code` on a read-only endpoint, and a call
+from writable `execute_code` or `call_destructive_tool` that the view's
+`refusesWrite` would refuse as a write (a `readOnly` connector, or a tool outside
+a pool's exact `writes`). When the
+catalog they join had settled before they asked and has passed its TTL, it is
+evicted and listed again, replacing the whole retained catalog (INV-8), so a
+reclassification reaches such a program within the TTL without a `list_changed`
+notification. Concurrent askers share the one relisting, and a listing still in
+flight when a call asks is accepted. Discovery and all other calls keep the
+retained catalog for the request.
+
 **Stale listings.** Discovery alone may list a tool catalog up to 24 hours past
 its expiry (`STALE_DISCOVERY_MS`), so chunks and manifests keep that storage TTL
 and a publish deletes the revision it supersedes. Each discovery first peeks the
