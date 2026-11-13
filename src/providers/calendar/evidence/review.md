@@ -36,10 +36,25 @@ natural vocabulary for each method live in each summary's first sentence.
 
 The vendor declaration names the nine methods the authored tools send;
 the manifest and drift records cover the full index. `update_event` and
-`respond_to_event` read the event first as an auxiliary read (no write step)
-because Calendar's patch replaces the whole attendee array: the read keeps
-every other guest's entry and response, and both tools refuse when Google
-reports `attendeesOmitted`, which would otherwise drop guests. A dispatched
+`respond_to_event` read the event first as an auxiliary read (no write step).
+Calendar's patch replaces the whole attendee array, so `update_event`'s guest
+change keeps every other guest's entry and response from the read, sends the
+read `etag` as `If-Match`, and refuses when Google reports `attendeesOmitted`.
+Per the version-resources guide, a stale ETag is HTTP 412; the shared Google
+table maps it to `conflict` only for an ETag-guarded request, and nothing is
+replayed. `respond_to_event` instead uses the Event resource's documented
+participant-only update: `attendeesOmitted: true` with only the user's own
+entry ("When updating an event, this can be used to only update the
+participant's response"). Other guests are never sent, so a concurrent RSVP or
+organizer edit cannot be reverted, and an omitted guest list no longer blocks
+an answer. It sends no `If-Match`: with nothing else to overwrite, a guard
+would only turn every other guest's reply into a spurious conflict.
+
+`query_free_busy` keeps Google's two maps apart: `groups[id]` carries a
+group's member calendar ids or its errors (such as `groupTooBig`), and each
+member's busy intervals come from `calendars`. Every requested id and member
+gets `status` `ok`, `error` or `missing`; only `ok` carries `busy`, so a
+failure or an absent answer is never presented as free. A dispatched
 write is attempted once; Google documents no idempotency key. The Meet
 `createRequest.requestId` only deduplicates conference creation inside
 Google and is not a replay key. `sendUpdates` is passed only when the caller

@@ -60,6 +60,7 @@ const SCHEDULE_TASK: ActiveTask = {
       timeMax: "2026-11-20T17:00:00Z",
       calendars: [ALICE, BOB],
     });
+    if (busy.calendars.some((calendar: Row) => calendar.status !== "ok")) throw new Error("Availability unknown");
     const taken = busy.calendars.flatMap((calendar: Row) => calendar.busy);
     let start = Date.parse("2026-11-20T14:00:00Z");
     while (taken.some((range: Row) => Date.parse(range.start) < start + 30 * 60_000 && Date.parse(range.end) > start))

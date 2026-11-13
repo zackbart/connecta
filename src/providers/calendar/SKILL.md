@@ -25,10 +25,12 @@ event needs `start.timeZone` so its occurrences follow daylight saving.
 
 ## Availability
 
-`query_free_busy` returns busy intervals, never titles. A calendar listed with
-errors (such as `notFound` or `groupTooBig`) is unknown, not free: say so
-rather than treating it as available. A free/busy result does not reserve the
-slot; create the event right after checking.
+`query_free_busy` returns busy intervals, never titles. Only a row with
+`status: "ok"` is known. `error` (with reasons such as `notFound` or
+`groupTooBig`) and `missing` mean availability is unknown, not free: say so
+rather than treating it as available. A group email lists its `members`, each
+with its own status and busy intervals. A free/busy result does not reserve
+the slot; create the event right after checking.
 
 <!-- when: writes -->
 ## Invitations and notifications
@@ -36,7 +38,8 @@ slot; create the event right after checking.
 Guests are emailed only as `sendUpdates` says; when it is omitted, Google
 applies its default for the API. Ask before notifying people outside the
 user's organization. `respond_to_event` changes only the user's own response;
-it cannot answer for another guest. Deleting or moving an event the user
+it cannot answer for another guest. An `update_event` guest change that fails
+`conflict` raced another edit and was not applied: read the event and retry. Deleting or moving an event the user
 organizes affects every guest's copy. A Google Meet link from `addGoogleMeet`
 can be pending at first: read the event again before sharing the link.
 

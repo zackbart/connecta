@@ -97,8 +97,8 @@ export const calendar = defineApiProvider<CalendarOptions>({
   title: "Google Calendar",
   readme: "Google Calendar",
   bundle: {
-    baselineGzip: 401353,
-    note: "./providers/calendar measures 401,353 B gzip standalone for its initial provider (#1395), Node 22.23.4, esbuild 0.28.1, neutral Worker conditions and gzip level 9; the same local toolchain measures ./providers/forms at 395,582 B against its recorded 372,442 B. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
+    baselineGzip: 401780,
+    note: "./providers/calendar measures 401,780 B gzip standalone in CI's bundle report for its initial provider (#1395), with neutral Worker conditions and gzip level 9. This entry includes the shared Effect provider kit, paid once per deployment; standalone provider sizes are not additive. Provider entries are reported, not capped (#899).",
   },
 
   skill,

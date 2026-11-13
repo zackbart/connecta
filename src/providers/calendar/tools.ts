@@ -303,6 +303,40 @@ function projectEvent(ctx: ConnectorContext, value: unknown, calendar?: string):
   });
 }
 
+// --- Free/busy -------------------------------------------------------------------
+
+const FreeBusyFields = {
+  id: Schema.String,
+  status: described(
+    Schema.Literals(["ok", "error", "missing"]),
+    "ok: busy is complete. error or missing: availability is unknown, never free.",
+  ),
+  busy: described(
+    Schema.Array(optional({ start: Schema.String, end: Schema.String })),
+    "Busy intervals, only when ok.",
+  ),
+  errors: described(Schema.Array(Schema.String), "Google's failure reasons, such as notFound or groupTooBig."),
+};
+
+function reasonsOf(errors: unknown): string[] {
+  return asArray(errors).map((error) => text(asRecord(error)["reason"]) ?? "unknown");
+}
+
+/** One calendar's answer; a calendar Google did not answer is missing, not free. */
+function freeBusyOf(id: string, calendars: JsonRecord): JsonRecord & { status: "ok" | "error" | "missing" } {
+  if (!Object.hasOwn(calendars, id)) return { id, status: "missing" };
+  const entry = asRecord(calendars[id]);
+  const errors = reasonsOf(entry["errors"]);
+  if (errors.length) return { id, status: "error", errors };
+  return {
+    id,
+    status: "ok",
+    busy: asArray(entry["busy"]).map((range) =>
+      compact({ start: text(asRecord(range)["start"]), end: text(asRecord(range)["end"]) }),
+    ),
+  };
+}
+
 // --- Argument checks ----------------------------------------------------------------
 
 type When = { readonly dateTime?: string; readonly date?: string; readonly timeZone?: string };
@@ -543,7 +577,7 @@ export function calendarTools({ connection }: { connection: Connection }): ApiTo
     read(connection, {
       name: "query_free_busy",
       description:
-        "Read busy intervals for calendars or guest emails in one time range, to find a free slot. Never event titles; private calendars report an error.",
+        "Read busy intervals for calendars, guest emails or groups in one time range, to find a free slot. Never event titles; only status ok rows are known.",
       review: "Google's freeBusy query is a read-only POST: it returns busy intervals and changes nothing.",
       input: Schema.Struct({
         timeMin: dateTime("Range start,"),
@@ -562,9 +596,11 @@ export function calendarTools({ connection }: { connection: Connection }): ApiTo
         timeMax: Schema.String,
         calendars: Schema.Array(
           optional({
-            id: Schema.String,
-            busy: Schema.Array(optional({ start: Schema.String, end: Schema.String })),
-            errors: Schema.Array(Schema.String),
+            ...FreeBusyFields,
+            members: described(
+              Schema.Array(optional(FreeBusyFields)),
+              "A group's member calendars, each with its own status.",
+            ),
           }),
         ),
       }),
@@ -588,19 +624,28 @@ export function calendarTools({ connection }: { connection: Connection }): ApiTo
             }),
           );
           const calendars = asRecord(reply["calendars"]);
+          const groups = asRecord(reply["groups"]);
           return {
             timeMin: text(reply["timeMin"]) ?? args.timeMin,
             timeMax: text(reply["timeMax"]) ?? args.timeMax,
             calendars: args.calendars.map((id) => {
-              const entry = asRecord(calendars[id]);
+              if (!Object.hasOwn(groups, id)) return freeBusyOf(id, calendars);
+              const group = asRecord(groups[id]);
+              const errors = reasonsOf(group["errors"]);
+              const members = asArray(group["calendars"])
+                .filter((member): member is string => typeof member === "string")
+                .map((member) => freeBusyOf(member, calendars));
+              const status =
+                errors.length || members.some((member) => member.status === "error")
+                  ? "error"
+                  : !members.length || members.some((member) => member.status === "missing")
+                    ? "missing"
+                    : "ok";
               return compact({
                 id,
-                busy: asArray(entry["busy"]).map((range) =>
-                  compact({ start: text(asRecord(range)["start"]), end: text(asRecord(range)["end"]) }),
-                ),
-                errors: asArray(entry["errors"])
-                  .map((error) => text(asRecord(error)["reason"]))
-                  .filter((reason): reason is string => reason !== undefined),
+                status,
+                errors: nonEmpty(errors),
+                members: nonEmpty(members),
               });
             }),
           };
@@ -700,14 +745,23 @@ export function calendarTools({ connection }: { connection: Connection }): ApiTo
           const ctx = yield* contextOf;
           const calendar = args.calendarId ?? "primary";
           const body = eventBody(args);
+          let etag: string | undefined;
           if (args.addAttendees?.length || args.removeAttendees?.length) {
             // Calendar replaces the whole guest list on patch: read it, keep
-            // every guest's response, and change only the named ones.
+            // every guest's response, change only the named ones, and send it
+            // only if the event is still the version read.
             const current = asRecord(yield* readEvent(calendar, args.eventId, { effect: "read", step: "event" }));
             if (current["attendeesOmitted"] === true)
               throw new ConnectorCallError(
                 "connector_call_failed",
                 "Google omitted part of this event's guest list, so it cannot be changed without losing guests; edit it in Calendar.",
+                { retryable: false },
+              );
+            etag = text(current["etag"]);
+            if (etag === undefined)
+              throw new ConnectorCallError(
+                "connector_call_failed",
+                "Google returned this event without an ETag, so its guest list cannot be changed without risking a concurrent edit.",
                 { retryable: false },
               );
             const removed = new Set((args.removeAttendees ?? []).map((email) => email.toLowerCase()));
@@ -720,13 +774,16 @@ export function calendarTools({ connection }: { connection: Connection }): ApiTo
               .map((attendee) => compact({ ...attendee }));
             body["attendees"] = [...kept, ...added];
           }
-          const reply = yield* json({
-            method: "PATCH",
-            path: eventPath(calendar, args.eventId),
-            template: EVENT_TEMPLATE,
-            query: { sendUpdates: args.sendUpdates, conferenceDataVersion: args.addGoogleMeet ? 1 : undefined },
-            body,
-          });
+          const reply = yield* json(
+            {
+              method: "PATCH",
+              path: eventPath(calendar, args.eventId),
+              template: EVENT_TEMPLATE,
+              query: { sendUpdates: args.sendUpdates, conferenceDataVersion: args.addGoogleMeet ? 1 : undefined },
+              body,
+            },
+            etag === undefined ? undefined : { ifMatch: etag },
+          );
           return eventResult(ctx, reply, calendar);
         }).pipe(knownFailures),
     }),
@@ -749,35 +806,28 @@ export function calendarTools({ connection }: { connection: Connection }): ApiTo
           const ctx = yield* contextOf;
           const calendar = args.calendarId ?? "primary";
           const current = asRecord(yield* readEvent(calendar, args.eventId, { effect: "read", step: "event" }));
-          const attendees = asArray(current["attendees"]).map(asRecord);
-          const self = attendees.findIndex((attendee) => attendee["self"] === true);
-          if (self < 0)
+          const self = asArray(current["attendees"])
+            .map(asRecord)
+            .find((attendee) => attendee["self"] === true);
+          if (self === undefined)
             throw new ConnectorCallError(
               "invalid_args",
               "The user is not a guest of this event, so there is no invitation to answer.",
             );
-          if (current["attendeesOmitted"] === true)
-            throw new ConnectorCallError(
-              "connector_call_failed",
-              "Google omitted part of this event's guest list, so a response cannot be saved without losing guests.",
-              { retryable: false },
-            );
-          // Calendar replaces the whole guest list on patch; only the user's own entry changes.
-          const updated = attendees.map((attendee, index) =>
-            index === self
-              ? compact({
-                  ...attendee,
-                  responseStatus: args.response,
-                  comment: args.comment ?? attendee["comment"],
-                })
-              : attendee,
-          );
+          // Google's participant-only update: with attendeesOmitted, a patch
+          // naming only the user's own entry changes only that response, so
+          // a guest's or the organizer's concurrent change is never sent back.
           const reply = yield* json({
             method: "PATCH",
             path: eventPath(calendar, args.eventId),
             template: EVENT_TEMPLATE,
             query: { sendUpdates: args.sendUpdates },
-            body: { attendees: updated },
+            body: {
+              attendeesOmitted: true,
+              attendees: [
+                compact({ ...self, responseStatus: args.response, comment: args.comment ?? self["comment"] }),
+              ],
+            },
           });
           return eventResult(ctx, reply, calendar);
         }).pipe(knownFailures),

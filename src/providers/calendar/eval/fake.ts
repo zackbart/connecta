@@ -265,7 +265,16 @@ export class FakeCalendar {
       if (!event) return error(404, "notFound", "Not Found");
       if (request.method === "GET") return send(event);
       if (request.method === "PATCH") {
-        Object.assign(event, body);
+        const expected = request.headers.get("if-match");
+        if (expected !== null && expected !== event.etag) return error(412, "conditionNotMet", "Precondition Failed");
+        const { attendeesOmitted, attendees, ...fields } = body;
+        Object.assign(event, fields);
+        if (Array.isArray(attendees))
+          event.attendees = attendeesOmitted
+            ? (event.attendees ?? []).map(
+                (attendee: Row) => attendees.find((entry: Row) => entry.email === attendee.email) ?? attendee,
+              )
+            : attendees;
         event.etag = `"${Number(String(event.etag).replace(/"/g, "")) + 1}"`;
         // The invitation's first answer commits, then the response is lost.
         if (event.id === INVITE_ID && !s.faulted) {

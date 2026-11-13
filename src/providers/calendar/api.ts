@@ -56,9 +56,9 @@ export const CalendarApi = {
   },
 };
 
-export const errors = googleErrors(CALENDAR, { standard: true });
+export const errors = googleErrors(CALENDAR, { standard: true, etagConflicts: true });
 /** {@link errors}, worded for the connection's access mode. */
-export const connectionErrors = googleConnectionErrors(CALENDAR, "calendar", errors);
+export const connectionErrors = googleConnectionErrors(CALENDAR, "calendar", errors, { etagConflicts: true });
 
 const values = valueSafety(CALENDAR_VALUE_SAFETY, () => calendarIndex);
 export const safety = {

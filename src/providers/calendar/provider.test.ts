@@ -2,7 +2,8 @@ import { PRIVATE_KEY } from "../../../test/fixtures/rsa.js";
 // The Google Calendar connection. Delegation, subjects, and tokens live in
 // test/google-workspace-delegation.test.ts; whole workflows in the provider's
 // outcome journeys. This suite covers request shapes, guest-list
-// preservation, argument refusals, withheld join secrets and hatch refusals.
+// preservation under concurrent edits, group free/busy, argument refusals,
+// withheld join secrets and hatch refusals.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { calendar } from "./index.js";
 import { installOwnedTransport } from "../../../test/fixtures/owned-transport.js";
@@ -16,6 +17,7 @@ const BASE = "/calendar/v3";
 interface ApiCall {
   url: URL;
   method: string;
+  headers: Headers;
   body: any;
 }
 
@@ -34,6 +36,7 @@ beforeEach(() => {
     const call: ApiCall = {
       url: new URL(url),
       method: init.method ?? "GET",
+      headers: new Headers(init.headers),
       body: typeof init.body === "string" ? JSON.parse(init.body) : undefined,
     };
     calls.push(call);
@@ -93,6 +96,54 @@ const INVITE = {
   },
 };
 
+type Event = typeof INVITE & { etag?: string };
+
+function respond(event: Event, email: string, responseStatus: string): Event {
+  return {
+    ...event,
+    attendees: event.attendees.map((attendee) =>
+      attendee.email === email ? { ...attendee, responseStatus } : attendee,
+    ),
+  };
+}
+
+/** Google's documented patch: If-Match guards the version; attendeesOmitted updates named entries only. */
+function googlePatch(event: Event, c: ApiCall): { status?: number; body: unknown; event?: Event } {
+  const expected = c.headers.get("if-match");
+  if (expected !== null && expected !== event.etag)
+    return {
+      status: 412,
+      body: { error: { code: 412, message: "Precondition Failed", errors: [{ reason: "conditionNotMet" }] } },
+    };
+  const { attendeesOmitted, attendees, ...fields } = c.body;
+  const merged =
+    attendees === undefined
+      ? event.attendees
+      : attendeesOmitted
+        ? event.attendees.map((attendee) => attendees.find((entry: any) => entry.email === attendee.email) ?? attendee)
+        : attendees;
+  const next = { ...event, ...fields, attendees: merged, etag: `"${Number(event.etag!.slice(1, -1)) + 1}"` };
+  return { body: next, event: next };
+}
+
+/** One stored event that another guest changes right after the tool's read. */
+function concurrentEvent(change: (event: Event) => Event) {
+  const google = {
+    event: { ...structuredClone(INVITE), etag: '"1"' } as Event,
+    route: (c: ApiCall) => {
+      if (c.method === "GET") {
+        const read = structuredClone(google.event);
+        google.event = { ...change(google.event), etag: '"2"' };
+        return { body: read };
+      }
+      const reply = googlePatch(google.event, c);
+      if (reply.event) google.event = reply.event;
+      return reply;
+    },
+  };
+  return google;
+}
+
 describe("events", () => {
   it("creates an event with a Meet request, and sends invitations only as asked", async () => {
     route = (c) =>
@@ -148,8 +199,8 @@ describe("events", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("answers an invitation by changing only the user's own response", async () => {
-    route = (c) => (c.method === "GET" ? { body: INVITE } : { body: { ...INVITE, attendees: c.body.attendees } });
+  it("answers an invitation with Google's participant-only patch, naming no other guest", async () => {
+    route = (c) => (c.method === "GET" ? { body: INVITE } : { body: googlePatch({ ...INVITE, etag: '"1"' }, c).body });
     const result = await call(connection(), "respond_to_event", {
       eventId: "evt1",
       response: "accepted",
@@ -158,30 +209,45 @@ describe("events", () => {
     expect(calls.map((c) => c.method)).toEqual(["GET", "PATCH"]);
     expect(calls[1]!.url.searchParams.get("sendUpdates")).toBe("all");
     expect(calls[1]!.body).toEqual({
-      attendees: [
-        INVITE.attendees[0],
-        { email: "alice@example.com", self: true, responseStatus: "accepted" },
-        INVITE.attendees[2],
-      ],
+      attendeesOmitted: true,
+      attendees: [{ email: "alice@example.com", self: true, responseStatus: "accepted" }],
     });
     expect(result.myResponseStatus).toBe("accepted");
   });
 
-  it("refuses to answer an event the user is not invited to, or whose guest list Google cut", async () => {
+  it("never reverts a guest's answer saved between the read and the user's own answer", async () => {
+    const google = concurrentEvent((event) => respond(event, "carol@example.com", "accepted"));
+    route = google.route;
+    await call(connection(), "respond_to_event", { eventId: "evt1", response: "declined", comment: "Out that day" });
+    expect(calls.map((c) => c.method)).toEqual(["GET", "PATCH"]);
+    expect(google.event.attendees).toEqual([
+      INVITE.attendees[0],
+      { email: "alice@example.com", self: true, responseStatus: "declined", comment: "Out that day" },
+      { email: "carol@example.com", responseStatus: "accepted", comment: "Maybe late" },
+    ]);
+  });
+
+  it("answers even when Google cut the guest list, and refuses an event the user is not invited to", async () => {
     const connector = connection();
     route = () => ({ body: { ...INVITE, attendees: [INVITE.attendees[0]] } });
     await expect(call(connector, "respond_to_event", { eventId: "evt1", response: "declined" })).rejects.toMatchObject({
       code: "invalid_args",
     });
-    route = () => ({ body: { ...INVITE, attendeesOmitted: true } });
-    await expect(call(connector, "respond_to_event", { eventId: "evt1", response: "declined" })).rejects.toMatchObject({
-      code: "connector_call_failed",
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
+    route = (c) =>
+      c.method === "GET"
+        ? { body: { ...INVITE, attendeesOmitted: true, attendees: [INVITE.attendees[1]] } }
+        : { body: { ...INVITE, attendeesOmitted: true, attendees: c.body.attendees } };
+    await call(connector, "respond_to_event", { eventId: "evt1", response: "declined" });
+    expect(calls.at(-1)!.body).toEqual({
+      attendeesOmitted: true,
+      attendees: [{ email: "alice@example.com", self: true, responseStatus: "declined" }],
     });
-    expect(calls.map((c) => c.method)).toEqual(["GET", "GET"]);
   });
 
-  it("adds and removes guests without replacing the others' responses", async () => {
-    route = (c) => (c.method === "GET" ? { body: INVITE } : { body: { ...INVITE, attendees: c.body.attendees } });
+  it("adds and removes guests without replacing the others' responses, against the version read", async () => {
+    route = (c) =>
+      c.method === "GET" ? { body: { ...INVITE, etag: '"7"' } } : { body: { ...INVITE, attendees: c.body.attendees } };
     await call(connection(), "update_event", {
       calendarId: "team@example.com",
       eventId: "evt1",
@@ -190,10 +256,39 @@ describe("events", () => {
       removeAttendees: ["Carol@example.com"],
     });
     expect(calls[1]!.url.pathname).toBe(`${BASE}/calendars/team%40example.com/events/evt1`);
+    expect(calls[1]!.headers.get("if-match")).toBe('"7"');
     expect(calls[1]!.body).toEqual({
       summary: "Planning v2",
       attendees: [INVITE.attendees[0], INVITE.attendees[1], { email: "dave@example.com", optional: true }],
     });
+
+    calls.length = 0;
+    await call(connection(), "update_event", { eventId: "evt1", summary: "No guest change" });
+    expect(calls.map((c) => c.method)).toEqual(["PATCH"]);
+    expect(calls[0]!.headers.has("if-match")).toBe(false);
+  });
+
+  it("reports a guest-list change that raced another edit as a conflict, sent once and never replayed", async () => {
+    const google = concurrentEvent((event) => respond(event, "carol@example.com", "accepted"));
+    route = google.route;
+    const refusal = await call(connection(), "update_event", {
+      eventId: "evt1",
+      addAttendees: [{ email: "dave@example.com" }],
+    }).catch((error) => error);
+    expect(refusal).toMatchObject({ code: "conflict" });
+    expect(refusal.message).toMatch(/changed after it was read/);
+    expect(calls.map((c) => c.method)).toEqual(["GET", "PATCH"]);
+    expect(calls[1]!.headers.get("if-match")).toBe('"1"');
+    expect(google.event.etag).toBe('"2"');
+    expect(google.event.attendees).toEqual(respond(INVITE, "carol@example.com", "accepted").attendees);
+  });
+
+  it("refuses a guest-list change when Google returns no ETag to guard it", async () => {
+    route = () => ({ body: INVITE });
+    await expect(
+      call(connection(), "update_event", { eventId: "evt1", removeAttendees: ["carol@example.com"] }),
+    ).rejects.toMatchObject({ code: "connector_call_failed" });
+    expect(calls.map((c) => c.method)).toEqual(["GET"]);
   });
 
   it("withholds conference join secrets and keeps the join link", async () => {
@@ -244,7 +339,7 @@ describe("events", () => {
     expect(calls).toHaveLength(2);
   });
 
-  it("reads free/busy as a reviewed read-only POST and keeps per-calendar errors", async () => {
+  it("reads free/busy as a reviewed read-only POST; an error or a missing calendar is unknown, not free", async () => {
     route = () => ({
       body: {
         timeMin: "2026-11-20T14:00:00.000Z",
@@ -258,15 +353,63 @@ describe("events", () => {
     const result = await call(connection({ readOnly: true }), "query_free_busy", {
       timeMin: "2026-11-20T14:00:00Z",
       timeMax: "2026-11-20T17:00:00Z",
-      calendars: ["alice@example.com", "ext@example.org"],
+      calendars: ["alice@example.com", "ext@example.org", "ghost@example.com"],
     });
     expect(calls[0]).toMatchObject({
       method: "POST",
-      body: { items: [{ id: "alice@example.com" }, { id: "ext@example.org" }] },
+      body: { items: [{ id: "alice@example.com" }, { id: "ext@example.org" }, { id: "ghost@example.com" }] },
     });
     expect(result.calendars).toEqual([
-      { id: "alice@example.com", busy: [{ start: "2026-11-20T14:00:00Z", end: "2026-11-20T15:00:00Z" }], errors: [] },
-      { id: "ext@example.org", busy: [], errors: ["notFound"] },
+      {
+        id: "alice@example.com",
+        status: "ok",
+        busy: [{ start: "2026-11-20T14:00:00Z", end: "2026-11-20T15:00:00Z" }],
+      },
+      { id: "ext@example.org", status: "error", errors: ["notFound"] },
+      { id: "ghost@example.com", status: "missing" },
+    ]);
+  });
+
+  it("expands a group into its members' busy intervals and keeps group and member failures", async () => {
+    const busy = { start: "2026-11-20T15:00:00Z", end: "2026-11-20T15:30:00Z" };
+    route = () => ({
+      body: {
+        groups: {
+          "team@example.com": { calendars: ["bob@example.com", "carol@example.com"] },
+          "eng@example.com": { calendars: ["bob@example.com", "dan@example.com", "erin@example.com"] },
+          "all@example.com": { errors: [{ domain: "global", reason: "groupTooBig" }] },
+        },
+        calendars: {
+          "bob@example.com": { busy: [busy] },
+          "carol@example.com": { busy: [] },
+          "dan@example.com": { errors: [{ domain: "global", reason: "notFound" }], busy: [] },
+        },
+      },
+    });
+    const result = await call(connection(), "query_free_busy", {
+      timeMin: "2026-11-20T14:00:00Z",
+      timeMax: "2026-11-20T17:00:00Z",
+      calendars: ["team@example.com", "eng@example.com", "all@example.com"],
+    });
+    expect(result.calendars).toEqual([
+      {
+        id: "team@example.com",
+        status: "ok",
+        members: [
+          { id: "bob@example.com", status: "ok", busy: [busy] },
+          { id: "carol@example.com", status: "ok", busy: [] },
+        ],
+      },
+      {
+        id: "eng@example.com",
+        status: "error",
+        members: [
+          { id: "bob@example.com", status: "ok", busy: [busy] },
+          { id: "dan@example.com", status: "error", errors: ["notFound"] },
+          { id: "erin@example.com", status: "missing" },
+        ],
+      },
+      { id: "all@example.com", status: "error", errors: ["groupTooBig"] },
     ]);
   });
 });

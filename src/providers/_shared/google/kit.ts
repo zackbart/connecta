@@ -96,6 +96,8 @@ export function googleErrors(
   options: {
     readonly standard?: boolean;
     readonly revisionConflicts?: boolean;
+    /** The product sends ETag-guarded writes (`If-Match`), whose HTTP 412 means the item changed. */
+    readonly etagConflicts?: boolean;
     /** Which access mode the advice describes; delegation unless OAuth mode says otherwise. */
     readonly auth?: "delegation" | "oauth";
   } = {},
@@ -209,6 +211,14 @@ export function googleErrors(
               advice: " Re-read it for the current revision, reapply the change, and retry.",
             }
           : undefined,
+      ({ status, operation }) =>
+        operation.flags?.["etagGuarded"] === true && status === 412
+          ? {
+              code: "conflict",
+              words: () => `${provider} refused the write because the item changed after it was read.`,
+              advice: " Re-read it, reapply the change to the current version, and retry.",
+            }
+          : undefined,
       // Google uses the same reason for a product switched off for this user
       // and for a stale write, so the classification asserts neither.
       ({ status, facts }) =>
@@ -252,9 +262,12 @@ export function googleErrors(
           meanings: {
             unknownId: notFound === "absent" ? ("not_found" as const) : ("connector_call_failed" as const),
             provesAbsence: notFound === "absent",
-            conflicts: options.revisionConflicts
-              ? ["A revision-guarded batch update returned ABORTED or FAILED_PRECONDITION with HTTP 400 or 409"]
-              : [],
+            conflicts: [
+              ...(options.revisionConflicts
+                ? ["A revision-guarded batch update returned ABORTED or FAILED_PRECONDITION with HTTP 400 or 409"]
+                : []),
+              ...(options.etagConflicts ? ["An If-Match write returned HTTP 412 because the item changed"] : []),
+            ],
           },
           bodyFailures: {
             review:
@@ -442,7 +455,7 @@ export function googleConnectionErrors(
   product: GoogleProduct,
   factory: string,
   errors: VendorErrors<GoogleFacts>,
-  flags: { readonly revisionConflicts?: boolean } = {},
+  flags: { readonly revisionConflicts?: boolean; readonly etagConflicts?: boolean } = {},
 ) {
   const oauth = googleErrors(product, { standard: true, ...flags, auth: "oauth" });
   const worded: VendorErrors<GoogleFacts> = { ...errors, classify: oauth.classify ?? [] };
@@ -558,6 +571,8 @@ export interface GoogleRequestOptions {
    * `writeControl.requiredRevisionId`): a stale one maps to `conflict`.
    */
   readonly revisionGuarded?: boolean;
+  /** The ETag the write was made against, sent as `If-Match`: Google's HTTP 412 maps to `conflict`. */
+  readonly ifMatch?: string;
   /** A lookup inside a write tool, which consumes no write step (the kit's auxiliary read). */
   readonly effect?: "read";
   /** One of the tool's declared write steps, for a tool that sends more than one write. */
@@ -654,15 +669,16 @@ export function googleClient(connection: Connection, index: OperationIndex): Goo
             path: request.path,
             template: operation.template,
             query: queryPairs(request.query),
-            headers: { accept, ...request.headers },
+            headers: { accept, ...request.headers, ...(options?.ifMatch ? { "if-match": options.ifMatch } : {}) },
             ...(request.body !== undefined ? { json: JSON.stringify(request.body) } : {}),
             ...(request.rawBody !== undefined ? { rawBody: request.rawBody } : {}),
           },
           {
-            ...(options?.revisionGuarded || binary
+            ...(options?.revisionGuarded || options?.ifMatch || binary
               ? {
                   flags: {
                     ...(options?.revisionGuarded ? { revisionGuarded: true as const } : {}),
+                    ...(options?.ifMatch ? { etagGuarded: true as const } : {}),
                     ...(binary ? { googleBytes: true as const } : {}),
                   },
                 }

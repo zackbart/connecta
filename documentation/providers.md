@@ -1716,6 +1716,19 @@ list, settings, colors, instances and import. Push notification channels
 (every `watch` method and `channels.stop`) remain refused: they deliver to a
 webhook this connection cannot receive.
 
+`update_event` with `addAttendees` or `removeAttendees` reads the event and
+sends the whole guest list back with the read ETag as `If-Match`; if anyone
+changed the event in between, Google answers HTTP 412, the write is not
+applied or replayed, and the call fails `conflict`: read the event and retry.
+It refuses an event whose guest list Google omitted. `respond_to_event` sends
+Google's participant-only patch (`attendeesOmitted` with only the user's own
+entry), so other guests' entries are never sent and a concurrent change to
+them is never reverted. `query_free_busy` gives each requested id a `status`:
+`ok` rows carry complete `busy` intervals; `error` rows carry Google's reasons
+(such as `notFound` or `groupTooBig`) and `missing` rows were not answered.
+Both mean availability is unknown, never free. A group lists its expanded
+`members`, each with its own status, and is `ok` only when every member is.
+
 `list_events` defaults to 25 rows, at most 50, and `list_calendars` to 25, at
 most 100; their cursors are signed and bound to the connection, caller and
 arguments through the shared deployment store. Results target the shared
