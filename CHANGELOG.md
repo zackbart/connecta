@@ -2,6 +2,16 @@
 
 All notable changes to this package are documented here.
 
+## 0.49.0 — 2026-11-14
+
+Connecta 0.49.0 makes warm calls to OAuth remote MCP connectors faster by cutting their sequential storage reads. A warm call to a modern OAuth downstream now makes 6 D1 round trips instead of 12, and a legacy one 11 instead of 15; non-OAuth calls are unchanged. Catalog acceptance reads the grant together with the catalog generation, admission reads the grant once for both its disconnect and token checks, and a connect reuses the fresh grant read its request already made. The SDK still reads the grant before every message, so rotation, refresh, disconnect and revocation keep their existing bounds.
+
+Nothing is breaking and no configuration change is required. One timing edge changes: a token rotation that lands just after a connect binds its epoch is now refused as a retryable "authorization changed" instead of reconnecting within the same call. Clients that already retry that refusal need no change.
+
+### Changed
+
+- A warm OAuth remote MCP call makes fewer sequential storage reads: 6 D1 round trips instead of 12 on a modern downstream and 11 instead of 15 on a legacy one, with non-OAuth calls unchanged. Catalog acceptance reads the grant and the catalog generation in one statement. A call's admission reads the grant once for both the disconnect and token checks. A connect binds the epoch and addresses its first listing from the fresh read the request already made, and a modern connect that sends nothing skips its post-connect epoch check. The SDK still reads the grant before every message, and rotation, refresh, disconnect and same-epoch token invalidation are refused or adopted before anything is sent with a stale credential. A rotation that lands just after a connect binds its epoch is refused as retryable "authorization changed" rather than reconnected within the same call. (#1424)
+
 ## 0.48.1 — 2026-11-13
 
 Connecta 0.48.1 keeps bursts of concurrent session starts from failing. When every authentication slot in a Worker isolate or Node process is taken, a request now waits briefly in a bounded queue instead of getting an immediate `authentication_busy` 503. Cloudflare Access assertions, Vercel workload tokens and the Google OAuth-mode ID-token check share one in-flight key-set fetch per adapter instead of refusing a third concurrent caller, and after a failed fetch, requests that need the key set wait out a one-second shared backoff instead of 30 seconds of refusals. `/health` reports the queue's depth and limit.
