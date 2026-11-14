@@ -1788,7 +1788,10 @@ async function fetchConnector(
   // observation time once, here, so every later render counts from it.
   if (typeof detail.observedAgeMs === "number") {
     const observedAt = Date.now() - detail.observedAgeMs;
-    const storedToolCount = typeof detail.toolCount === "number" ? { storedToolCount: detail.toolCount } : {};
+    const storedToolCount =
+      typeof detail.toolCount === "number" && detail.status === "ok" && !detail.problem
+        ? { storedToolCount: detail.toolCount }
+        : {};
     detail = {
       ...detail,
       observedAt,

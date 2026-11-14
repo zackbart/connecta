@@ -461,6 +461,9 @@ test("a stored timeout stays parked with a counting age until a live Refresh rea
   const card = page.locator(".connector-card", { hasText: "CRM" });
   await expect(card.locator(".pill")).toHaveText("Not responding");
   await expect(card.locator(".stored-status")).toHaveText("Stored status, checked just now. Refresh to check again.");
+  await expect(card.locator(".tool-split")).not.toContainText("3 tools");
+  const line = await card.locator(".connector-card-last").boundingBox();
+  expect((await card.locator(".stored-status").boundingBox())!.height).toBeLessThanOrEqual(line!.height);
   // The age counts from the observation, and nothing reads the parked row.
   await page.clock.runFor(120_000);
   await expect(card.locator(".stored-status")).toHaveText("Stored status, checked 2 min ago. Refresh to check again.");
@@ -537,6 +540,11 @@ test("an unread connector holds its place and height, counts in All only, and ne
   await expect(view.locator(".map-column").nth(2)).toHaveText("Connectors3");
   await expect(view.locator(".map-column").nth(3)).toHaveText("Tools–");
   await expect(view.getByText("0 tools")).toHaveCount(0);
+  await expect(view.locator('[data-node="connector:svc1"]')).toHaveAttribute(
+    "aria-label",
+    /reach Service svc1 through \/mcp/,
+  );
+  await expect(view.locator('[aria-label*="nobody reaches"]')).toHaveCount(0);
 
   releaseStored();
   await expect(view.getByText("All clear")).toBeVisible();

@@ -119,6 +119,7 @@ export function ClientSetupDialog({
  */
 function connectorProblem(group: EndpointGroup, health: ConnectorHealth): { label: string; tone: Tone } | null {
   const { config, live } = group;
+  if (!live) return null;
   const verdict = connectorVerdict(
     live,
     Object.hasOwn(health.signals, config.id) ? health.signals[config.id] : undefined,

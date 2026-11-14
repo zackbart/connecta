@@ -96,7 +96,9 @@ neutral and reads "Checking". A connector whose catalog is unknown (failed,
 not yet read, or a stored row) draws a muted dash there instead of "0 tools";
 a stored row that carries a tool count shows that count over an empty bar.
 The Tools column count reads "–" until every connector has a verdict and a
-count.
+count. Grant links, endpoint rows and reach sentences come from configuration,
+so a connector still checking keeps its links and is never described as
+unreachable.
 
 - A grant link takes its connector's health color. Grants on a read-only
   endpoint are dashed; an agent's link to its pool is dotted while it has no
@@ -656,12 +658,15 @@ that follows admission, and fixes the observation time once as each stored
 row lands. The list card and the connector page mark a stored row the same
 way: a quiet "Checking…" whose hover names the stored observation's time, and
 a tool bar that shows the stored tool count over an empty bar (a placeholder
-when the count is unknown), never "No tools". The browser then
+when the count is unknown, including every stored observation that is not
+`ok` or carries a problem), never "No tools". The browser then
 sends one plain live read per stored row, through the same queue of twelve
 detail reads; queued stored reads start before any queued live read. A stored
 `connector_timeout` row is not read again on its own; its mark reads "Stored
 status, checked … ago. Refresh to check again." with an age that keeps
-counting, and it waits for Refresh like a live timeout.
+counting, and it waits for Refresh like a live timeout. On a card that mark
+stays on one line, truncated with its full text on hover, so a card keeps its
+height when its placeholder resolves.
 Refresh, a single connector's read, recovery retries and OAuth polls always
 read live.
 

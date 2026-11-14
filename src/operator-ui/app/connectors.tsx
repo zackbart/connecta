@@ -119,7 +119,10 @@ export function StoredStatus({ observedAt, parked }: { observedAt: number; parke
   const at = new Date(observedAt).toISOString();
   const age = sinceLabel(at, Math.max(now, Date.now())).toLowerCase();
   return parked ? (
-    <span className="meta stored-status" title={`Stored status from ${formatDate(at)}`}>
+    <span
+      className="meta stored-status"
+      title={`Stored status, checked ${age}. Refresh to check again. Stored status from ${formatDate(at)}`}
+    >
       Stored status, checked {age}. Refresh to check again.
     </span>
   ) : (

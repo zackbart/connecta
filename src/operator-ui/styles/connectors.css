@@ -170,6 +170,16 @@
 .connector-card-last .dot {
   vertical-align: 0.05em;
 }
+.connector-card-foot > .connector-card-last,
+.connector-card-foot .problem-action {
+  flex: none;
+}
+.connector-card-foot > .stored-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .connector-card-foot .problem-action {
   position: relative;
   z-index: 1;

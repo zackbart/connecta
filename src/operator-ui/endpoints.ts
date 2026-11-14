@@ -19,7 +19,8 @@ import type { DescribedConnector } from "../describe-config.js";
 
 export interface EndpointGroup {
   config: DescribedConnector;
-  live: OperatorConnectorOverlay;
+  /** Null while the connector's details have not loaded. */
+  live: OperatorConnectorOverlay | null;
   /** Live tools this endpoint serves, after grants, guards and read-only mode. */
   tools: OperatorTool[];
   /** The matching matrix cell's subject, or null when the matrix has no cell. */
@@ -129,10 +130,10 @@ function endpointGroups(
 ): EndpointGroup[] {
   const cells = cellsFor(contract, pool);
   return (contract.config?.connectors ?? []).flatMap((config) => {
-    const live = contract.live.connectors.find((c) => c.id === config.id);
+    const live = contract.live.connectors.find((c) => c.id === config.id) ?? null;
     const grant = grants.find((g) => g.connectorId === config.id);
-    if (!live || !grant) return [];
-    const tools = live.tools.filter((tool) => {
+    if (!grant) return [];
+    const tools = (live?.tools ?? []).filter((tool) => {
       if (
         tool.classification !== "read" &&
         (config.readOnly || (readOnly && !writes.includes(`${config.id}.${tool.name}`)))
