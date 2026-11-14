@@ -176,6 +176,8 @@
 }
 .connector-card-foot > .stored-status {
   min-width: 0;
+  position: relative;
+  z-index: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

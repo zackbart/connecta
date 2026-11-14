@@ -146,7 +146,8 @@ Setup button.
   still shows two URLs labeled People and Agents; the People URL
   (`/mcp/<pool>`) admits no one, because the pool has no people.
 - Expanding a row lists everyone by name, then each connector with what it
-  runs as and its tools, write tools amber with a pencil. Runs-as comes from
+  runs as and its tools, write tools amber with a pencil, or "Checking…"
+  while its details or live tools have not loaded. Runs-as comes from
   the endpoint's matrix cell: "Shared · saved <date>", "Shared · connected
   <date>", "Shared · not configured", "Shared · set in deployment", "Shared ·
   no credential needed", "Personal · N of M connected", "Workspace · people:

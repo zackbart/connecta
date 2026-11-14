@@ -313,6 +313,8 @@ function EndpointTools({ endpoint, health }: { endpoint: EndpointRow; health: Co
                         </li>
                       ))}
                     </ul>
+                  ) : !group.live || group.live.observedAt !== undefined ? (
+                    <span className="meta">Checking…</span>
                   ) : (
                     <span className="meta">No tools</span>
                   )}

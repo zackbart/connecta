@@ -463,7 +463,10 @@ test("a stored timeout stays parked with a counting age until a live Refresh rea
   await expect(card.locator(".stored-status")).toHaveText("Stored status, checked just now. Refresh to check again.");
   await expect(card.locator(".tool-split")).not.toContainText("3 tools");
   const line = await card.locator(".connector-card-last").boundingBox();
-  expect((await card.locator(".stored-status").boundingBox())!.height).toBeLessThanOrEqual(line!.height);
+  const status = (await card.locator(".stored-status").boundingBox())!;
+  expect(status.height).toBeLessThanOrEqual(line!.height);
+  await card.locator(".stored-status").hover({ timeout: 2_000 });
+  await expect(card.locator(".stored-status:hover")).toHaveCount(1);
   // The age counts from the observation, and nothing reads the parked row.
   await page.clock.runFor(120_000);
   await expect(card.locator(".stored-status")).toHaveText("Stored status, checked 2 min ago. Refresh to check again.");
@@ -545,6 +548,14 @@ test("an unread connector holds its place and height, counts in All only, and ne
     /reach Service svc1 through \/mcp/,
   );
   await expect(view.locator('[aria-label*="nobody reaches"]')).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Endpoints", exact: true }).click();
+  const root = page.locator('[data-endpoint="/mcp"]');
+  await root.locator(".endpoint-toggle").click();
+  const breakdown = root.locator(".endpoint-breakdown");
+  await expect(breakdown.locator("tr", { hasText: "Service svc1" })).toContainText("Checking…");
+  await expect(breakdown.getByText("No tools")).toHaveCount(0);
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
 
   releaseStored();
   await expect(view.getByText("All clear")).toBeVisible();
