@@ -923,6 +923,11 @@ export const prefetchCatalog = authMethod(
     }),
 );
 
+export interface CredentialIdentity {
+  (supplied?: { raw: string | null }): Promise<string>;
+  readonly source?: { storage: KVStorage; key: string };
+}
+
 /** Keys ignore self-reported serverInfo and bind the configured connector instead. */
 export function catalogClientOptions(
   ctx: ConnectorContext,
@@ -932,8 +937,9 @@ export function catalogClientOptions(
   connectionSignal?: AbortSignal,
   owner?: object,
   sharing: "private" | "shared" = "private",
-  resolveCredentialIdentity?: () => Promise<string>,
+  resolveCredentialIdentity?: CredentialIdentity,
   connectionless = false,
+  pinnedIdentity?: string,
 ): Promise<
   Pick<ClientOptions, "responseCacheStore" | "cachePartition" | "defaultCacheTtlMs"> & {
     intake: (
@@ -971,6 +977,7 @@ export function catalogClientOptions(
       sharing,
       resolveCredentialIdentity,
       connectionless,
+      pinnedIdentity,
     ]),
   );
 }
@@ -984,8 +991,9 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
     connectionSignal?: AbortSignal,
     owner?: object,
     sharing: "private" | "shared" = "private",
-    resolveCredentialIdentity?: () => Promise<string>,
+    resolveCredentialIdentity?: CredentialIdentity,
     connectionless = false,
+    pinnedIdentity?: string,
   ) =>
     authFlow<Awaited<ReturnType<typeof catalogClientOptions>>>(function* () {
       const request = Context.get(viewServices(ctx), RequestScope);
@@ -1055,48 +1063,71 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             manifest: Manifest;
           }
         | undefined;
-      const currentGeneration = cacheMethod(({ stopped, io, generation }: CacheOperation, memoized: boolean = false) =>
-        authFlow<string | undefined>(function* () {
-          const key = responseCacheKeys.generation(connectorId);
-          for (let attempt = 0; attempt < 16; attempt++) {
-            if (stopped()) return undefined;
-            // A retry after a lost claim always reads fresh.
-            const current = (yield authCall(io, [cacheMethod(() => generationRead(memoized && attempt === 0))])) as
-              | string
-              | null;
-            if (stopped()) return undefined;
-            if (current) return current;
-            // A connectionless reader never claims or recreates a generation: a
-            // missing one is a miss at every check, never a reused namespace.
-            if (connectionless) return undefined;
-            const next = generation.value ?? crypto.randomUUID();
-            const claimed = (yield authCall(io, [
-              cacheMethod(
-                () =>
-                  authStorage(storage, "compareAndSet", [
-                    key,
-                    null,
-                    next,
-                    { ttlSeconds: GENERATION_TTL_SECONDS },
-                  ]) as Effect.Effect<boolean, unknown>,
-              ),
-            ])) as boolean;
-            if (stopped()) return undefined;
-            if (claimed) return next;
-          }
-          throw new Error("Catalog cache generation is busy.");
-        }),
+      const currentGeneration = cacheMethod(
+        ({ stopped, io, generation }: CacheOperation, memoized: boolean = false, supplied?: string | null) =>
+          authFlow<string | undefined>(function* () {
+            const key = responseCacheKeys.generation(connectorId);
+            for (let attempt = 0; attempt < 16; attempt++) {
+              if (stopped()) return undefined;
+              // A retry after a lost claim always reads fresh.
+              const current =
+                attempt === 0 && supplied !== undefined
+                  ? supplied
+                  : ((yield authCall(io, [cacheMethod(() => generationRead(memoized && attempt === 0))])) as
+                      | string
+                      | null);
+              if (stopped()) return undefined;
+              if (current) return current;
+              // A connectionless reader never claims or recreates a generation: a
+              // missing one is a miss at every check, never a reused namespace.
+              if (connectionless) return undefined;
+              const next = generation.value ?? crypto.randomUUID();
+              const claimed = (yield authCall(io, [
+                cacheMethod(
+                  () =>
+                    authStorage(storage, "compareAndSet", [
+                      key,
+                      null,
+                      next,
+                      { ttlSeconds: GENERATION_TTL_SECONDS },
+                    ]) as Effect.Effect<boolean, unknown>,
+                ),
+              ])) as boolean;
+              if (stopped()) return undefined;
+              if (claimed) return next;
+            }
+            throw new Error("Catalog cache generation is busy.");
+          }),
       );
       const namespace = cacheMethod((operation: CacheOperation, memoized: boolean = false) =>
         authFlow<string | undefined>(function* () {
           const { stopped, generation, io } = operation;
-          if (
-            !memoized &&
-            resolveCredentialIdentity &&
-            ((yield authCall(io, [resolveCredentialIdentity])) as string) !== operation.credentialIdentity
-          )
-            return undefined;
-          const current = (yield authCall(currentGeneration, [operation, memoized])) as string | undefined;
+          let supplied: { raw: string | null } | undefined;
+          let suppliedGeneration: string | null | undefined;
+          if (!memoized && resolveCredentialIdentity) {
+            const source = resolveCredentialIdentity.source;
+            const values = source
+              ? ((yield authCall(io, [
+                  cacheMethod(() =>
+                    reads.readFresh(
+                      [source, { storage, key: responseCacheKeys.generation(connectorId) }],
+                      (storage, keys) => authStorageMany(storage, keys),
+                    ),
+                  ),
+                ])) as (string | null)[] | undefined)
+              : undefined;
+            if (values) {
+              supplied = { raw: values[0] ?? null };
+              suppliedGeneration = values[1] ?? null;
+            }
+            const identity = (yield authCall(io, [
+              cacheMethod(() => authCall<string>(resolveCredentialIdentity, [supplied])),
+            ])) as string;
+            if (identity !== operation.credentialIdentity) return undefined;
+          }
+          const current = (yield authCall(currentGeneration, [operation, memoized, suppliedGeneration])) as
+            | string
+            | undefined;
           if (!current || stopped()) return undefined;
           generation.value ??= current;
           return generation.value === current
@@ -1661,6 +1692,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
       // The queue retains only a Promise turn. Awaiting it in this caller's
       // request preserves workerd I/O ownership; the listing program stays native.
       let tail = Promise.resolve();
+      let pinned = pinnedIdentity;
       const withListing = cacheMethod(
         <T>(listingCtx: ConnectorContext, read: () => Promise<T>, bound?: Partial<ListingBinding>) =>
           authFlow<T>(function* () {
@@ -1684,7 +1716,10 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               const operation = capture();
               try {
                 if (bound && "credentialIdentity" in bound) listing.credentialIdentity = bound.credentialIdentity;
-                else if (resolveCredentialIdentity)
+                else if (pinned !== undefined) {
+                  listing.credentialIdentity = pinned;
+                  pinned = undefined;
+                } else if (resolveCredentialIdentity)
                   listing.credentialIdentity = yield authInvoke<string>(operation, "io", [resolveCredentialIdentity]);
                 if (bound?.fence !== undefined) listing.fence = bound.fence;
                 if (bound?.generationStored !== undefined) {
