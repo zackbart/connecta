@@ -501,9 +501,14 @@ The maintainer view carries:
   persisted catalogs retain their original fetch time.
 - `live.activity`: available, unconfigured, forbidden, or unavailable history.
   Historical last-call and last-seen lookups need the activity permission and read gate,
-  scan up to 1,000 recent rows, filter connector/tool grants, restrict personal
-  connectors to the caller's activity identity, and copy a validated timestamp
-  and outcome only. Admission last-seen reads require a maintainer and honor
+  filter connector/tool grants, restrict personal connectors to the caller's
+  activity identity, and copy a validated timestamp and outcome only. A last
+  call reads up to 1,000 of that connector's newest rows, asking the store with
+  `connectorId`; a last-seen time reads up to 1,000 newest rows of all history
+  and stops once every agent is seen. A store that ignores `connectorId` gets
+  one unfiltered 1,000-row read for last calls instead. Last calls and last-seen
+  times are bounded separately, so one timing out leaves the other's values and
+  reports `unavailable`. Admission last-seen reads require a maintainer and honor
   the configured activity read gate, including when history is unavailable;
   they work with no activity module. A null means unknown or withheld.
 - `connectors: []`.

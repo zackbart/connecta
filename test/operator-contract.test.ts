@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
+import { activityHistory, type ActivityListOptions, type ToolCallActivityEvent } from "../src/activity.js";
 import type { ConnectaConfigDescription } from "../src/describe-config.js";
 import { createConnecta, customExecutor, type Connector, type InboundAuth } from "../src/index.js";
 import { operatorUi, type OperatorUiContract } from "../src/ui.js";
@@ -282,6 +282,63 @@ describe("operator config contract", () => {
       expect(JSON.stringify(detail)).not.toContain("SENTINEL");
     }
     expect(JSON.stringify(data)).not.toContain("SENTINEL");
+  });
+
+  it("finds a quiet connector's last call under another connector's history with one read per detail", async () => {
+    const at = (index: number) => new Date(Date.UTC(2026, 9, 8) + index * 1000).toISOString();
+    const event = (index: number, connectorId: string): ToolCallActivityEvent => ({
+      schemaVersion: 1,
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      occurredAt: at(index),
+      requestId: `request-${index}`,
+      actor: { kind: "human", id: "alice", namespace: "directory" },
+      connectorId,
+      toolName: "read",
+      address: `${connectorId}.read`,
+      source: "call_tool",
+      outcome: "success",
+      durationMs: 1,
+      attempts: 1,
+      serverName: "connecta",
+      serverVersion: "1.0.0",
+    });
+    const history = [event(0, "quiet")];
+    for (let index = 1; index <= 1200; index++) history.unshift(event(index, "busy"));
+    const reads: ActivityListOptions[] = [];
+    const app = deployment({
+      readOnly: false,
+      connectors: [connector("busy"), connector("quiet")],
+      executor,
+      auth: human,
+      maintainers,
+      ui: operatorUi(),
+      logger: "silent",
+      activity: activityHistory({
+        store: {
+          record() {},
+          list: async (options) => {
+            reads.push(options);
+            const rows = history.filter((entry) => !options.connectorId || entry.connectorId === options.connectorId);
+            const start = options.cursor ? Number(options.cursor) : 0;
+            const end = start + options.limit;
+            return { events: rows.slice(start, end), ...(end < rows.length ? { nextCursor: String(end) } : {}) };
+          },
+        },
+      }),
+    });
+    const data = await read(app);
+    expect(data.live.activity).toBe("available");
+    expect(data.live.connectors.map((row) => [row.id, row.lastCall])).toEqual([
+      ["busy", { at: at(1200), outcome: "success" }],
+      ["quiet", { at: at(0), outcome: "success" }],
+    ]);
+    expect(reads.map((options) => options.connectorId).sort()).toEqual(["busy", "quiet"]);
+    reads.length = 0;
+    const detail = (await (await app.fetch(new Request(`${BASE}/ui/connectors/quiet`))).json()) as {
+      overlay: { lastCall: unknown };
+    };
+    expect(detail.overlay.lastCall).toEqual({ at: at(0), outcome: "success" });
+    expect(reads).toEqual([{ limit: 100, connectorId: "quiet" }]);
   });
 
   it("INV-6: status and catalog failures are closed problem codes, and authorization hooks never run", async () => {

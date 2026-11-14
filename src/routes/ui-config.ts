@@ -14,7 +14,7 @@ import { bindActivityRequest } from "../activity-request.js";
 import { AGENT_NAMESPACE } from "../agent-identity.js";
 import { configValuePaths } from "../config-value-sources.js";
 import { Effect } from "effect";
-import type { ActivityOutcome, ActivityRequestContext } from "../activity.js";
+import type { ActivityOutcome, ActivityPage, ActivityRequestContext } from "../activity.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { credentialTestRule, storedCredentialShape } from "../credential-rules.js";
 import { describedTools } from "../described.js";
@@ -226,13 +226,15 @@ const OUTCOMES: ReadonlySet<ActivityOutcome> = new Set([
   "paused",
   "approved",
 ]);
+const CONNECTOR_SCAN_CONCURRENCY = 8;
 const isTimestamp = (value: string) =>
   /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value));
 
 /**
- * One bounded scan of recent activity fills each row's last call and each
- * declared agent's `lastSeenAt` from the rows this maintainer may see. Agent
- * rows are recorded under the access-token directory with the agent's name.
+ * Bounded reads of recent activity fill each row's last call, from that
+ * connector's own rows, and each declared agent's `lastSeenAt`, from the
+ * shared history, using only rows this maintainer may see. Agent rows are
+ * recorded under the access-token directory with the agent's name.
  */
 export function scanOperatorActivity(
   context: RouteContext,
@@ -253,48 +255,100 @@ export function scanOperatorActivity(
         )
       : true;
     if (!permitted) return "forbidden" as const;
-    const scan = Effect.gen(function* () {
-      const byId = new Map(rows.map((row) => [row.id, row]));
-      const byAgent = new Map(agents.map((agent) => [agent.name, agent]));
-      let cursor: string | undefined;
-      const seen = new Set<string>();
-      // Bound the read even when a custom reader repeats a cursor or ignores
-      // its requested page size. Each page belongs to the request fiber, so
-      // cancellation cannot start the next page.
-      for (let pageIndex = 0; pageIndex < 10; pageIndex++) {
-        const page = yield* attempt(() => activity.store.list!({ limit: 100, ...(cursor ? { cursor } : {}) }));
-        for (const event of page.events.slice(0, 100)) {
-          if (!isTimestamp(event.occurredAt)) continue;
-          // A last call is a call; any row recorded for an agent, a catalog
-          // refresh included, is a sign it was seen.
-          const row = event.kind === undefined && OUTCOMES.has(event.outcome) ? byId.get(event.connectorId) : undefined;
-          const agent =
-            (event.actor.kind === "access_token" || event.actor.kind === "vercel_oidc") &&
-            event.actor.namespace === AGENT_NAMESPACE &&
-            event.actor.id
-              ? byAgent.get(event.actor.id)
-              : undefined;
-          if ((!row && !agent) || !activityEventVisible(context, authz, registry, event)) continue;
-          if (row && (!row.lastCall || event.occurredAt > row.lastCall.at))
-            row.lastCall = { at: event.occurredAt, outcome: event.outcome };
-          if (agent && (!agent.lastSeenAt || event.occurredAt > agent.lastSeenAt)) agent.lastSeenAt = event.occurredAt;
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const byAgent = new Map(agents.map((agent) => [agent.name, agent]));
+    let readerIgnoresFilter = false;
+    const visible = (event: ActivityPage["events"][number]) =>
+      isTimestamp(event.occurredAt) && activityEventVisible(context, authz, registry, event);
+    // A last call is a call; any row recorded for an agent, a catalog
+    // refresh included, is a sign it was seen.
+    const visitCall = (event: ActivityPage["events"][number]): boolean => {
+      const row = event.kind === undefined && OUTCOMES.has(event.outcome) ? byId.get(event.connectorId) : undefined;
+      if (!row || !visible(event)) return false;
+      if (!row.lastCall || event.occurredAt > row.lastCall.at)
+        row.lastCall = { at: event.occurredAt, outcome: event.outcome };
+      return true;
+    };
+    const visitAgent = (event: ActivityPage["events"][number]): boolean => {
+      const agent =
+        (event.actor.kind === "access_token" || event.actor.kind === "vercel_oidc") &&
+        event.actor.namespace === AGENT_NAMESPACE &&
+        event.actor.id
+          ? byAgent.get(event.actor.id)
+          : undefined;
+      if (!agent || !visible(event)) return false;
+      if (!agent.lastSeenAt || event.occurredAt > agent.lastSeenAt) agent.lastSeenAt = event.occurredAt;
+      return true;
+    };
+    // Bound the read even when a custom reader repeats a cursor or ignores its
+    // requested page size. Each page belongs to the request fiber, so
+    // cancellation cannot start the next page.
+    const pages = (
+      connectorId: string | undefined,
+      answered: (event: ActivityPage["events"][number]) => boolean,
+    ): Effect.Effect<void, unknown> =>
+      Effect.gen(function* () {
+        let cursor: string | undefined;
+        const seen = new Set<string>();
+        for (let pageIndex = 0; pageIndex < 10; pageIndex++) {
+          const page = yield* attempt(() =>
+            activity.store.list!({
+              limit: 100,
+              ...(cursor ? { cursor } : {}),
+              ...(connectorId !== undefined ? { connectorId } : {}),
+            }),
+          );
+          let done = false;
+          for (const event of page.events.slice(0, 100)) {
+            if (connectorId !== undefined && event.connectorId !== connectorId) {
+              readerIgnoresFilter = true;
+              return;
+            }
+            if (answered(event)) done = true;
+          }
+          cursor = page.nextCursor;
+          if (done || !cursor || seen.has(cursor)) return;
+          seen.add(cursor);
         }
-        cursor = page.nextCursor;
-        if (!cursor || seen.has(cursor)) break;
-        seen.add(cursor);
-      }
-      return "available" as const;
-    });
-    return yield* bounded(
+      });
+    const unseen = new Set(byAgent.keys());
+    const calls = bounded(
       context,
-      () => scan,
+      () =>
+        Effect.gen(function* () {
+          yield* Effect.forEach(rows, (row) => pages(row.id, visitCall), {
+            concurrency: CONNECTOR_SCAN_CONCURRENCY,
+            discard: true,
+          });
+          if (readerIgnoresFilter) yield* pages(undefined, (event) => (visitCall(event), false));
+          return true;
+        }),
       () =>
         Effect.sync(() => {
           for (const row of rows) row.lastCall = null;
-          for (const agent of agents) agent.lastSeenAt = null;
-          return "unavailable" as const;
+          return false;
         }),
     );
+    const seen = unseen.size
+      ? bounded(
+          context,
+          () =>
+            Effect.as(
+              pages(undefined, (event) => {
+                if (visitAgent(event) && event.actor.id) unseen.delete(event.actor.id);
+                return unseen.size === 0;
+              }),
+              true,
+            ),
+          () =>
+            Effect.sync(() => {
+              for (const agent of agents) agent.lastSeenAt = null;
+              return false;
+            }),
+        )
+      : Effect.succeed(true);
+    const [callsRead, agentsRead] = yield* Effect.all([calls, seen], { concurrency: "unbounded" });
+    return callsRead && agentsRead ? ("available" as const) : ("unavailable" as const);
   });
 }
 

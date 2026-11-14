@@ -403,6 +403,8 @@ const ACTIVITY_SCHEMA: readonly string[] = [
   )`,
   `CREATE INDEX IF NOT EXISTS tool_call_activity_recent
     ON tool_call_activity (occurred_at_ms DESC, id DESC)`,
+  `CREATE INDEX IF NOT EXISTS tool_call_activity_connector_recent
+    ON tool_call_activity (connector_id, occurred_at_ms DESC, id DESC)`,
 ];
 /** Columns added after the table first shipped, in the order they arrived. */
 const LATER_ACTIVITY_COLUMNS = [
@@ -702,31 +704,31 @@ export function nativeSqlActivityStore(
         ]);
       });
     },
-    list({ cursor, limit }): Effect.Effect<ActivityPage, unknown> {
+    list({ cursor, limit, connectorId }): Effect.Effect<ActivityPage, unknown> {
       return Effect.gen(function* () {
         const boundedLimit = Math.min(100, Math.max(1, Math.trunc(limit)));
         const pageSize = boundedLimit + 1;
         const position = cursor ? decodeCursor(cursor) : undefined;
+        const conditions: string[] = [];
+        const params: (string | number)[] = [];
+        if (connectorId !== undefined) {
+          conditions.push("connector_id = ?");
+          params.push(connectorId);
+        }
+        if (position) {
+          conditions.push("(occurred_at_ms < ? OR (occurred_at_ms = ? AND id < ?))");
+          params.push(position.occurredAtMs, position.occurredAtMs, position.id);
+        }
         yield* ensure();
         const rows = (yield* driver.all<Record<string, unknown>>(
-          position
-            ? sql(
-                `${ACTIVITY_SELECT}
-             WHERE occurred_at_ms < ?
-                OR (occurred_at_ms = ? AND id < ?)
+          sql(
+            `${ACTIVITY_SELECT}
+             ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
              ORDER BY occurred_at_ms DESC, id DESC
              LIMIT ?`,
-                position.occurredAtMs,
-                position.occurredAtMs,
-                position.id,
-                pageSize,
-              )
-            : sql(
-                `${ACTIVITY_SELECT}
-             ORDER BY occurred_at_ms DESC, id DESC
-             LIMIT ?`,
-                pageSize,
-              ),
+            ...params,
+            pageSize,
+          ),
         )).map(activityRow);
         const hasMore = rows.length > boundedLimit;
         const visible = hasMore ? rows.slice(0, boundedLimit) : rows;

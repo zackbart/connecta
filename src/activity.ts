@@ -262,9 +262,20 @@ export interface ActivitySink {
   record(event: ToolCallActivityEvent): void | Promise<void>;
 }
 
+/** What one page read asks for, newest first. */
+export interface ActivityListOptions {
+  cursor?: string;
+  limit: number;
+  /**
+   * Only this connector's rows. A reader may ignore it and return every
+   * connector's rows; callers filter what they receive either way.
+   */
+  connectorId?: string;
+}
+
 /** Optional read side used by Connecta's authenticated Activity UI. */
 export interface ActivityReader {
-  list(options: { cursor?: string; limit: number }): Promise<ActivityPage>;
+  list(options: ActivityListOptions): Promise<ActivityPage>;
 }
 
 export interface ActivityStore extends ActivitySink {
