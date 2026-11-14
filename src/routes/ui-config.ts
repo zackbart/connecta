@@ -288,24 +288,28 @@ export function scanOperatorActivity(
       answered: (event: ActivityPage["events"][number]) => boolean,
     ): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
+        let filter = connectorId;
+        let visit = answered;
         let cursor: string | undefined;
         const seen = new Set<string>();
         for (let pageIndex = 0; pageIndex < 10; pageIndex++) {
+          if (filter !== undefined && readerIgnoresFilter) return;
           const page = yield* attempt(() =>
             activity.store.list!({
               limit: 100,
               ...(cursor ? { cursor } : {}),
-              ...(connectorId !== undefined ? { connectorId } : {}),
+              ...(filter !== undefined ? { connectorId: filter } : {}),
             }),
           );
-          let done = false;
-          for (const event of page.events.slice(0, 100)) {
-            if (connectorId !== undefined && event.connectorId !== connectorId) {
-              readerIgnoresFilter = true;
-              return;
-            }
-            if (answered(event)) done = true;
+          const events = page.events.slice(0, 100);
+          if (filter !== undefined && events.some((event) => event.connectorId !== filter)) {
+            if (readerIgnoresFilter) return;
+            readerIgnoresFilter = true;
+            filter = undefined;
+            visit = (event) => (visitCall(event), false);
           }
+          let done = false;
+          for (const event of events) if (visit(event)) done = true;
           cursor = page.nextCursor;
           if (done || !cursor || seen.has(cursor)) return;
           seen.add(cursor);
@@ -320,7 +324,6 @@ export function scanOperatorActivity(
             concurrency: CONNECTOR_SCAN_CONCURRENCY,
             discard: true,
           });
-          if (readerIgnoresFilter) yield* pages(undefined, (event) => (visitCall(event), false));
           return true;
         }),
       () =>

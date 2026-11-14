@@ -341,6 +341,54 @@ describe("operator config contract", () => {
     expect(reads).toEqual([{ limit: 100, connectorId: "quiet" }]);
   });
 
+  it("reads a reader that ignores connectorId once, not once per connector", async () => {
+    const ids = Array.from({ length: 17 }, (_, index) => `svc${index}`);
+    const at = (index: number) => new Date(Date.UTC(2026, 9, 8) + index * 1000).toISOString();
+    const history = ids
+      .map(
+        (connectorId, index) =>
+          ({
+            connectorId,
+            toolName: "read",
+            occurredAt: at(index),
+            outcome: "success",
+            actor: { kind: "human", id: "alice", namespace: "directory" },
+          }) as unknown as ToolCallActivityEvent,
+      )
+      .reverse();
+    let reads = 0;
+    const app = deployment({
+      readOnly: false,
+      connectors: ids.map((id) => connector(id)),
+      executor,
+      auth: human,
+      maintainers,
+      ui: operatorUi(),
+      logger: "silent",
+      activity: activityHistory({
+        store: {
+          record() {},
+          list: async () => {
+            reads++;
+            return { events: history };
+          },
+        },
+      }),
+    });
+    const data = await read(app);
+    expect(data.live.activity).toBe("available");
+    expect(data.live.connectors.map((row) => row.lastCall)).toEqual(
+      ids.map((_, index) => ({ at: at(index), outcome: "success" })),
+    );
+    expect(reads).toBeLessThanOrEqual(8);
+    reads = 0;
+    const detail = (await (await app.fetch(new Request(`${BASE}/ui/connectors/svc3`))).json()) as {
+      overlay: { lastCall: unknown };
+    };
+    expect(detail.overlay.lastCall).toEqual({ at: at(3), outcome: "success" });
+    expect(reads).toBe(1);
+  });
+
   it("INV-6: status and catalog failures are closed problem codes, and authorization hooks never run", async () => {
     let starts = 0;
     const app = deployment({
