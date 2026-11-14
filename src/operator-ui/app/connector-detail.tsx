@@ -12,7 +12,7 @@ import { connectorSummary, type ConnectorSummary } from "../config-summary.js";
 import { Catalog } from "./catalog.js";
 import { ConnectorAuth, ConnectorDiagnostics } from "./connections.js";
 import { ActivityPage } from "./activity.js";
-import { AuthScopeBadge, StoredStatus, ToolSplit } from "./connectors.js";
+import { AuthScopeBadge, StoredStatus, storedTools, ToolSplit } from "./connectors.js";
 import { verdictFor } from "./problems.js";
 import { refreshConnector, stopConnectorReads } from "./store.js";
 
@@ -50,7 +50,7 @@ export function ConnectorDetailPage({ state }: { state: OperatorState }) {
             <div className="conn-badges">
               <code title={id}>{id}</code>
               <AuthScopeBadge scope={config.authScope} />
-              <ToolSplit tools={live.tools} awaitingLive={live.observedAt !== undefined} />
+              <ToolSplit tools={live.tools} stored={storedTools(live)} />
             </div>
           ) : null}
           {live?.observedAt !== undefined ? (

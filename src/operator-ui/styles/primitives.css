@@ -353,6 +353,38 @@ kbd {
   height: 0.875rem;
   width: 0.875rem;
 }
+.skeleton {
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+  background: var(--sunk);
+  border-radius: var(--radius-sm);
+  display: inline-block;
+  height: 0.75em;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.skeleton.w-xs {
+  width: 2.5rem;
+}
+.skeleton.w-sm {
+  width: 4.5rem;
+}
+.skeleton.w-md {
+  width: 7rem;
+}
+.skeleton.w-lg {
+  width: 11rem;
+}
+.skeleton.w-full {
+  width: 100%;
+}
+@keyframes skeleton-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+.skeleton-page > .card-body {
+  gap: var(--space-4);
+}
 @keyframes spin {
   to {
     rotate: 360deg;
@@ -1029,6 +1061,9 @@ details[open] > .disclosure::before {
   /* One turn, not a strobe: a near-zero infinite spin would flicker. */
   .spinner {
     animation-iteration-count: 1 !important;
+  }
+  .skeleton {
+    animation: none !important;
   }
 }
 

@@ -77,6 +77,12 @@ function sessionToken(): Promise<string | null | undefined> {
 }
 
 /** Storage that throws (private browsing) reads as no stored token. */
+export function sessionPresumed(): boolean {
+  if (auth.kind === "cloudflare-access") return true;
+  if (auth.kind === "clerk") return Boolean(window.Clerk?.session);
+  return storedToken() !== null;
+}
+
 function storedToken(): string | null {
   try {
     return localStorage.getItem(TOKEN_KEY);
@@ -571,7 +577,7 @@ async function loadData(signal: AbortSignal): Promise<void> {
   // Admission is complete. Connector deadlines and coalescing now own the
   // remaining reads, so a slow provider cannot make the shell stale.
   resetRecovery(false);
-  await refreshSnapshot(undefined, signal, contract, publication);
+  await refreshSnapshot(undefined, undefined, contract, publication);
 }
 
 /* Member actions, validated at dispatch ------------------------------------- */
@@ -879,13 +885,14 @@ function parkConnectorRecovery(id: string): void {
 // Only plain detail results are coalesced; transports remain request-owned.
 // Each read is its own request for one connector, so the limit sets how many
 // downstreams one tab waits on at once, not how often any one is read.
-const DETAIL_READ_LIMIT = 8;
+const DETAIL_READ_LIMIT = 12;
 const connectorReads = new Map<
   string,
   { controller: AbortController; signal: AbortSignal; promise: Promise<DetailOutcome> }
 >();
 let activeConnectorReads = 0;
-const connectorWaiters: Array<() => void> = [];
+const storedWaiters: Array<() => void> = [];
+const liveWaiters: Array<() => void> = [];
 async function coalescedConnector(
   id: string,
   viewer: string,
@@ -899,13 +906,14 @@ async function coalescedConnector(
   const controller = new AbortController();
   const combined = AbortSignal.any([signal, controller.signal]);
   const promise = (async () => {
-    if (activeConnectorReads >= DETAIL_READ_LIMIT) await new Promise<void>((resolve) => connectorWaiters.push(resolve));
+    if (activeConnectorReads >= DETAIL_READ_LIMIT)
+      await new Promise<void>((resolve) => (stored ? storedWaiters : liveWaiters).push(resolve));
     else activeConnectorReads++;
     try {
       if (combined.aborted) return { kind: "stale" } as const;
       return await fetchConnector(id, token, combined, stored);
     } finally {
-      const next = connectorWaiters.shift();
+      const next = storedWaiters.shift() ?? liveWaiters.shift();
       if (next) next();
       else activeConnectorReads--;
     }
@@ -1780,7 +1788,12 @@ async function fetchConnector(
   // observation time once, here, so every later render counts from it.
   if (typeof detail.observedAgeMs === "number") {
     const observedAt = Date.now() - detail.observedAgeMs;
-    detail = { ...detail, observedAt, ...(detail.overlay ? { overlay: { ...detail.overlay, observedAt } } : {}) };
+    const storedToolCount = typeof detail.toolCount === "number" ? { storedToolCount: detail.toolCount } : {};
+    detail = {
+      ...detail,
+      observedAt,
+      ...(detail.overlay ? { overlay: { ...detail.overlay, observedAt, ...storedToolCount } } : {}),
+    };
   }
   return { kind: "detail", detail };
 }

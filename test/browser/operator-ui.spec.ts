@@ -35,6 +35,10 @@ let storedRows:
   | undefined;
 /** Holds every live detail read until released, and counts detail reads in flight. */
 let liveDetails: { pending: Promise<void>; inFlight: number; max: number } | undefined;
+/** Holds these connectors' stored reads until released. */
+let heldStored: { ids: ReadonlySet<string>; pending: Promise<void> } | undefined;
+/** Serve the cached contract as production does: no live rows until each detail read lands. */
+let cachedWithoutLive = false;
 /**
  * A real deployment behind this fake one. While set, the paths it names are
  * forwarded to its `fetch` as a signed-in, same-origin operator, so the page
@@ -179,7 +183,12 @@ test.beforeAll(async () => {
       return;
     }
     if (method === "GET" && url.pathname === "/ui/api/config") {
-      sendJson(response, 200, await fixtureContract(served));
+      const contract = await fixtureContract(served);
+      sendJson(
+        response,
+        200,
+        cachedWithoutLive ? { ...contract, live: { ...contract.live, connectors: [] } } : contract,
+      );
       return;
     }
     const detailMatch = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(url.pathname);
@@ -190,6 +199,10 @@ test.beforeAll(async () => {
         return;
       }
       const stored = url.searchParams.get("observation") === "stored" ? storedRows?.get(connector.id) : undefined;
+      if (stored && heldStored?.ids.has(connector.id)) {
+        await heldStored.pending;
+        if (response.destroyed) return;
+      }
       const flight = liveDetails;
       if (flight) flight.max = Math.max(flight.max, ++flight.inFlight);
       try {
@@ -253,6 +266,8 @@ test.beforeEach(() => {
   servedData = undefined;
   storedRows = undefined;
   liveDetails = undefined;
+  heldStored = undefined;
+  cachedWithoutLive = false;
   realRoutes = undefined;
 });
 
@@ -398,7 +413,7 @@ const detailReads = (id: string) =>
     .map((request) => request.path)
     .filter((path) => path === `/ui/connectors/${id}` || path === `/ui/connectors/${id}?observation=stored`);
 
-test("INV-10: a stored status shows first with its age, then the live read's current failure replaces it", async ({
+test("INV-10: a stored status shows first with its age on hover, then the live read's current failure replaces it", async ({
   page,
 }) => {
   servedData = crmLive({ status: "error", problem: "connector_unavailable" });
@@ -407,8 +422,9 @@ test("INV-10: a stored status shows first with its age, then the live read's cur
   await openAuthenticated(page);
   const card = page.locator(".connector-card", { hasText: "CRM" });
   await expect(card.locator(".pill")).toHaveText("Connected");
-  await expect(card.locator(".stored-status")).toHaveText("Stored status, checked 2 min ago · checking live…");
-  await expect(card.getByText("Tools awaiting live read")).toBeVisible();
+  await expect(card.locator(".stored-status")).toHaveText("Checking…");
+  await expect(card.locator(".stored-status")).toHaveAttribute("title", /^Stored status from .+, checking live$/);
+  await expect(card.locator(".tool-split.awaiting")).toHaveText("3 tools");
   await expect(card.getByText("No tools")).toHaveCount(0);
   release();
   await expect(card.locator(".pill")).toHaveText("Unavailable");
@@ -425,8 +441,8 @@ test("a directly opened connector marks its stored status and shows its tools as
   await openAuthenticated(page, "/connectors/oauth");
   const view = page.locator("#connectorView");
   await expect(view.locator(".conn-title .pill")).toHaveText("Connected");
-  await expect(view.locator(".stored-status")).toHaveText("Stored status, checked just now · checking live…");
-  await expect(view.locator(".conn-badges")).toContainText("Tools awaiting live read");
+  await expect(view.locator(".stored-status")).toHaveText("Checking…");
+  await expect(view.locator(".conn-badges .tool-split.awaiting")).toHaveText("3 tools");
   await expect(view.locator(".state-title")).toHaveText("Tools awaiting live read");
   await expect(view.locator(".state-copy")).toHaveText(
     "This status is stored. The tools appear when the live read answers.",
@@ -455,7 +471,7 @@ test("a stored timeout stays parked with a counting age until a live Refresh rea
   expect(detailReads("oauth")).toEqual(["/ui/connectors/oauth?observation=stored", "/ui/connectors/oauth"]);
 });
 
-test("stored and live detail reads share the page's ceiling of eight at once", async ({ page }) => {
+test("stored and live detail reads share the page's ceiling of twelve at once", async ({ page }) => {
   const ids = Array.from({ length: 12 }, (_, index) => `svc${index}`);
   const template = data().connectors[0]!;
   servedData = {
@@ -471,16 +487,85 @@ test("stored and live detail reads share the page's ceiling of eight at once", a
   await expect(page.locator(".stored-status")).toHaveCount(12);
   // Every stored row has asked for its live read, through the one queue the
   // stored reads used. Chromium opens six connections per origin, below the
-  // store's eight (operator-store.test.ts asserts eight exactly); here the
+  // store's twelve (operator-store.test.ts asserts twelve exactly); here the
   // held live reads fill what the browser allows and never pass the ceiling.
   await expect.poll(() => liveDetails!.inFlight).toBeGreaterThanOrEqual(6);
   await page.waitForTimeout(300);
-  expect(liveDetails!.inFlight).toBeLessThanOrEqual(8);
+  expect(liveDetails!.inFlight).toBeLessThanOrEqual(12);
   release();
   await expect(page.locator(".stored-status")).toHaveCount(0);
-  expect(liveDetails!.max).toBeLessThanOrEqual(8);
+  expect(liveDetails!.max).toBeLessThanOrEqual(12);
   for (const id of ids)
     expect(detailReads(id)).toEqual([`/ui/connectors/${id}?observation=stored`, `/ui/connectors/${id}`]);
+});
+
+test("an unread connector holds its place and height, counts in All only, and never reads as healthy or empty", async ({
+  page,
+}) => {
+  const ids = ["svc0", "svc1", "svc2"];
+  const template = data().connectors[0]!;
+  const { problem: _problem, ...row } = template;
+  servedData = {
+    ...data(),
+    connectors: ids.map((id) => ({ ...row, id, title: `Service ${id}`, status: "ok" as const })),
+  };
+  cachedWithoutLive = true;
+  storedRows = new Map(ids.map((id) => [id, { status: "ok", observedAgeMs: 1_000 }]));
+  let releaseStored!: () => void;
+  heldStored = { ids: new Set(["svc1"]), pending: new Promise<void>((resolve) => (releaseStored = resolve)) };
+  const releaseLive = holdLiveDetails();
+  await openAuthenticated(page);
+  const cards = page.locator(".connector-card");
+  await expect(cards.filter({ hasText: "Checking…" })).toHaveCount(2);
+  await expect(cards.locator("h3")).toHaveText(["Service svc0", "Service svc1", "Service svc2"]);
+  const pending = cards.nth(1);
+  await expect(pending).toHaveAttribute("aria-busy", "true");
+  const height = async (index: number) => (await cards.nth(index).boundingBox())!.height;
+  expect(await height(1)).toBe(await height(0));
+  const filters = page.getByRole("group", { name: "Show connectors" });
+  await expect(filters).toContainText("All3");
+  await expect(filters).toContainText("Healthy2");
+  await expect(cards.nth(0).locator(".tool-split.awaiting")).toHaveText("3 tools");
+
+  await page.getByRole("link", { name: "Overview", exact: true }).click();
+  const view = page.locator("#overviewView");
+  await expect(view.locator(".stat-number").first()).toHaveText("2/3");
+  await expect(view.locator(".stat-legend").first()).toContainText("1 checking");
+  await expect(view.locator(".overview-title .pill")).toHaveText("Checking");
+  await expect(view.locator(".overview-attention")).toContainText("Checking 1 connector…");
+  await expect(view.getByText("All clear")).toHaveCount(0);
+  await expect(view.locator(".map-column").nth(2)).toHaveText("Connectors3");
+  await expect(view.locator(".map-column").nth(3)).toHaveText("Tools–");
+  await expect(view.getByText("0 tools")).toHaveCount(0);
+
+  releaseStored();
+  await expect(view.getByText("All clear")).toBeVisible();
+  await expect(view.locator(".stat-number").first()).toHaveText("3/3");
+  await expect(view.locator(".map-column").nth(3)).toHaveText("Tools9");
+  releaseLive();
+  await expect(view.locator(".overview-title .pill")).toHaveText("All healthy");
+});
+
+test("an established session shows the requested page while admission answers, not a sign-in card", async ({
+  page,
+}) => {
+  let release!: () => void;
+  slowRead = {
+    path: "/ui/api/config?live=cached",
+    pending: new Promise<void>((resolve) => (release = resolve)),
+    started: false,
+    cancelled: false,
+  };
+  await page.addInitScript((token) => localStorage.setItem("connecta:token", token), TOKEN);
+  await page.goto(`${origin}/connectors`);
+  await expect.poll(() => slowRead!.started).toBe(true);
+  await expect(page.locator("h1")).toHaveText("Connectors");
+  await expect(page.locator("#connectionsView .section")).toHaveAttribute("aria-busy", "true");
+  await expect(page.locator("#gate")).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Overview", exact: true })).toHaveCount(0);
+  release();
+  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Overview", exact: true })).toBeVisible();
 });
 
 test("never sends the tab to a non-http authorization URL", async ({ page }) => {

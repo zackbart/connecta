@@ -757,6 +757,8 @@ export interface ConnectorVerdict {
   action: "Connect" | "Replace key" | "Inspect" | null;
 }
 
+export const PENDING_VERDICT: ConnectorVerdict = { tone: "neutral", label: "Checking", action: null };
+
 const PROBLEM_LABEL: Readonly<Record<UiProblem, string>> = {
   connector_unavailable: "Unavailable",
   connector_timeout: "Not responding",

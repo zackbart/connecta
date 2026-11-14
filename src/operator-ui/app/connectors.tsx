@@ -6,10 +6,11 @@ import { formatDate, type OperatorState } from "../view.js";
 import { Badge, followLink, Pill, pillStatus, StateBlock } from "./parts.js";
 import { Button, Input, SegmentedControl } from "./primitives.js";
 import { ProblemAction, verdictFor } from "./problems.js";
-import { ContractState } from "./contract-state.js";
+import { ContractState, contractLoading } from "./contract-state.js";
 import { useConnectorHealth } from "./health.js";
 import { ConnectorMatrix } from "./matrix.js";
 import { loadOperatorContract } from "./store.js";
+import { ConnectorCardSkeleton, ConnectorsSkeleton, Skeleton } from "./skeletons.js";
 
 function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {
   const href = `/connectors/${encodeURIComponent(id)}${tab ? `#${tab}` : ""}`;
@@ -31,19 +32,36 @@ export function AuthScopeBadge({ scope }: { scope: string }) {
  */
 export function ToolSplit({
   tools,
-  awaitingLive = false,
+  stored,
 }: {
   tools: readonly Pick<OperatorTool, "classification">[];
   /** A stored row: its tools come only with a live read, so none is not "No tools". */
-  awaitingLive?: boolean;
+  stored?: { count: number | undefined; parked: boolean } | undefined;
 }) {
   const write = tools.filter((tool) => tool.classification === "write").length;
   const read = tools.length - write;
   const readWidth = tools.length ? (read / tools.length) * 100 : 0;
+  if (!tools.length && stored)
+    return (
+      <div className="tool-split awaiting">
+        <span className="tool-split-total">
+          {stored.count ? (
+            <>
+              <span className="num">{stored.count}</span> {stored.count === 1 ? "tool" : "tools"}
+            </>
+          ) : stored.parked ? (
+            <span className="meta">Tools unknown</span>
+          ) : (
+            <Skeleton width="sm" />
+          )}
+        </span>
+        <span className={stored.parked ? "tool-split-track" : "skeleton skeleton-bar"} aria-hidden="true" />
+      </div>
+    );
   if (!tools.length)
     return (
       <div className="tool-split">
-        <span className="tool-split-total">{awaitingLive ? "Tools awaiting live read" : "No tools"}</span>
+        <span className="tool-split-total">No tools</span>
       </div>
     );
   return (
@@ -63,6 +81,14 @@ export function ToolSplit({
   );
 }
 
+export function storedTools(
+  live: Pick<OperatorConnectorOverlay, "observedAt" | "storedToolCount" | "problem">,
+): { count: number | undefined; parked: boolean } | undefined {
+  return live.observedAt === undefined
+    ? undefined
+    : { count: live.storedToolCount, parked: live.problem === "connector_timeout" };
+}
+
 /** "3 min ago" for recent times, the date after a week. The exact time is the title. */
 export function sinceLabel(iso: string, now = Date.now()): string {
   const at = new Date(iso).valueOf();
@@ -78,22 +104,28 @@ export function sinceLabel(iso: string, now = Date.now()): string {
 }
 
 /**
- * The one mark of a stored row, on the list and the detail page alike: the
- * status shown is an earlier observation, and when it was made. A parked
- * timeout waits for Refresh; any other stored row has a live read on its way.
- * The age counts from a fixed observation time and re-renders as it grows.
+ * The one mark of a stored row, on the list and the detail page alike. A row
+ * with a live read on its way says only that it is checking; a parked timeout
+ * waits for Refresh and says how old its status is, counting from a fixed
+ * observation time.
  */
 export function StoredStatus({ observedAt, parked }: { observedAt: number; parked: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    if (!parked) return;
     const timer = setInterval(() => setNow(Date.now()), 15_000);
     return () => clearInterval(timer);
-  }, []);
+  }, [parked]);
   const at = new Date(observedAt).toISOString();
-  return (
+  const age = sinceLabel(at, Math.max(now, Date.now())).toLowerCase();
+  return parked ? (
     <span className="meta stored-status" title={`Stored status from ${formatDate(at)}`}>
-      Stored status, checked {sinceLabel(at, Math.max(now, Date.now())).toLowerCase()}
-      {parked ? ". Refresh to check again." : " · checking live…"}
+      Stored status, checked {age}. Refresh to check again.
+    </span>
+  ) : (
+    <span className="meta stored-status checking" title={`Stored status from ${formatDate(at)}, checking live`}>
+      <span className="spinner" aria-hidden="true" />
+      Checking…
     </span>
   );
 }
@@ -119,7 +151,7 @@ function ConnectorCard({ row, steady }: { row: Row; steady: ConnectorHealth }) {
         <Pill status={pillStatus(health.tone)}>{health.label}</Pill>
       </div>
       {row.description ? <p className="connector-card-description">{row.description}</p> : null}
-      <ToolSplit tools={row.tools} awaitingLive={row.observedAt !== undefined} />
+      <ToolSplit tools={row.tools} stored={storedTools(row)} />
       <div className="connector-card-foot">
         <span className="connector-card-last">
           <span className="meta">Last call</span>{" "}
@@ -171,29 +203,26 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
   // cards, filter counts and the attention set hold still until it settles.
   const health = useConnectorHealth(state);
   const contract = health.contract;
-  const rows: Row[] =
-    contract?.config?.connectors.flatMap((config) => {
-      const live = contract.live.connectors.find((c) => c.id === config.id);
-      return live
-        ? [
-            {
-              ...live,
-              title: config.title ?? config.id,
-              authScope: config.authScope,
-              readOnly: config.readOnly === true,
-              ...(config.description ? { description: config.description } : {}),
-            },
-          ]
-        : [];
-    }) ?? [];
-  const pending = contract?.config?.connectors.filter((c) => !rows.some((row) => row.id === c.id)) ?? [];
-  const total = rows.length + pending.length;
+  const entries =
+    contract?.config?.connectors.map((config) => ({
+      config,
+      row: contract.live.connectors.find((c) => c.id === config.id) ?? null,
+    })) ?? [];
+  const rowOf = (config: (typeof entries)[number]["config"], live: OperatorConnectorOverlay): Row => ({
+    ...live,
+    title: config.title ?? config.id,
+    authScope: config.authScope,
+    readOnly: config.readOnly === true,
+    ...(config.description ? { description: config.description } : {}),
+  });
+  const rows = entries.flatMap(({ config, row }) => (row ? [rowOf(config, row)] : []));
+  const total = entries.length;
   const attention = new Set(rows.filter((row) => verdictFor(row.id, row, health).action).map((row) => row.id));
   const q = query.trim().toLowerCase();
-  const visible = rows.filter(
-    (row) =>
-      (filter === "all" || (filter === "attention") === attention.has(row.id)) &&
-      [row.id, row.title, row.status].some((value) => value.toLowerCase().includes(q)),
+  const visible = entries.filter(
+    ({ config, row }) =>
+      (filter === "all" || (row !== null && (filter === "attention") === attention.has(config.id))) &&
+      [config.id, config.title ?? config.id, row?.status ?? ""].some((value) => value.toLowerCase().includes(q)),
   );
   const filters = [
     { value: "all", label: "All", count: total },
@@ -211,17 +240,28 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
             <h2 id="connectorLedgerHeading" className="meta" tabIndex={-1}>
               {total} {total === 1 ? "connector" : "connectors"}
             </h2>
+          ) : contractLoading(state) ? (
+            <h2 className="meta" aria-hidden="true">
+              <Skeleton width="sm" />
+            </h2>
           ) : null}
         </div>
         <div className="page-actions">
           {contract ? <ViewToggle view={view} onChange={setView} /> : null}
-          <Button disabled={state.contractPhase === "loading"} onClick={() => void loadOperatorContract()}>
+          <Button
+            disabled={state.session !== "ready" || state.contractPhase === "loading"}
+            onClick={() => void loadOperatorContract()}
+          >
             Refresh
           </Button>
         </div>
       </div>
       {!contract ? (
-        <ContractState state={state} />
+        contractLoading(state) ? (
+          <ConnectorsSkeleton />
+        ) : (
+          <ContractState state={state} />
+        )
       ) : (
         <section className="section" aria-labelledby="connectorLedgerHeading">
           {total ? (
@@ -238,34 +278,31 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
               />
             </div>
           ) : null}
-          {filter === "all" && pending.length ? (
-            <ul className="connector-grid" aria-label="Loading connectors">
-              {pending
-                .filter((c) => `${c.id} ${c.title ?? ""}`.toLowerCase().includes(q))
-                .map((c) => (
-                  <li key={c.id} className="connector-card" aria-busy="true">
-                    <ConnectorLink id={c.id} name={c.title ?? c.id} />
-                    <p className="meta">Loading connection…</p>
-                  </li>
-                ))}
-            </ul>
-          ) : null}
           {visible.length && view === "matrix" ? (
             <ConnectorMatrix
               contract={contract}
-              rows={visible}
+              rows={visible.flatMap(({ config, row }) => (row ? [rowOf(config, row)] : []))}
               state={state}
               health={health}
               link={(row) => <ConnectorLink id={row.id} name={row.title} />}
             />
           ) : visible.length ? (
             <ul className="connector-grid" aria-label="Connectors">
-              {visible.map((row) => (
-                <ConnectorCard key={row.id} row={row} steady={health} />
-              ))}
+              {visible.map((entry) =>
+                entry.row ? (
+                  <ConnectorCard key={entry.config.id} row={rowOf(entry.config, entry.row)} steady={health} />
+                ) : (
+                  <ConnectorCardSkeleton
+                    key={entry.config.id}
+                    title={<ConnectorLink id={entry.config.id} name={entry.config.title ?? entry.config.id} />}
+                    id={entry.config.id}
+                    {...(entry.config.description ? { description: entry.config.description } : {})}
+                  />
+                ),
+              )}
             </ul>
-          ) : pending.length ? null : (
-            <StateBlock>{rows.length ? "No matches" : "No connectors."}</StateBlock>
+          ) : (
+            <StateBlock>{total ? "No matches" : "No connectors."}</StateBlock>
           )}
         </section>
       )}

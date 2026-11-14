@@ -1,6 +1,6 @@
 import type { OperatorAgent, OperatorUiContractV2 } from "./contract.js";
 import { endpointRows, hueOf, initialsOf, type EndpointRow } from "./endpoints.js";
-import { connectorVerdict, type ConnectorSignals, type ConnectorVerdict } from "./view.js";
+import { connectorVerdict, PENDING_VERDICT, type ConnectorSignals, type ConnectorVerdict } from "./view.js";
 
 /**
  * The Overview's connection map, computed from operator contract v2 alone:
@@ -32,6 +32,7 @@ export interface MapNode {
   readOnly: boolean;
   /** Connectors only: their live tools by final classification, or null while the catalog is unknown. */
   tools: { read: number; write: number } | null;
+  storedTools: number | null;
   /** Up to two letters for a person's avatar, or a connector's monogram; empty otherwise. */
   initials: string;
   /** A person's tint bucket, 0–5, the same one their endpoint chips use. */
@@ -66,7 +67,7 @@ export interface MapEdge {
 
 interface MapColumn {
   label: string;
-  count: number;
+  count: number | null;
   x: number;
 }
 
@@ -317,6 +318,30 @@ export function monogram(title: string): string {
   return (words[0] ?? title).charAt(0).toUpperCase();
 }
 
+type LiveRow = OperatorUiContractV2["live"]["connectors"][number];
+
+function liveCatalogKnown(live: LiveRow | null): boolean {
+  if (!live) return false;
+  if (live.tools.length > 0) return true;
+  return live.status === "ok" && !live.problem && live.observedAgeMs === undefined && live.observedAt === undefined;
+}
+
+function toolCountOf(live: LiveRow | null): number | null {
+  if (liveCatalogKnown(live)) return live!.tools.length;
+  return live?.storedToolCount ?? null;
+}
+
+function toolsColumnCount(rows: Array<LiveRow | null>): number | null {
+  let total = 0;
+  for (const live of rows) {
+    if (!live) return null;
+    const count = toolCountOf(live);
+    if (count === null && live.observedAt !== undefined) return null;
+    total += count ?? 0;
+  }
+  return total;
+}
+
 /** The whole map for a maintainer's contract; an empty map for anyone else. */
 export function connectionMap(contract: OperatorUiContractV2, options: ConnectionMapOptions = {}): ConnectionMap {
   const rows = contract.role === "maintainer" ? endpointRows(contract) : [];
@@ -326,11 +351,11 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
       member.kind === "human" ? [`person:${member.namespace}:${member.id}`] : [],
     ),
   );
-  const connectors = (contract.role === "maintainer" ? (contract.config?.connectors ?? []) : []).flatMap((config) => {
-    const live = contract.live.connectors.find((c) => c.id === config.id);
+  const connectors = (contract.role === "maintainer" ? (contract.config?.connectors ?? []) : []).map((config) => {
+    const live = contract.live.connectors.find((c) => c.id === config.id) ?? null;
     const signals =
       options.signals && Object.hasOwn(options.signals, config.id) ? options.signals[config.id] : undefined;
-    return live ? [{ config, live, health: connectorVerdict(live, signals) }] : [];
+    return { config, live, health: live ? connectorVerdict(live, signals) : PENDING_VERDICT };
   });
   const health = new Map(connectors.map(({ config, health }) => [config.id, health]));
 
@@ -356,6 +381,7 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
           tone: works ? "neutral" : "warn",
           readOnly: false,
           tools: null,
+          storedTools: null,
           initials: caller.kind === "person" ? initialsOf(caller.name) : "",
           hue: caller.kind === "person" ? hueOf(caller.id.slice("person:".length)) : 0,
           summary: callerSummary(caller),
@@ -378,6 +404,7 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
           tone: "neutral",
           readOnly: row.readOnly,
           tools: null,
+          storedTools: null,
           initials: "",
           summary: endpointSummary(row, callers),
         },
@@ -387,10 +414,10 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
   }
   for (const { config, live, health: verdict } of connectors) {
     const title = config.title ?? config.id;
-    const read = live.tools.filter((tool) => tool.classification === "read").length;
+    const tools = live?.tools ?? [];
+    const read = tools.filter((tool) => tool.classification === "read").length;
     const scope = config.authScope === "personal" ? "personal" : "shared";
-    // A failed or unobserved catalog has no tools to count, which is not zero tools.
-    const known = live.tools.length > 0 || (live.status === "ok" && !live.problem);
+    const count = toolCountOf(live);
     nodes.push(
       node(
         {
@@ -398,11 +425,13 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
           kind: "connector",
           column: 2,
           name: title,
-          detail: verdict.tone === "ok" ? `${scope} · ${plural(live.tools.length, "tool")}` : verdict.label,
+          detail:
+            verdict.tone !== "ok" ? verdict.label : count === null ? scope : `${scope} · ${plural(count, "tool")}`,
           href: connectorHref(config.id, verdict.tone === "ok"),
           tone: verdict.tone,
           readOnly: false,
-          tools: known ? { read, write: live.tools.length - read } : null,
+          tools: liveCatalogKnown(live) ? { read, write: tools.length - read } : null,
+          storedTools: liveCatalogKnown(live) ? null : count,
           initials: monogram(title),
           summary: connectorSummary(title, config.id, verdict, rows, callers),
         },
@@ -462,7 +491,7 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
       { label: "Callers", count: callers.length, x: COLUMN_X[0] },
       { label: "Endpoints", count: rows.length, x: COLUMN_X[1] },
       { label: "Connectors", count: connectors.length, x: COLUMN_X[2] },
-      { label: "Tools", count: connectors.reduce((n, { live }) => n + live.tools.length, 0), x: TOOLS_X },
+      { label: "Tools", count: toolsColumnCount(connectors.map(({ live }) => live)), x: TOOLS_X },
     ],
   };
 }
