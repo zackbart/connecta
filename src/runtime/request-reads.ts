@@ -283,6 +283,33 @@ export class RequestReads {
     });
   }
 
+  readFresh<E, R>(
+    requests: readonly { storage: KVStorage; key: string }[],
+    load: (storage: KVStorage, keys: readonly string[]) => Effect.Effect<(string | null)[], E, R>,
+  ): Effect.Effect<(string | null)[] | undefined, E, R> {
+    return Effect.suspend(() => {
+      const addresses = requests.map(({ storage, key }) => physicalStorageAddress(storage, key));
+      const root = addresses[0]?.store;
+      const storage = root && roots.get(root);
+      if (!storage || addresses.some((address) => address?.store !== root)) return Effect.succeed(undefined);
+      const found = requests.map(({ storage, key }) => this.lookup(storage, key, true));
+      const started = this.trace ? performance.now() : 0;
+      return Effect.map(
+        load(
+          storage,
+          addresses.map((address) => address!.key),
+        ),
+        (values) =>
+          found.map((entry, i) => {
+            const value = values[i] ?? null;
+            if (entry && !entry.hit) entry.record(value);
+            if (this.trace) this.note(true, false, value, started);
+            return value;
+          }),
+      );
+    });
+  }
+
   /** A value this request already read, with no observed write to `key` since; never reads storage. */
   peek(storage: KVStorage, key: string): string | null | undefined {
     const values = this.valuesFor(storage, key);

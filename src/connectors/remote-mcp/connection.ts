@@ -20,6 +20,7 @@ import { trackOAuthStartReset } from "../../auth/oauth-start-reset.js";
 import { sentSecretsFor } from "../../sent-secrets.js";
 import {
   catalogClientOptions,
+  type CredentialIdentity,
   observeCatalogChange,
   observeCatalogExpiry,
   observeCatalogFetch,
@@ -39,7 +40,7 @@ import { detach, runEdge } from "../../runtime/run.js";
 import type { RequestPrincipal } from "../../request-token.js";
 import { requestPrincipalFor } from "../../request-principal.js";
 import { callerOf } from "../../connector-caller.js";
-import { negotiationKeys } from "../../storage/keys.js";
+import { negotiationKeys, oauthGrantKeys } from "../../storage/keys.js";
 import { forgetNegotiation, readNegotiation, storeNegotiation } from "../negotiation-cache.js";
 import type { ConnectorContext } from "../../types.js";
 import type { CallDispatch } from "./transport.js";
@@ -49,10 +50,13 @@ import { AUTH_OR_THROTTLE, promised, recordWireErrors, requiresAuthorization } f
 import { MAX_TOOL_PAGES } from "./catalog.js";
 import { SKILLS_EXTENSION } from "./resources.js";
 
+type ObservedGrant = { epoch: string; identity?: string };
+
 /** What a pre-connect catalog read already resolved, for the connect it falls back to. */
 export interface Preread {
   credential?: string;
   negotiation?: { digest: string; prior: PriorDiscovery | undefined };
+  oauth?: { epoch: string; identity: string };
 }
 
 export interface ConnectionState {
@@ -95,6 +99,7 @@ export interface ConnectionState {
   authRequired: boolean;
   provider: KvOAuthProvider | null;
   connectedGeneration: string | null;
+  admittedEpoch: string | null;
   /**
    * The provider of the latest connect attempt: the consent it stored, if
    * any, is the one a start hands out, while its epoch is live.
@@ -281,6 +286,7 @@ export function remoteMcpConnection(
         authRequired: false,
         provider: null,
         connectedGeneration: null,
+        admittedEpoch: null,
         attemptProvider: null,
         credentialDigest: null,
       };
@@ -367,6 +373,7 @@ export function remoteMcpConnection(
     state.authRequired = false;
     state.provider = null;
     state.connectedGeneration = null;
+    state.admittedEpoch = null;
     state.credentialDigest = null;
     // `scope` is deliberately left as it is — see ConnectionState.
   };
@@ -419,12 +426,15 @@ export function remoteMcpConnection(
       }),
     );
   const catalogSharing: "private" | "shared" = requestAuth || opts.authScope === "personal" ? "private" : "shared";
-  const catalogIdentityFor = (ctx: ConnectorContext, provider: KvOAuthProvider) =>
-    authMethod(() =>
-      authFlow<string>(function* () {
-        const tokens = yield authInvoke(provider, "tokens", []);
-        return yield authCall<string>(secretDigest, [ctx, JSON.stringify(tokens)]);
-      }),
+  const catalogIdentityFor = (ctx: ConnectorContext, provider: KvOAuthProvider): CredentialIdentity =>
+    Object.assign(
+      authMethod((supplied?: { raw: string | null }) =>
+        authFlow<string>(function* () {
+          const tokens = yield authInvoke(provider, "tokens", [undefined, supplied]);
+          return yield authCall<string>(secretDigest, [ctx, JSON.stringify(tokens)]);
+        }),
+      ),
+      { source: { storage: provider.storage, key: oauthGrantKeys.grant } },
     );
 
   // The verdict's key: everything that decides how this connector's handshake
@@ -484,7 +494,7 @@ export function remoteMcpConnection(
       }
       try {
         let epoch = "";
-        let identity: (() => Promise<string>) | undefined;
+        let identity: CredentialIdentity | undefined;
         let pinnedIdentity: string | undefined;
         if (isOauth) {
           // Read-only grant snapshots: no in-place sealing, epoch binding or
@@ -495,15 +505,30 @@ export function remoteMcpConnection(
           const snapshot = (yield authInvoke(provider, "peekGrant", [])) as { epoch: string; tokens?: OAuthTokens };
           epoch = snapshot.epoch;
           if (provider.isOperatorDisconnectedEpoch(epoch) || !snapshot.tokens) return preread;
-          pinnedIdentity = yield authCall<string>(secretDigest, [ctx, JSON.stringify(snapshot.tokens)]);
+          const snapshotIdentity = (yield authCall<string>(secretDigest, [
+            ctx,
+            JSON.stringify(snapshot.tokens),
+          ])) as string;
+          pinnedIdentity = snapshotIdentity;
+          preread.oauth = { epoch, identity: snapshotIdentity };
           const bound = epoch;
-          identity = authMethod(() =>
-            authFlow<string>(function* () {
-              const current = (yield authInvoke(provider, "peekGrant", [])) as { epoch: string; tokens?: OAuthTokens };
-              // A distinct value per refusal never matches the listing's identity.
-              if (current.epoch !== bound || !current.tokens) return `superseded:${crypto.randomUUID()}`;
-              return yield authCall<string>(secretDigest, [ctx, JSON.stringify(current.tokens)]);
-            }),
+          identity = Object.assign(
+            authMethod((supplied?: { raw: string | null }) =>
+              authFlow<string>(function* () {
+                const current = (yield authInvoke(provider, "peekGrant", [supplied])) as {
+                  epoch: string;
+                  tokens?: OAuthTokens;
+                };
+                const digest =
+                  current.epoch === bound && current.tokens
+                    ? ((yield authCall<string>(secretDigest, [ctx, JSON.stringify(current.tokens)])) as string)
+                    : undefined;
+                if (digest !== snapshotIdentity) delete preread.oauth;
+                // A distinct value per refusal never matches the listing's identity.
+                return digest ?? `superseded:${crypto.randomUUID()}`;
+              }),
+            ),
+            { source: { storage: provider.storage, key: oauthGrantKeys.grant } },
           );
         }
         if (opts.versionNegotiation !== "legacy") {
@@ -533,6 +558,7 @@ export function remoteMcpConnection(
           catalogSharing,
           identity,
           true,
+          pinnedIdentity,
         ])) as Awaited<ReturnType<typeof catalogClientOptions>>;
         if (use === "peek") {
           const entry = (yield authInvoke(cache, "peekTools", [ctx])) as CatalogPeekEntry | undefined;
@@ -601,13 +627,17 @@ export function remoteMcpConnection(
         if (state.authRequired) {
           throw rt.authRequiredError(ctx);
         }
+        const admitted = state.admittedEpoch;
+        state.admittedEpoch = null;
         let oauthGeneration: string | undefined;
         if (isOauth && (state.client || state.connecting)) {
           const provider = newProvider(ctx, state, openRequest(ctx.requestScope ?? ctx).signal);
-          oauthGeneration = (yield authView(
-            ctx,
-            authMethod(() => authInvoke(provider, "liveEpoch", []) as Effect.Effect<string, unknown>),
-          )) as string;
+          oauthGeneration =
+            admitted ??
+            ((yield authView(
+              ctx,
+              authMethod(() => authInvoke(provider, "liveEpoch", []) as Effect.Effect<string, unknown>),
+            )) as string);
           if (provider.isOperatorDisconnectedEpoch(oauthGeneration)) {
             closeHalf(state);
             throw rt.operatorDisconnectedError();
@@ -673,6 +703,7 @@ export function remoteMcpConnection(
             credentialDigest,
             principal,
             preread?.negotiation,
+            preread?.oauth ?? (admitted === null ? undefined : { epoch: admitted }),
           );
         if (joined !== attempt) {
           leave();
@@ -702,6 +733,7 @@ export function remoteMcpConnection(
     credentialDigest: string | null,
     principal: RequestPrincipal | undefined,
     negotiation: Preread["negotiation"],
+    observed: ObservedGrant | undefined,
   ): Deferred.Deferred<Client, unknown> => {
     const attempt = Deferred.makeUnsafe<Client, unknown>();
     state.connecting = attempt;
@@ -710,7 +742,7 @@ export function remoteMcpConnection(
     // which would otherwise wait on a client bound to the older key.
     state.credentialDigest = credentialDigest;
     detach(
-      connect(ctx, state, attempt, credentialValue, credentialFramed, principal, negotiation).pipe(
+      connect(ctx, state, attempt, credentialValue, credentialFramed, principal, negotiation, observed).pipe(
         // The connection belongs to this request, without the first waiter's
         // call/credential/budget authority. Refresh coordinators stay separate.
         Effect.provideService(RequestScope, Context.get(viewServices(ctx), RequestScope)),
@@ -737,6 +769,7 @@ export function remoteMcpConnection(
     credentialFramed: string | null,
     principal: RequestPrincipal | undefined,
     negotiation: Preread["negotiation"],
+    observed: ObservedGrant | undefined,
   ): Effect.Effect<Client, unknown> => {
     // Force reset, rotation, and teardown all abandon an attempt the same way:
     // they unpublish it and close the lease it holds, if it holds one yet.
@@ -781,7 +814,9 @@ export function remoteMcpConnection(
         // reset meanwhile fails the attempt rather than handing it the next
         // epoch's grant.
         const genAtStart = provider
-          ? yield* promised(authMethod(() => authInvoke(provider, "beginFlow", []) as Effect.Effect<string, unknown>))
+          ? observed
+            ? provider.bindObservedEpoch(observed.epoch)
+            : yield* promised(authMethod(() => authInvoke(provider, "beginFlow", []) as Effect.Effect<string, unknown>))
           : "";
         if (!owned()) return yield* Effect.fail(rt.scopeEndedError());
         if (provider) state.attemptProvider = provider;
@@ -826,6 +861,8 @@ export function remoteMcpConnection(
                 cacheOwner,
                 catalogSharing,
                 provider ? catalogIdentityFor(ctx, provider) : undefined,
+                false,
+                observed?.identity,
               ]) as Effect.Effect<Awaited<ReturnType<typeof catalogClientOptions>>, unknown>,
           ),
         );
@@ -880,14 +917,17 @@ export function remoteMcpConnection(
           return client;
         };
         let c = makeClient();
-        let t = rt.buildTransport(
-          ctx,
-          provider,
-          credentialFramed,
-          connectionAbort.signal,
-          credentialValue,
-          false,
-          principal,
+        let sentMessage = false;
+        const countSends = (transport: Transport): Transport => {
+          const send = transport.send.bind(transport);
+          transport.send = (...args) => {
+            sentMessage = true;
+            return send(...args);
+          };
+          return transport;
+        };
+        let t = countSends(
+          rt.buildTransport(ctx, provider, credentialFramed, connectionAbort.signal, credentialValue, false, principal),
         );
         if (!owned()) {
           held.transport = t;
@@ -928,14 +968,16 @@ export function remoteMcpConnection(
                 )
                   throw error;
                 c = makeClient();
-                t = rt.buildTransport(
-                  ctx,
-                  provider,
-                  credentialFramed,
-                  connectionAbort.signal,
-                  credentialValue,
-                  false,
-                  principal,
+                t = countSends(
+                  rt.buildTransport(
+                    ctx,
+                    provider,
+                    credentialFramed,
+                    connectionAbort.signal,
+                    credentialValue,
+                    false,
+                    principal,
+                  ),
                 );
                 state.transport = held.transport = t;
                 recordWireErrors(t, () => observeCatalogChange(ctx, id, connectionAbort.signal, cacheOwner));
@@ -975,7 +1017,7 @@ export function remoteMcpConnection(
         // A force re-auth that landed WHILE we were connecting wiped the
         // credentials this client just bound to. Discard it rather than cache
         // a stale-isolate connection.
-        if (provider) {
+        if (provider && sentMessage) {
           const generation = yield* promised(
             authMethod(() => authInvoke(provider, "liveEpoch", []) as Effect.Effect<string, unknown>),
           ).pipe(Effect.mapError((error) => (owned() ? error : rt.scopeEndedError())));

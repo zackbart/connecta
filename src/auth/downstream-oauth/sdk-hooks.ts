@@ -11,7 +11,7 @@ import { authCall, authFlow, authInvoke, authMethod, authValue } from "../native
 import { discoveryIssuer } from "../oauth-grant.js";
 import type { KvOAuthProvider } from "../downstream-oauth.js";
 import { aborted } from "./refresh-coordinator.js";
-import { type Grant, type GrantBody, fingerprint } from "./grant-store.js";
+import { type Grant, type GrantBody, type SuppliedGrant, fingerprint } from "./grant-store.js";
 import { oauthStateDigest, randomState } from "./consent.js";
 
 /** KvOAuthProvider's SDK hooks; `authMethods` installs them. */
@@ -153,11 +153,11 @@ export const sdkHookMethods = {
       }.bind(this),
     );
   },
-  tokens: function (this: KvOAuthProvider, ctx?: OAuthClientInformationContext) {
+  tokens: function (this: KvOAuthProvider, ctx?: OAuthClientInformationContext, supplied?: SuppliedGrant) {
     return authFlow<OAuthTokens | undefined>(
       function* (this: KvOAuthProvider) {
         if (this.signal?.aborted) throw aborted(this.signal);
-        const grant = (yield authInvoke(this, "activeGrant", [])) as Grant;
+        const grant = (yield authInvoke(this, "activeGrant", [supplied])) as Grant;
         if (this.signal?.aborted) throw aborted(this.signal);
         const { tokens } = grant.body;
         if (!tokens || (ctx && grant.body.issuer !== ctx.issuer)) return undefined;

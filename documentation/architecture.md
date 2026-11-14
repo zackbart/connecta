@@ -688,22 +688,45 @@ manifest probes, and any hinted chunks, share that statement or a `getMany`
 statement; their normal precedence and public scope check still apply. These
 batches contain only reads. Catalog addresses
 use the listing's pinned OAuth identity and locating generation; they authorize
-nothing. After chunk verification, acceptance re-reads the OAuth identity and
-generation separately and refuses a changed epoch or token digest. The invocation
-gate checks disconnect first, then reads tokens separately to refuse absent
-credentials and observe current expiry and the invalidation fingerprint. Token
-removal, expiry, scope and replacement can change without advancing the epoch;
-epoch fences alone cannot protect these values. The SDK's later token read may
-return no tokens and omit Authorization, so it does not replace invocation's
-token-presence refusal. The transport also refuses tokenless MCP requests on
-passive OAuth paths, regardless of provider history; an explicit authorization
-start may probe for the SDK's challenge. A refused tool send binds its private
-failure provenance to the undispatched physical request. Invocation accepts it
-only for the owning boundary and whole logical call; error fields, copied
-connectors, and refusals after a send cannot supply that proof.
-Connection reuse and SDK dispatch retain their fresh
-epoch or token reads; no credential read is prefetched.
+nothing. After chunk verification, acceptance reads the OAuth grant and the
+generation fresh, in one statement, and refuses a changed epoch or token digest.
 Stores with replaced methods or separate backing stores retain individual reads.
+
+A warm OAuth remote MCP call reads the grant once per stage that acts on it, and
+every one of those reads is fresh. Each guarantee rests on the last read before
+the action it protects; a read that only addresses an entry or binds an epoch
+reuses a fresh read this request already made, with nothing sent in between:
+
+| Read                                   | Protects                                                                                                                               |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Partition snapshot (catalog read)      | Nothing it authorizes: it derives the epoch and token digest that address the negotiation verdict and catalog entries.                 |
+| Acceptance, with the generation fence  | A rotated, refreshed or disconnected grant never serves its old partition's catalog.                                                   |
+| Admission (`registerInvocationAuth`)   | A disconnect refuses the call with `downstream_oauth_required`; absent tokens refuse it; expiry, scope and replacement decide renewal. |
+| SDK, before every message              | The credential sent is the current one; a disconnect or rotation since admission refuses the send.                                     |
+| Epoch, after a handshake that sent one | A client whose handshake crossed a re-authorization is discarded.                                                                      |
+
+A connect binds its flow to the epoch the catalog read derived its partition
+from, or to the one the call's admission read, and addresses its first listing
+with the snapshot's token digest; a connect with neither reads the epoch. Binding
+only restricts: every later read and write of a bound flow fails once another
+epoch is live, and epochs never recur, so a binding older than storage can only
+refuse with a retryable "authorization changed", never send another epoch's
+grant. A connectionless acceptance that finds a different grant than its
+snapshot drops the snapshot, so the connect it falls back to reads the epoch.
+Admission is one read: token removal, expiry, scope and replacement can change
+without advancing the epoch, so it reads the tokens themselves, not an epoch.
+One that lands after admission meets the SDK's read before the send, and the
+transport refuses a tokenless MCP request on a passive OAuth path regardless of
+provider history; an explicit authorization start may probe for the SDK's
+challenge. A refused tool send binds its private failure provenance to the
+undispatched physical request. Invocation accepts it only for the owning
+boundary and whole logical call; error fields, copied connectors, and refusals
+after a send cannot supply that proof. A connection already open in the request
+compares its epoch with the one admission read, and reconnects if it moved. A
+connect that sends no message, such as a modern one with a stored verdict,
+skips the post-connect epoch check; every later use of that client checks the
+epoch itself. No grant
+read is memoized across requests or prefetched before its keys are known.
 
 A remote connector's `listTools` without a live connection in its request
 reads this cache before connecting. It derives the same partition a connect
@@ -712,9 +735,10 @@ OAuth epoch and token digest) from storage reads only, then makes the SDK's
 two-probe read with the pre-connect empty server identity: the private slot,
 then a shared connector's public slot, served only when written public. OAuth
 grants are read by a non-mutating snapshot: no plaintext grant is sealed in
-place, no epoch is bound, nothing is refreshed. Every identity check during
-cache acceptance reads the grant again and refuses the entry unless the epoch
-its partition was derived from and the token digest both still hold. A missing
+place, no epoch is bound, nothing is refreshed. The listing is addressed with
+that snapshot's token digest. Every identity check during cache acceptance
+reads the grant again and refuses the entry unless the epoch its partition was
+derived from and the token digest both still hold. A missing
 or expired generation is a miss at every check and is never claimed or
 recreated. An unexpired complete entry is returned with no transport,
 handshake, session cleanup or storage write. A miss, an expired entry, an
@@ -2533,9 +2557,12 @@ Memoized:
 Always fresh:
 
 - every OAuth grant read, including the token and epoch check behind each SDK
-  message (a disconnect need not revoke the vendor token), `peekGrant` and
-  every cache-acceptance identity check, compare-and-set loops, refresh claims
-  and leases, resets and disconnects;
+  message (a disconnect need not revoke the vendor token), call admission,
+  `peekGrant` and every cache-acceptance identity check, compare-and-set loops,
+  refresh claims and leases, resets and disconnects. An acceptance check reads
+  the grant with the generation in one fresh statement; a connect's epoch
+  binding and first listing address reuse this request's fresh snapshot or
+  admission read (see warm resolution above);
 - the catalog generation fence before a cached entry is served or published;
 - the credential a call sends.
 
@@ -2564,22 +2591,26 @@ chunks through the isolate's revision hint:
 | Legacy remote MCP call, cold isolate     |          5 |              7 |             10 |
 | Modern remote MCP call, warm             |          1 |              3 |              4 |
 | Modern remote MCP call, cold isolate     |          1 |              7 |             10 |
-| OAuth remote MCP call, warm              |          5 |             15 |             16 |
-| OAuth remote MCP call, cold isolate      |          5 |             19 |             22 |
-| OAuth call after a 401, with refresh     |          9 |             35 |             44 |
-| OAuth call with proactive refresh        |          6 |             31 |             39 |
+| OAuth remote MCP call, warm              |          5 |             11 |             12 |
+| Modern OAuth remote MCP call, warm       |          1 |              6 |              7 |
+| OAuth remote MCP call, cold isolate      |          5 |             15 |             18 |
+| OAuth call after a 401, with refresh     |          9 |             31 |             40 |
+| OAuth call with proactive refresh        |          6 |             27 |             35 |
 | `api()` credential call, warm            |          1 |              3 |              4 |
 | `api()` credential call, cold isolate    |          1 |              6 |              9 |
-| Unscoped search, warm (3 remote, 1 api)  |          0 |             10 |             10 |
+| Unscoped search, warm (3 remote, 1 api)  |          0 |              8 |              8 |
 | `execute_code`, 5 calls to one connector |          9 |              7 |             12 |
 | UI connector detail, `api()` credential  |          0 |              5 |              6 |
 | UI connector detail, credential remote   |          4 |             10 |             11 |
-| UI connector detail, OAuth remote        |          4 |             17 |             18 |
+| UI connector detail, OAuth remote        |          4 |             16 |             17 |
 
 Header-auth calls to the legacy (session) server handshake per request:
 `initialize`, `notifications/initialized`, the SSE `GET`, the call and the
 session `DELETE`. The modern server advertises a catalog TTL, so a warm call is
-the call alone. OAuth calls read the grant fresh before every SDK message.
+the call alone. OAuth calls read the grant fresh before every SDK message; a
+warm modern OAuth call adds three grant reads to the modern call's round trips
+(the partition snapshot, admission, and the SDK's read before the call), with
+acceptance's read joining the generation fence.
 Run with `D1_BUDGET_REPORT=1` to print each measurement; a failing case prints
 its request and statement log.
 
@@ -4091,7 +4122,8 @@ SQL catalog locating snapshots derive at most two manifest candidates from the
 stored generation alongside negotiation and generation rows. These candidates
 are request-local hints with exact config, owner and credential partitions.
 Complete chunk verification and a separate later primary generation and identity
-fence decide acceptance. OAuth invocation and dispatch reads stay separate.
+fence, read together in one statement, decide acceptance. OAuth admission and
+dispatch reads stay separate.
 
 SQL result stashes write at most 64 trailing rows per awaited transaction, with one
 expiry sweep per batch. Header publication follows confirmed trailing writes in a
