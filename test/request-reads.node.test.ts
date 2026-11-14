@@ -488,6 +488,46 @@ describe("request read memo", () => {
     reads.close();
   });
 
+  it("reads keys across views fresh in one statement, never from the memo, and refuses mixed stores", async () => {
+    const d1 = counted();
+    const storage = d1.storage();
+    const scoped = view(storage, "conn:svc:");
+    await scoped.set("grant", "old-grant");
+    await storage.set("generation", "g1");
+    const reads = new RequestReads();
+    const { authStorageMany } = await import("../src/auth/native.js");
+    const fresh = () =>
+      runEdge(
+        reads.readFresh(
+          [
+            { storage: scoped, key: "grant" },
+            { storage, key: "generation" },
+          ],
+          (root, keys) => authStorageMany(root, keys),
+        ),
+      );
+    expect(await reads.readPromise(scoped, "grant", () => scoped.get("grant"))).toBe("old-grant");
+    await d1.storage().set("conn:svc:grant", "new-grant");
+    d1.reset();
+    expect(await fresh()).toEqual(["new-grant", "g1"]);
+    expect(d1.count.log).toEqual(['all ["conn:svc:grant","generation"]']);
+    expect(await reads.readPromise(storage, "generation", async () => "unread")).toBe("g1");
+    expect(await reads.readPromise(scoped, "grant", async () => "unread")).toBe("new-grant");
+    const separate = memoryStorage();
+    expect(
+      await runEdge(
+        reads.readFresh(
+          [
+            { storage, key: "generation" },
+            { storage: separate, key: "grant" },
+          ],
+          (root, keys) => authStorageMany(root, keys),
+        ),
+      ),
+    ).toBeUndefined();
+    reads.close();
+  });
+
   it("never records a read that a write overlapped", async () => {
     const storage = memoryStorage();
     await storage.set("k", "old");
@@ -848,11 +888,12 @@ describe("request budgets", () => {
   afterAll(async () => {
     await executor.close?.();
   });
-  // A warm locating read carries the hinted chunks. The connection's binding
-  // grant reads follow it, then acceptance's identity read and generation
-  // fence. A fault injected after the binding reads lands where the separate
-  // chunk read used to, between the catalog data and its acceptance.
-  const bindingGrantReads = (oauthModern: boolean) => (oauthModern ? 3 : 1);
+  // Grant reads after a warm locating read, which carries the hinted chunks:
+  // acceptance reads the grant with its generation fence, then the call's
+  // admission, then the SDK before each message. A fault injected after N of
+  // them lands at that boundary: 0 between the catalog data and its acceptance,
+  // 1 before admission, 2 between admission and the first send.
+  const GRANT_READS_BEFORE = { chunks: 0, admission: 1, dispatch: 2 } as const;
 
   async function production(
     options: {
@@ -1080,7 +1121,12 @@ describe("request budgets", () => {
         // The isolate's revision hint puts the chunks in the locating read.
         expect(catalog[0]).toContain(":chunk:");
         // This SELECT must follow the chunks, separate from the locating batch.
-        expect(catalog[1]).toMatch(/^all \["response-cache:.*:generation"\]$/);
+        // OAuth reads the grant fresh in the same statement as the fence.
+        expect(catalog[1]).toMatch(
+          label.startsWith("OAuth")
+            ? /^all \["conn:oauth:oauth:grant","response-cache:.*:generation"\]$/
+            : /^all \["response-cache:.*:generation"\]$/,
+        );
       }
       if (label.endsWith(", warm") || label === "execute_code, 5 calls") {
         // A warm isolate's revision hints put chunks in the locating read.
@@ -1247,15 +1293,18 @@ describe("request budgets", () => {
     // The first connect sealed the seeded plaintext grant.
     expect(JSON.parse((await d.storage.get(d.grantKey))!).sealed).toEqual(expect.any(String));
     const warm = await d.measure("OAuth call, warm", () => d.call(app, "oauth.echo"));
-    expect([warm.roundTrips, warm.statements]).toEqual([15, 16]);
+    expect([warm.roundTrips, warm.statements]).toEqual([11, 12]);
     const program = await d.measure("OAuth call, warm", () =>
       d.tool(app, "execute_code", {
         code: 'async () => connecta.call("oauth.echo", { text: "hi" })',
       }),
     );
-    expect([program.roundTrips, program.statements]).toEqual([15, 16]);
-    expect(warm.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(12);
-    expect(program.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(12);
+    expect([program.roundTrips, program.statements]).toEqual([11, 12]);
+    // The partition snapshot, acceptance with its fence, admission, and the
+    // SDK before initialize, initialized, the SSE GET, the call and the DELETE,
+    // plus the epoch check after the handshake that sent the token.
+    expect(warm.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(9);
+    expect(program.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(9);
     await d.measure("OAuth call, cold isolate", () => d.call(d.build(), "oauth.echo"));
 
     // The rotation stores a token 75 seconds from expiry, outside the
@@ -1289,19 +1338,23 @@ describe("request budgets", () => {
           ? d.call(app, "oauth.echo")
           : d.tool(app, "execute_code", { code: 'async () => connecta.call("oauth.echo", { text: "hi" })' }),
       );
-      expect(measured.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(9);
+      // The partition snapshot, acceptance with its fence, admission, and the
+      // SDK before the call. The connect sends nothing and reads nothing.
+      expect(measured.log.filter((line) => line.startsWith("all ") && line.includes(d.grantKey))).toHaveLength(4);
       expect(measured.downstream).toBe(1);
-      expect([measured.roundTrips, measured.statements]).toEqual([12, 13]);
+      expect([measured.roundTrips, measured.statements]).toEqual([6, 7]);
     }
   });
 
   it.each([
     [false, "chunks", false],
     [true, "chunks", false],
-    [false, "invocation", false],
-    [true, "invocation", false],
+    [false, "admission", false],
+    [true, "admission", false],
+    [false, "dispatch", false],
+    [true, "dispatch", false],
     [false, "chunks", true],
-    [false, "invocation", true],
+    [false, "admission", true],
   ] as const)(
     "OAuth modern=%s preserves rotation, disconnect and refresh across %s gated=%s",
     async (oauthModern, boundary, gated) => {
@@ -1349,11 +1402,9 @@ describe("request budgets", () => {
           const chunk = params.some((key) => typeof key === "string" && key.includes(":chunk:"));
           if (chunk) pastChunks = true;
           if (pastChunks && params.includes(d.grantKey)) grantReads++;
-          // The second grant read after the binding reads checks disconnect; the
-          // separate invocation tokens() read follows it, even when the epoch is unchanged.
-          // Publish after its SELECT captured the old value; dispatch must read again.
-          const binding = bindingGrantReads(oauthModern);
-          if (!pastChunks || (boundary === "chunks" ? grantReads !== binding : grantReads !== binding + 2)) return;
+          // Publish after the boundary's SELECT captured the old value; the
+          // next stage must read again.
+          if (!pastChunks || grantReads !== GRANT_READS_BEFORE[boundary]) return;
           d.afterRead(undefined);
           changed = true;
           // A separate provider and SQL storage instance publishes between reads,
@@ -1380,13 +1431,17 @@ describe("request budgets", () => {
           for (const request of d.oauthRequests) expect(request.method).toBe("DELETE");
           d.oauthRequests.length = 0;
         });
-        const refused = change === "disconnect" || (oauthModern && boundary === "chunks" && change === "rotation");
+        // A connection bound to the old epoch refuses at its next read: a rotation
+        // after admission, or for modern after the catalog read bound it.
+        const refused =
+          change === "disconnect" ||
+          (change === "rotation" && (boundary === "dispatch" || (oauthModern && boundary === "chunks")));
         const text = await d.tool(app, "call_tool", { address: "oauth.echo", args: { text: "hi" } }, refused);
         await d.settle();
         expect(changed, change).toBe(true);
         if (change === "disconnect") {
           const error = JSON.parse(text).result.structuredContent.error;
-          if (oauthModern && boundary === "chunks") {
+          if (boundary === "dispatch" || (oauthModern && boundary === "chunks")) {
             expect(error).toMatchObject({ code: "unavailable", retryable: true });
             expect(error.message).toContain("authorization changed");
           } else {
@@ -1448,9 +1503,9 @@ describe("request budgets", () => {
     let changed = false;
     d.afterRead(async (params) => {
       if (params.some((key) => typeof key === "string" && key.includes(":chunk:"))) pastChunks = true;
-      // Invalidate after the disconnect SELECT captured valid tokens, where
-      // the combined invocation snapshot used to admit this call.
-      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== bindingGrantReads(oauthModern) + 2) return;
+      // Invalidate after admission captured valid tokens: the SDK's read before
+      // the send finds none, and the transport refuses the tokenless request.
+      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== GRANT_READS_BEFORE.dispatch) return;
       d.afterRead(undefined);
       changed = true;
       const other = d.otherProvider();
@@ -1507,7 +1562,7 @@ describe("request budgets", () => {
     let changed = false;
     d.afterRead(async (params) => {
       if (params.some((key) => typeof key === "string" && key.includes(":chunk:"))) pastChunks = true;
-      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== bindingGrantReads(oauthModern) + 2) return;
+      if (!pastChunks || !params.includes(d.grantKey) || ++grantReads !== GRANT_READS_BEFORE.admission) return;
       d.afterRead(undefined);
       changed = true;
       const tokens = {
@@ -1618,20 +1673,20 @@ const BUDGETS = {
   "legacy call, cold isolate": { downstream: 5, roundTrips: 8, statements: 11 },
   "modern call, warm": { downstream: 1, roundTrips: 4, statements: 5 },
   "modern call, cold isolate": { downstream: 1, roundTrips: 8, statements: 11 },
-  "OAuth call, warm": { downstream: 5, roundTrips: 17, statements: 18 },
-  "OAuth call, cold isolate": { downstream: 5, roundTrips: 21, statements: 25 },
-  "OAuth call, 401 refresh": { downstream: 9, roundTrips: 39, statements: 49 },
-  "OAuth call, proactive refresh": { downstream: 6, roundTrips: 35, statements: 43 },
+  "OAuth call, warm": { downstream: 5, roundTrips: 12, statements: 13 },
+  "OAuth call, cold isolate": { downstream: 5, roundTrips: 17, statements: 20 },
+  "OAuth call, 401 refresh": { downstream: 9, roundTrips: 34, statements: 44 },
+  "OAuth call, proactive refresh": { downstream: 6, roundTrips: 30, statements: 39 },
   "api credential call, warm": { downstream: 1, roundTrips: 4, statements: 5 },
   "api credential call, cold isolate": { downstream: 1, roundTrips: 7, statements: 10 },
-  "unscoped search, warm": { downstream: 0, roundTrips: 11, statements: 11 },
+  "unscoped search, warm": { downstream: 0, roundTrips: 9, statements: 9 },
   "execute_code, 5 calls": { downstream: 9, roundTrips: 8, statements: 14 },
   // A live detail records its stored status observation (#1173 item 2.3):
   // one write, batched with the expiry sweep, and, for a static api()
   // catalog whose listing reads no generation, the generation read.
   "UI detail, rest": { downstream: 0, roundTrips: 6, statements: 7 },
   "UI detail, keyed": { downstream: 4, roundTrips: 11, statements: 13 },
-  "UI detail, oauth": { downstream: 4, roundTrips: 19, statements: 20 },
+  "UI detail, oauth": { downstream: 4, roundTrips: 18, statements: 19 },
   "UI stored detail, rest": { downstream: 0, roundTrips: 5, statements: 5 },
   "UI stored detail, keyed": { downstream: 0, roundTrips: 5, statements: 5 },
   "UI stored detail, oauth": { downstream: 0, roundTrips: 3, statements: 3 },

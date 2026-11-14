@@ -591,32 +591,35 @@ it.each([
   },
 );
 
+const removeTokensAfter = (method: "peekGrant" | "admissionGrant") => {
+  const original = KvOAuthProvider.prototype[method] as (...args: unknown[]) => Promise<unknown>;
+  const state = { removed: false };
+  vi.spyOn(KvOAuthProvider.prototype, method).mockImplementation(async function (
+    this: KvOAuthProvider,
+    ...args: unknown[]
+  ) {
+    const result = await original.apply(this, args);
+    if (!state.removed && args[0] === undefined) {
+      state.removed = true;
+      const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
+      await other.tokens();
+      await other.invalidateCredentials("tokens");
+    }
+    return result;
+  } as never);
+  const beginFlow = vi.spyOn(KvOAuthProvider.prototype, "beginFlow");
+  return { state, beginFlow };
+};
+
 it.each(["auto", "legacy"] as const)(
   "requires OAuth on the catalog path when tokens disappear before a replacement provider binds (%s)",
   async (versionNegotiation) => {
     const flow = setup({ oauth: true, versionNegotiation });
     await flow.seedOAuth();
-    const observed = new Set<KvOAuthProvider>();
-    const observe = KvOAuthProvider.prototype.observe;
-    vi.spyOn(KvOAuthProvider.prototype, "observe").mockImplementation(function (this: KvOAuthProvider, grant) {
-      observe.call(this, grant);
-      if (grant.body.tokens) observed.add(this);
-    });
-    const begin = KvOAuthProvider.prototype.beginFlow;
-    let removed = false;
-    vi.spyOn(KvOAuthProvider.prototype, "beginFlow").mockImplementation(async function (this: KvOAuthProvider, epoch) {
-      if (!removed) {
-        expect([...observed].some((provider) => provider !== this)).toBe(true);
-        expect(observed.has(this)).toBe(false);
-        removed = true;
-        const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
-        await other.tokens();
-        await other.invalidateCredentials("tokens");
-      }
-      return begin.call(this, epoch);
-    });
+    const { state, beginFlow } = removeTokensAfter("peekGrant");
     await expect(flow.connector.listTools(flow.context())).rejects.toMatchObject({ code: "downstream_oauth_required" });
-    expect(removed).toBe(true);
+    expect(state.removed).toBe(true);
+    expect(beginFlow).not.toHaveBeenCalled();
     expect(flow.requests).toEqual([]);
   },
 );
@@ -628,19 +631,10 @@ it.each([false, true])(
     await flow.seedOAuth();
     await flow.outcome("list_items");
     flow.requests.length = 0;
-    const begin = KvOAuthProvider.prototype.beginFlow;
-    let removed = false;
-    vi.spyOn(KvOAuthProvider.prototype, "beginFlow").mockImplementation(async function (this: KvOAuthProvider, epoch) {
-      if (!removed) {
-        removed = true;
-        const other = new KvOAuthProvider("svc", this.storage, `${BASE}/oauth/callback/svc`);
-        await other.tokens();
-        await other.invalidateCredentials("tokens");
-      }
-      return begin.call(this, epoch);
-    });
+    const { state, beginFlow } = removeTokensAfter("admissionGrant");
     const result = program ? await flow.program(false) : await flow.outcome("create_item", { id: 1 });
-    expect(removed).toBe(true);
+    expect(state.removed).toBe(true);
+    expect(beginFlow).not.toHaveBeenCalled();
     expect(flow.requests).toEqual([]);
     expect(flow.sent("create_item")).toEqual([]);
     expect(result.error).toMatchObject({ code: "downstream_oauth_required" });

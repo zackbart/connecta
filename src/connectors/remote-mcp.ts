@@ -833,17 +833,17 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         settlingOperation(
           authMethod((ctx: ConnectorContext) =>
             authFlow<void>(function* () {
-              const provider = newProvider(ctx, stateFor(ctx));
-              if ((yield authInvoke(provider, "operatorDisconnected", [])) as boolean)
-                throw operatorDisconnectedError();
-              // Keep this separate from the disconnect read: invalidation and
-              // refresh can remove or replace tokens without changing the epoch.
-              // The SDK may otherwise send anonymously when its tokens() is empty.
-              if (!((yield authInvoke(provider, "tokens", [])) as OAuthTokens | undefined))
-                throw authRequiredError(ctx);
-              // That read also decides whether the token is about to expire.
+              const state = stateFor(ctx);
+              const provider = newProvider(ctx, state);
+              const admission = (yield authInvoke(provider, "admissionGrant", [])) as {
+                epoch: string;
+                tokens?: OAuthTokens;
+              };
+              if (provider.isOperatorDisconnectedEpoch(admission.epoch)) throw operatorDisconnectedError();
+              if (!admission.tokens) throw authRequiredError(ctx);
               const due = provider.renewalDue();
               if (due !== undefined) (yield authCall(renewBeforeCall, [ctx, due])) as void;
+              state.admittedEpoch = admission.epoch;
             }),
           ),
           0,
