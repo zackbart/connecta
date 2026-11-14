@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-14: Calm operator loading (#1430) adds the boot shell, layout placeholders, pending connector states and the stored-first detail queue to the operator bundle. A same-toolchain local comparison against origin/main at 0c078ae3 measures +1,477 B ./ui, +1,741 B examples/worker and +1,669 B operator-ui/assets, root unchanged. CI on main measures ./ui at 345,166 B (run 43612051529) and examples/worker at 834,268 B (#1428), so this PR reaches about 346,643 B and 836,009 B. The ./ui cap moves 346,000 to 347,000 B and the examples/worker cap 834,650 to 836,360 B, each about 350 B over the estimate, to check against this PR's build (package) table.",
     "2026-11-14: Fewer warm OAuth grant reads (#1424, #1428) add per-request grant snapshots, epoch binding and the fenced acceptance read. CI on 349e0b1f (run 43648251029, build (package)) measures the root at 448,629 B gzip and examples/worker at 834,268 B. The root cap moves 448,450 to 449,000 B and the examples/worker cap 833,930 to 834,650 B, each about 350 B over CI.",
     "2026-11-13: Sharing the Access key-set fetch and queuing authentication bursts (#1420, #1423) add the single in-flight JWKS fetch with generation ownership and the FIFO admission queue. CI for #1423 at 73eb4ccf measures the root at 448,048 B and examples/worker at 833,528 B, past its 833,500 B cap; the round-1 review fix measures +42 B root and +51 B examples/worker in a same-toolchain local comparison, so CI reaches about 448,090 B and 833,579 B. The caps move to 448,450 B and 833,930 B, leaving about 360 B and 351 B. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-13: One grant for several connectors (#1416, #1418) adds grant owners to the registry (storage namespace and sealer through the owner, group checks and invalidation), owner-following Connect links, management and member contract, and the shared refresh coordinator. CI for #1418 merged with main at 1e048e2f measures the root at 447,754 B and examples/worker at 833,157 B. Owner-approved: the caps move to 448,100 B and 833,500 B, leaving 346 B and 343 B. The new ./google-account entry bundles all nine Google products on one grant and measures 622,478 B on CI; its cap leaves about 57,000 B, as ./google's leaves 60,000 B.",
@@ -183,7 +184,7 @@
     },
     "./ui": {
       "baselineGzip": 272943,
-      "maxGzip": 346000
+      "maxGzip": 347000
     },
     "./credentials": {
       "baselineGzip": 1459,
@@ -199,7 +200,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 834650
+      "maxGzip": 836360
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
