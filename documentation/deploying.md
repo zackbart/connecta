@@ -317,10 +317,21 @@ parameters such as `?codemode=false`, which opencode adds to remote URLs, so
 neither a URL nor a host can choose the surface. Give a code-mode host its own
 pool if other hosts share the meta pool.
 
-One small evaluation found the native surface passed as many tasks as the
-default meta surface, or more, with about half the input tokens. That run used
-one model and two repeats, so treat it as early evidence. A full comparison is
-still pending.
+A paired Worker evaluation compared the three surfaces on the same 23 tasks
+with two models: Claude Sonnet 5.5 at five repeats and GPT-6-Luna at three
+([notes](https://github.com/zackbart/connecta/blob/main/eval/baselines/notes-surface-decision-w5-1.md)).
+Treat its results as guidance from that run, not a guarantee for other models:
+
+- **Keep `execute_code` on native pools.** Sonnet runs in a host without its
+  own code mode. With code off, its result paging took about twice the turns
+  and about 14 times the input tokens (a median of about 280,000 against
+  20,000), and it passed no more tasks.
+- **`executeCode: false` is a reasonable opt-in for hosts with their own code
+  mode.** Under Codex code mode it matched native's pass rate. It used fewer
+  tokens on joins and more on paging.
+- **The meta surface remains the default.** Native is the token-efficient
+  opt-in. It used fewer input tokens and less wall time at a similar pass
+  rate, but it did not take fewer turns.
 
 **opencode (v2).** Every tool runs unprompted by default, because the default
 permission rule allows everything. Add `ask` rules for the tools that can
