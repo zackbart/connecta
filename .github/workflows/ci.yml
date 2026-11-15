@@ -83,8 +83,9 @@ jobs:
       - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - run: pnpm run test:workers
 
-  # Outcome references, then the Node template, Node eval and native workerd
-  # deployments with the operator page. No model, login or network service.
+  # Search ranking against its baseline, outcome references, then the Node
+  # template, Node eval and native workerd deployments with the operator page.
+  # No model, login or network service.
   behavior:
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -98,6 +99,7 @@ jobs:
       - run: pnpm --filter @zackbart/connecta install --frozen-lockfile
       - name: Verify native workerd isolation on this kernel
         run: pnpm run build:operator-ui && pnpm run eval:selftest --workerd-isolation-only
+      - run: pnpm run eval:retrieval
       - run: pnpm run eval:outcomes
       - name: Install Chromium and system dependencies
         timeout-minutes: 16

@@ -21,10 +21,12 @@ acquisition timeout.
 
 ## Required behavioral checks
 
-Two commands run on every PR in CI's `behavior` job. Neither needs a login,
-model, external network or vendor account.
+Three commands run on every PR in CI's `behavior` job. None needs a login,
+model, external network or vendor account. `eval:retrieval` is described under
+[retrieval ranking](#retrieval-ranking).
 
 ```sh
+pnpm run eval:retrieval
 pnpm run eval:outcomes
 pnpm run eval:smoke
 ```
@@ -181,6 +183,90 @@ result and refusal/skip reason to `eval/results/worker-references-<time>.json`,
 and exits nonzero on failed grades or execution errors. OAuth/host tasks and
 non-serializable deployments retain the Worker target's explicit refusal;
 opt-in skipped tasks remain excluded.
+
+## Retrieval ranking
+
+`pnpm run eval:retrieval [--verbose] [--update-baseline] [--out path]` scores
+search ranking without a model, network or build. Labelled queries go through
+the real `search_tools` handler (`createMetaTools` over a `Registry` with memory
+storage) against neutral fixture catalogs, and the scores are compared with the
+checked-in [baseline](baselines/retrieval.json). A run is deterministic and takes
+about a minute (roughly 420 searches).
+
+**Fixtures** (`retrieval/catalogs.ts`) are three deployments. Maintained
+providers are built from their own `fixtures.ts` with an explicit connector id;
+everything else is a synthetic remote MCP catalog written for this eval. Never
+copy a live deployment's catalog or its connector, account, person or company
+names into these fixtures; use neutral names such as `alice` and `bob`. The
+structural features that drive ranking are reproduced on purpose:
+
+- `personal`: eight Google providers and People (as `contacts`), each in three
+  accounts (`gmail`, `gmail_alice`, `gmail_bob`, ...), so identical tools repeat
+  across accounts and queries can name an account. A finance connector titled
+  "Budget Money" whose title words appear in no tool name, a camelCase sports
+  watch whose `queryTrainingSchedule` competes for "schedule", meals, flights and
+  a microblog.
+- `studio`: a single 300-tool project connector with templated descriptions,
+  an internal handbook whose answers are in its description only, single-account
+  Google providers, Vercel and Cloudflare (raw-API hatches with no named tool for
+  projects, deployments or DNS).
+- `product`: four accounts of one subscriptions catalog (one a subset, so not
+  every catalog is identical), Hyphen-Case analytics, two issue trackers, two
+  warehouses, two app databases, a raw-API-only messaging connector, three Stripe
+  accounts, GitHub, Granola, Intercom, Cloudflare and Vercel.
+
+**Queries** (`retrieval/queries.ts`): 143 main queries (intent 54, precise 42,
+write 16, hatch 15, vague 8, multi-account 8) and 32 held-out queries. An answer
+`conn*.tool` accepts `conn` and every `conn_<account>`; a query that names an
+account accepts only that account's tools, never the default account's. Every
+accepted answer must answer the query on its own, judged from the fixture's
+description: a tool that returns related data (project-wide definitions for a
+customer's grants, steps for sleep) is not an answer. A collapsed row's `alsoOn` addresses count
+only for `conn*` answers, so multi-account queries stay strict. Queries marked
+`uncertain` have another defensible reading, and each accepted answer serves one
+of those readings; they count in the gate like every other query, and the
+`certain labels` line excludes them. The held-out set was written after the main
+set and its fixtures were frozen. Ranking changes may be inspected per query on
+the main set only; read the held-out set's aggregate and never tune on it. Every
+answer must match a tool in its fixture catalog, or the run fails before scoring.
+
+**Metrics**: R@k is the share of queries with an acceptable row in the first k;
+MRR uses the first acceptable rank within the top 20. Each search follows
+`nextOffset` until it has 20 rows, so a page shortened by the write-description
+budget does not hide ranks. Both sets report all, `safety: "readOnly"` (scored
+over queries with at least one read answer) and per-type scores. Every eighth
+query is ranked again on a freshly built registry and must return the same top 8.
+
+**Paging cases** run against the 300-tool connector and a connector whose write
+descriptions exceed the 32 KiB per-page write budget. Each answer set is larger
+than the first page, and the walk must reach every answer through `nextOffset`:
+browsing the large connector at the default and maximum limits (every address
+once), browsing its reads with `safety: "readOnly"`, a query whose answers outnumber its
+limit-8 page, and a write query whose first page ends before the limit. On every
+case the first page must carry `hasMore: true` and a `nextOffset` equal to its
+offset plus its row count, the last page carries neither, `total` is stable and
+equals the rows walked, and no address repeats.
+
+**Gate**: for both sets, all and read-only, R@5 may not fall more than 0.02 below
+the baseline and MRR more than 0.01; the scored query counts must match. On the
+main set that admits two lost queries at R@5 and fails a third; on the held-out
+set one lost query fails. Larger scores pass and are printed with a reminder to
+record them. Controls require the gate to reject a ranking one place lower
+everywhere and one with no answers, and to accept the current ranking against
+itself. A failure lists every query ranked lower than its baseline rank and writes
+`eval/results/retrieval-<time>.json` with each query's top 8 and the failures;
+`--verbose` also lists every query without an answer in its top 5.
+
+**Updating the baseline**: a change that moves ranking reruns with
+`--update-baseline` in the same PR and states the before and after scores. The
+flag refuses to write while a paging, determinism or control check fails. The
+baseline stores each query's first-answer rank as `<all>/<readOnly>` (0: not in
+the top 20; `-`: no read answer), so the diff shows exactly which queries moved.
+
+**CI**: the gate runs in the `behavior` job before `eval:outcomes`. It imports
+source directly, needs no build or runtime lock, uses no network, and is
+deterministic for an unchanged catalog and ranker, so a ranking regression fails
+in the PR that causes it rather than in a later live evaluation.
 
 ## Historical baselines
 
