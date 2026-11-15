@@ -41,6 +41,8 @@ export interface OperatorConnectorOverlay {
    * milliseconds, fixed once as the row lands so its age keeps counting.
    */
   observedAt?: number;
+  /** Browser-only: the stored observation's tool count, while `tools` waits for a live read. */
+  storedToolCount?: number;
 }
 
 /** Whole connector access, or exact tool grants. `requireReadOnly` is always false since guarded grants were removed. */

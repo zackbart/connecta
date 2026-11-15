@@ -105,6 +105,20 @@ function NodeBody({ node }: { node: MapNode }) {
 function ToolsBox({ node }: { node: MapNode }) {
   if (!node.toolsBox) return null;
   const { x, y, width, height } = node.toolsBox;
+  if (!node.tools && node.storedTools !== null) {
+    return (
+      <>
+        <rect className="map-box tools" x={x} y={y} width={width} height={height} rx={11} />
+        <text className="map-title" x={x + 14} y={y + 22}>
+          <tspan className="map-count">{node.storedTools}</tspan>
+          <tspan className="map-detail" dx={5}>
+            {node.storedTools === 1 ? "tool" : "tools"}
+          </tspan>
+        </text>
+        <rect className="map-bar" x={x + 14} y={y + 33} width={width - 28} height={6} rx={3} />
+      </>
+    );
+  }
   if (!node.tools) {
     return (
       <>
@@ -260,7 +274,7 @@ function MapDrawing({ map }: { map: ConnectionMap }) {
               <text key={column.label} className="map-column" x={column.x + 2} y={20}>
                 {column.label}
                 <tspan className="map-column-count" dx={6}>
-                  {column.count}
+                  {column.count ?? "–"}
                 </tspan>
               </text>
             ))}
@@ -385,7 +399,7 @@ function MapList({ map }: { map: ConnectionMap }) {
                     {node.name}
                   </ListLink>
                   <span className="map-list-note">
-                    {node.tone === "ok" ? toolsPhrase(served.tools, served.write) : node.detail}
+                    {node.tone === "ok" && node.tools ? toolsPhrase(served.tools, served.write) : node.detail}
                   </span>
                 </li>
               ))}

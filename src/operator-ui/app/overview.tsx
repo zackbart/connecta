@@ -3,12 +3,13 @@ import { connectionMap, type MapNode } from "../connection-map.js";
 import { attentionItems, overviewHeadline, type AttentionItem, type OverviewHeadline } from "../overview.js";
 import type { OperatorState } from "../view.js";
 import { fixPrompt } from "../fix-prompts.js";
-import { ContractState } from "./contract-state.js";
+import { ContractState, contractLoading } from "./contract-state.js";
 import { ConnectionMapView } from "./connection-map.js";
 import { useConnectorHealth } from "./health.js";
 import { Icon } from "./icons.js";
 import { CopyButton, followLink, MemberMark, Pill } from "./parts.js";
 import { Card } from "./primitives.js";
+import { OverviewSkeleton, PendingLine, Skeleton } from "./skeletons.js";
 
 /**
  * The maintainer's landing page: how the deployment is doing, what needs
@@ -63,7 +64,7 @@ function Stats({ headline, callers }: { headline: OverviewHeadline; callers: Map
         <p className="stat-number">
           {headline.connectors ? (
             <>
-              {headline.healthy}
+              {headline.pending === headline.connectors ? <Skeleton width="xs" /> : headline.healthy}
               <span className="stat-of">/{headline.connectors}</span>
             </>
           ) : (
@@ -84,6 +85,7 @@ function Stats({ headline, callers }: { headline: OverviewHeadline; callers: Map
             ["ok", headline.healthy, "healthy"],
             ["warn", headline.warn, "attention"],
             ["danger", headline.danger, "failing"],
+            ["neutral", headline.pending, "checking"],
           ]}
         />
       </Stat>
@@ -175,7 +177,7 @@ function AttentionRow({ item }: { item: AttentionItem }) {
   );
 }
 
-function Attention({ items }: { items: AttentionItem[] }) {
+function Attention({ items, pending }: { items: AttentionItem[]; pending: number }) {
   return (
     <Card className="overview-section overview-attention" title="Needs attention" titleId="attentionHeading">
       {items.length ? (
@@ -184,7 +186,12 @@ function Attention({ items }: { items: AttentionItem[] }) {
             <AttentionRow key={item.key} item={item} />
           ))}
         </ul>
-      ) : (
+      ) : null}
+      {pending ? (
+        <PendingLine>
+          Checking {pending} {pending === 1 ? "connector" : "connectors"}…
+        </PendingLine>
+      ) : items.length ? null : (
         <div className="attention-clear" role="status">
           <span className="attention-icon tone-ok" aria-hidden="true">
             <Icon name="check" size={15} />
@@ -197,7 +204,8 @@ function Attention({ items }: { items: AttentionItem[] }) {
 }
 
 /** The page's status in a word: the cards below carry the numbers. */
-function Status({ items, unverified }: { items: AttentionItem[]; unverified: boolean }) {
+function Status({ items, unverified, pending }: { items: AttentionItem[]; unverified: boolean; pending: boolean }) {
+  if (!items.length && pending) return <Pill status="neutral">Checking</Pill>;
   if (!items.length)
     return (
       <Pill status={unverified ? "neutral" : "healthy"}>{unverified ? "No attention needed" : "All healthy"}</Pill>
@@ -226,16 +234,24 @@ export function OverviewPage({ state }: { state: OperatorState }) {
             Overview
           </h1>
           {headline?.connectors ? (
-            <Status items={items} unverified={headline.bar.some((entry) => entry.tone === "neutral")} />
+            <Status
+              items={items}
+              unverified={headline.bar.some((entry) => entry.tone === "neutral")}
+              pending={headline.pending > 0}
+            />
           ) : null}
         </div>
       </div>
       {!contract || !map || !headline ? (
-        <ContractState state={state} />
+        contractLoading(state) ? (
+          <OverviewSkeleton />
+        ) : (
+          <ContractState state={state} />
+        )
       ) : (
         <>
           <Stats headline={headline} callers={map.nodes.filter((node) => node.column === 0)} />
-          <Attention items={items} />
+          <Attention items={items} pending={headline.pending} />
           <Card className="overview-section overview-map" title="Who reaches what" titleId="mapHeading">
             <ConnectionMapView map={map} />
           </Card>

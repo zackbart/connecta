@@ -1,6 +1,7 @@
 {
   "notes": [
     "2026-11-15: Per-connector last-call reads (#1427) add the connectorId activity filter, the filtered per-connector scan and its cancelling fallback. CI at a44ba2fd (run 43656682090, build (package)) measures examples/worker at 834,672 B, 22 B past its cap; the root (448,629 B) and ./ui (345,899 B) stay under theirs. The examples/worker cap moves 834,650 to 835,020 B, about 350 B over CI.",
+    "2026-11-15: Calm operator loading (#1430) adds the boot shell, layout placeholders, pending connector states and the stored-first detail queue to the operator bundle. CI at efeaf1dc, merged with #1427 (run 43657688503, build (package)), measures ./ui at 348,326 B, the root at 448,629 B and examples/worker at 836,741 B. The ./ui cap moves 346,000 to 348,680 B and the examples/worker cap 835,020 to 837,090 B, each about 350 B over CI.",
     "2026-11-14: Fewer warm OAuth grant reads (#1424, #1428) add per-request grant snapshots, epoch binding and the fenced acceptance read. CI on 349e0b1f (run 43648251029, build (package)) measures the root at 448,629 B gzip and examples/worker at 834,268 B. The root cap moves 448,450 to 449,000 B and the examples/worker cap 833,930 to 834,650 B, each about 350 B over CI.",
     "2026-11-13: Sharing the Access key-set fetch and queuing authentication bursts (#1420, #1423) add the single in-flight JWKS fetch with generation ownership and the FIFO admission queue. CI for #1423 at 73eb4ccf measures the root at 448,048 B and examples/worker at 833,528 B, past its 833,500 B cap; the round-1 review fix measures +42 B root and +51 B examples/worker in a same-toolchain local comparison, so CI reaches about 448,090 B and 833,579 B. The caps move to 448,450 B and 833,930 B, leaving about 360 B and 351 B. ./ui, baselineGzip and every other cap are unchanged.",
     "2026-11-13: One grant for several connectors (#1416, #1418) adds grant owners to the registry (storage namespace and sealer through the owner, group checks and invalidation), owner-following Connect links, management and member contract, and the shared refresh coordinator. CI for #1418 merged with main at 1e048e2f measures the root at 447,754 B and examples/worker at 833,157 B. Owner-approved: the caps move to 448,100 B and 833,500 B, leaving 346 B and 343 B. The new ./google-account entry bundles all nine Google products on one grant and measures 622,478 B on CI; its cap leaves about 57,000 B, as ./google's leaves 60,000 B.",
@@ -184,7 +185,7 @@
     },
     "./ui": {
       "baselineGzip": 272943,
-      "maxGzip": 346000
+      "maxGzip": 348680
     },
     "./credentials": {
       "baselineGzip": 1459,
@@ -200,7 +201,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 835020
+      "maxGzip": 837090
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
