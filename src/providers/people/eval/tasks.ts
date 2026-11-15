@@ -1,6 +1,6 @@
 /** Resolve attendees across three address books, save one, and label it: graded on fake state, ledger and answer. */
 import { PEOPLE_PRIVATE } from "./fake.js";
-import { deliveredValues } from "../../../../eval/tasks/correctness.js";
+import { deliveredValues, replyData } from "../../../../eval/tasks/correctness.js";
 import { check } from "../../../../eval/tasks/baseline.js";
 import type { ActiveTask } from "../../../../eval/tasks/types.js";
 import type { ProviderTasks } from "../../../../eval/support/provider-eval.js";
@@ -59,10 +59,10 @@ const PEOPLE_TASK: ActiveTask = {
         resultMode: "value",
       });
       if (result.isError) throw new Error(result.text);
-      return JSON.parse(result.text) as Row;
+      return replyData(result) as Row;
     };
     const copied = await write("copy_other_contact", { resourceName: found.carol.resourceName });
-    const contact = (copied.data ?? copied).resourceName as string;
+    const contact = copied.resourceName as string;
     await write("update_contact_group_members", { resourceName: found.planning.resourceName, add: [contact] });
     await write("update_contact", {
       resourceName: found.bob.resourceName,

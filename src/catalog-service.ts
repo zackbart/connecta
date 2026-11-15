@@ -183,10 +183,36 @@ const SERVICE_NAMES = [
 ];
 
 /**
- * Leading verbs that ask to read. A query led by one ranks read rows above
- * write rows within each relevance tier; writes stay on the page.
+ * Leading verbs that ask to read. A query led by one, or with no word that
+ * `statesWrite`, ranks read rows above write rows within each relevance
+ * tier; writes stay on the page.
  */
 const READ_INTENT = /^(?:list|get|find|search|show|read|fetch|count)$/;
+const WRITE_VERBS = new Set(
+  "create send post delete remove update add archive cancel log share reply draft write mark publish set move upload edit rename trash complete schedule forward like follow retweet invite merge deploy pause restore apply tag categorize save submit transfer convert refund approve book put insert append assign copy duplicate revoke disable enable close reopen import replace accept decline respond rsvp unarchive".split(
+    " ",
+  ),
+);
+
+/**
+ * A write verb or its present-tense inflection: updates, copies, updating, logging.
+ * Past participles describe records ("files uploaded today"), so they never count.
+ */
+function statesWrite(term: string): boolean {
+  if (WRITE_VERBS.has(term)) return true;
+  const bases: string[] = [];
+  for (const [suffix, ending] of [
+    ["ies", "y"],
+    ["es", ""],
+    ["s", ""],
+    ["ing", ""],
+    ["ing", "e"],
+  ] as const)
+    if (term.length > suffix.length + 2 && term.endsWith(suffix)) bases.push(term.slice(0, -suffix.length) + ending);
+  return bases.some(
+    (base) => WRITE_VERBS.has(base) || (/([b-df-hj-np-tv-z])\1$/.test(base) && WRITE_VERBS.has(base.slice(0, -1))),
+  );
+}
 /** Name words that state an action, never a resource. */
 const ACTION_WORD = /^(?:list|get|find|search|show|read|fetch|count|create|update|delete)$/;
 
@@ -1951,10 +1977,16 @@ export class CatalogService {
         const index = searchableCatalogs.findIndex((catalog) => Result.isSuccess(catalog) && catalog.success === tools);
         return index < 0 ? undefined : searchSynonyms(connectors[index]!);
       };
+      const connectorTextFor = (tools: ToolDef[]) => {
+        const index = searchableCatalogs.findIndex((catalog) => Result.isSuccess(catalog) && catalog.success === tools);
+        const connector = connectors[index];
+        return connector && `${connector.title ?? ""} ${connector.description ?? ""}`;
+      };
       const statistics = lexicalCorpusStatistics(
         searchableCatalogs.flatMap((catalog) => (Result.isSuccess(catalog) ? [catalog.success] : [])),
         retrievalQuery,
         synonymsFor,
+        connectorTextFor,
       );
       const trimmedQuery = query.trim();
       const isBrowse = trimmedQuery.length === 0;
@@ -1989,7 +2021,7 @@ export class CatalogService {
                 : []),
             ]);
             const localStatistics = exactConnector
-              ? lexicalCorpusStatistics([catalog.success], retrievalQuery, synonymsFor)
+              ? lexicalCorpusStatistics([catalog.success], retrievalQuery, synonymsFor, connectorTextFor)
               : undefined;
             // An exact identity is a browse even when one tool repeats that
             // identity in its name or description. Action queries still keep
@@ -2093,14 +2125,21 @@ export class CatalogService {
       if (!isBrowse && !unsearchableQuery && !rankedMatches.some((match) => match.covered)) {
         matchMode = "partial";
       }
-      // A read-intent verb leads the query once connector names are set aside.
       const identityTerms = new Set(connectors.flatMap(connectorNames).flatMap(lexicalQueryTerms));
-      const readIntent = READ_INTENT.test(lexicalQueryTerms(query).find((term) => !identityTerms.has(term)) ?? "");
-      const readFirst = (match: (typeof matches)[number]) => Number(readIntent && match.tool.classification === "read");
+      const terms = lexicalQueryTerms(query);
+      const readIntent =
+        this.markUncallableWrites ||
+        READ_INTENT.test(terms.find((term) => !identityTerms.has(term)) ?? "") ||
+        !terms.some(statesWrite);
+      const readFirst = (match: (typeof matches)[number]) =>
+        Number(
+          readIntent &&
+            (this.markUncallableWrites ? !readProgramRefuses(match.tool) : match.tool.classification === "read"),
+        );
       // Exact tool names precede connector identity and lexical scoring. A
       // longer name such as get_issue_status cannot beat an exact get_issue
       // merely because its description repeats rare query terms. Within a
-      // tier, a read-intent query puts reads before writes.
+      // tier, reads precede writes unless the query states a write.
       // A hatch with a matching operation stays above partial matches, as does a
       // tool that names the query's subject and states the rest in its tail. A
       // tail alone earns no tier: long prose can mention anything.
@@ -2274,6 +2313,8 @@ export class CatalogService {
         new Set([
           ...(statistics.nameMatches.get(term) ?? []),
           ...(statistics.descriptionMatches.get(term) ?? []),
+          ...(statistics.connectorMatches.get(term) ?? []),
+          ...(statistics.inputMatches.get(term) ?? []),
           ...vocabularyTools,
         ]);
       const representedTerms: string[] = [];
@@ -2331,9 +2372,8 @@ export class CatalogService {
               required: connectorGuideRequired(scopedConnector),
             }
           : undefined;
-      // Partial identity words can still explain a miss. Exact identities are
-      // already ranking inputs above; this guidance handles a title word such
-      // as "warehouse" when the full title is "Warehouse stock".
+      // Identity words can still explain a miss when no tool of the connector
+      // they name matched the rest of the query.
       const identityConnectorIds =
         matches.length === 0 && !isBrowse && !unsearchableQuery && !scopedConnector
           ? connectors

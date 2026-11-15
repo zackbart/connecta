@@ -18,6 +18,17 @@ export const NO_CODE_CAPABILITY_MISMATCHES: Record<string, string> = {
     "billing__* tools appear only after the credential is saved, but the host's tool list is fixed for the session: Connecta advertises no list_changed, Claude's allowlist is set at spawn, and Codex CLI 0.166.0's config/mcpServer/reload did not expose them on the next turn. Not run on this arm.",
 };
 const NO_CODE_NOT_RUN = "auth-required-recovery";
+/** Tasks no agent can do on the code arm, recorded as typed skips for every runner instead of certain failures. */
+export const CODE_CAPABILITY_MISMATCHES: Record<string, string> = {
+  "p5-preview-program-refused":
+    "The host refuses execute_code, the code arm's only operation route, so no agent can read the log or receive the direct-read preview this task measures. Not run on this arm.",
+};
+const RUNNERS = ["claude", "codex", "eve"] as const;
+
+/** Whether every runner records this arm's task as a capability mismatch, so no trial of it runs. */
+export function notRunOnArm(task: ActiveTask): boolean {
+  return RUNNERS.every((runner) => task.runnerSkips?.[runner]?.code === "capability-mismatch");
+}
 /** The answer-evidence check reads this sentence, so every arm of a task must ask for it. */
 const EVIDENCE_SENTENCE = "Finish with the source system, record ids, and facts supporting your answer.";
 
@@ -107,10 +118,18 @@ export function taskForSurface(task: ActiveTask, surface: Surface): ActiveTask {
   if (task.id === "p5-result-paging")
     prompt = `Read ci.get_run_log for runId 4812 in a program, reduce its full log, and identify the actual failing test and HTTP status. ${EVIDENCE_SENTENCE}`;
   const reference = task.reference;
+  const mismatch = CODE_CAPABILITY_MISMATCHES[task.id];
   return {
     ...task,
     prompt,
     ...(task.id === "p5-read-only-program-refusal" ? { approvals: {} } : {}),
+    ...(mismatch
+      ? {
+          runnerSkips: Object.fromEntries(
+            RUNNERS.map((runner) => [runner, { code: "capability-mismatch" as const, reason: mismatch }]),
+          ),
+        }
+      : {}),
     reference: async (ctx) => {
       const programCall: ReferenceContext["call"] = (tool, args) => {
         if (tool === "call_tool" || tool === "call_destructive_tool")

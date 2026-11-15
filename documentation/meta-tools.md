@@ -1291,7 +1291,15 @@ and a few unambiguous abbreviations (`config`/`configuration`, `db`/`database`,
 arbitrary mid-word substrings. Document frequency weights rare domain terms above
 ubiquitous action terms. A term weighs most in the name, then the summary, then
 the title (`title` or `annotations.title`), and least in the rest of the
-description, which stays searchable but is weak evidence. A tool's score is then
+description, which stays searchable but is weak evidence. Two weaker zones count
+toward coverage but never make a match complete: the owning connector's
+configured title and description, which match every tool of that connector (so
+`money` reaches a connector titled "Money tracker") without making the word
+commoner, and a tool's top-level input property names and their descriptions,
+which count toward document frequency like any tool text. Input property
+text is indexed up to 512 UTF-16 code units per tool and 131,072 per catalog, in
+catalog and property order; text past either budget is not searchable. A tool's
+score is then
 multiplied by the square of the share of the query's total rarity it covers in
 any zone, so rare words in a description's tail outrank a common verb in a name,
 and a tool covering every term is unaffected.
@@ -1314,10 +1322,17 @@ follow:
 
 When a complete match exists, tier 3 keeps only tools covering every term
 somewhere, covering at least two terms, or whose name states a term at least as
-rare as the query's average. Otherwise it keeps any match. Within a tier, a query
-whose first word outside connector names is `list`, `get`, `find`, `search`,
-`show`, `read`, `fetch`, or `count` ranks read rows before write rows; writes stay
-on the page. Score and catalog order break the remaining ties.
+rare as the query's average. Otherwise it keeps any match. Within a tier, read
+rows rank before write rows unless a query word states a write: a fixed English
+list such as `create`, `send`, `update`, `delete`, `add`, `archive`, `reply`,
+`schedule`, `put` or `refund`, or its present-tense inflection (`updates`,
+`copies`, `updating`). A past participle describes records ("files uploaded
+today") and never counts. Write detection is English-only; a word in another
+language never counts as a write. A query whose first word outside connector
+names is `list`, `get`, `find`, `search`, `show`, `read`, `fetch`, or `count`
+still ranks reads first. In `execute_read_code`, rows the route can call rank
+before `callable: false` rows whatever the query says. Writes stay on the page
+either way. Score and catalog order break the remaining ties.
 
 A searched tool that several connectors offer identically (same name,
 classification, description, annotations, input schema, declared output schema,
@@ -1334,12 +1349,25 @@ connector ID and title words the query names most, then the best-ranked, so
 read-only connector is in no `alsoOn`. `total`, `offset` and `nextOffset` count
 rows after grouping. A browse lists every address and groups nothing.
 
+A short shared synonym map widens a query word on every connector, as an
+ordinary whole-token match ranked below the word itself: `email`/`mail`/`gmail`,
+`schedule`/`calendar`/`agenda`, `meeting`/`event`,
+`money`/`finance`/`financial`/`payment`,
+`spend`/`spending`/`expense`/`transaction`, `bill`/`invoice`,
+`file`/`document`, `changed`/`modified`/`updated`, `task`/`todo`,
+`workout`/`exercise`, `revenue`/`mrr`/`income`/`sales`,
+`subscriber`/`subscription`, `deploy`/`deployment`,
+`contact`/`person`/`people` and `feed`/`timeline`. A shared synonym makes a
+match complete only when no searched tool states the word itself in its name,
+title or summary. Words with a second sense that ties unrelated records, such as
+`run`, `chat`, `message`, `activity`, `recurring` or `post`, stay out of it.
+
 A maintained provider may declare `searchSynonyms`: groups of single lowercase
 words its users and its vendor use for the same record, such as `household`
 and `family` for Church Community Builder. A query word then matches that
 provider's tools and operation vocabulary through any word in its group, as an
-ordinary whole-token match ranked below the word itself. Synonyms never widen
-another connector's matches. Church Community Builder declares
+ordinary whole-token match ranked below the word itself. Provider synonyms never
+widen another connector's matches. Church Community Builder declares
 `person`/`individual` and `household`/`family`; Granola declares
 `meeting`/`note`.
 An exact connector ID or title query browses that connector's tools, even when
