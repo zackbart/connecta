@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here.
 
+## 0.51.0 — 2026-11-15
+
+Connecta 0.51.0 changes how read-only scopes present the writes they refuse. On a read-only endpoint, a connector with `readOnly`, or a read-only pool that grants a connector's reads but not its writes, `search_tools`, describe, `connecta.search` and `connecta.describe` now list each in-scope write with `classification: "write"` and `callable: false` instead of omitting it. Agents asked to make a change on such a scope can find the real tool, call it, and receive a clean `read_only_endpoint` refusal to relay, rather than guessing a name, getting `unknown_tool` and telling the person the tool does not exist.
+
+Enforcement is unchanged. Every write call is still refused with `read_only_endpoint` before validation or dispatch, on every path. A read-only native pool still omits writes from its `tools/list`, so hosts that prompt for approval never offer a tool the endpoint always refuses; programs on that pool find them through `connecta.search`. Tools outside the scope stay invisible: ungranted tools, tools on ungranted connectors and tools classified `"hidden"` never appear. Decision 0027 supersedes the earlier omission from #820, and INV-2 now says read-only scopes list writes as not callable.
+
+Deployments may notice two things. Members of a read-only scope now see the names, summaries and schemas of writes on connectors they can already read; a deployment that relied on the omission to keep a write's existence private must remove it from the scope with `"hidden"` or a narrower grant. The one-line `unknown_tool` note on these scopes, and the `search_tools` and `call_destructive_tool` descriptions on read-only endpoints, now say that refused writes are listed with `callable: false`, so hosts that remember approvals by description text may ask again on those endpoints. Writable scopes are unaffected. The retrieval eval's labels now accept the named Vercel project list and GitHub pull request list added in 0.50.0; that change is eval-only and deployments can ignore it.
+
+### Changed
+
+- Read-only scopes list the writes they refuse instead of hiding them. On a read-only endpoint, a `readOnly` connector, or a read-only pool's ungranted write, `search_tools`, describe, `connecta.search` and `connecta.describe` return each write with `classification: "write"` and `callable: false`, with a one-sentence summary. Calls are still refused with `read_only_endpoint` before validation or dispatch. A native pool's tool list still omits these writes, and tools outside the scope stay undiscoverable. The `unknown_tool` note on these scopes now says search lists refused writes with `callable: false`.
+- The retrieval eval accepts the named Vercel project list and GitHub pull request list where they answer a query, scores those queries as precise rather than raw-API hatch, and records the new baseline.
+
 ## 0.50.0 — 2026-11-15
 
 Connecta 0.50.0 makes agents more reliable at finding and calling the right tool. It fixes defects that real hosts hit in production, improves search ranking against a new deterministic retrieval eval, tightens the text hosts show to models, and gives programs more to work with when they fail or run low on budget. Pools, classification, secrecy and the meta-tool set are unchanged.
