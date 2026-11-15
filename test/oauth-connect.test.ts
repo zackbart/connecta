@@ -236,11 +236,25 @@ it("INV-7: connection starts and callbacks preserve retryable pre-auth refusals 
   expect(flow.finishAuth).toHaveBeenCalledTimes(1);
 });
 
+/** The operator UI's link keeps the unsealed v3 encoding; MCP handoffs are sealed. */
+async function operatorLink(flow: ReturnType<typeof setup>): Promise<{ authorizationUrl: string }> {
+  const response = await flow.app.fetch(
+    new Request(`${BASE}/ui/oauth/service?mode=continue`, {
+      method: "POST",
+      headers: { ...flow.headers("alice"), Origin: BASE },
+    }),
+    undefined,
+    flow.runtime("alice"),
+  );
+  return (await response.json()) as { authorizationUrl: string };
+}
+
 it("INV-4: rejects re-encoded payloads with the original valid signature and requests a fresh link", async () => {
   const flow = setup("clerk", "personal");
-  const { authorizationUrl } = await flow.authorize();
+  const { authorizationUrl } = await operatorLink(flow);
   const url = new URL(authorizationUrl);
   const [version, body, signature] = url.searchParams.get("h")!.split(".");
+  expect(version).toBe("v3");
   const signatureText = atob(signature!.replace(/-/g, "+").replace(/_/g, "/"));
   expect(await flow.vault.verifyOAuthHandoff!(`${version}.${body}`, signatureText)).toBe(true);
   const compact = atob(body!.replace(/-/g, "+").replace(/_/g, "/"));
@@ -278,7 +292,8 @@ it("INV-4: accepts pre-upgrade JSON tokens only with their original signature an
   const signature = await flow.vault.signOAuthHandoff!(payload);
   const url = new URL(`${BASE}/connect/service`);
   url.searchParams.set("h", `${payload}.${signature}`);
-  const fresh = await flow.authorize();
+  const fresh = await operatorLink(flow);
+  expect(fresh.authorizationUrl).toContain("?h=v3.");
   expect(fresh.authorizationUrl.length).toBeLessThan(url.href.length * 0.9);
   const modified = new URL(url);
   modified.searchParams.set("h", `${btoa(json.replace('"force":false', '"force":0'))}.${signature}`);
@@ -307,7 +322,7 @@ describe.each([
     expect(JSON.stringify(handoff)).not.toContain(AS);
     expect(handoff.authorizationUrl).not.toContain("%");
     const token = new URL(handoff.authorizationUrl).searchParams.get("h")!;
-    expect(token).toMatch(/^v3\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect(token).toMatch(/^v4\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     expect(token).not.toContain("=");
     const compact = atob(token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"));
     expect(() => JSON.parse(compact)).toThrow();

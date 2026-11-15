@@ -1392,9 +1392,10 @@ model until then. Two settings return the handoff instead:
   selects the handoff over a prompt; it grants nothing, and a request that
   forges it only loses its own prompt.
 
-Either way, the handoff links keep the identity binding described above, and
-pending prompt state from an earlier request still verifies and resolves as
-usual.
+Either way, the handoff links keep the identity binding described above and,
+like every `/connect` link an MCP endpoint issues from a sealing vault, are
+sealed so the agent sees no principal in them. Pending prompt state from an
+earlier request still verifies and resolves as usual.
 
 For an operator-managed credential, an explicit `authorize_connector` returns
 `recovery: "ready"` when the declared credential fields are configured. This

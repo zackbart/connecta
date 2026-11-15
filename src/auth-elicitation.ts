@@ -524,8 +524,6 @@ export class AuthElicitation {
               // The signed state bound these arguments, so this is the restart the
               // caller asked for, sharing the prompt's reset if that prompt was opened.
               const forced = tool === "authorize_connector" && force === true;
-              // The ordinary handoff, except that the link is the sealed form this
-              // client was already shown: the agent sees no principal in it.
               const handoff = yield* upwardStep(
                 authCall<AuthorizationHandoff>(authorizationHandoff, [
                   registry,

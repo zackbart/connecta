@@ -2941,13 +2941,14 @@ cannot restart pending consent. Failed starts remain single-use but do not block
 successful attempt. A link visited during the completion check continues the
 attempt that check is judging, and cannot reset it.
 
-The `/connect` link issued by the elicitation boundary encrypts its browser
-handoff with the vault's `seal`/`open` methods before signing it. The URL carries
+Every `/connect` link an MCP endpoint issues (in a URL elicitation, a refusal,
+an auth error's handoff, or `authorize_connector`) encrypts its browser handoff
+with the vault's `seal`/`open` methods before signing it. The URL carries
 neither principal identifiers nor credentials and authenticates no browser.
 The same principal and management checks apply to OAuth and credential-slot
 links. A credential-slot visit consumes its link and redirects to the
 same-origin operator UI, where credential mutation requires its own identity
-and Origin checks. Vaults without sealing keep ordinary handoffs and cannot
+and Origin checks. Vaults without sealing keep unsealed handoffs and cannot
 serve URL elicitation. See [authorization recovery](./meta-tools.md#authorization-recovery)
 for capability gating, retry termination, and dispatch restrictions.
 
@@ -3009,8 +3010,8 @@ still serve configured credentials. Both routes accept only GET, otherwise retur
 
 The fifteen-minute signed handoff carries connector ownership, initiating principal, deployment origin, nonce,
 restart mode, and, for a forced flow's later links, the flow they share a reset with. New links use versioned, length-prefixed fields instead of
-JSON, with unpadded base64url payload and signature segments. Ordinary handoffs use an opaque wire encoding,
-not encryption; URL elicitation also seals those fields as described above. Copy the complete URL unchanged.
+JSON, with unpadded base64url payload and signature segments. Operator UI links, and MCP links from a vault
+without sealing, use an opaque wire encoding, not encryption; other MCP links also seal those fields as described above. Copy the complete URL unchanged.
 The signature authenticates the exact version and payload text. Tampered or re-encoded links return
 `Invalid or expired connection link. Request a new link from connecta.` Pre-upgrade signed JSON and sealed
 v2 links still verify against their original text and expire after their original fifteen minutes. A link from

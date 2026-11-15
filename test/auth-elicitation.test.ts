@@ -281,9 +281,11 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
         code: "downstream_oauth_required",
         connector: "service",
         recovery: "oauth",
-        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
+        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=v4.`),
         nextAction: { url: error.authorizationUrl },
       });
+      const [, sealed] = new URL(error.authorizationUrl).searchParams.get("h")!.split(".");
+      expect(atob(sealed!.replace(/-/g, "+").replace(/_/g, "/"))).not.toMatch(/alice|[a-f0-9]{64}/);
       expect({ ...error, authorizationUrl: undefined, nextAction: undefined }).toEqual({
         ...expected,
         authorizationUrl: undefined,
@@ -297,7 +299,7 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
       expect(explicit.resultType).not.toBe("input_required");
       expect(explicit.structuredContent).toMatchObject({
         recovery: "oauth",
-        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
+        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=v4.`),
       });
 
       const bob = await flow.app.fetch(new Request(error.authorizationUrl, { headers: { Cookie: "__session=bob" } }));
@@ -322,7 +324,7 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(hidden.resultType).not.toBe("input_required");
     expect(hidden.structuredContent.error).toMatchObject({
       code: "downstream_oauth_required",
-      authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
+      authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=v4.`),
     });
     const shown = (await flow.rpc(undefined, undefined, { headers: { "X-Anthropic-Client": "ClaudeAI" } })).result;
     expect(shown.resultType).toBe("input_required");
@@ -410,9 +412,8 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     for (const field of ["connector", "recovery", "status", "instructions"])
       expect(refused[field]).toEqual(ordinary[field]);
     expect(new URL(refused.authorizationUrl).pathname).toBe(new URL(ordinary.authorizationUrl).pathname);
-    // The agent now sees this link, and the sealed form does not name the principal.
     expect(new URL(refused.authorizationUrl).searchParams.get("h")).toMatch(/^v4\./);
-    expect(new URL(ordinary.authorizationUrl).searchParams.get("h")).toMatch(/^v3\./);
+    expect(new URL(ordinary.authorizationUrl).searchParams.get("h")).toMatch(/^v4\./);
   });
 
   it("INV-4: a refused prompt on a native pool names no route and keeps the handoff", async () => {
