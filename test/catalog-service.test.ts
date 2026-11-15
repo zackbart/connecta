@@ -36,7 +36,7 @@ describe("request-scoped catalog cache", () => {
         tools: async (ctx) => {
           await ctx.credential!.get();
           await ctx.storage.get(oauthGrantKeys.grant);
-          return [{ name: "read_record", annotations: { readOnlyHint: true } }];
+          return [{ name: "read_record", description: `Read one ${id} record.`, annotations: { readOnlyHint: true } }];
         },
       }),
     );
