@@ -1607,7 +1607,8 @@ describe("stale catalog listing", () => {
     const readOnly = await f.discover(f.viewFor(hidden), (service) => service.search({ query: "" }), {
       readOnly: true,
     });
-    expect(readOnly.entries).toEqual([]);
+    expect(readOnly.entries.map((entry) => [entry.tool.name, entry.tool.callable])).toEqual([["read_next", false]]);
+    expect(readOnly.catalogErrors[0]?.stale).toBe(true);
   });
 
   it("INV-5 INV-8: another owner, a rotated credential or an invalidated generation finds no stale entry", async () => {
@@ -2832,7 +2833,7 @@ describe("pre-connect cached catalogs", () => {
           requestScope,
           probeTimeoutMs: 100,
           concurrency: 8,
-        }).listCatalogs(true, registry.listConnectors(), allowStale);
+        }).listCatalogs(registry.listConnectors(), allowStale);
       } finally {
         for (const connector of d.connectors)
           await connector.closeScope?.(registry.contextFor(connector.id, BASE, requestScope));

@@ -391,7 +391,6 @@ export class NativeSurface {
       requestSignal: options.requestSignal,
       probeTimeoutMs: options.probeTimeoutMs,
       concurrency: options.discoveryConcurrency,
-      // Listing omits a read-only endpoint's writes, as search does.
       readOnly: options.readOnly,
       defer: options.defer,
       // Declared schema descriptions read as this pool serves them.
@@ -723,7 +722,7 @@ export class NativeSurface {
                 authInvoke<({ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown })[]>(
                   self.catalog,
                   "listCatalogs",
-                  [true, connectors ?? self.registry.listConnectors(), allowStale],
+                  [connectors ?? self.registry.listConnectors(), allowStale],
                 ),
               );
               const claimed: { names: string[]; claim: NativeTool }[] = [];

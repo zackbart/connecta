@@ -768,7 +768,7 @@ if (only) process.exit();
           {
             name: "execute_code",
             description:
-              "Run a JavaScript program for every operation: search, call and combine the connected services' tools.\nRead-only endpoint: search and describe omit write tools, and every write call is refused.",
+              "Run a JavaScript program for every operation: search, call and combine the connected services' tools.\nRead-only endpoint: search and describe list writes with callable: false, and every write call is refused.",
           },
         ],
       },
@@ -809,7 +809,7 @@ if (only) process.exit();
       if (
         fixture.method === "tools/list" &&
         result.tools[0].description !==
-          "Run a JavaScript program for every operation: search, call and combine the connected services' tools.\nRead-only endpoint: search and describe omit write tools, and every write call is refused."
+          "Run a JavaScript program for every operation: search, call and combine the connected services' tools.\nRead-only endpoint: search and describe list writes with callable: false, and every write call is refused."
       )
         throw new Error("The code adapter changed Connecta's tool guidance");
       if (

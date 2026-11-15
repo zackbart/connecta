@@ -324,12 +324,12 @@ integration is ambiguous. `safety: "readOnly"` selects stored read verdicts;
 `"approvalRequired"` selects stored write verdicts; omitted or `"all"` selects
 both. Search and describe rows carry `classification`. These filters grant no
 authority and change no call admission decision. On a read-only endpoint or connector,
-search and describe omit write tools (`W12`): a write is absent from every
-filter, and describing one is `unknown_tool`. `connecta.skill` guides are not
-filtered and may name such a write; calling it is still refused with
+and for a read-only pool's write its `writes` does not grant, search and describe
+list the write with `classification: "write"` and `callable: false` (`W12`,
+[refused writes](./meta-tools.md#refused-writes)); calling it is refused with
 `read_only_endpoint`. Calling a name the scope's catalog lacks is `unknown_tool`,
-whose message there says search omits refused writes and that only a write's exact
-address returns `read_only_endpoint` ([meta-tools](./meta-tools.md#argument-recovery)).
+whose message there says search lists refused writes with `callable: false`
+([meta-tools](./meta-tools.md#argument-recovery)).
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`
 (declared properties only), and `outputKeys`: the names the rendered schema
@@ -1652,13 +1652,12 @@ See [argument echo rules](./meta-tools.md#echo-budgets) for supported schema sha
 `call_destructive_tool`; `call_tool` still accepts only reads and refuses a write
 with `destructive_tool_requires_approval`. Read-only endpoints annotate
 `execute_code` as read-only (`readOnlyHint: true, destructiveHint: false`),
-omit write tools from `search_tools`, `connecta.search`, and
-`connecta.describe`, and refuse every write call through `call_tool`,
+list write tools in `search_tools`, `connecta.search`, and
+`connecta.describe` with `callable: false`, and refuse every write call through `call_tool`,
 `call_destructive_tool`, and programs with `read_only_endpoint` before
-validation or dispatch. Guides and skills are documentation and may still name
-those tools. Both modes keep `execute_code` and every other meta tool; [`execute_read_code`](./meta-tools.md#read-programs) is listed only on writable meta endpoints.
+validation or dispatch. Both modes keep `execute_code` and every other meta tool; [`execute_read_code`](./meta-tools.md#read-programs) is listed only on writable meta endpoints.
 [Native pools](./meta-tools.md#native-tool-surface) list individual downstream
-tools and omit writes when read-only. They retain `execute_code` by default;
+tools and omit refused writes from that list when read-only. They retain `execute_code` by default;
 `executeCode: false` replaces it with `read_result`. Approval belongs to the client.
 `readOnly` grants no tool or connector access and cannot be set by guest code,
 request arguments, or a downstream catalog. `execute.approval`,

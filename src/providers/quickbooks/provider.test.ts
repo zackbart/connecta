@@ -279,7 +279,9 @@ it("INV-2: defaults read-only and refuses malformed writes before validation, au
     const registry = makeRegistry([connector]);
     const catalog = new CatalogService(registry, "https://connecta.example");
     const page = await catalog.search({ connector: "accounting", safety: "all" });
-    expect(page.entries.some((entry) => entry.tool.address === "accounting.create_customer")).toBe(readOnly === false);
+    const create = page.entries.find((entry) => entry.tool.address === "accounting.create_customer");
+    expect(create?.tool.classification).toBe("write");
+    expect(create?.tool.callable).toBe(readOnly === false ? undefined : false);
     const meta = createMetaTools(registry, "https://connecta.example", { readOnly: readOnly === false });
     const result = await meta.callDestructiveTool({
       address: "accounting.create_customer",

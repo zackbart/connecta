@@ -64,16 +64,21 @@ function connection(kind: "custom" | "api" | "mcp", readOnly?: boolean) {
 }
 
 describe.each(["custom", "api", "mcp"] as const)("%s connector readOnly", (kind) => {
-  it("INV-1 INV-2: omits non-read tools from discovery and refuses both direct call paths before dispatch", async () => {
+  it("INV-1 INV-2: lists non-read tools as not callable and refuses both direct call paths before dispatch", async () => {
     const state = connection(kind, true);
-    const registry = makeRegistry([state.connector]);
+    const registry = makeRegistry([state.connector], { classification: { notes: { contradiction: "hidden" } } });
     const service = new CatalogService(registry, BASE);
     const meta = createMetaTools(registry, BASE, { readOnly: false });
+    const writes = ["write", ...(kind === "api" ? [] : ["unknown"])];
     const page = await service.search({ connector: "notes", safety: "all" });
-    expect(page.entries.map((entry) => entry.tool.address)).toEqual(["notes.read"]);
-    for (const name of ["write", "contradiction", ...(kind === "api" ? [] : ["unknown"])]) {
+    expect(page.entries.map((entry) => [entry.tool.address, entry.tool.callable])).toEqual([
+      ["notes.read", undefined],
+      ...writes.map((name) => [`notes.${name}`, false]),
+    ]);
+    for (const name of writes) {
       const described = await service.describe({ address: `notes.${name}` });
-      expect(described[0]).toMatchObject({ error: expect.anything() });
+      expect(described[0]).toMatchObject({ classification: "write", callable: false });
+      expect(described[0]).not.toHaveProperty("error");
       for (const invoke of [meta.callTool, meta.callDestructiveTool]) {
         const result = await invoke({ address: `notes.${name}`, args: {} });
         expect(result.isError).toBe(true);
@@ -86,6 +91,19 @@ describe.each(["custom", "api", "mcp"] as const)("%s connector readOnly", (kind)
     expect(state.dispatched()).toBe(0);
     expect((await meta.callTool({ address: "notes.read" })).isError).not.toBe(true);
     expect(state.dispatched()).toBe(1);
+    expect(await service.describe({ address: "notes.contradiction" })).toMatchObject([
+      { errorDetails: { code: "unknown_tool" } },
+    ]);
+    for (const address of ["notes.contradiction", "notes.update_record"]) {
+      const guessed = await meta.callTool({ address, args: {} });
+      expect(guessed.structuredContent).toMatchObject({
+        error: {
+          code: "unknown_tool",
+          message: expect.stringContaining("Writes refused here are listed by search with callable: false."),
+        },
+      });
+    }
+    expect(state.dispatched()).toBe(1);
   });
 
   it("INV-2: defaults writable and connector false cannot reopen a read-only endpoint", async () => {
@@ -95,8 +113,14 @@ describe.each(["custom", "api", "mcp"] as const)("%s connector readOnly", (kind)
       const writable = createMetaTools(registry, BASE, { readOnly: false });
       expect((await writable.callDestructiveTool({ address: "notes.write" })).isError).not.toBe(true);
       const restricted = new CatalogService(registry, BASE, { readOnly: true });
-      expect((await restricted.search({ connector: "notes" })).entries.map((entry) => entry.tool.address)).toEqual([
-        "notes.read",
+      expect(
+        (await restricted.search({ connector: "notes", query: "" })).entries.map((entry) => [
+          entry.tool.address,
+          entry.tool.callable,
+        ]),
+      ).toEqual([
+        ["notes.read", undefined],
+        ...["write", ...(kind === "api" ? [] : ["unknown"]), "contradiction"].map((name) => [`notes.${name}`, false]),
       ]);
       const refused = await createMetaTools(registry, BASE, { readOnly: true }).callDestructiveTool({
         address: "notes.write",

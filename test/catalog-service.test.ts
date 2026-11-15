@@ -349,10 +349,18 @@ describe("request-scoped catalog cache", () => {
       const visible = await readOnly.search({ query: "record" });
       const readOnlyIndex = rank.mock.calls.at(-1)![0];
       expect(readOnlyIndex).not.toBe(firstIndex);
-      expect(visible.entries.map((entry) => entry.tool.name)).toEqual(["read_record"]);
+      expect(visible.entries.map((entry) => [entry.tool.name, entry.tool.callable])).toEqual([
+        ["read_record", undefined],
+        ["write_record", false],
+      ]);
       await readOnly.search({ query: "read record" });
       expect(rank.mock.calls.at(-1)![0]).toBe(readOnlyIndex);
-      expect((await readOnly.search({ query: "record", safety: "approvalRequired" })).entries).toEqual([]);
+      expect(
+        (await readOnly.search({ query: "record", safety: "approvalRequired" })).entries.map((entry) => [
+          entry.tool.name,
+          entry.tool.callable,
+        ]),
+      ).toEqual([["write_record", false]]);
     } finally {
       rank.mockRestore();
       for (const catalog of [service, nextRequest, readOnly]) openRequest(catalog.requestScope).close();

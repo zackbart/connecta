@@ -1148,8 +1148,8 @@ construction and must choose `true` or `false`. A pool inherits it unless the
 pool sets its own `readOnly`, in either direction. A person routed to their
 pool at plain `/mcp` gets that pool's effective `readOnly`. A writable endpoint lets
 `call_destructive_tool` and programs write, and the MCP client decides what to
-approve. On a read-only endpoint, write tools are absent from `search_tools`
-results, `connecta.search`, and `connecta.describe`, and `call_tool`,
+approve. On a read-only endpoint, `search_tools` results, `connecta.search`,
+and `connecta.describe` list write tools with `callable: false`, and `call_tool`,
 `call_destructive_tool`, and program writes are refused with
 `read_only_endpoint` before validation or dispatch. Reads, including reads
 through `call_destructive_tool`, still run.
@@ -1162,9 +1162,9 @@ list `execute_read_code` where a writable endpoint would, and report
 `call_destructive_tool`, programs, and on a native pool its own write tool,
 exactly as on a writable endpoint, and never through `call_tool` or a read
 program. Every other write is treated as a read-only connector's would be:
-absent from `search_tools`, `connecta.search`, `connecta.describe`, and the
-native tool list, and refused with `read_only_endpoint` before validation or
-dispatch, on `/mcp/<pool>`, `/agent/<pool>`, and a person's plain `/mcp`. A
+listed with `callable: false` by `search_tools`, `connecta.search`, and
+`connecta.describe`, absent from the native tool list, and refused with
+`read_only_endpoint` before validation or dispatch, on `/mcp/<pool>`, `/agent/<pool>`, and a person's plain `/mcp`. A
 write the vendor adds later is never in `writes`, so it stays refused. An exact
 write address in `tools` grants no write on a read-only pool; only `writes`
 does. A connector's own `readOnly: true` still refuses its writes there.

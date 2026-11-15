@@ -44,7 +44,7 @@ should call.
 | Access           | A pool limits the tools its members can reach; it lists only people or only agents.                                       |
 | Writes           | For tools marked as writes, once a change is sent, Connecta won't automatically send it again.                            |
 | Secrets          | Known secrets are redacted from agent output. Enable the credential vault to encrypt stored credentials and OAuth tokens. |
-| Read-only access | Read-only endpoints hide writes and refuse attempts to call them.                                                         |
+| Read-only access | Read-only endpoints show writes as not callable and refuse attempts to call them.                                         |
 
 Read-only protection and single-attempt writes depend on truthful tool labels.
 The AI app using Connecta decides when to ask for approval; a writable pool

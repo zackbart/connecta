@@ -236,7 +236,7 @@ states:
   never served read-annotated, because a host may resend a read-annotated call
   after a connection failure. `call_tool` refuses it with the next step, naming
   `call_destructive_tool`. It runs on `call_destructive_tool` and `execute_code`, and
-  read-only endpoints and connectors omit and refuse it. An operator warning names the override once per change in
+  read-only endpoints and connectors list it as not callable and refuse it. An operator warning names the override once per change in
   that runtime, across callers and principals.
 - **The source is silent** (no `readOnlyHint` and no `destructiveHint: true`): the
   override is the only evidence, so the tool serves as a read with read

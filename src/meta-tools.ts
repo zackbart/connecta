@@ -1101,7 +1101,7 @@ function metaToolsForRequest(
     responseCeilingMs?: number | undefined;
     /** When the inbound request arrived. Otherwise the ceiling counts from each call. */
     requestStartedAt?: number | undefined;
-    /** The endpoint refuses every write call and write page, and search and describe omit write tools. */
+    /** The endpoint refuses every write call and write page; search and describe list writes with `callable: false`. */
     readOnly?: boolean | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number | undefined;
@@ -1172,7 +1172,6 @@ function metaToolsForRequest(
   });
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
-    // search_tools never shows a read-only endpoint's writes.
     readOnly: opts.readOnly,
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
@@ -1786,7 +1785,7 @@ function metaToolsForRequest(
 // characters (https://github.com/anomalyco/opencode/issues/63603).
 const SEARCH_DESC = (readOnly: boolean, program: string) =>
   `${readOnly ? `Find a tool's address and schema in this read-only catalog; for read work, search inside one ${program} program.` : `Find a tool's address and schema in the catalog, mainly a write for ${META_ROUTES.write}; read work: ${program}.`}
-${readOnly ? "" : "A program searches, calls and returns the answer in one step. "}Use 2–4 action/object terms and includeSchemas="compact"; set connector when known; an empty query browses. safety filters by classification and grants nothing. Read catalogErrors and any absence before choosing a tool.`;
+${readOnly ? "Writes show callable: false; this endpoint refuses them. " : "A program searches, calls and returns the answer in one step. "}Use 2–4 action/object terms and includeSchemas="compact"; set connector when known; an empty query browses. safety filters by classification and grants nothing. Read catalogErrors and any absence before choosing a tool.`;
 const CALL_DESC = (readOnly: boolean, program: string) =>
   `Call one read-only tool whose connector.tool address you already know; other read work: ${program}.
 ${readOnly ? "It must be annotated readOnlyHint: true; this endpoint refuses every write." : `Tools not annotated readOnlyHint: true fail closed to ${META_ROUTES.write}.`} A truncated result carries nextAction.`;
@@ -1794,7 +1793,7 @@ const CALL_DESTRUCTIVE_DESC = `Run one write (any tool not annotated readOnlyHin
 Check the tool's schema and consequences, then include a short reason for the human reviewer; it grants nothing and is not sent downstream. Never resend a write to see its output.`;
 /** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */
 const CALL_DESTRUCTIVE_READ_ONLY_DESC = `This read-only endpoint refuses every write sent here; run reads with ${META_ROUTES.read} or ${META_ROUTES.program} instead.
-Search and describe omit write tools; a read sent here still runs.`;
+Search and describe list writes with callable: false; a read sent here still runs.`;
 const AUTHORIZE_DESC = `Request a connector's sign-in or credential handoff after auth_required, when the error carries no link to pass on.
 Also for a fresh link; an error's authorizationUrl or operatorUrl needs no call. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed on authentication or configuration, give the retained handoff to the operator; otherwise proceed with the call. force=true restarts OAuth when the verified user opens the /connect URL. Never accepts credentials.`;
 const NATIVE_GRANTED_MAX_BYTES = 1_024;

@@ -1065,7 +1065,12 @@ describe("pools serve exactly their tools", () => {
       rpc(c, path, user, name, { address, args: {}, ...(name === "call_destructive_tool" ? { reason: "test" } : {}) });
     const code = (outcome: any) => JSON.stringify(outcome).match(/"code":"([a-z_]+)"/u)?.[1];
     const search = async (path: string, user: User) =>
-      JSON.stringify(await rpc(c, path, user, "search_tools", { connector: "crm", query: "", limit: 20 }));
+      (
+        (await rpc(c, path, user, "search_tools", { connector: "crm", query: "", limit: 20 })) as any
+      ).result.structuredContent.tools.map((tool: { address: string; callable?: false }) => [
+        tool.address,
+        tool.callable,
+      ]);
     const list = async (path: string, user: User) =>
       (
         (await readJsonRpc(
@@ -1083,10 +1088,11 @@ describe("pools serve exactly their tools", () => {
     expect(meta.map((tool) => tool.name)).toContain("call_destructive_tool");
     expect(meta.find((tool) => tool.name === "execute_code")?.annotations?.destructiveHint).toBe(true);
     for (const path of ["/mcp/team", "/mcp"]) {
-      const found = await search(path, "bob");
-      expect(found).toContain("crm.find");
-      expect(found).toContain("crm.save");
-      expect(found).not.toContain("crm.drop");
+      expect(await search(path, "bob")).toEqual([
+        ["crm.find", undefined],
+        ["crm.save", undefined],
+        ["crm.drop", false],
+      ]);
       expect((await call(path, "bob", "call_destructive_tool", "crm.save")).result.isError).toBeFalsy();
       expect(code(await call(path, "bob", "call_destructive_tool", "crm.drop"))).toBe("read_only_endpoint");
       expect(code(await call(path, "bob", "call_tool", "crm.save"))).toBe("destructive_tool_requires_approval");
@@ -1094,19 +1100,21 @@ describe("pools serve exactly their tools", () => {
     expect(calls).toEqual(["save", "save"]);
 
     const described = (address: string, fns: Record<string, (...args: unknown[]) => Promise<unknown>>) =>
-      fns.describe!({ address }).then((value: any) => (value.tools[0].error ? "absent" : "shown"));
+      fns.describe!({ address }).then((value: any) =>
+        value.tools[0].error ? "absent" : value.tools[0].callable === false ? "not callable" : "shown",
+      );
     const refusal = (error: unknown) =>
       String(error).includes("this endpoint is read-only") ? "refused" : String(error);
     program = async (fns) => ({
       described: await described("crm.save", fns),
-      hidden: await described("crm.drop", fns),
+      refused: await described("crm.drop", fns),
       saved: await fns.call!("crm.save", {}).then(() => "sent", refusal),
       dropped: await fns.call!("crm.drop", {}).then(() => "sent", refusal),
     });
     const ran = (await rpc(c, "/mcp/team", "bob", "execute_code", { code: "async () => null" })).result;
     expect(ran.structuredContent.result).toEqual({
       described: "shown",
-      hidden: "absent",
+      refused: "not callable",
       saved: "sent",
       dropped: "refused",
     });
@@ -1118,10 +1126,16 @@ describe("pools serve exactly their tools", () => {
     expect(nativeNames.some((name) => name.endsWith("drop"))).toBe(false);
     expect((await rpc(c, "/mcp/native", "carol", nativeSave!, {})).result.isError).toBeFalsy();
     expect(calls).toEqual(["save", "save", "save", "save"]);
+    program = async (fns) =>
+      ((await fns.search!({ query: "" })) as any).tools.map(
+        (tool: { address: string; callable?: false }) => `${tool.address}${tool.callable === false ? " refused" : ""}`,
+      );
+    const nativeSearch = (await rpc(c, "/mcp/native", "carol", "execute_code", { code: "async () => null" })).result;
+    expect(nativeSearch.structuredContent.result).toEqual(["crm.find", "crm.save", "crm.drop refused"]);
 
     tools = [...tools, { name: "purge", annotations: { readOnlyHint: false, destructiveHint: true } }];
     await c.registry.invalidateStored("crm");
-    expect(await search("/mcp/team", "bob")).not.toContain("crm.purge");
+    expect(await search("/mcp/team", "bob")).toContainEqual(["crm.purge", false]);
     expect(code(await call("/mcp/team", "bob", "call_destructive_tool", "crm.purge"))).toBe("read_only_endpoint");
     expect((await list("/mcp/native", "carol")).some((tool) => tool.name.endsWith("purge"))).toBe(false);
     expect(calls).toEqual(["save", "save", "save", "save"]);

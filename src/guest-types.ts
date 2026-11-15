@@ -175,7 +175,7 @@ interface CatalogDescription {
   inputSchemaTruncated?: true;
   outputSchemaTruncated?: true;
   annotations?: ToolDef["annotations"];
-  /** In `execute_read_code`: false when this route refuses the tool because it can write. */
+  /** False when this endpoint, connector, pool or `execute_read_code` refuses the tool because it can write. */
   callable?: false;
   error?: string;
   errorDetails?: CatalogDescriptionFailureDetail;
@@ -199,7 +199,7 @@ type CatalogSearchTool = {
   outputKeys?: string[];
   annotations?: ToolDef["annotations"];
   classification?: ToolDef["classification"];
-  /** In `execute_read_code`: false when this route refuses the tool because it can write. */
+  /** False when this endpoint, connector, pool or `execute_read_code` refuses the tool because it can write. */
   callable?: false;
   guideRequired?: true;
   guideRequiredReasons?: GuideRequiredReason[];

@@ -247,7 +247,7 @@ describe("call_tool", () => {
     expect(tool.error.nextAction.arguments.connector).toBe("calc");
     expect(tool.error.nextAction.arguments.query.length).toBeLessThan(600);
 
-    // A typo names the near tool, as describe does, and a read-only scope never names a write.
+    // A typo names the near tool, as describe does, from the tools search lists, refused writes included.
     const nearby = makeRegistry([
       {
         id: "tickets",
@@ -268,10 +268,9 @@ describe("call_tool", () => {
     const readOnly = textOf(await createMetaTools(nearby, BASE, { readOnly: true }).callTool(typo)) as {
       error: { suggestions?: string[] };
     };
-    expect(readOnly.error.suggestions).toEqual(["tickets.get_ticket"]);
+    expect(readOnly.error.suggestions).toEqual(["tickets.get_ticket", "tickets.set_ticket"]);
     const readOnlyTools = createMetaTools(nearby, BASE, { readOnly: true });
-    const omitted =
-      "Search omits writes refused here; a write's exact address returns read_only_endpoint, not unknown_tool.";
+    const omitted = "Writes refused here are listed by search with callable: false.";
     for (const call of [readOnlyTools.callTool, readOnlyTools.callDestructiveTool]) {
       expect((await call({ address: "tickets.set_ticket" })).structuredContent).toMatchObject({
         error: { code: "read_only_endpoint" },
