@@ -433,6 +433,7 @@ it("projects opt-in deferred skills through real Eve with caller policy before a
 async function localConnecta(
   pool: Partial<NonNullable<Parameters<typeof createConnecta>[0]["pools"]>[string]>,
   run: (url: string, token: string) => Promise<void>,
+  deployment: Pick<Parameters<typeof createConnecta>[0], "execute"> = {},
 ) {
   const storage = memoryStorage();
   const token = (await new AccessTokenManager(storage, { agents: ["assistant"] }).rotate("assistant", "test")).token;
@@ -449,6 +450,7 @@ async function localConnecta(
       api("tickets", { tools: [{ name: "send_email", description: "Send an email", ...read }] }),
     ],
     executor: customExecutor({ execute: async () => ({ result: null }) }, { lifecycle: "self-managed" }),
+    ...deployment,
   });
   const server = createServer(async (req, res) => {
     const chunks = [];
@@ -493,23 +495,39 @@ function discovering(
 }
 
 const META_GUIDE = (name: string, reachable: string, readCode = false) =>
-  `Connecta tools are deferred: call eve__tool({ name: "${name}__<tool>", input }). Names in this guidance and in nextAction omit the "${name}__" prefix. Go straight to ${name}__${readCode ? "execute_read_code for lookups" : "execute_code"} without eve__search, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }.${readCode ? ` It refuses writes: make changes with ${name}__execute_code, or ${name}__call_destructive_tool for one known write.` : ""} eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program. Reachable: ${reachable}.`;
+  `Connecta tools are deferred: call eve__tool({ name: "${name}__<tool>", input }). Names in this guidance and in nextAction omit the "${name}__" prefix. Go straight to ${name}__${readCode ? "execute_read_code without eve__search for every program that writes nothing" : "execute_code without eve__search"}, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }.${readCode ? ` It runs the same programs as ${name}__execute_code but refuses writes; use it even where other instructions say execute_code. Use ${name}__execute_code only to change something, or ${name}__call_destructive_tool for one known write.` : ""} eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program. Reachable: ${reachable}.`;
 
 it("prefixes the server's text with the guide for each surface, from a real endpoint's facts", async () => {
-  const guide = async (pool: Parameters<typeof localConnecta>[0], connection?: string) => {
+  const guide = async (
+    pool: Parameters<typeof localConnecta>[0],
+    connection?: string,
+    deployment?: Parameters<typeof localConnecta>[2],
+  ) => {
     let content = "";
-    await localConnecta(pool, async (url, token) => {
-      const result = await turn(
-        connectaInstructions({ url, pool: "assistant", getToken: () => token, ...(connection ? { connection } : {}) }),
-      );
-      content = (result as { content: string }).content;
-    });
+    await localConnecta(
+      pool,
+      async (url, token) => {
+        const result = await turn(
+          connectaInstructions({
+            url,
+            pool: "assistant",
+            getToken: () => token,
+            ...(connection ? { connection } : {}),
+          }),
+        );
+        content = (result as { content: string }).content;
+      },
+      deployment,
+    );
     return content.replace(/^Connecta guidance:\n/, "").split("\n");
   };
   const [meta, metaServer] = await guide({});
   expect(meta).toBe(META_GUIDE("connecta", "crm, billing, tickets", true));
   expect(metaServer).toContain("Other read work: one execute_read_code program");
-  expect(Buffer.byteLength(meta!)).toBeLessThanOrEqual(740);
+  expect(Buffer.byteLength(meta!)).toBeLessThanOrEqual(880);
+  const [noReadRoute, noReadRouteServer] = await guide({}, undefined, { execute: { readRoute: false } });
+  expect(noReadRoute).toBe(META_GUIDE("connecta", "crm, billing, tickets"));
+  expect(noReadRouteServer).not.toContain("execute_read_code");
   const [readOnly, readOnlyServer] = await guide({ readOnly: true });
   expect(readOnly).toBe(META_GUIDE("connecta", "crm, billing, tickets"));
   expect(readOnlyServer).not.toContain("execute_read_code");

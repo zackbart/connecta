@@ -252,8 +252,10 @@ helper places an Eve guide before it, built from the endpoint's
 
 - **Meta pools:** call `eve__tool({ name: "connecta__execute_code", input })`
   directly, with a short example program. When the facts say `execute_read_code`
-  is listed, lookups go to `connecta__execute_read_code` instead, and changes to
-  `connecta__execute_code` or `connecta__call_destructive_tool`. `eve__search` sees the routing tools and
+  is listed, every program that writes nothing goes to
+  `connecta__execute_read_code` instead, even where other instructions name
+  `execute_code`, and only changes go to `connecta__execute_code` or
+  `connecta__call_destructive_tool`. `eve__search` sees the routing tools and
   never a downstream operation, so its empty result does not mean a capability is
   missing. Reachable connectors are listed by id.
 - **Native pools:** a read is `connecta__<connector>__<tool>` and a write
@@ -265,7 +267,14 @@ helper places an Eve guide before it, built from the endpoint's
   list.
 - **Older servers without facts:** only the naming rule.
 
-The guide adds about 600 bytes with three connectors, and about 730 with
+Your own agent instructions should route the same way. On a writable meta pool,
+name `execute_read_code` for questions, lookups and reports, and `execute_code`
+only for programs that change something. Instructions that send every question
+to `execute_code` keep the agent on the write route for work that writes
+nothing. A helper older than 0.48 does not read `executeReadCode` and sends every
+program to `execute_code`; install the helper matching your server.
+
+The guide adds about 600 bytes with three connectors, and about 875 with
 `execute_read_code`. Its roster stays under 512
 bytes: titles go first, then whole entries give way to a `+N more` count. Set
 `rosterMaxBytes` on `connectaInstructions` to change that cap; it must be a
