@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { AUTH_PROGRAM, HANDOFF_BASE, handoffFixture } from "./fixtures/authorization-handoff.js";
+import { AUTH_PROGRAM, HANDOFF_BASE, SHORT_CONNECT_LINK, handoffFixture } from "./fixtures/authorization-handoff.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { fixture as stripeFixture } from "../src/providers/stripe/fixtures.js";
@@ -32,10 +32,10 @@ it.each(["direct", "search"])(
     expect(error).toMatchObject({
       recovery: "oauth",
       nextAction: {
-        url: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v4.`),
+        url: expect.stringMatching(SHORT_CONNECT_LINK),
         purpose: expect.any(String),
       },
-      authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v4.`),
+      authorizationUrl: expect.stringMatching(SHORT_CONNECT_LINK),
       instructions: expect.any(String),
     });
     // The link goes on as it is, so what the agent passes along is what was signed.

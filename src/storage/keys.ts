@@ -430,12 +430,15 @@ export const oauthRefreshActiveKeys = {
   holder: (epoch: string, holder: string) => validateStorageKey(`oauth:refresh-active:${epoch}:${holder}`),
 } as const satisfies Keyed;
 
-/** Single-use browser links and forced resets (`used`/`started`/`failed`), and MRTR rounds. */
+/**
+ * Single-use browser links and forced resets (`used`/`started`/`failed`), MRTR
+ * rounds, and short links: a sealed, signed link under the SHA-256 of its id.
+ */
 export const oauthConnectKeys = {
   family: {
     name: "oauth-connect",
     scope: "connector",
-    prefixes: ["oauth:connect-used:", "oauth:connect-reset:", "oauth:request-used:"],
+    prefixes: ["oauth:connect-used:", "oauth:connect-reset:", "oauth:request-used:", "oauth:connect-link:"],
     version: { number: 1, in: "untagged" },
     codec: textCodec,
     // A link's remaining lifetime, fifteen minutes for a round, or thirty for a
@@ -446,6 +449,7 @@ export const oauthConnectKeys = {
   used: (nonce: string) => validateStorageKey(`oauth:connect-used:${nonce}`),
   reset: (flow: string) => validateStorageKey(`oauth:connect-reset:${flow}`),
   retry: (nonce: string) => validateStorageKey(`oauth:request-used:${nonce}`),
+  link: (digest: string) => validateStorageKey(`oauth:connect-link:${digest}`),
 } as const satisfies Keyed;
 
 /**

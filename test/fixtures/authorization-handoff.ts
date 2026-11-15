@@ -8,6 +8,7 @@ import { fakeClerkAuth, mcpRpc, readJsonRpc } from "./http.js";
 import { CREDENTIAL_KEY } from "./ui.js";
 
 export const HANDOFF_BASE = "https://connecta.test";
+export const SHORT_CONNECT_LINK = /^https:\/\/connecta\.test\/connect\/service\?h=[a-z2-7]{26}$/;
 export const AUTH_PROGRAM = `async () => {
   const calls = await Promise.all([1, 2, 3].map(async () => {
     try { return await connecta.call("service.read"); }
@@ -112,7 +113,7 @@ export async function checkAuthHandoffProgram(executor: Executor): Promise<void>
   try {
     const result = (await flow.rpc("execute_code", { code: AUTH_PROGRAM })).structuredContent.result;
     const error = result.calls[0].data;
-    expect(error).toMatchObject({ code: "downstream_oauth_required", recovery: "oauth", nextAction: { url: error.authorizationUrl, purpose: expect.stringContaining("Give this link to the user") }, authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v4.`), instructions: expect.any(String) });
+    expect(error).toMatchObject({ code: "downstream_oauth_required", recovery: "oauth", nextAction: { url: error.authorizationUrl, purpose: expect.stringContaining("Give this link to the user") }, authorizationUrl: expect.stringMatching(SHORT_CONNECT_LINK), instructions: expect.any(String) });
     for (const call of result.calls) {
       expect(call.data).toEqual(call.details);
       expect(call.data.authorizationUrl).toBe(error.authorizationUrl);

@@ -1,9 +1,10 @@
-import { decodeBase64url } from "./bytes.js";
+import { decodeBase64url, sha256Hex } from "./bytes.js";
 import { upwardStep } from "./upward.js";
-import { authCall, authInvoke, authFlow, authStorage, registerAuth } from "./auth/native.js";
+import { authCall, authInvoke, authFlow, authStorage, authValue, registerAuth } from "./auth/native.js";
 import { runEdge } from "./runtime/run.js";
 import type { ServerOptions } from "./routes/shared.js";
 import { oauthConnectKeys } from "./storage/keys.js";
+import type { KVStorage } from "./types.js";
 
 const HANDOFF_TTL_MS = 15 * 60_000;
 // A flow can issue a link until its ten-minute retry state ends, and that link lives
@@ -80,6 +81,37 @@ function decodeSegment(value: string): string {
   const decoded = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(decodeBase64url(value));
   if (encodeSegment(decoded) !== value) throw new Error("Noncanonical handoff encoding");
   return decoded;
+}
+
+const SHORT_LINK_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
+const SHORT_LINK = /^[a-z2-7]{26}$/;
+
+function shortLinkId(): string {
+  let id = "";
+  let bits = 0;
+  let value = 0;
+  for (const byte of crypto.getRandomValues(new Uint8Array(16))) {
+    value = ((value << 8) | byte) & 0xfff;
+    bits += 8;
+    for (; bits >= 5; bits -= 5) id += SHORT_LINK_ALPHABET[(value >>> (bits - 5)) & 31];
+  }
+  return id + SHORT_LINK_ALPHABET[(value << (5 - bits)) & 31];
+}
+
+function* shortLinkKey(id: string) {
+  return oauthConnectKeys.link(yield* upwardStep(authValue<string>(() => sha256Hex(id))));
+}
+
+function* storeShortLink(storage: KVStorage, token: string, expiresAtMs: number) {
+  const id = shortLinkId();
+  try {
+    const key = yield* shortLinkKey(id);
+    return (yield* upwardStep(authStorage<boolean>(storage, "compareAndSet", [key, null, token, { expiresAtMs }])))
+      ? id
+      : token;
+  } catch {
+    return token;
+  }
 }
 
 export function oauthConnectUnavailable(opts: Pick<ServerOptions, "config">): string | undefined {
@@ -181,8 +213,14 @@ const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
       // Preserve the vault's entire signature and its representation, including
       // custom vaults, while keeping every URL segment unpadded base64url.
       const signature = encodeSegment(yield* upwardStep(authInvoke<string>(vault, "signOAuthHandoff", [payload])));
+      const token = `${payload}.${signature}`;
       const url = new URL(`/connect/${connectorId}`, baseUrl);
-      url.searchParams.set("h", `${payload}.${signature}`);
+      url.searchParams.set(
+        "h",
+        opaque
+          ? yield* storeShortLink(opts.registry.contextFor(connectorId, baseUrl).storage, token, handoff.expiresAt)
+          : token,
+      );
       return { url: url.toString(), nonce: handoff.nonce };
     });
   },
@@ -246,6 +284,16 @@ const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
     return authFlow<Handoff | null>(function* () {
       if (!token || token.length > 4096) return null;
       try {
+        if (SHORT_LINK.test(token)) {
+          if (!opts.registry.getConnector(connectorId)) return null;
+          const stored = yield* upwardStep(
+            authStorage<string | null>(opts.registry.contextFor(connectorId, baseUrl).storage, "get", [
+              yield* shortLinkKey(token),
+            ]),
+          );
+          if (!stored?.startsWith("v4.")) return null;
+          token = stored;
+        }
         const parts = token.split(".");
         let h: Handoff;
         if (parts.length === 3 && (parts[0] === "v3" || parts[0] === "v4")) {
