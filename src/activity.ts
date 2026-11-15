@@ -1,4 +1,4 @@
-import { checkedActivityOperation } from "./operation-activity.js";
+import { checkedActivityOperation, operationEvent } from "./operation-activity.js";
 import { CONNECTA_VERSION } from "./version.js";
 import { assertKnownOptions, keys, optionsOf } from "./config-schema.js";
 import { routeActivity } from "./routes/activity.js";
@@ -129,13 +129,15 @@ export interface ActivityCatalogChange {
   changedTools: number;
 }
 
-export type ActivityOperationName = "search" | "describe" | "result" | "skill" | "program";
+export type ActivityOperationName = "search" | "describe" | "result" | "skill" | "program" | "authorize";
 export interface ActivityOperation {
   name: ActivityOperationName;
   /** Conservative endpoint scope, never caller-supplied addresses. */
   connectors: string[];
   personal: boolean;
   hostCalls?: { attempted: number; admitted: number; succeeded: number; failed: number };
+  /** Writes a program dispatched, by outcome. */
+  writes?: { succeeded: number; failed: number; unknown: number };
 }
 
 /** Integer metadata is checked at every write and read boundary. */
@@ -331,6 +333,8 @@ export interface ActivityRequestContext {
   pool?: string;
   serverInfo: { name: string; version: string };
   clientInfo?: { name: string; version: string };
+  /** The User-Agent product, recorded only when the request declared no clientInfo. */
+  userAgent?: { name: string; version?: string };
   deploymentId?: string;
   defer?: (promise: Promise<unknown>) => void;
   logger: Logger;
@@ -375,8 +379,9 @@ export function recordToolActivity(context: ActivityRequestContext | undefined, 
   const errorCode = classificationCode(input.errorCode);
   const friction = input.kind === "operation" ? undefined : (input.friction ?? agentFrictionForCode(errorCode));
   // Re-check client grammars at the record boundary; never spread the envelope.
-  const clientName = activityClientFact(context.clientInfo?.name, "name");
-  const clientVersion = activityClientFact(context.clientInfo?.version, "version");
+  const client = context.clientInfo ?? context.userAgent;
+  const clientName = activityClientFact(client?.name, "name");
+  const clientVersion = activityClientFact(client?.version, "version");
   const event: ToolCallActivityEvent = {
     schemaVersion: 1,
     id: crypto.randomUUID(),
@@ -477,33 +482,17 @@ export function activityHistory(options: ActivityHistoryOptions): ActivityModule
   };
 }
 
+export interface OperationRecordInput {
+  operation: ActivityOperation;
+  source?: "execute_read_code" | undefined;
+  durationMs: number;
+  resultBytes?: number | undefined;
+  outcome: ActivityOutcome;
+  errorCode?: ClassificationCode | undefined;
+}
+
 /** Operation records reuse the detached sink and accept no payload fields. */
-export function recordOperationActivity(
-  context: ActivityRequestContext,
-  input: {
-    operation: ActivityOperation;
-    source?: "execute_read_code" | undefined;
-    durationMs: number;
-    resultBytes?: number | undefined;
-    outcome: ActivityOutcome;
-    errorCode?: ClassificationCode | undefined;
-  },
-): void {
-  const operation = checkedActivityOperation(input.operation);
-  if (!operation) return;
-  const connectorId = operation.connectors.length === 1 ? operation.connectors[0]! : "$operation";
-  recordToolActivity(context, {
-    kind: "operation",
-    operation,
-    connectorId,
-    toolName: operation.name,
-    address: `${connectorId}.${operation.name}`,
-    source: input.source ?? "execute_code",
-    outcome: input.outcome,
-    durationMs: input.durationMs,
-    ...(input.resultBytes !== undefined ? { resultBytes: input.resultBytes } : {}),
-    attempts: 1,
-    ...(input.errorCode ? { errorCode: input.errorCode } : {}),
-    ...(operation.personal ? { privateCatalog: true } : {}),
-  });
+export function recordOperationActivity(context: ActivityRequestContext, input: OperationRecordInput): void {
+  const event = operationEvent(input);
+  if (event) recordToolActivity(context, event);
 }

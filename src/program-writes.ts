@@ -220,13 +220,18 @@ export class ProgramWrites {
     return { entries, truncated };
   }
 
-  finish(result: ToolResult, secrets: SentSecrets, maxResultChars: number): ToolResult {
-    if (this.states.length === 0) return result;
-    const writes: WriteCounts = {
+  /** Settled writes by outcome. */
+  counts(): WriteCounts {
+    return {
       succeeded: this.states.filter((state) => state === "ok").length,
       failed: this.states.filter((state) => state === "failed").length,
       unknown: this.states.filter((state) => state === "unknown").length,
     };
+  }
+
+  finish(result: ToolResult, secrets: SentSecrets, maxResultChars: number): ToolResult {
+    if (this.states.length === 0) return result;
+    const writes = this.counts();
     if (writes.unknown > 0) {
       // Caught or not, an authorization verdict a write met after it left is
       // the result, as a direct call reports it: its code and handoff, never

@@ -1346,7 +1346,8 @@ an address no connector owns. Ten tools called is ten events, as legible as ten
 `call_tool` calls, which makes moving work into the sandbox an optimization
 rather than a blindfold. An exhausted host-call budget is the exception: `L4`
 refuses that attempt above the invocation path, so it is charged but records no
-event.
+call event. The run's terminal budget stop is recorded once, as its program row
+(`V4`).
 
 **V2.** Each event carries `connectorId`, `toolName`, `address`, `source`,
 `outcome` (`success`, `error`, `timeout`, `cancelled`), `durationMs`,
@@ -1374,10 +1375,16 @@ fields that are otherwise operator- and connector-authored, so `connectorId`
 and `toolName` clamp at 128 UTF-8 bytes (`address` at 257) with a `…` marker:
 payload-free _by construction_ means the event has nowhere to put a payload.
 
-**V4.** By default the execution and its utility operations emit no events.
+**V4.** By default the execution and its utility operations emit no events,
+except a terminal budget stop: a run that a host-call, notice or
+emission-attempt budget ended adds one `program` row with
+`errorCode: "budget_exceeded"` whether or not operation history is on.
 With `activityHistory({ operations: true })`, each executed search, describe,
-result page and skill read adds a `kind: "operation"` row, and the whole program
-adds a `program` row with host-call counts. Utility attempts refused above the
+result page and skill read adds a `kind: "operation"` row, and every whole
+program adds one `program` row with its route as `source` (`execute_code` or
+`execute_read_code`), outcome and checked error code, duration, host-call
+counts, and write counts (`succeeded`, `failed`, `unknown`). A budget stop with
+history on is still that run's single `program` row. Utility attempts refused above the
 execution boundary remain represented by the program's host-call accounting.
 Rows use fixed operation names rather than argument-supplied addresses or IDs;
 they carry timings, typed outcomes/codes and serialized return byte counts,

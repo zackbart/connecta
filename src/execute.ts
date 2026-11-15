@@ -1468,14 +1468,9 @@ function sandboxProvider(
               : invoke;
             const operationEffect =
               activity?.recordOperation && ["search", "describe", "result", "skill"].includes(name)
-                ? operationActivity(
-                    activity,
-                    registry,
-                    name as "search" | "describe" | "result" | "skill",
-                    guarded,
-                    undefined,
-                    route === READ_PROGRAM_SOURCE ? route : undefined,
-                  )
+                ? operationActivity(activity, registry, name as "search" | "describe" | "result" | "skill", guarded, {
+                    source: route === READ_PROGRAM_SOURCE ? route : undefined,
+                  })
                 : guarded;
             const running = runEdge(
               operationEffect.pipe(
@@ -1755,6 +1750,7 @@ export function createExecuteTool(
     unawaited: { read: boolean },
     retention: { note?: string },
     ceiling: ResponseCeiling,
+    stop: { budget: boolean },
   ): Effect.Effect<ToolResult> =>
     Effect.suspend(() => {
       const sentSecrets = sentSecretsForRequest(requestScope);
@@ -1820,6 +1816,7 @@ export function createExecuteTool(
                 hostCalls,
                 onHostCallBudgetExceeded: (failure) => {
                   budgetFailure = failure;
+                  stop.budget = true;
                   Deferred.doneUnsafe(terminal, Effect.fail(failure));
                 },
                 emitCollector: emitted,
@@ -1999,6 +1996,7 @@ export function createExecuteTool(
         const programWrites = new ProgramWrites();
         const unawaited = { read: false };
         const retention: { note?: string } = {};
+        const stop = { budget: false };
         const ceiling = responseCeiling(
           programRoute(config.readProgram),
           config.requestStartedAt ?? Date.now(),
@@ -2026,6 +2024,7 @@ export function createExecuteTool(
             unawaited,
             retention,
             ceiling,
+            stop,
           );
         });
         return operationActivity(
@@ -2061,8 +2060,12 @@ export function createExecuteTool(
             Effect.catchDefect(Effect.fail),
             Effect.mapError((error) => redactAgentOutput(sentSecrets, error)),
           ),
-          () => ({ ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded }),
-          config.readProgram ? READ_PROGRAM_SOURCE : undefined,
+          {
+            counts: () => ({ ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded }),
+            writes: () => programWrites.counts(),
+            source: config.readProgram ? READ_PROGRAM_SOURCE : undefined,
+            budgetStopped: () => stop.budget,
+          },
         );
       }),
   );

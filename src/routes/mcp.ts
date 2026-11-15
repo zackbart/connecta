@@ -27,7 +27,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { Duration, Effect, Exit, Option, Result, Scope } from "effect";
 import type { ActivityActor, ActivityRequestContext } from "../activity.js";
-import type { McpClientContext } from "../mcp-client-context.js";
+import { userAgentClient, type McpClientContext } from "../mcp-client-context.js";
 import { registerExecuteTool } from "../execute.js";
 import { ExecutorAdmissionError, type AdmissionController, type AdmissionLease } from "../executor-admission.js";
 import { registerMetaTools } from "../meta-tools.js";
@@ -501,6 +501,7 @@ function serveMcp(
         },
       });
       servers.push(server);
+      const userAgent = userAgentClient(request.headers.get("User-Agent"));
       const activity: ActivityRequestContext | undefined = opts.config.activity?.store
         ? {
             sink: opts.config.activity?.store,
@@ -511,6 +512,7 @@ function serveMcp(
             requestId: crypto.randomUUID(),
             ...(pool !== undefined ? { pool } : {}),
             serverInfo: opts.config.serverInfo,
+            ...(userAgent ? { userAgent } : {}),
             ...(opts.config.activity?.deploymentId ? { deploymentId: opts.config.activity?.deploymentId } : {}),
             ...(runtimeContext?.waitUntil ? { defer: runtimeContext.waitUntil.bind(runtimeContext) } : {}),
             logger: opts.config.logger,

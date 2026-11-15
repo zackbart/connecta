@@ -259,7 +259,13 @@ and authenticated activity read route. Names match
 `[A-Za-z0-9][A-Za-z0-9._+-]{0,31}`, each as a whole string. Names allow up to
 64 characters, versions up to 32. `__proto__`, `constructor`, and `prototype`
 are reserved. Invalid values are absent, never truncated or escaped. Capabilities and other client metadata never enter activity.
-Legacy requests without an envelope leave client facts absent.
+A legacy (2025-era) request has no envelope, and its `initialize` arrives in
+an earlier stateless exchange that Connecta does not retain, so the clientInfo
+it declared cannot reach later calls. When a request declares no clientInfo,
+activity records the leading `product/version` token of its `User-Agent`
+header in the same two fields, under the same grammars; a product without a
+version records only `clientName`, and an absent or unmatched header leaves
+both absent. The header never reaches capabilities, identity or routing.
 Every emitted activity event also carries `packageVersion`, generated from
 `package.json` before build and independent of the display-only `serverInfo`.
 Doctor uses and reports that same generated version. SQL stores validate
