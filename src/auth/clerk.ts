@@ -562,12 +562,6 @@ function emailDomain(email: string): string | null {
   return isDomain(domain) ? domain.toLowerCase() : null;
 }
 
-/**
- * Clerk inbound auth.
- *
- * `organizationId`, `allowedDomains`, and `gate` decide who is admitted; each
- * configured check must pass.
- */
 function assertPublicUrl(value: unknown): void {
   if (value === undefined) return;
   let url: URL | undefined;
@@ -581,6 +575,12 @@ function assertPublicUrl(value: unknown): void {
   }
 }
 
+/**
+ * Clerk inbound auth.
+ *
+ * `organizationId`, `allowedDomains`, and `gate` decide who is admitted; each
+ * configured check must pass.
+ */
 export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   assertPublicUrl(opts.publicUrl);
   assertNoRetiredToolkitOptions("clerkAuth", opts);
