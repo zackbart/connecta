@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here.
 
+## 0.52.0 — 2026-11-15
+
+People now connect only at plain `/mcp`, and agents only at `/agent/<pool>`. Maintainers receive the whole catalog there and belong to no pool; every other person is listed in at most one pool, which plain `/mcp` serves them. `/mcp/<pool>` is removed: it answers the MCP 404 before authentication, and Clerk publishes protected-resource metadata only for `/mcp`.
+
+This release is breaking for deployments whose configuration lists a maintainer in a pool or a person in two pools: `createConnecta` now throws `ConfigError` naming the member. Remove maintainers from pool `members`, give each person exactly one pool (merge tool lists or give them a pool of their own), and repoint any human client still configured at `/mcp/<pool>` to `/mcp`, then reconnect. `describeConfig().peopleInSeveralPools` and the `ambiguous_pool` log reason are gone, `describeConfig().pools[].path` and the operator contract's `humanPath`/`agentPath` now name where each pool's members connect, saved Endpoints links move from `#mcp/<pool>` to `#pool:<pool>`, and `connecta doctor --pool` takes only agent tokens. `documentation/plain-mcp-upgrade.md` has the steps.
+
+Deployments whose people were already each in one pool and connected at `/mcp`, and agent-only deployments, need no configuration change. Agent pools, tokens and `/agent/<pool>` URLs are unchanged.
+
+### Removed
+
+- **Breaking:** People connect only at plain `/mcp`; `/mcp/<pool>` is removed and answers the MCP 404 before auth, and Clerk no longer publishes per-pool protected-resource metadata. Maintainers receive the whole catalog and belong to no pool; every other person is listed in at most one pool, which plain `/mcp` serves them. Construction throws `ConfigError` on a maintainer in a pool's `members` or a person in two pools. `describeConfig().peopleInSeveralPools`, its construction warning and the `ambiguous_pool` log reason are removed; `describeConfig().pools[].path` and `OperatorPoolV2.humanPath`/`agentPath` now name where each pool's members connect, with `null` for the other kind. `connecta doctor --pool` accepts only agent tokens. Agents keep `/agent/<pool>` unchanged. See `documentation/plain-mcp-upgrade.md`.
+
 ## 0.51.0 — 2026-11-15
 
 Connecta 0.51.0 changes how read-only scopes present the writes they refuse. On a read-only endpoint, a connector with `readOnly`, or a read-only pool that grants a connector's reads but not its writes, `search_tools`, describe, `connecta.search` and `connecta.describe` now list each in-scope write with `classification: "write"` and `callable: false` instead of omitting it. Agents asked to make a change on such a scope can find the real tool, call it, and receive a clean `read_only_endpoint` refusal to relay, rather than guessing a name, getting `unknown_tool` and telling the person the tool does not exist.
