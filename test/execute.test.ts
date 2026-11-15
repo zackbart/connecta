@@ -1410,6 +1410,85 @@ it.each([
   expect(reads).toHaveLength(1);
 });
 
+describe("connecta.budget (L9)", () => {
+  const ledger: Connector = connectorWith({
+    id: "ledger",
+    kind: "api",
+    tools: [
+      { name: "get", annotations: { readOnlyHint: true } },
+      { name: "record", annotations: { readOnlyHint: false } },
+    ],
+    call: async (name) => ({ tool: name }),
+  });
+  type Left = { hostCallsLeft: number; writesLeft: number; msLeft?: number };
+  type RunnerConfig = NonNullable<Parameters<typeof createExecuteTool>[5]>;
+  const run = (config: RunnerConfig, program: (fns: ExecutorProvider["fns"]) => Promise<unknown>) =>
+    createExecuteTool(
+      makeRegistry([ledger]),
+      BASE,
+      scriptedExecutor(program),
+      silentLogger,
+      undefined,
+      config,
+    )({
+      code: "",
+    });
+
+  it("reports the configured limits, counts a write at its gate, and spends nothing itself", async () => {
+    const seen: Left[] = [];
+    const out = await run({ maxHostCalls: 4, maxWrites: 1 }, async (fns) => {
+      const budget = async () => seen.push((await required(fns.budget)()) as Left);
+      await budget();
+      await required(fns.call)("ledger.record", {});
+      await budget();
+      await required(fns.call)("ledger.record", {}).catch(() => {});
+      for (let i = 0; i < 50; i++) await budget();
+      return "done";
+    });
+    expect(out.isError).toBeFalsy();
+    expect(seen.map(({ msLeft: _msLeft, ...counts }) => counts).slice(0, 3)).toEqual([
+      { hostCallsLeft: 4, writesLeft: 1 },
+      { hostCallsLeft: 3, writesLeft: 0 },
+      { hostCallsLeft: 2, writesLeft: 0 },
+    ]);
+    expect(seen.at(-1)).toMatchObject({ hostCallsLeft: 2, writesLeft: 0 });
+    for (const { msLeft } of seen) expect(Number.isSafeInteger(msLeft) && msLeft! > 0).toBe(true);
+    const body = required(out.structuredContent) as { hostCalls: unknown; calls: { outcome: string }[] };
+    expect(body.hostCalls).toEqual({ attempted: 2, admitted: 2, succeeded: 1, failed: 1 });
+    expect(body.calls.map(({ outcome }) => outcome)).toEqual(["success", "refused"]);
+  });
+
+  it("reports no writes left in a read program, whatever the write budget", async () => {
+    let left: unknown;
+    const out = await run(
+      { readProgram: true, routes: routeNames("read-route"), followUpRoutes: routeNames("read-route"), maxWrites: 5 },
+      async (fns) => {
+        await required(fns.call)("ledger.record", {}).catch(() => {});
+        left = await required(fns.budget)();
+        return "done";
+      },
+    );
+    expect(out.isError).toBeFalsy();
+    expect(left).toEqual({ hostCallsLeft: 19, writesLeft: 0, msLeft: expect.any(Number) });
+  });
+
+  it("delivers no counters once a budget stop has ended the run", async () => {
+    let seen: unknown;
+    const out = await run({ maxHostCalls: 1 }, async (fns) => {
+      void required(fns.call)("ledger.get", {}).catch(() => {});
+      void required(fns.call)("ledger.get", {}).catch(() => {});
+      seen = await Promise.race([
+        required(fns.budget)().catch(() => "rejected"),
+        new Promise((resolve) => setTimeout(() => resolve("withheld"), 50)),
+      ]);
+      return "must not be returned";
+    });
+    expect(out.isError).toBe(true);
+    expect(required(out.structuredContent).error).toMatchObject({ code: "budget_exceeded" });
+    expect(["withheld", "rejected"]).toContain(seen);
+  });
+});
+
 describe("program call log", () => {
   const ledger: Connector = connectorWith({
     id: "ledger",

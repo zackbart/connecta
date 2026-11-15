@@ -171,7 +171,7 @@ statements, and bare statement bodies are outside host recovery. QuickJS may
 wrap a bare body when driven directly; that is outside the portable contract.
 
 **P2.** The only capabilities in the contract are `connecta.search`,
-`connecta.describe`, `connecta.call`, `connecta.read`, `connecta.result`, `connecta.skill`, `connecta.emit`, and `console.log` /
+`connecta.describe`, `connecta.call`, `connecta.read`, `connecta.result`, `connecta.skill`, `connecta.budget`, `connecta.emit`, and `console.log` /
 `console.warn` / `console.error`, captured and returned. Anything else a runtime
 exposes is outside the portable contract and must not be used. QuickJS grants
 none of it. A loader-only Dynamic Worker denies external egress and filesystem
@@ -218,7 +218,7 @@ belonged to shortcut dispatch and stay retired; nothing reuses those ids.
 
 ## The surface
 
-Seven functions: `search`, `describe`, `call`, `read`, `result`, `skill`, and `emit`,
+Eight functions: `search`, `describe`, `call`, `read`, `result`, `skill`, `budget`, and `emit`,
 plus `skills`, an undeclared alias bound to the same host function as `skill`.
 All return awaitable values; emission also works without `await`. The namespace
 has no inherited members. Unknown properties are undefined, and calling them
@@ -599,6 +599,26 @@ connecta.emit(badge);
 
 The rich-output channel, delivered after the JSON envelope on success. Its
 clauses are [Emitted output](#emitted-output) (`M1`–`M10`).
+
+### connecta.budget
+
+```js
+async () => {
+  const contacts = [];
+  let cursor;
+  do {
+    const { hostCallsLeft, msLeft } = await connecta.budget();
+    if (hostCallsLeft < 1 || msLeft === 0) return { contacts, nextCursor: cursor };
+    const { data } = await connecta.call("crm.list_contacts", { cursor });
+    contacts.push(...data.contacts);
+    cursor = data.page.hasMore ? data.page.nextCursor : undefined;
+  } while (cursor);
+  return { contacts };
+};
+```
+
+Reports what this run has left, so a loop can return partial results itself
+before the terminal budget stop (`L4`). Its clause is `L9`.
 
 ## Errors
 
@@ -1059,7 +1079,7 @@ base64 text.
 exactly as much as the return value. Native forwarding preserves the raw
 downstream block through a host-issued reference, within `S5`, `L6` and `M5`.
 
-**M7.** `emit` alone spends no host-call budget (`L4`); `search`, `describe`,
+**M7.** Of the content functions, `emit` alone spends no host-call budget (`L4`); `search`, `describe`,
 `call`, `read`, `result`, and `skill` share it. Text also observes `R2`.
 
 **M8.** `emit` is a provider function. Guest-authored blocks cross as arguments;
@@ -1272,7 +1292,7 @@ because connecta enforces them above the sandbox:
 
 | Bound                                                                                                | Value                                                                                                                                                                                                                                                             |
 | ---------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Host calls per execution, shared by every guest call except `emit` and the single `unawaited` notice | 20 by default, `execute.maxHostCalls`                                                                                                                                                                                                                             |
+| Host calls per execution, shared by every guest call but `emit`, `budget` and the `unawaited` notice | 20 by default, `execute.maxHostCalls`                                                                                                                                                                                                                             |
 | Writes per run on a writable endpoint, on top of the host calls they also spend (`W10`)              | 10 by default, `execute.maxWrites`                                                                                                                                                                                                                                |
 | Deadline per host call                                                                               | `connecta.call`: its `timeoutMs`, else `calls.defaultTimeoutMs`, else `execute.hostCallTimeoutMs` (15 s); `result`, `skill` and `read`: `execute.hostCallTimeoutMs`. One deadline covers catalog resolution, admission, the connector call, and result processing |
 | Discovery page                                                                                       | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                                                                                                                                                                           |
@@ -1283,8 +1303,9 @@ because connecta enforces them above the sandbox:
 | Logs presented to the model                                                                          | 4,000 serialized characters                                                                                                                                                                                                                                       |
 
 For any tool whose output declares `page`, continue while `page.hasMore` is true.
-When approaching the program's host-call limit, return `page.nextCursor` before
-the call that would exceed it and continue in the next program with the same
+When approaching the program's host-call limit, which `connecta.budget()`
+reports (`L9`), return `page.nextCursor` before the call that would exceed it
+and continue in the next program with the same
 arguments and that cursor; don't restart.
 For example, return `{ nextCursor: result.page.nextCursor }` after reducing the
 current page, then pass that cursor to the tool in the next program.
@@ -1388,6 +1409,29 @@ program watchdog (`L3`). `execute_code`'s description states the host-call
 budget, the per-call deadline and, when the executor publishes one, the run
 deadline as `<n>s/run` — the ones a program must plan around before it runs. The result and log caps live here and in the truncation notice itself
 (`R2`, `R5`).
+
+**L9.** `connecta.budget()` resolves to this run's remaining bounds,
+`{ hostCallsLeft, writesLeft, msLeft }`, as exact non-negative integers read
+from the host's own counters when the call reaches the host:
+
+- `hostCallsLeft` is `execute.maxHostCalls` minus the host calls attempted so far
+  (`L4`), counted on entry like the budget itself, so a call not yet awaited
+  already counts. At 0 the next counted call ends the run with
+  `budget_exceeded`.
+- `writesLeft` is `execute.maxWrites` minus the writes sent so far (`W10`); a
+  write counts when its gate admits it, not when it is called. It is 0 on a
+  read-only endpoint and in `execute_read_code`, where every write is refused.
+- `msLeft` is the time left before the run stops sending calls: before reads stop
+  (`L3`), less the least time a call is sent with. At 0, every `connecta.call`,
+  read or write, is refused unsent with a retryable `timeout`. It is omitted only when the run has
+  no read deadline, which `execute_code` and `execute_read_code` always set.
+
+It spends no host call, emission attempt or write, has no attempt cap, enters
+neither activity nor the `calls` log (`R9`), and reports nothing beyond the
+run's own counters: no other run's, connector's or deployment's state. Calling
+it changes none of the values it reports. Like every guest function it returns
+a Promise; reading a field without `await` is the missing-await error (`E6`).
+After the run has ended (`L4`), it is withheld like every other host reply.
 
 ## Activity
 
@@ -1769,7 +1813,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `Y4`                   | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `L1`, `L2`             | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `L3`, `X1`             | `test/guest-api-contract.test.ts` (short-deadline executors, read caps, write exemption, the write gate, the final dispatch gate, a write on the wire at the ceiling and a stall after a write), `test/node.node.test.ts` (upload counts against the ceiling, arrival comes only from the host), `test/program-writes.test.ts` (what makes a failed program retryable), `test/meta-tools-call.test.ts` (direct and native calls at the final gate and under the dispatch floor), `test/execute.test.ts` (calls and reads under the dispatch floor), `test/invocation-pipeline.test.ts` (the physical-send check after a remote MCP reconnect or an `api()` credential refresh, with a wrapper control), `test/remote-mcp-write-once.test.ts` and `test/api-oauth.test.ts` (a read sent once whose replay after a 401 and a refresh is refused stays sent), `test/request-admission.test.ts` (a 65 s downstream behind a 60 s client on a fake clock, with the old ceiling as its control), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value) |
-| `L4`, `L8`             | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `L4`, `L8`, `L9`       | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors; `budget()` counters, read-only and read-program writes, and the out-of-time zero)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `L5`, `L7`, `X2`       | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue), `test/executor-requests.test.ts` (queued handoffs and refusal shape across separate workerd requests), `test/request-context.node.test.ts` (queued and QuickJS host-call request context)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/storage-sql-d1.test.ts` (SQL stash and native D1 fault probes), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `V1`–`V4`              | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no execution event by default), `test/identity-write-journey.node.test.ts` (opt-in real-program utility/program rows, payload exclusion and detached writes), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/browser/operator-ui.spec.ts` (identity changes), `test/sql-storage-contract.ts`, run by `test/sqlite-storage.node.test.ts` (historical activity rows still round-trip)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -1806,13 +1850,15 @@ declaration and names the functions that spend no host call.
 | `read`      | `hostCall` | Reads one advertised resource URI.                                       |
 | `result`    | `hostCall` | Reads a retained result whole, or pages it by page or UTF-8 byte offset. |
 | `skill`     | `hostCall` | Fetches a skill's text by exact name.                                    |
+| `budget`    | `none`     | Reports the run's remaining host calls, writes, and time to send calls.  |
 | `emit`      | `emission` | Forwards a content block to the client; needs no await.                  |
 | `unawaited` | `once`     | Tells the host a program read a result field off an unawaited call.      |
 
 A `hostCall` function spends one host call on entry (`L4`, `M7`) and returns a
 Promise whose result fields mark an unawaited read. The runtime wraps
 `provider.<name>`, or its own local of that name when the entry is `wrapped`,
-as `call` is. An `emission` function spends none, is bounded by the emission
+as `call` is. A `none` function spends nothing and has no attempt cap, so
+it may only read the run's own state and must change nothing it reports. An `emission` function spends none, is bounded by the emission
 collector and an attempt cap, and returns a tracked thenable. A `once`
 function accepts one call per run, ends the run on a second, and is called only
 by the runtime, never from the namespace.

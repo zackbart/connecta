@@ -218,7 +218,7 @@ export function guestInitializer(): string {
   // Result fields read off an unawaited host call flag the run, still undefined.
   let unawaited = false;
   const fields = {};
-  for (const key of ["data", "format", "content", "tools", "catalogErrors", "total", "text", "resultId", "hasMore", "nextOffset"])
+  for (const key of ["data", "format", "content", "tools", "catalogErrors", "total", "text", "resultId", "hasMore", "nextOffset", "hostCallsLeft", "writesLeft", "msLeft"])
     fields[key] = { get() { unawaited = true; } };
   const hosted = (fn) => function () {
     const promise = apply(fn, undefined, arguments);

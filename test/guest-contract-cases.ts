@@ -3608,6 +3608,113 @@ return fs;
     },
   },
   {
+    clauses: "L9, L4, W10, R9",
+    name: "budget() reports exact remaining host calls and writes and spends neither",
+    code: `async () => {
+      const start = await connecta.budget();
+      await connecta.call("reader.read", { value: "a" });
+      const afterRead = await connecta.budget();
+      await connecta.call("reader.wipe");
+      const afterWrite = await connecta.budget();
+      const pending = connecta.call("reader.read", { value: "b" });
+      const whilePending = await connecta.budget();
+      await pending;
+      return { start, afterRead, afterWrite, whilePending, again: await connecta.budget() };
+    }`,
+    check(outcome, state) {
+      const result = record(outcome) as Record<string, { hostCallsLeft: number; writesLeft: number; msLeft: number }>;
+      const left = (key: string) => {
+        const { msLeft: _msLeft, ...counts } = required(result[key]);
+        return counts;
+      };
+      expect(left("start")).toEqual({ hostCallsLeft: 20, writesLeft: 10 });
+      expect(left("afterRead")).toEqual({ hostCallsLeft: 19, writesLeft: 10 });
+      expect(left("afterWrite")).toEqual({ hostCallsLeft: 18, writesLeft: 9 });
+      expect(left("whilePending")).toEqual({ hostCallsLeft: 17, writesLeft: 9 });
+      expect(left("again")).toEqual({ hostCallsLeft: 17, writesLeft: 9 });
+      const times = ["start", "afterRead", "afterWrite", "whilePending", "again"].map(
+        (key) => required(result[key]).msLeft,
+      );
+      for (const ms of times) expect(Number.isSafeInteger(ms) && ms > 0).toBe(true);
+      expect([...times].sort((a, b) => b - a)).toEqual(times);
+      expect(outcome.value.hostCalls).toEqual({ attempted: 3, admitted: 3, succeeded: 3, failed: 0 });
+      expect((outcome.value.calls as { address: string }[]).map(({ address }) => address)).toEqual([
+        "reader.read",
+        "reader.wipe",
+        "reader.read",
+      ]);
+      expect(state.calls).toMatchObject({ "reader.read": 2, "reader.wipe": 1 });
+    },
+  },
+  {
+    clauses: "L9, L4",
+    name: "a loop that checks budget() returns its partial results instead of a budget stop",
+    code: `async () => {
+      const echoes = [];
+      for (let index = 0; index < 213; index += 1) {
+        if ((await connecta.budget()).hostCallsLeft === 0) return { echoes, nextIndex: index };
+        echoes.push((await connecta.call("reader.read", { value: String(index) })).data.echo);
+      }
+      return { echoes };
+    }`,
+    check(outcome, state) {
+      expect(record(outcome)).toEqual({
+        echoes: Array.from({ length: 20 }, (_, index) => String(index)),
+        nextIndex: 20,
+      });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 20, admitted: 20, succeeded: 20, failed: 0 });
+      expect(state.calls["reader.read"]).toBe(20);
+    },
+  },
+  {
+    clauses: "L9, W12",
+    name: "budget() reports no writes left on a read-only endpoint",
+    readOnly: true,
+    code: `async () => await connecta.budget()`,
+    check(outcome) {
+      expect(record(outcome)).toEqual({ hostCallsLeft: 20, writesLeft: 0, msLeft: expect.any(Number) });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
+    },
+  },
+  {
+    clauses: "L9, L3",
+    name: "budget() reports no time left once calls are refused unsent",
+    runDeadline: true,
+    code: `async () => {
+      const first = (await connecta.budget()).msLeft;
+      const hung = await connecta.call("hang.read", {}, { timeoutMs: 600000 }).catch((err) => err.code);
+      const after = await connecta.budget();
+      const late = await connecta.call("reader.read", { value: "late" }).catch((err) => err.code);
+      return { first, hung, after, late };
+    }`,
+    check(outcome, state) {
+      const result = record(outcome) as { first: number };
+      expect(result).toMatchObject({
+        hung: "timeout",
+        after: { hostCallsLeft: 19, writesLeft: 10, msLeft: 0 },
+        late: "timeout",
+      });
+      expect(result.first).toBeGreaterThan(0);
+      expect(result.first).toBeLessThan(2_000);
+      expect(state.calls["reader.read"] ?? 0).toBe(0);
+    },
+  },
+  {
+    clauses: "L9, E6",
+    name: "INV-6: program errors name a missing await on budget()",
+    code: `async () => {\nreturn connecta.budget().hostCallsLeft.toFixed();\n}`,
+    check(outcome) {
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "TypeError",
+          hint: "connecta.* returns a Promise; await it: (await connecta.call(address, args)).data.",
+        },
+      });
+      expect(outcome.value.hostCalls).toEqual({ attempted: 0, admitted: 0, succeeded: 0, failed: 0 });
+    },
+  },
+  {
     clauses: "P2, X5",
     name: "pins the portable ambient-authority boundary",
     code: CAPABILITY_PROBE_CODE,

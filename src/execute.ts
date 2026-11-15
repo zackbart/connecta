@@ -1189,6 +1189,14 @@ function sandboxProvider(
       if (limits.unawaited) limits.unawaited.read = true;
     },
     call,
+    budget: () =>
+      Effect.sync(() => ({
+        hostCallsLeft: Math.max(0, maxHostCalls - hostCalls.attempted),
+        writesLeft: limits.readOnly || limits.readProgram ? 0 : Math.max(0, maxWrites - writes),
+        ...(limits.readDeadlineAt === undefined
+          ? {}
+          : { msLeft: Math.max(0, Math.trunc(limits.readDeadlineAt - floorMs - Date.now())) }),
+      })),
     result: (id, options, signal, onStage) => {
       const finished = typeof id === "string" ? transfers.get(id) : undefined;
       if (finished?.finished) {

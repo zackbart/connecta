@@ -53,6 +53,12 @@ export const GUEST_FUNCTIONS = [
     alias: { name: "skills", note: "models write connecta.skills, the top-level tool's name." },
     declaration: "skill(name: string): Promise<{ text: string }>;",
   },
+  /** Reports the run's remaining host calls, writes, and time to send calls. */
+  {
+    name: "budget",
+    budget: "none",
+    declaration: "budget(): Promise<{ hostCallsLeft: number; writesLeft: number; msLeft?: number }>;",
+  },
   /** Forwards a content block to the client; needs no await. */
   {
     name: "emit",
@@ -90,6 +96,14 @@ type GuestFunction =
     })
   | (GuestFunctionBase & {
       /**
+       * Spends no host call and has no attempt cap: it only reads the run's
+       * own counters, so calling it changes nothing it reports.
+       */
+      budget: "none";
+      declaration: string;
+    })
+  | (GuestFunctionBase & {
+      /**
        * Spends no host call; the emission collector and an attempt cap bound it.
        * Returns a tracked thenable whose unhandled rejection fails the run.
        */
@@ -114,7 +128,9 @@ interface GuestFunctionBase {
 export type GuestFunctionSpec = (typeof GUEST_FUNCTIONS)[number];
 
 /** Public guest functions that spend no host call, for the agent-facing text. */
-export const UNCOUNTED_GUEST_FUNCTIONS = GUEST_FUNCTIONS.filter((fn) => fn.budget === "emission")
+export const UNCOUNTED_GUEST_FUNCTIONS = GUEST_FUNCTIONS.filter(
+  (fn) => fn.budget === "none" || fn.budget === "emission",
+)
   .map((fn) => fn.name)
   .join(" and ");
 
