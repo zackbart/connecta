@@ -98,7 +98,8 @@ async function fixture(
     onStalled?: () => void;
   } = {},
 ) {
-  const store = await storage();
+  const openStorage = await database();
+  const store = openStorage();
   const id = `catalog_${crypto.randomUUID().replaceAll("-", "")}`;
   let tokenA = TOKEN_A;
   let listings = 0;
@@ -113,7 +114,8 @@ async function fixture(
     | "header"
     | "paged"
     | "stalled"
-    | "renamed" = "ok";
+    | "renamed"
+    | "destructive" = "ok";
   let resolvedTokens = 0;
   const stalled = new Set<() => void>();
   const requests: string[] = [];
@@ -178,7 +180,8 @@ async function fixture(
                   ...(mode === "header" ? { bad: { type: "object", "x-mcp-header": "bad private declaration" } } : {}),
                 },
               },
-              annotations: { readOnlyHint: true },
+              annotations:
+                mode === "destructive" ? { readOnlyHint: false, destructiveHint: true } : { readOnlyHint: true },
             },
           ],
         },
@@ -201,9 +204,9 @@ async function fixture(
           },
     });
   const connector = newConnector();
-  const registry = (instance = connector) =>
+  const registry = (instance = connector, instanceStorage = store) =>
     new Registry([instance], {
-      storage: store,
+      storage: instanceStorage,
       logger: silentLogger,
       toolCacheTtlSeconds: options.fallback ?? 300,
       catalogMinTtlSeconds: options.min ?? 0,
@@ -255,6 +258,7 @@ async function fixture(
   };
   return {
     store,
+    openStorage,
     id,
     connector,
     newConnector,
@@ -1397,6 +1401,110 @@ it("INV-9 INV-8: stale tool fallback preserves expiry, remains partitioned and e
   now += 300_000;
   await expect(f.read(root)).rejects.toMatchObject({ code: "connector_call_failed" });
 });
+
+it("INV-1 INV-8: a request relists a failed or stale revalidation once, and keeps a fresh or zero-TTL catalog's rules", async () => {
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const revalidatingCalls = async (
+    f: Awaited<ReturnType<typeof fixture>>,
+    root: Registry,
+    steps: Array<() => void>,
+  ) => {
+    const before = f.listings();
+    const resolved = await f.discover(f.viewFor(root), async (service) => {
+      const results = [];
+      for (const step of steps) {
+        step();
+        results.push(await runEdge(service.resolve(`${f.id}.read`, {}, true)));
+      }
+      return results;
+    });
+    return {
+      outcomes: resolved.map((resolution) => (resolution.ok ? "ok" : resolution.error.code)),
+      listings: f.listings() - before,
+    };
+  };
+  const expire = (f: Awaited<ReturnType<typeof fixture>>, mode: Parameters<typeof f.mode>[0]) => () => {
+    now += 1_100;
+    f.mode(mode);
+  };
+  const keep = () => {};
+
+  const refused = await fixture({ ttl: 1_000 });
+  const refusedRoot = refused.registry();
+  await refused.read(refusedRoot);
+  expect(await revalidatingCalls(refused, refusedRoot, [keep, expire(refused, "error"), keep, keep, keep])).toEqual({
+    outcomes: ["ok", ...Array(4).fill("provider_permission_denied")],
+    listings: 1,
+  });
+
+  const unavailable = await fixture({ ttl: 1_000 });
+  const unavailableRoot = unavailable.registry();
+  await unavailable.read(unavailableRoot);
+  const pastFallback = () => {
+    now += 300_000;
+  };
+  expect(
+    await revalidatingCalls(unavailable, unavailableRoot, [
+      keep,
+      expire(unavailable, "transient"),
+      keep,
+      keep,
+      pastFallback,
+      keep,
+    ]),
+  ).toEqual({
+    outcomes: ["ok", "ok", "ok", "ok", "connector_call_failed", "connector_call_failed"],
+    listings: 2,
+  });
+
+  const zeroTtl = await fixture({ ttl: 0 });
+  expect(await revalidatingCalls(zeroTtl, zeroTtl.registry(), [keep, keep, keep, keep, keep])).toEqual({
+    outcomes: Array(5).fill("ok"),
+    listings: 5,
+  });
+
+  const fresh = await fixture({ ttl: 60_000 });
+  const freshRoot = fresh.registry();
+  await fresh.read(freshRoot);
+  expect(await revalidatingCalls(fresh, freshRoot, [keep, keep, keep, keep, keep])).toEqual({
+    outcomes: Array(5).fill("ok"),
+    listings: 0,
+  });
+});
+
+it.each(["error", "transient"] as const)(
+  "INV-1 INV-8: a request reads another isolate's newer catalog before reusing its failed or stale revalidation (%s)",
+  async (failure) => {
+    let now = Date.now();
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const f = await fixture({ ttl: 1_000 });
+    const mine = f.registry();
+    const theirs = f.registry(f.newConnector(), f.openStorage());
+    await f.read(mine);
+    const before = f.listings();
+    const classifications = await f.discover(f.viewFor(mine), async (service) => {
+      const resolve = async () => {
+        const resolution = await runEdge(service.resolve(`${f.id}.read`, {}, true));
+        return resolution.ok ? resolution.resolved.definition.classification : resolution.error.code;
+      };
+      const seen = [await resolve()];
+      now += 1_100;
+      f.mode(failure);
+      seen.push(await resolve(), await resolve());
+      f.mode("destructive");
+      await f.read(theirs);
+      f.mode(failure);
+      seen.push(await resolve(), await resolve());
+      return seen;
+    });
+    const settled = failure === "error" ? "provider_permission_denied" : "read";
+    expect({ classifications, listings: f.listings() - before }).toEqual({
+      classifications: ["read", settled, settled, "write", "write"],
+      listings: 2,
+    });
+  },
+);
 
 describe("stale catalog listing", () => {
   const search = (service: CatalogService) => service.search({ query: "read" });

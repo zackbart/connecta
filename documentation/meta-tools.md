@@ -183,6 +183,15 @@ that fails transiently resolves the call through the bounded stale fallback in
 [architecture](./architecture.md#storage-credentials-and-connectors), so while a
 downstream cannot list, the bound extends by at most five minutes.
 
+A relisting that cannot list is not repeated within the request. Before each of
+its later such calls to that connector, the stored catalog is read again, from
+storage only. Unless storage holds a newer catalog, a different one, or none the
+call could fall back to, the call admits against the same stale fallback until
+that fallback's five minutes end, then lists once more; after a relisting that
+failed with no fallback, it is refused with the same error. Otherwise it is
+listed again and admitted against what that listing returns, so a catalog
+another instance published meanwhile is the one it admits against.
+
 Every other call keeps the catalog its request retained, with no relisting:
 writable `execute_code` and `call_destructive_tool` to an unrestricted connector
 or a granted write, whose host approval covers the whole program or call, and
