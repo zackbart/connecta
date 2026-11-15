@@ -15,6 +15,8 @@ export interface GuestApi {
     options?: { page?: number; offset?: number; maxBytes?: number },
   ): Promise<GuestResultPage>;
   skill(name: string): Promise<{ name: string; text: string; format: "text" }>;
+  /** What this run has left; spends no host call. `msLeft` reaches 0 when calls are refused unsent. */
+  budget(): Promise<{ hostCallsLeft: number; writesLeft: number; msLeft?: number }>;
   /** Forwards an authored block or original native call content; data-only results and paged handles are refused. */
   emit(
     block: GuestNativeBlock | (Exclude<GuestResult, GuestResultHandle> & { content: GuestNativeBlock[] }),

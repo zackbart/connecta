@@ -1189,6 +1189,18 @@ function sandboxProvider(
       if (limits.unawaited) limits.unawaited.read = true;
     },
     call,
+    // workerd runs no timer while a guest awaits back-to-back RPC replies, so a
+    // polling loop would starve both deadlines; replying after a timer turn yields.
+    budget: () =>
+      Effect.sleep(Duration.millis(1)).pipe(
+        Effect.map(() => ({
+          hostCallsLeft: Math.max(0, maxHostCalls - hostCalls.attempted),
+          writesLeft: limits.readOnly || limits.readProgram ? 0 : Math.max(0, maxWrites - writes),
+          ...(limits.readDeadlineAt === undefined
+            ? {}
+            : { msLeft: Math.max(0, Math.trunc(limits.readDeadlineAt - floorMs - Date.now())) }),
+        })),
+      ),
     result: (id, options, signal, onStage) => {
       const finished = typeof id === "string" ? transfers.get(id) : undefined;
       if (finished?.finished) {

@@ -75,6 +75,8 @@ async () => {
 Host-call budget exhaustion ends the run with budget_exceeded. Catch and
 allSettled cannot recover it or return partial output. Bound batches before
 starting them; every guest call except ${UNCOUNTED_GUEST_FUNCTIONS} spends host calls.
+\`await connecta.budget()\` returns this run's \`{ hostCallsLeft, writesLeft, msLeft }\`;
+a loop returns what it has, with a cursor, before they run out.
 Split remaining reads. Never replay writes for their output.
 
 ## Per-connector guides

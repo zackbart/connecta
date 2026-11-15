@@ -280,14 +280,16 @@ const BUDGETS = {
     call_destructive_tool: 350,
     // Grew to say when no call is needed: an auth error that already carries its link.
     authorize_connector: 580,
-    // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial.
-    execute_code: 3_030,
+    // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial,
+    // then 97 for connecta.budget(), which lets a program return partial results before a terminal budget stop.
+    execute_code: 3_130,
     // Carries the same inventory: a host may load only this tool for read work.
     execute_read_code: 790,
   },
   // Open summaries: the full contracts stay on the server, in meta-output.ts.
   outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170, execute_read_code: 170 },
-  usage: 5_500,
+  // Grew 161 characters to name connecta.budget() beside the host-call rule.
+  usage: 5_690,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
   searchPage: { default: 470, compact: 730 },
