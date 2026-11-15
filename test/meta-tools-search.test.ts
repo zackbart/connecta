@@ -448,7 +448,7 @@ describe("search_tools", () => {
     }
   });
 
-  it("ranks reads above writes after a read-intent leading verb without hiding writes", async () => {
+  it("ranks reads above writes unless the query states a write, without hiding writes", async () => {
     const hosting: Connector = connectorWith({
       id: "hosting",
       kind: "api",
@@ -473,17 +473,44 @@ describe("search_tools", () => {
       ((textOf(await mt.searchTools({ query })) as SearchResult).tools ?? []).map(
         (tool) => `${tool.name}:${tool.classification}`,
       );
-    // Lexically the write's name is the stronger match.
-    expect((await ranked("project settings"))[0]).toBe("update_project_settings:write");
-    for (const query of ["show project settings", "list project settings", "hosting show project settings"]) {
+    // Lexically the write's name is the stronger match; a query with no write verb still reads first.
+    for (const query of [
+      "project settings",
+      "show project settings",
+      "list project settings",
+      "hosting show project settings",
+      "project settings changed this week",
+      "project settings updated last week",
+    ]) {
       expect(await ranked(query), query).toEqual([
         "get_project:read",
         "update_project_settings:write",
         "delete_project_settings:write",
       ]);
     }
-    // A non-read verb leaves lexical order alone.
-    expect((await ranked("update project settings"))[0]).toBe("update_project_settings:write");
+    // A write verb anywhere leaves lexical order alone, unless a read verb leads.
+    for (const query of [
+      "update project settings",
+      "project settings delete",
+      "updating project settings",
+      "updates to project settings",
+      "deleting project settings",
+    ])
+      expect((await ranked(query))[0], query).toMatch(/:write$/);
+    expect((await ranked("list project settings to update"))[0]).toBe("get_project:read");
+    expect((await ranked("edit project settings"))[0]).toBe("update_project_settings:write");
+    // A read program can call only the reads, so they lead whatever the query says.
+    const program = new CatalogService(makeRegistry([hosting]), BASE, { markUncallableWrites: true });
+    expect(
+      (await program.search({ query: "edit project settings" })).entries.map((entry) => [
+        entry.tool.name,
+        entry.tool.callable,
+      ]),
+    ).toEqual([
+      ["get_project", undefined],
+      ["update_project_settings", false],
+      ["delete_project_settings", false],
+    ]);
   });
 
   it("folds one tool offered by several connectors into its best-ranked row and routes to a named account", async () => {

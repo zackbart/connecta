@@ -1314,10 +1314,17 @@ follow:
 
 When a complete match exists, tier 3 keeps only tools covering every term
 somewhere, covering at least two terms, or whose name states a term at least as
-rare as the query's average. Otherwise it keeps any match. Within a tier, a query
-whose first word outside connector names is `list`, `get`, `find`, `search`,
-`show`, `read`, `fetch`, or `count` ranks read rows before write rows; writes stay
-on the page. Score and catalog order break the remaining ties.
+rare as the query's average. Otherwise it keeps any match. Within a tier, read
+rows rank before write rows unless a query word states a write: a fixed English
+list such as `create`, `send`, `update`, `delete`, `add`, `archive`, `reply`,
+`schedule`, `put` or `refund`, or its present-tense inflection (`updates`,
+`copies`, `updating`). A past participle describes records ("files uploaded
+today") and never counts. Write detection is English-only; a word in another
+language never counts as a write. A query whose first word outside connector
+names is `list`, `get`, `find`, `search`, `show`, `read`, `fetch`, or `count`
+still ranks reads first. In `execute_read_code`, rows the route can call rank
+before `callable: false` rows whatever the query says. Writes stay on the page
+either way. Score and catalog order break the remaining ties.
 
 A searched tool that several connectors offer identically (same name,
 classification, description, annotations, input schema, declared output schema,
