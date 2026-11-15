@@ -28,6 +28,7 @@ import { nativeRecovery } from "./native-recovery.js";
 import { CatalogService } from "./catalog-service.js";
 import { catalogStaleness, type CatalogStaleness } from "./catalog-freshness.js";
 import { jsonResult, type ToolResult } from "./meta-tools.js";
+import { withoutHostControlKeys } from "./advertised-schema.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type { RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
@@ -206,6 +207,16 @@ function annotationsFor(tool: ToolDef, stale: boolean) {
     : { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
 }
 
+function localRef(root: JsonSchema, ref: unknown): unknown {
+  if (typeof ref !== "string" || !ref.startsWith("#/")) return undefined;
+  let target: unknown = root;
+  for (const part of ref.slice(2).split("/")) {
+    if (!target || typeof target !== "object") return undefined;
+    target = (target as JsonSchema)[part.replace(/~1/g, "/").replace(/~0/g, "~")];
+  }
+  return target;
+}
+
 /** Object arguments retain every applicable constraint, including local refs. */
 function nativeInputSchema(schema: JsonSchema): Record<string, unknown> | undefined {
   function supportsObject(value: unknown, seen = new Set<unknown>()): boolean {
@@ -220,13 +231,8 @@ function nativeInputSchema(schema: JsonSchema): Record<string, unknown> | undefi
     )
       return false;
     if (node.$ref !== undefined) {
-      if (typeof node.$ref !== "string" || !node.$ref.startsWith("#/")) return false;
-      let target: unknown = schema;
-      for (const part of node.$ref.slice(2).split("/")) {
-        if (!target || typeof target !== "object") return false;
-        target = (target as JsonSchema)[part.replace(/~1/g, "/").replace(/~0/g, "~")];
-      }
-      if (!supportsObject(target, next)) return false;
+      const target = localRef(schema, node.$ref);
+      if (target === undefined || !supportsObject(target, next)) return false;
     }
     for (const key of ["anyOf", "oneOf", "allOf"]) {
       const branches = node[key];
@@ -260,6 +266,80 @@ function passThroughSchema(schema: JsonSchema | undefined): StandardSchemaWithJS
       jsonSchema: { input: () => json, output: () => json },
     },
   } as StandardSchemaWithJSON;
+}
+
+const IGNORED_KEYWORDS = new Set([
+  "type",
+  "title",
+  "description",
+  "default",
+  "examples",
+  "$schema",
+  "$id",
+  "$comment",
+  "$defs",
+  "definitions",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]);
+const MAX_DECLARATION_NODES = 256;
+const declarations = new WeakMap<JsonSchema, Map<string, boolean>>();
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mayDeclare(schema: JsonSchema | undefined, key: string): boolean {
+  if (schema === undefined) return false;
+  let known = declarations.get(schema);
+  let result = known?.get(key);
+  if (result === undefined) {
+    result = !provablyUndeclared(schema, key);
+    if (!known) declarations.set(schema, (known = new Map()));
+    known.set(key, result);
+  }
+  return result;
+}
+
+function provablyUndeclared(root: JsonSchema, key: string): boolean {
+  const pending: unknown[] = [root];
+  const visited = new Set<unknown>();
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (typeof node === "boolean" || visited.has(node)) continue;
+    if (!plainObject(node) || visited.size === MAX_DECLARATION_NODES) return false;
+    visited.add(node);
+    for (const [keyword, operand] of Object.entries(node)) {
+      if (IGNORED_KEYWORDS.has(keyword) || keyword.startsWith("x-")) continue;
+      switch (keyword) {
+        case "properties":
+          if (!plainObject(operand) || Object.hasOwn(operand, key)) return false;
+          break;
+        case "required":
+          if (!Array.isArray(operand) || operand.includes(key)) return false;
+          break;
+        case "additionalProperties":
+          if (typeof operand !== "boolean") return false;
+          break;
+        case "$ref": {
+          const target = localRef(root, operand);
+          if (target === undefined) return false;
+          pending.push(target);
+          break;
+        }
+        case "allOf":
+        case "anyOf":
+        case "oneOf":
+          if (!Array.isArray(operand)) return false;
+          pending.push(...operand);
+          break;
+        default:
+          return false;
+      }
+    }
+  }
+  return true;
 }
 
 function describe(entry: NativeTool, executeCode: boolean, guideName?: string): string {
@@ -514,7 +594,10 @@ export class NativeSurface {
               const result = yield* upwardStep(
                 authInvoke<unknown>(self.options, "route", [
                   boundClassification(name) === "read" ? "call_tool" : "call_destructive_tool",
-                  { address, args },
+                  {
+                    address,
+                    args: withoutHostControlKeys(args, (key) => mayDeclare(target.entry.tool.inputSchema, key)),
+                  },
                   request,
                 ]),
               );

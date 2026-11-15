@@ -113,6 +113,17 @@ endpoint, the `call_tool`, `call_destructive_tool`, and `search_tools`
 descriptions say so too; `call_destructive_tool` still runs reads there. `call_destructive_tool.reason` is dropped before
 anything runs.
 
+**Host-injected keys.** Some hosts add their own control keys to every tool
+call's arguments, outside the advertised schema. Gemini CLI adds
+`wait_for_previous`, a boolean that orders its own scheduling. Every meta-tool
+and native-surface tool drops these keys from the top level of its arguments
+before input validation: they are never advertised in an `inputSchema`, never
+reach a handler, and never go downstream. The list is exactly
+`wait_for_previous`. Other undeclared keys keep their existing handling:
+`call_tool`, `call_destructive_tool` and `read_result` refuse them with an
+`Unrecognized key` error that names them, and the other meta-tools ignore them.
+Keys inside `args` belong to the downstream tool and are never dropped.
+
 ## Read programs
 
 `execute_read_code` runs a program with the same guest API, sandbox and budgets as
@@ -2078,6 +2089,20 @@ address and served classification. Unknown or ambiguous names fail with
 is why no `outputSchema` is advertised. A truncated result's notice pages with
 `connecta.result` inside `execute_code`, or with `read_result` on a pool without
 `execute_code`.
+
+A native downstream tool's arguments lose a [host-injected key](#the-meta-tools)
+only when its input schema provably cannot accept that key as an argument;
+otherwise the downstream tool receives it unchanged. The proof walks every
+schema reachable from the root through local `$ref`, `allOf`, `anyOf` and
+`oneOf`, visiting each at most once and at most 256 in all. It understands only
+`properties`, `required`, boolean `additionalProperties`, those four, and the
+annotations `type`, `title`, `description`, `default`, `examples`, `$schema`,
+`$id`, `$comment`, `$defs`, `definitions`, `deprecated`, `readOnly`,
+`writeOnly` and `x-` extensions. The key is kept when a reachable schema names
+it in `properties` or `required`, uses any other keyword (such as `not`, `if`,
+`patternProperties`, a schema-valued `additionalProperties` or `$dynamicRef`),
+has an unresolvable or non-local `$ref` or a malformed keyword, or when the walk
+exceeds 256 schemas.
 
 **Approval is the host's, enforcement is Connecta's.** The host approves from
 the annotations of the list it cached, and some hosts resend calls they believe
