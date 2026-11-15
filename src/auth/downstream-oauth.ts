@@ -31,6 +31,7 @@ import {
   type GrantBody,
   grantStoreMethods,
   isDisconnectedEpoch,
+  type SuppliedGrant,
 } from "./downstream-oauth/grant-store.js";
 import {
   type OAuthRefreshCoordinator,
@@ -190,7 +191,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * reads a flow makes, it never seals a plaintext record in place, binds an
    * epoch, records what it handed out, refreshes or discovers (INV-10).
    */
-  declare peekGrant: () => Promise<{
+  declare peekGrant: (supplied?: SuppliedGrant) => Promise<{
     epoch: string;
     tokens?: OAuthTokens;
     issuer?: string;
@@ -269,16 +270,27 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * body, written before the vault could seal, is sealed where it lies by
    * compare-and-set; a failure leaves it readable for the next write to seal.
    */
-  declare private readGrant: (signal?: AbortSignal | null | undefined) => Promise<{
+  declare private readGrant: (
+    signal?: AbortSignal | null | undefined,
+    supplied?: SuppliedGrant,
+  ) => Promise<{
     raw: string | null;
     grant: Grant;
   }>;
 
   /** The grant a bound flow reads: a replaced epoch fails it. */
-  declare private boundGrant: (signal?: AbortSignal | null | undefined) => Promise<Grant>;
+  declare private boundGrant: (signal?: AbortSignal | null | undefined, supplied?: SuppliedGrant) => Promise<Grant>;
 
   /** SDK preparation is call/request-owned; coordinator reads explicitly opt out. */
-  declare private activeGrant: () => Promise<Grant>;
+  declare private activeGrant: (supplied?: SuppliedGrant) => Promise<Grant>;
+
+  declare admissionGrant: () => Promise<{ epoch: string; tokens?: OAuthTokens }>;
+
+  bindObservedEpoch(epoch: string): string {
+    this.epoch = epoch;
+    this.bound = true;
+    return epoch;
+  }
 
   /**
    * The one way a grant changes: read, change, compare-and-set, again while
@@ -539,7 +551,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * issuer-aware read records what it handed the SDK, so the coordinator can
    * tell a refresh another request completed since.
    */
-  declare tokens: (ctx?: OAuthClientInformationContext) => Promise<OAuthTokens | undefined>;
+  declare tokens: (ctx?: OAuthClientInformationContext, supplied?: SuppliedGrant) => Promise<OAuthTokens | undefined>;
 
   declare saveTokens: (tokens: OAuthTokens, ctx?: OAuthClientInformationContext) => Promise<void>;
 

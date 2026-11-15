@@ -54,6 +54,10 @@ export function nextTokenGrant(grant: Grant, body: GrantBody): Grant {
   return next;
 }
 
+export interface SuppliedGrant {
+  raw: string | null;
+}
+
 export interface Grant {
   tokenRevision?: number;
   observation?: GrantObservation;
@@ -262,7 +266,7 @@ export const grantStoreMethods = {
       }.bind(this),
     ).pipe(Effect.catch(() => Effect.succeed(false)));
   },
-  peekGrant: function (this: KvOAuthProvider) {
+  peekGrant: function (this: KvOAuthProvider, supplied?: SuppliedGrant) {
     return authFlow<{
       epoch: string;
       tokens?: OAuthTokens;
@@ -271,9 +275,11 @@ export const grantStoreMethods = {
       observation?: GrantObservation;
     }>(
       function* (this: KvOAuthProvider) {
-        const raw = (yield authInvoke(this, "wait", [
-          authMethod(() => authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>),
-        ])) as string | null;
+        const raw = supplied
+          ? supplied.raw
+          : ((yield authInvoke(this, "wait", [
+              authMethod(() => authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>),
+            ])) as string | null);
         const grant = (yield authInvoke(this, "openGrant", [raw])) as Grant;
         return {
           epoch: grant.epoch,
@@ -285,17 +291,20 @@ export const grantStoreMethods = {
       }.bind(this),
     );
   },
-  readGrant: function (this: KvOAuthProvider, signal: AbortSignal | null | undefined) {
+  readGrant: function (this: KvOAuthProvider, signal: AbortSignal | null | undefined, supplied?: SuppliedGrant) {
     signal = signal === undefined ? this.signal : signal;
 
     return authFlow<{ raw: string | null; grant: Grant }>(
       function* (this: KvOAuthProvider) {
-        let raw = (yield authInvoke(this, "wait", [
-          authMethod(() => {
-            return authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>;
-          }),
-          signal,
-        ])) as string | null;
+        if (supplied && signal?.aborted) throw aborted(signal);
+        let raw = supplied
+          ? supplied.raw
+          : ((yield authInvoke(this, "wait", [
+              authMethod(() => {
+                return authStorage(this.storage, "get", [GRANT]) as Effect.Effect<string | null, unknown>;
+              }),
+              signal,
+            ])) as string | null);
         if (raw === null) {
           // Inspect names only: retired credentials are never opened or copied.
           const keys = (yield authInvoke(this, "wait", [
@@ -329,12 +338,12 @@ export const grantStoreMethods = {
       }.bind(this),
     );
   },
-  boundGrant: function (this: KvOAuthProvider, signal: AbortSignal | null | undefined) {
+  boundGrant: function (this: KvOAuthProvider, signal: AbortSignal | null | undefined, supplied?: SuppliedGrant) {
     signal = signal === undefined ? this.signal : signal;
 
     return authFlow<Grant>(
       function* (this: KvOAuthProvider) {
-        const { grant } = (yield authInvoke(this, "readGrant", [signal])) as {
+        const { grant } = (yield authInvoke(this, "readGrant", [signal, supplied])) as {
           raw: string | null;
           grant: Grant;
         };
@@ -343,8 +352,20 @@ export const grantStoreMethods = {
       }.bind(this),
     );
   },
-  activeGrant: function (this: KvOAuthProvider) {
-    return authInvoke(this, "boundGrant", []) as Effect.Effect<Grant, unknown>;
+  activeGrant: function (this: KvOAuthProvider, supplied?: SuppliedGrant) {
+    return authInvoke(this, "boundGrant", [undefined, supplied]) as Effect.Effect<Grant, unknown>;
+  },
+  admissionGrant: function (this: KvOAuthProvider) {
+    return authFlow<{ epoch: string; tokens?: OAuthTokens }>(
+      function* (this: KvOAuthProvider) {
+        const { grant } = (yield authInvoke(this, "readGrant", [])) as { raw: string | null; grant: Grant };
+        if (isDisconnectedEpoch(grant.epoch)) return { epoch: grant.epoch };
+        if (this.bound && grant.epoch !== this.epoch) throw this.flowSuperseded();
+        const { tokens } = grant.body;
+        if (tokens) this.seen.tokens = fingerprint(tokens);
+        return { epoch: grant.epoch, ...(tokens ? { tokens } : {}) };
+      }.bind(this),
+    );
   },
   updateGrant: function (
     this: KvOAuthProvider,
