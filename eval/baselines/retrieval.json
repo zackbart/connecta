@@ -3,17 +3,17 @@
     "main": {
       "all": {
         "n": 143,
-        "r1": 0.6923,
+        "r1": 0.7063,
         "r5": 0.8951,
         "r8": 0.8951,
-        "mrr": 0.7722
+        "mrr": 0.7825
       },
       "readOnly": {
         "n": 127,
-        "r1": 0.7087,
+        "r1": 0.7244,
         "r5": 0.9055,
         "r8": 0.9134,
-        "mrr": 0.7898
+        "mrr": 0.8003
       },
       "types": {
         "intent": {
@@ -24,11 +24,11 @@
           "mrr": 0.671
         },
         "precise": {
-          "n": 42,
-          "r1": 0.881,
+          "n": 45,
+          "r1": 0.8889,
           "r5": 1,
           "r8": 1,
-          "mrr": 0.9254
+          "mrr": 0.9304
         },
         "write": {
           "n": 16,
@@ -38,11 +38,11 @@
           "mrr": 0.7704
         },
         "hatch": {
-          "n": 15,
-          "r1": 0.6,
-          "r5": 0.8667,
-          "r8": 0.8667,
-          "mrr": 0.6811
+          "n": 12,
+          "r1": 0.6667,
+          "r5": 0.8333,
+          "r8": 0.8333,
+          "mrr": 0.7236
         },
         "vague": {
           "n": 8,
@@ -61,10 +61,10 @@
       },
       "certain": {
         "n": 135,
-        "r1": 0.7111,
+        "r1": 0.7259,
         "r5": 0.9111,
         "r8": 0.9111,
-        "mrr": 0.789
+        "mrr": 0.7999
       }
     },
     "holdout": {
@@ -196,8 +196,8 @@
     "main:personal:subscriptions I pay for": "0/0",
     "main:personal:who attended the meeting": "1/1",
     "main:studio:list projects": "1/1",
-    "main:studio:vercel projects": "5/3",
-    "main:studio:list vercel projects": "3/3",
+    "main:studio:vercel projects": "1/1",
+    "main:studio:list vercel projects": "1/1",
     "main:studio:cloudflare zones": "1/1",
     "main:studio:dns records for a domain": "3/3",
     "main:studio:why did the deploy fail": "1/1",

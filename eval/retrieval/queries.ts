@@ -34,6 +34,7 @@ const HANDBOOK_READ = ["handbook.search_docs", "handbook.get_doc"];
 const SUBSCRIPTION_METRICS = ["subscriptions*.get-overview-metrics", "subscriptions*.get-chart-data"];
 const GMAIL_HATCH = ["gmail*.gmail_api_search", "gmail*.gmail_api_read"];
 const VERCEL_HATCH = ["vercel.vercel_api_search", "vercel.vercel_api_read"];
+const VERCEL_PROJECTS = ["vercel.list_projects", ...VERCEL_HATCH];
 const CLOUDFLARE_HATCH = ["cloudflare.cloudflare_api_search", "cloudflare.cloudflare_api_read"];
 const STRIPE_HATCH = ["stripe*.stripe_api_search", "stripe*.stripe_api_read"];
 const INTERCOM_HATCH = ["intercom.intercom_api_search", "intercom.intercom_api_read"];
@@ -137,9 +138,9 @@ export const MAIN_QUERIES: readonly RetrievalQuery[] = [
     ["intent", "who attended the meeting", ["meet*.list_participants"]],
   ]),
   ...rows("studio", [
-    ["precise", "list projects", ["projects.list_projects"], 1],
-    ["hatch", "vercel projects", VERCEL_HATCH],
-    ["hatch", "list vercel projects", VERCEL_HATCH],
+    ["precise", "list projects", ["projects.list_projects", "vercel.list_projects"], 1],
+    ["precise", "vercel projects", VERCEL_PROJECTS],
+    ["precise", "list vercel projects", VERCEL_PROJECTS],
     ["precise", "cloudflare zones", ["cloudflare.list_zones"]],
     ["hatch", "dns records for a domain", CLOUDFLARE_HATCH],
     ["intent", "why did the deploy fail", ["vercel.get_deployment_build_logs"]],
@@ -180,7 +181,11 @@ export const MAIN_QUERIES: readonly RetrievalQuery[] = [
   ...rows("product", [
     ["intent", "active subscriptions count", SUBSCRIPTION_METRICS],
     ["hatch", "stripe customers created yesterday", STRIPE_HATCH],
-    ["hatch", "open pull requests", ["github.search_scoped", "github.github_api_search", "github.github_api_read"]],
+    [
+      "precise",
+      "open pull requests",
+      ["github.list_pull_requests", "github.search_scoped", "github.github_api_search", "github.github_api_read"],
+    ],
     ["intent", "issues in progress", ["tracker*.list_issues"]],
     ["write", "create an issue in the tracker", ["tracker*.save_issue"]],
     ["precise", "analytics events", ["analytics.Get-Events", "analytics.Get-Live-Events"]],
