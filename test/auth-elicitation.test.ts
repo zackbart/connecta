@@ -30,6 +30,8 @@ function setup(
     namedCredential?: boolean;
     uiPath?: string;
     noUi?: boolean;
+    authElicitation?: boolean;
+    poolAuthElicitation?: boolean;
   } = {},
 ) {
   const storage = options.storage ?? memoryStorage();
@@ -74,6 +76,7 @@ function setup(
     vault,
     ...(options.uiPath ? { ui: { ...operatorUi(), credentialHandoffUrl: () => options.uiPath! } } : {}),
     ...(options.noUi ? { ui: undefined } : {}),
+    ...(options.authElicitation === undefined ? {} : { authElicitation: options.authElicitation }),
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
     ...(options.routed ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
     pools: {
@@ -82,6 +85,7 @@ function setup(
         members: [{ namespace: "https://clerk.example.test", id: "alice" }],
         readOnly: false,
         ...(options.native ? { surface: "native" as const } : {}),
+        ...(options.poolAuthElicitation === undefined ? {} : { authElicitation: options.poolAuthElicitation }),
       },
     },
     executor: {
@@ -104,8 +108,9 @@ function setup(
       state?: string;
       action?: string;
       user?: string;
-      pool?: string;
+      pool?: string | undefined;
       elicitation?: Record<string, unknown>;
+      headers?: Record<string, string>;
     } = {},
   ) => {
     if (options.native && (name === "call_tool" || name === "call_destructive_tool")) {
@@ -131,6 +136,7 @@ function setup(
     request.headers.set("Mcp-Name", name);
     request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
     if (typeof args.address === "string") request.headers.set("Mcp-Param-Address", args.address);
+    for (const [header, value] of Object.entries(opts.headers ?? {})) request.headers.set(header, value);
     const pool = opts.pool ?? (options.native ? "trusted" : undefined);
     const target = pool ? new Request(`${BASE}/mcp/${pool}`, request) : request;
     return readJsonRpc(await app.fetch(target));
@@ -254,6 +260,72 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(JSON.stringify(result)).not.toContain("downstream.test");
     expect(flow.connector.startAuth).not.toHaveBeenCalled();
     expect(sign).toHaveBeenCalledOnce();
+  });
+
+  it("INV-4 INV-5: authElicitation: false hands a URL-capable host the ordinary handoff at once", async () => {
+    for (const [flow, pool] of [
+      [setup({ authElicitation: false }), undefined],
+      [setup({ authElicitation: false }), "trusted"],
+      [setup({ poolAuthElicitation: false }), "trusted"],
+      [setup({ native: true, poolAuthElicitation: false }), "trusted"],
+    ] as const) {
+      const expected = (await flow.rpc(undefined, undefined, { pool, elicitation: { form: {} } })).result
+        .structuredContent.error;
+      flow.call.mockClear();
+      const result = (await flow.rpc(undefined, undefined, { pool })).result;
+      expect(result.resultType).not.toBe("input_required");
+      expect(result.requestState).toBeUndefined();
+      expect(result.isError).toBe(true);
+      const error = result.structuredContent.error;
+      expect(error).toMatchObject({
+        code: "downstream_oauth_required",
+        connector: "service",
+        recovery: "oauth",
+        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
+        nextAction: { url: error.authorizationUrl },
+      });
+      expect({ ...error, authorizationUrl: undefined, nextAction: undefined }).toEqual({
+        ...expected,
+        authorizationUrl: undefined,
+        nextAction: undefined,
+      });
+      expect(JSON.stringify(result)).not.toContain("downstream.test");
+      expect(flow.call).toHaveBeenCalledOnce();
+      expect(flow.connector.startAuth).not.toHaveBeenCalled();
+
+      const explicit = (await flow.rpc("authorize_connector", { connector: "service" }, { pool })).result;
+      expect(explicit.resultType).not.toBe("input_required");
+      expect(explicit.structuredContent).toMatchObject({
+        recovery: "oauth",
+        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
+      });
+
+      const bob = await flow.app.fetch(new Request(error.authorizationUrl, { headers: { Cookie: "__session=bob" } }));
+      expect(bob.status).toBe(403);
+      expect(flow.connector.startAuth).not.toHaveBeenCalled();
+      expect((await flow.browser(error.authorizationUrl)).status).toBeLessThan(400);
+      expect(flow.connector.startAuth).toHaveBeenCalledOnce();
+    }
+    const reenabled = setup({ authElicitation: false, poolAuthElicitation: true });
+    expect((await reenabled.rpc(undefined, undefined, { pool: "trusted" })).result.resultType).toBe("input_required");
+    expect((await reenabled.rpc()).result.resultType).not.toBe("input_required");
+    const poolOnly = setup({ poolAuthElicitation: false });
+    expect((await poolOnly.rpc()).result.resultType).toBe("input_required");
+    expect(() => createTestConnecta({ connectors: [], authElicitation: "off" as never })).toThrow(
+      "ConnectaConfig.authElicitation must be true or false",
+    );
+  });
+
+  it("INV-4: a host that hides URL elicitation gets the handoff instead of a prompt it never shows", async () => {
+    const flow = setup();
+    const hidden = (await flow.rpc(undefined, undefined, { headers: { "X-Anthropic-Client": "Cowork" } })).result;
+    expect(hidden.resultType).not.toBe("input_required");
+    expect(hidden.structuredContent.error).toMatchObject({
+      code: "downstream_oauth_required",
+      authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
+    });
+    const shown = (await flow.rpc(undefined, undefined, { headers: { "X-Anthropic-Client": "ClaudeAI" } })).result;
+    expect(shown.resultType).toBe("input_required");
   });
 
   it("invalidates routed auth continuations when membership selects a different pool", async () => {

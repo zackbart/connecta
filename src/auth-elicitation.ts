@@ -53,6 +53,12 @@ import {
   MAX_INPUT_ROUNDS as MAX_ROUNDS,
 } from "./request-state.js";
 
+// Cowork declares elicitation.url but never shows the prompt; its tool call hangs
+// until a 180 s timeout and only then answers `cancel`. Anthropic's proxy marks it
+// with this header: https://github.com/anthropics/claude-ai-mcp/issues/1046
+const hidesUrlElicitation = (headers: Headers | undefined): boolean =>
+  headers?.get("x-anthropic-client")?.trim().toLowerCase() === "cowork";
+
 const INPUT_KEY = "connecta_auth";
 const MESSAGE = "Connect this service in your browser, then retry the request.";
 // A client may answer without showing anything, and the response cannot prove
@@ -124,6 +130,7 @@ export class AuthElicitation {
       principal: string | undefined;
       registry: RegistryView;
       canManage: (id: string) => boolean;
+      urlElicitation: boolean;
       connectLink: (id: string, force?: boolean, flow?: string) => Promise<{ url: string; nonce: string }>;
       linkStarted: (id: string, nonce: string) => Promise<boolean>;
       claimRetry: (id: string, nonce: string) => Promise<boolean>;
@@ -348,6 +355,8 @@ export class AuthElicitation {
             const capabilities = envelope?.[CLIENT_CAPABILITIES_META_KEY];
             const elicitation = object(capabilities) ? capabilities.elicitation : undefined;
             const capable =
+              self.options.urlElicitation &&
+              !hidesUrlElicitation(context.http?.req?.headers) &&
               envelope?.[PROTOCOL_VERSION_META_KEY] === "2026-07-28" &&
               object(elicitation) &&
               Object.hasOwn(elicitation, "url") &&

@@ -435,6 +435,8 @@ function serveMcp(
         principal: principalKey,
         registry,
         canManage: canManageAuth,
+        urlElicitation:
+          (pool !== undefined ? opts.pools.get(pool)?.authElicitation : undefined) ?? opts.config.authElicitation,
         connectLink: authMethod((id: string, force?: boolean, flow?: string) =>
           authCall<{ url: string; nonce: string }>(oauthConnectLink, [
             opts,

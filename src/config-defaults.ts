@@ -7,6 +7,7 @@
 // directly sees the deployment's defaults rather than a second copy of them.
 
 export const CONFIG_DEFAULTS = {
+  authElicitation: true,
   discovery: {
     concurrency: 4,
     catalogTtlSeconds: 300,

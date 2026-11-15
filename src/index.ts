@@ -76,7 +76,7 @@ export interface Connecta {
  */
 function resolvePools(
   pools: ResolvedConfig["pools"],
-  readOnly: boolean,
+  inherited: { readOnly: boolean; authElicitation: boolean },
   registry: Registry,
   members: MemberContext,
 ): Map<string, ResolvedPool> {
@@ -112,7 +112,7 @@ function resolvePools(
         }
       }
     }
-    const poolReadOnly = pool.readOnly ?? readOnly;
+    const poolReadOnly = pool.readOnly ?? inherited.readOnly;
     if (pool.writes !== undefined) {
       access = withWrites(access, resolveWriteGrants(name, pool.writes, poolReadOnly, registry));
     }
@@ -135,6 +135,7 @@ function resolvePools(
       Object.freeze({
         access,
         readOnly: poolReadOnly,
+        authElicitation: pool.authElicitation ?? inherited.authElicitation,
         members: Object.freeze(resolvePoolMembers(pool.members, path, members)),
         ...(unlisted ? { unlisted } : {}),
         ...(pool.owner !== undefined ? { owner: pool.owner.trim() } : {}),
@@ -389,7 +390,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     members,
   );
   assertConnectorMembersManageable(resolved, connectorMembers, maintainers);
-  const pools = resolvePools(resolved.pools, resolved.readOnly, registry, members);
+  const pools = resolvePools(resolved.pools, resolved, registry, members);
   for (const connector of resolved.connectors) {
     const restriction = accountRestrictionOf(connector);
     if (restriction)
