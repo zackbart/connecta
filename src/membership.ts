@@ -38,6 +38,8 @@ export interface ResolvedPool {
   description?: string;
   /** Present for a native pool; absent is the six meta-tools. */
   native?: { executeCode: boolean };
+  /** Resolved: the pool's own `authElicitation`, else the deployment's. */
+  authElicitation: boolean;
 }
 
 export const presentsReadOnly = (pool: Pick<ResolvedPool, "readOnly" | "access">): boolean =>

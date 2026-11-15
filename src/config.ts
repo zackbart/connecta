@@ -400,6 +400,12 @@ const pool = {
    * always includes it.
    */
   executeCode: opaque<boolean>({ check: assertFlag }),
+  /**
+   * Whether this pool's endpoints ask for connector authorization through an
+   * MCP URL elicitation. Inherits the deployment's `authElicitation` unless set
+   * here, in either direction.
+   */
+  authElicitation: opaque<boolean>({ check: assertFlag }),
 };
 
 const icon = {
@@ -550,6 +556,18 @@ const connectaConfig = {
    * URL also redirects matching inbound HTTP requests to HTTPS.
    */
   publicUrl: opaque<string>({ check: httpUrl }),
+  /**
+   * Whether a host that declares MCP URL elicitation receives a call's
+   * connector authorization as an `input_required` URL prompt. `false` returns
+   * the authorization handoff (`authorizationUrl`, `nextAction`) in the failed
+   * call's result at once, as a host without URL elicitation receives it: set
+   * it for hosts that declare URL elicitation but never show the prompt. Pools
+   * inherit it unless they set their own. Default true.
+   */
+  authElicitation: opaque<boolean, boolean>({
+    check: assertFlag,
+    resolve: (value) => value ?? D.authElicitation,
+  }),
   /**
    * Exact browser MCP origins, or "*". Defaults to publicUrl's origin and
    * HTTP(S) loopback origins at any port. Originless clients are admitted.

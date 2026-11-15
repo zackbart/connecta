@@ -1395,6 +1395,28 @@ from configured `publicUrl`. OAuth consent stays in the browser; a credential
 slot uses the authenticated operator UI. `authorize_connector` uses the same
 flow for explicit connect and restart. There is no legacy shim.
 
+Some hosts declare `elicitation.url` but never show the prompt. The
+`input_required` result ends Connecta's request, so the server has no wait to
+bound: such a host waits on its own tool timeout and returns nothing to the
+model until then. Two settings return the handoff instead:
+
+- `authElicitation: false` in deployment code, at the top level or on a pool,
+  turns the prompt off for that endpoint. A pool inherits the deployment value
+  unless it sets its own, in either direction; a person routed to their pool at
+  plain `/mcp` gets the pool's value. Auth-gated calls and `authorize_connector`
+  then return at once with the same result a host without URL elicitation gets:
+  the recovery envelope below, with `authorizationUrl` and `nextAction`.
+- A request carrying the header `x-anthropic-client: Cowork` gets that same
+  result without configuration. That host declares URL elicitation, never shows
+  it, and answers `cancel` only at its 180-second tool timeout. The header only
+  selects the handoff over a prompt; it grants nothing, and a request that
+  forges it only loses its own prompt.
+
+Either way, the handoff links keep the identity binding described above and,
+like every `/connect` link an MCP endpoint issues from a sealing vault, are
+sealed so the agent sees no principal in them. Pending prompt state from an
+earlier request still verifies and resolves as usual.
+
 For an operator-managed credential, an explicit `authorize_connector` returns
 `recovery: "ready"` when the declared credential fields are configured. This
 reports local presence, without testing the key or remembering earlier requests.
@@ -1469,7 +1491,8 @@ SDK's JSON-RPC `-32602` with `data.reason: "invalid_request_state"` before the
 handler runs. Changed arguments or code produce a typed `invalid_request_state`
 tool failure before dispatch. Retry state grants no access; each request still
 passes current identity, pool, connector visibility, and management checks.
-Hosts without URL support keep the recovery envelope below, with a `/connect`
+Hosts without URL support, endpoints with `authElicitation: false`, and hosts
+that hide URL elicitation keep the recovery envelope below, with a `/connect`
 URL when this deployment can issue one. Without an interactive provider,
 signing vault, or configured public URL, automatic elicitation is unavailable.
 

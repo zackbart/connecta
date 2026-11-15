@@ -818,7 +818,7 @@ Access is read from one place, deployment code. Top-level
 with the deployment's `readOnly`, and who reach the operator routes. A
 non-maintainer person listed in exactly one pool receives that pool at plain
 `/mcp` exactly as `/mcp/<pool>` serves it: its `tools`, `readOnly`, `surface`,
-`executeCode` and `description`. A maintainer keeps the whole catalog even when
+`executeCode`, `authElicitation` and `description`. A maintainer keeps the whole catalog even when
 also listed in pools. Membership is matched on the admitted, resolved
 `{ namespace, id }`, so a bare `"bob"` and the explicit reference it resolves
 to are the same person, and the same id in another namespace is not. Authentication, OAuth challenges and resource audiences are plain `/mcp`'s;
@@ -1067,6 +1067,7 @@ admitted.
 | Agents       | An agent member reaches its pools only at `/agent/<pool>`, with its `cta_` token. Human endpoints refuse `cta_`; see [agent endpoints](#agent-endpoints).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | Surface      | From 0.35.0, optional `surface`: `"meta"` (default) serves the meta-tools; `"native"` lists each of the pool's downstream tools directly, for clients with their own tool search, with optional `executeCode: false` to replace `execute_code` with `read_result` (invalid on meta pools). Calls take the same paths either way. See the [native tool surface](./meta-tools.md#native-tool-surface).                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Description  | Optional `description`: plain text telling the model what this endpoint is for. `/mcp/<pool>` and `/agent/<pool>` place the description before the rest of the MCP instructions; a maintainer at plain `/mcp` and a pool without one serve none. A routed person receives their pool description. It grants, hides, and refuses nothing, and changes no tool or tool description.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Auth prompt  | Optional `authElicitation`, inheriting the deployment's (default `true`): `false` returns connector authorization as the explicit handoff instead of an MCP URL elicitation, for hosts that declare URL elicitation but never show it. See [authorization recovery](./meta-tools.md#authorization-recovery).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | Writes       | Optional `writes` on a pool whose effective `readOnly` is `true`: exact `connector.tool` addresses it serves as writes. Each is in the pool's scope without also appearing in `tools`. Every other write stays refused, including one a vendor adds later to the same connector. An entry whose tool classifies as a read is a read grant. See [writable and read-only endpoints](#writable-and-read-only-endpoints).                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | Unlisted     | Optional `unlisted`: connector ids in the pool's scope that endpoint facts mark `unlisted: true`, so a client such as `connecta-eve` keeps them off its model's roster. It is not access control: they stay callable at the same endpoint, and `execute_code`, search and Connecta's own instructions still name them.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | Construction | Malformed names, unknown options or connectors, empty pools, empty or missing `members`, mixed people and agent membership (a `ConfigError` naming the pool), unresolvable member references, a non-boolean `readOnly`, an `owner` that is not a Workspace email address, a `description` that is not 1 to 500 UTF-16 code units of one-line text after trimming, a retired `trust` or `grant`, and addresses absent from an `api()` static catalog throw. `writes` throws (a `ConfigError` naming the pool) when the pool is writable, when it is empty, when an entry is a bare connector id or not an address, and when an address names an unknown connector or a tool absent from an `api()` static catalog. `unlisted` throws when it is empty, repeats an id, or names a connector outside the pool's `tools` and `writes`. Remote catalogs are checked at lazy load. |
@@ -1567,9 +1568,11 @@ longer live; one left behind cannot complete and expires with its link.
 | `DELETE /ui/oauth/<id>`                  | Disconnects and invalidates the cached catalog, even if the browser leaves.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 `authorize_connector` issues the same browser link, with `force` carried in the
-signed handoff. On hosts without URL elicitation, direct and program auth
-failures and search/describe catalog failures include the same authorization
-handoff. A declined or cancelled URL elicitation returns it too. The admitted registry and management permission govern issuance.
+signed handoff. On hosts without URL elicitation, on endpoints with
+`authElicitation: false`, and on hosts that hide URL elicitation (see
+[authorization recovery](./meta-tools.md#authorization-recovery)), direct and
+program auth failures and search/describe catalog failures include the same
+authorization handoff. A declined or cancelled URL elicitation returns it too. The admitted registry and management permission govern issuance.
 Each call or program run shares at most one handoff per connector; errors never
 request a forced restart. Signed links retain their fifteen-minute expiry,
 initiating-user and owner binding, origin check, and single-use browser nonce.
@@ -2938,13 +2941,14 @@ cannot restart pending consent. Failed starts remain single-use but do not block
 successful attempt. A link visited during the completion check continues the
 attempt that check is judging, and cannot reset it.
 
-The `/connect` link issued by the elicitation boundary encrypts its browser
-handoff with the vault's `seal`/`open` methods before signing it. The URL carries
+Every `/connect` link an MCP endpoint issues (in a URL elicitation, a refusal,
+an auth error's handoff, or `authorize_connector`) encrypts its browser handoff
+with the vault's `seal`/`open` methods before signing it. The URL carries
 neither principal identifiers nor credentials and authenticates no browser.
 The same principal and management checks apply to OAuth and credential-slot
 links. A credential-slot visit consumes its link and redirects to the
 same-origin operator UI, where credential mutation requires its own identity
-and Origin checks. Vaults without sealing keep ordinary handoffs and cannot
+and Origin checks. Vaults without sealing keep unsealed handoffs and cannot
 serve URL elicitation. See [authorization recovery](./meta-tools.md#authorization-recovery)
 for capability gating, retry termination, and dispatch restrictions.
 
@@ -3006,8 +3010,8 @@ still serve configured credentials. Both routes accept only GET, otherwise retur
 
 The fifteen-minute signed handoff carries connector ownership, initiating principal, deployment origin, nonce,
 restart mode, and, for a forced flow's later links, the flow they share a reset with. New links use versioned, length-prefixed fields instead of
-JSON, with unpadded base64url payload and signature segments. Ordinary handoffs use an opaque wire encoding,
-not encryption; URL elicitation also seals those fields as described above. Copy the complete URL unchanged.
+JSON, with unpadded base64url payload and signature segments. Operator UI links, and MCP links from a vault
+without sealing, use an opaque wire encoding, not encryption; other MCP links also seal those fields as described above. Copy the complete URL unchanged.
 The signature authenticates the exact version and payload text. Tampered or re-encoded links return
 `Invalid or expired connection link. Request a new link from connecta.` Pre-upgrade signed JSON and sealed
 v2 links still verify against their original text and expire after their original fifteen minutes. A link from

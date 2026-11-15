@@ -32,10 +32,10 @@ it.each(["direct", "search"])(
     expect(error).toMatchObject({
       recovery: "oauth",
       nextAction: {
-        url: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v3.`),
+        url: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v4.`),
         purpose: expect.any(String),
       },
-      authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v3.`),
+      authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=v4.`),
       instructions: expect.any(String),
     });
     // The link goes on as it is, so what the agent passes along is what was signed.

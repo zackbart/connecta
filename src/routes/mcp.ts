@@ -435,6 +435,8 @@ function serveMcp(
         principal: principalKey,
         registry,
         canManage: canManageAuth,
+        urlElicitation:
+          (pool !== undefined ? opts.pools.get(pool)?.authElicitation : undefined) ?? opts.config.authElicitation,
         connectLink: authMethod((id: string, force?: boolean, flow?: string) =>
           authCall<{ url: string; nonce: string }>(oauthConnectLink, [
             opts,
@@ -542,7 +544,14 @@ function serveMcp(
         readOnly,
         canManageAuth,
         oauthConnectUrl: authMethod((id: string, force?: boolean) =>
-          authCall<string>(oauthConnectUrl, [opts, baseUrl, id, principalKey, force]),
+          authCall<string>(oauthConnectUrl, [
+            opts,
+            baseUrl,
+            id,
+            principalKey,
+            force,
+            Boolean(opts.config.vault?.seal && opts.config.vault.open),
+          ]),
         ),
         oauthConnectUnavailable: oauthConnectUnavailable(opts),
         credentialHandoffUrl: opts.config.ui?.credentialHandoffUrl(baseUrl),
