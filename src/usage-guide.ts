@@ -14,7 +14,7 @@ description: How to route work between one ${META_ROUTES.program} program and Co
 
 Route as the server instructions and ${META_ROUTES.program}'s first sentence say.
 Read one account with ${META_ROUTES.read}: \`{ "address": "crm.get_account", "args": { "id": "acct_42" } }\`.
-On a read-only endpoint search omits writes (guides may name them) and each
+On a read-only endpoint search lists writes with \`callable: false\` and each
 fails read_only_endpoint; tell the user. Unannotated tools fail closed to writes.
 Where listed, ${READ_PROGRAM_SOURCE} refuses writes, marked \`callable: false\`.
 

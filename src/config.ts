@@ -312,9 +312,9 @@ function assertMemberList(value: unknown, path: string): void {
 
 const pool = {
   /**
-   * Whether this pool's endpoint refuses every write: write tools are absent
-   * from search_tools, tool listings, and describe, and every write call is
-   * refused. Inherits the deployment's `readOnly` unless set here, in either
+   * Whether this pool's endpoint refuses every write: native tool listings
+   * omit write tools, search_tools and describe list them with
+   * `callable: false`, and every write call is refused. Inherits the deployment's `readOnly` unless set here, in either
    * direction.
    */
   readOnly: opaque<boolean>({ check: assertFlag }),
@@ -690,8 +690,9 @@ const connectaConfig = {
   ),
   /**
    * Required. Whether the default /mcp endpoint refuses every write. `true`:
-   * write tools are absent from search_tools, tool listings, and describe,
-   * and call_tool, call_destructive_tool, and program writes are refused.
+   * native tool listings omit write tools, search_tools and describe list
+   * them with `callable: false`, and call_tool, call_destructive_tool, and
+   * program writes are refused.
    * `false`: call_destructive_tool and programs may write, and the MCP
    * client owns approval. Pools inherit it unless they set their own. It has
    * no default while deployments migrate from `trust` (#820).

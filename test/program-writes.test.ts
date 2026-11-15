@@ -958,7 +958,7 @@ describe("classification and pool endpoints (#706)", () => {
     }
   });
 
-  it("INV-1 INV-2: a read-only program's guessed write is refused only at its exact address; hidden and absent names fail alike", async () => {
+  it("INV-1 INV-2: a read-only program lists its refused write as not callable and refuses it; hidden and absent names fail alike", async () => {
     const attempt: Program = async (connecta) => {
       const settled = await Promise.allSettled(
         ["close_issue", "update_issue", "post"].map((name) => connecta.call!(`tracker.${name}`, { id: "WEB-105" })),
@@ -967,10 +967,23 @@ describe("classification and pool endpoints (#706)", () => {
         call.status === "rejected" ? { code: call.reason.code, message: call.reason.message } : "sent",
       );
     };
-    const omitted =
-      "Search omits writes refused here; a write's exact address returns read_only_endpoint, not unknown_tool.";
+    const discover: Program = async (connecta) => {
+      const page = await connecta.search!({ connector: "tracker", query: "" });
+      const described = await connecta.describe!({ addresses: ["tracker.close_issue", "tracker.post"] });
+      return {
+        listed: page.tools.map((tool: { address: string; callable?: false }) => [tool.address, tool.callable]),
+        described: described.tools.map((tool: { callable?: false; errorDetails?: { code: string } }) =>
+          tool.errorDetails ? tool.errorDetails.code : tool.callable,
+        ),
+      };
+    };
+    const omitted = "Writes refused here are listed by search with callable: false.";
     const classification = { tracker: { post: "hidden" as const } };
     const readOnly = world({ readOnly: true, classification });
+    expect(value(await readOnly.run(discover)).result).toEqual({
+      listed: [["tracker.close_issue", false]],
+      described: [false, "unknown_tool"],
+    });
     const [exact, absent, hidden] = value(await readOnly.run(attempt)).result;
     expect(exact).toMatchObject({ code: "read_only_endpoint", message: expect.stringContaining("tell the user") });
     expect(absent).toEqual({
@@ -981,6 +994,10 @@ describe("classification and pool endpoints (#706)", () => {
     expect(readOnly.writes()).toEqual([]);
 
     const writable = world({ readOnly: false, classification, write: () => ({ closed: true }) });
+    expect(value(await writable.run(discover)).result).toEqual({
+      listed: [["tracker.close_issue", undefined]],
+      described: [undefined, "unknown_tool"],
+    });
     const [sent, ...missing] = value(await writable.run(attempt)).result;
     expect(sent).toBe("sent");
     expect(missing.map((error: { message: string }) => error.message)).toEqual([

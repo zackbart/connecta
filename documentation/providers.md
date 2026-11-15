@@ -626,7 +626,7 @@ The credential test reads `/people/v2/me` with the organization included.
 A missing or malformed pair is refused before transport. Personal auth ownership
 is available with `authScope: "personal"`; agents use shared credentials.
 
-**Options and boundaries.** `readOnly: true` omits and refuses writes.
+**Options and boundaries.** `readOnly: true` lists as not callable and refuses writes.
 `defaultPageSize` sets the named lists' default limit (25 normally, at most 100).
 `userAgent` identifies the deployment and a contact; a nonempty single line is
 required. `baseUrl` is an HTTPS proxy override, or HTTP on loopback for tests.
@@ -777,7 +777,7 @@ checks its reported subdomain. The key has no scopes: it reaches the whole
 account, giving included. It is sent only to the configured church hostname.
 
 **Options.** `subdomain` is one hostname label before `.breezechms.com`, never
-a URL. `readOnly: true` omits and refuses writes on every endpoint, including
+a URL. `readOnly: true` lists as not callable and refuses writes on every endpoint, including
 writes that Breeze sends as GET requests. `defaultPageSize` sets paged-list
 sizes from 1 to 1,000 (default 100). `list_events` separately defaults to 100
 and caps at 1,000 without a continuation. `authScope` selects shared or
@@ -1077,7 +1077,7 @@ selected operation resolves, including variable defaults, block strings and a
 single `zoneTag_in` string, must be a 32-character hexadecimal id. Anything
 else, such as a domain name, fails `invalid_args` before any request, pinned or
 not, without repeating the value.
-`readOnly: true` omits and refuses writes. No argument or sensitive-data option returns secrets;
+`readOnly: true` lists as not callable and refuses writes. No argument or sensitive-data option returns secrets;
 credential values and private destinations remain unavailable. `baseUrl` is an
 HTTPS proxy override (HTTP is allowed on loopback for tests).
 
@@ -1448,7 +1448,7 @@ shares one Workspace account across callers. See [Workspace delegation](./auth.m
 [OAuth mode](#gmail) instead takes `{ oauth, authScope }` and requests exactly
 `https://www.googleapis.com/auth/documents`; enable Google Docs API in the OAuth
 client's project.
-`readOnly: true` omits and refuses all writes. Optional `instructions` append
+`readOnly: true` lists as not callable and refuses all writes. Optional `instructions` append
 connection-specific guidance; `baseUrl` is an operator-controlled API root.
 There is no configurable sensitive-field set: document text is requested data.
 
@@ -1524,7 +1524,7 @@ OAuth client's project.
 **Options and boundaries.** `subject` is a fixed Workspace address or a
 function mapping admitted identities. Unmapped callers fail `auth_required`;
 agent pools need an owner unless a fixed subject is configured. Configure
-inbound authentication. `readOnly: true` omits and refuses writes, including
+inbound authentication. `readOnly: true` lists as not callable and refuses writes, including
 hatch mutations. `instructions` appends deployment guidance. `baseUrl` may
 select a confined HTTPS proxy (HTTP loopback for tests). Cell values, notes,
 formulas and metadata are requested content; no `sensitiveFields` switch is
@@ -1593,7 +1593,7 @@ an account. A fixed subject gives every admitted caller that account's view.
 Each logical call resolves its subject once, including form/answer joins.
 A missing form and one the account cannot open are indistinguishable.
 
-`readOnly: true` omits and refuses writes. There is no configurable sensitive
+`readOnly: true` lists as not callable and refuses writes. There is no configurable sensitive
 field set: answers, respondent email and quiz answer keys are requested data
 on both named tools and the hatch. Vendor-minted temporary image URLs and
 credentials remain permanently withheld. Listing forms, sharing and deleting
@@ -1639,7 +1639,7 @@ a fixed account is configured. Unmapped callers fail `auth_required` before
 minting; no tool selects another subject. A deck's absence and lack of access
 are indistinguishable. Delegation is resolved when a data call needs it.
 
-**Options and boundaries.** `readOnly: true` omits and refuses every write.
+**Options and boundaries.** `readOnly: true` lists as not callable and refuses every write.
 `baseUrl` is an HTTPS proxy override, or HTTP on loopback for tests. There is
 no configurable sensitive-field set; field selection only narrows replies.
 The five-method frozen index includes four generic executable JSON routes.
@@ -1786,7 +1786,7 @@ URLs are vendor-minted image destinations, and `clientData` holds other
 applications' private storage, so both are always withheld. Names, emails,
 phone numbers, organizations and memberships are the requested data.
 
-`readOnly: true` omits and refuses writes. Named reads ask Google for names,
+`readOnly: true` lists as not callable and refuses writes. Named reads ask Google for names,
 email addresses, phone numbers and organizations unless `personFields` names
 others. Lists return 25 people by default, at most 100. Searches return at most
 30, Google's cap, with no continuation. Contact reads, creates, copies and
@@ -1839,7 +1839,7 @@ resolves its subject once, including the read inside `update_event` and
 `respond_to_event`. A missing event and one the account cannot see are
 indistinguishable.
 
-`readOnly: true` omits and refuses writes. There is no configurable sensitive
+`readOnly: true` lists as not callable and refuses writes. There is no configurable sensitive
 field set: event details, guests and their responses are requested data. A
 conference entry point's `accessCode`, `passcode`, `password` and `pin` are
 permanently withheld on named tools and the hatch; the join link stays.
@@ -2052,7 +2052,7 @@ calls without a mapped account fail `auth_required`, and no tool argument
 selects an account. A missing space or conference record and one the account
 cannot see are indistinguishable.
 
-`readOnly: true` omits and refuses `create_space`, `update_space`,
+`readOnly: true` lists as not callable and refuses `create_space`, `update_space`,
 `end_active_conference` and hatch writes. There is no configurable sensitive
 field set: attendee names, People user ids, partial phone numbers, dial-in
 PINs, SIP codes and transcript text are requested data on both named tools and

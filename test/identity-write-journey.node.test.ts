@@ -168,7 +168,16 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
     expect(ledger.calls).toEqual([]);
     const listing = await locked.call("search_tools", { query: "", limit: 50 });
     expect(listing.text).toContain("notes.read");
-    expect(JSON.parse(listing.text).tools.map((tool: { address: string }) => tool.address)).toEqual(["notes.read"]);
+    expect(
+      JSON.parse(listing.text).tools.map((tool: { address: string; callable?: false }) => [
+        tool.address,
+        tool.callable ?? true,
+      ]),
+    ).toEqual([
+      ["notes.read", true],
+      ["notes.save", false],
+    ]);
+    expect(listing.text).not.toMatch(/account\.read|notes\.hidden/);
     expect((await locked.listTools()).find((tool) => tool.name === "execute_code")?.readOnly).toBe(true);
     for (const name of ["call_tool", "call_destructive_tool"]) {
       const refused = await locked.call(name, { address: "notes.save", args: {} });

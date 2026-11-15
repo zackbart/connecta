@@ -122,7 +122,7 @@ describe("description summaries", () => {
       expect(full.tools.every((tool) => tool.descriptionTruncated === undefined)).toBe(true);
       summaries.tools.forEach((tool, index) => {
         const description = tool.description ?? "";
-        if (tool.classification === "write") {
+        if (tool.classification === "write" && tool.callable !== false) {
           expect(tool.descriptionTruncated, tool.address).toBeUndefined();
           expect(description, tool.address).toBe(full.tools[index]!.description ?? "");
           return;
@@ -583,9 +583,13 @@ describe("search_tools", () => {
       ["mail.search_threads", "mail_work.search_threads"],
     ]);
 
-    // A read-only connector's write stays hidden; pages count rows, so walking them returns each row once.
+    // A read-only connector's write is its own not-callable row; pages count rows, so walking them returns each row once.
     const archive = await search({ query: "archive thread" });
-    expect(rows(archive)).toEqual([["mail.archive_thread", ["mail_work.archive_thread", "mail_beta.archive_thread"]]]);
+    expect(rows(archive)).toEqual([
+      ["mail.archive_thread", ["mail_work.archive_thread", "mail_beta.archive_thread"]],
+      ["mail_home.archive_thread", undefined],
+    ]);
+    expect(archive.tools.map((tool) => tool.callable)).toEqual([undefined, false]);
     const walked: SearchResult["tools"] = [];
     for (let offset: number | undefined = 0; offset !== undefined;) {
       const page: SearchResult = await search({ query: "search threads", limit: 1, offset });
@@ -599,9 +603,10 @@ describe("search_tools", () => {
     expect(rows(await search({ query: "send message" })).map(([address]) => address)).toEqual([
       "mail.send_message",
       "mail_work.send_message",
+      "mail_home.send_message",
       "mail_beta.send_message",
     ]);
-    expect((await search({ query: "" })).total).toBe(10);
+    expect((await search({ query: "" })).total).toBe(12);
   });
 
   it("groups on declared facts only, so an isolate's observed output schemas never move a page", async () => {
@@ -847,7 +852,7 @@ describe("search_tools", () => {
     // The hatch covers every word through one operation, so it precedes them, and the page is not partial.
     expect(addresses[0]).toBe("edge.cloudflare_api_search");
     expect(beside.matchMode).toBeUndefined();
-    // Limit and read-only endpoints still govern what the wider page shows.
+    // Limit governs what the wider page shows; a read-only endpoint marks its write not callable.
     const page = textOf(
       await createMetaTools(makeRegistry([subscriptions(), cloudflareFixture.create("edge")]), BASE).searchTools({
         query: "cancel a subscription",
@@ -861,8 +866,10 @@ describe("search_tools", () => {
         readOnly: true,
       }).searchTools({ query: "cancel a subscription" }),
     ) as SearchResult;
-    expect(readOnly.tools.map((tool) => tool.address)).not.toContain("billing.update_subscription");
-    expect(readOnly.tools.every((tool) => tool.classification === "read")).toBe(true);
+    expect(readOnly.tools.map((tool) => tool.address)).toEqual(addresses);
+    expect(
+      readOnly.tools.filter((tool) => tool.classification !== "read").map((tool) => [tool.address, tool.callable]),
+    ).toEqual([["billing.update_subscription", false]]);
   });
 
   it("keeps a hatch on the page and below a complete authored tool", async () => {

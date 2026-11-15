@@ -49,7 +49,8 @@ explain how to check the service or retrieve retained output.
 
 ## Read-only blocks actions that change data
 
-A read-only pool hides tools marked as writes and refuses attempts to call
+A read-only pool shows tools marked as writes as not callable, so an agent can
+tell you the change exists but is not allowed here, and refuses attempts to call
 them before sending anything. Guessing a tool name or asking from a program
 does not bypass it. A read-only pool can still name a few exact write actions
 it allows; every other write stays refused, including one a service adds

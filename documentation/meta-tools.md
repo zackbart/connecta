@@ -47,9 +47,9 @@ list, so a client's cached meta-tool list never depends on
 the storage behind the deployment. `execute_code`
 is annotated `readOnlyHint: true, destructiveHint: false` on a read-only
 endpoint, and `readOnlyHint: false, destructiveHint: true` on a writable one.
-Approval belongs to the client. A read-only endpoint keeps all six tools, omits
-write tools from `search_tools` results and describe, and refuses every write
-call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
+Approval belongs to the client. A read-only endpoint keeps all six tools, lists
+write tools in `search_tools` results and describe with `callable: false`
+([refused writes](#refused-writes)), and refuses every write call. Connector `readOnly` applies the same restriction on every endpoint; effective read-only is endpoint OR connector. Neither setting changes connector visibility or read grants. Guides
 (`queryAnalysis.guideSummary`, `skills`, `connecta.skill`, skill
 `resources/read`) are documentation and may name tools the endpoint refuses. The three tools with structured-only success results
 (`execute_code`, `search_tools`, `authorize_connector`) advertise an open
@@ -256,7 +256,8 @@ or a granted write, whose host approval covers the whole program or call, and
 read.
 
 **Discovery lists writes, marked.** `connecta.search` and `connecta.describe` return
-them with `callable: false`, and no other entry carries the field. Writes are not
+them with `callable: false`, and only refused tools carry the field
+([refused writes](#refused-writes)). Writes are not
 omitted because omission reads as absence, and a program that reduces a page keeps
 the marker on the entry it selects where it would drop a page-level note.
 `search_tools` remains the unprompted way to find a write's address outside a program.
@@ -314,8 +315,8 @@ inside the program can still discard the answer.
 On a writable endpoint the same program discovers and dispatches writes, capped
 by `execute.maxWrites`, and `call_destructive_tool` sends one known write. On a
 read-only endpoint nothing writes: `search_tools`, `connecta.search`, and
-`connecta.describe` omit write tools as if the connector lacked them, and
-every write call through `call_tool`, `call_destructive_tool`, or a program is
+`connecta.describe` list write tools with `callable: false`
+([refused writes](#refused-writes)), and every write call through `call_tool`, `call_destructive_tool`, or a program is
 refused before validation or dispatch with `read_only_endpoint`,
 `retryable: false`, and an explicit statement that no write route exists here.
 Bootstrap instructions state the serving endpoint’s actual write policy. Connector
@@ -372,14 +373,14 @@ Read-only lookup belongs in `connecta.search` inside the program; top-level
 `search_tools` stays for explicit catalog inspection and approval-required
 discovery. Both take the same arguments.
 
-| Argument           | What it does                                                                                                                                                                                                                                                                                        |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `query`            | two to four action/object terms; empty or whitespace-only browses                                                                                                                                                                                                                                   |
-| `connector`        | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous                                                                                                    |
-| `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe client approval policy; a read-only endpoint has no write rows. |
-| `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                                                        |
-| `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                                                 |
-| `fullDescriptions` | unabridged tool purposes instead of the one-sentence summary, at the obvious cost; write rows are always full                                                                                                                                                                                       |
+| Argument           | What it does                                                                                                                                                                                                                                                                                                           |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`            | two to four action/object terms; empty or whitespace-only browses                                                                                                                                                                                                                                                      |
+| `connector`        | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous                                                                                                                       |
+| `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe client approval policy; a read-only endpoint's write rows carry `callable: false`. |
+| `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                                                                           |
+| `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                                                                    |
+| `fullDescriptions` | unabridged tool purposes instead of the one-sentence summary, at the obvious cost; write rows are always full, except a write this scope refuses                                                                                                                                                                       |
 
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
@@ -504,6 +505,32 @@ next discovery read in that request, without storage reads on unchanged repeats.
 Changes from another process/isolate or direct storage writes need not be observed
 until the next request. Custom vault mutations must also invalidate the registry.
 The index never crosses request or caller/pool boundaries.
+
+### Refused writes
+
+A scope that refuses writes it can otherwise see lists them instead of omitting
+them: a read-only endpoint, a `readOnly` connector, and a read-only pool's write
+that its `writes` does not grant. `search_tools`, `describe`, `connecta.search`
+and `connecta.describe` return each such write with `classification: "write"`
+and `callable: false`, the marker `execute_read_code` uses for the writes it
+refuses ([read programs](#read-programs)). Omitting them read as absence: an
+agent asked to change something guessed a name, got `unknown_tool`, and told the
+person the tool did not exist instead of that this endpoint is read-only.
+
+- Calling a listed write is refused with `read_only_endpoint` before validation
+  or dispatch on every path, and the message tells the agent to tell the user.
+- Search shows these rows with a one-sentence summary, as it does reads, and
+  spends no write-description budget on them, because no route here runs them.
+  `fullDescriptions: true` and describe still return the full text.
+- Ranking is unchanged: reads precede writes unless the query states a write.
+- A native pool's `tools/list` still omits them; a program there finds them
+  through `connecta.search`.
+- Only the scope's own catalog is listed. A tool the pool does not grant, a
+  tool on a connector outside the pool, and a tool classified `"hidden"` stay
+  undiscoverable and fail as `unknown_tool`.
+
+The search, `call_destructive_tool` and `execute_code` descriptions and the
+usage guide say that writes carry `callable: false` on a read-only endpoint.
 
 ### TypeScript signatures
 
@@ -1303,7 +1330,8 @@ following ones until it reaches 40 characters, within 160 UTF-16 code units. Tex
 with no sentence end in that range is cut at a word and marked `…`. The row
 carries `descriptionTruncated: true` whenever text was left out;
 `fullDescriptions: true` returns the original text and no flag. Only `read`
-rows are summarized. A `write` row always carries its full, original
+rows and writes this scope refuses ([refused writes](#refused-writes)) are
+summarized. Any other `write` row always carries its full, original
 description and never `descriptionTruncated`, so a precondition stated late in
 a write's description is on the page that finds it. Write descriptions share
 one budget of 32 KiB UTF-8 per page in rank order: when the next write would
@@ -1366,8 +1394,8 @@ either way. Score and catalog order break the remaining ties.
 
 A searched tool that several connectors offer identically (same name,
 classification, description, annotations, input schema, declared output schema,
-whether its connector has a guide and requires it, and whether
-`execute_read_code` can call it) appears once, at its best rank. Any per-address
+whether its connector has a guide and requires it, whether
+`execute_read_code` can call it, and whether it is `callable: false`) appears once, at its best rank. Any per-address
 fact a row shows is part of that identity. Output schemas observed from earlier
 results are local to one process, so they never affect grouping, and a grouped
 row shows no observed schema. The row's `alsoOn` lists the other
@@ -1375,8 +1403,9 @@ addresses in rank order; each is callable as its own address, and `connectors`
 carries its connector's title and guide. The row shown is the group member whose
 connector ID and title words the query names most, then the best-ranked, so
 `home threads` shows `mail_home.search_threads` with `mail.search_threads` in
-`alsoOn`. Only rows the caller can already see are grouped: a write hidden on a
-read-only connector is in no `alsoOn`. `total`, `offset` and `nextOffset` count
+`alsoOn`. Only rows the caller can already see are grouped, and a write refused
+on a read-only connector never shares a row with the same write a writable
+connector runs. `total`, `offset` and `nextOffset` count
 rows after grouping. A browse lists every address and groups nothing.
 
 A short shared synonym map widens a query word on every connector, as an
@@ -1972,16 +2001,17 @@ list connectors from another pool or identity's grants.
 
 An `unknown_tool` error from a direct call or a program carries `suggestions`
 when the connector has a tool with a near name: canonical addresses ranked as
-describe ranks them, and only reads on a read-only endpoint or connector.
+describe ranks them, drawn from the same tools search lists, refused writes
+included.
 
 Where this scope refuses the connector's writes (a read-only endpoint, a
 `readOnly` connector, or a write a read-only pool's `writes` does not grant),
-the `unknown_tool` message adds: `Search omits writes refused here; a write's
-exact address returns read_only_endpoint, not unknown_tool.` A write that exists
-in the scope's catalog is refused with `read_only_endpoint` before validation or
-dispatch; a guessed name that does not exist, a hidden tool, and a tool outside
-the pool all return this same `unknown_tool`, so the note depends only on the
-scope's configuration and never on what the catalog holds.
+the `unknown_tool` message adds: `Writes refused here are listed by search with
+callable: false.` A write that exists in the scope's catalog is refused with
+`read_only_endpoint` before validation or dispatch; a guessed name that does not
+exist, a hidden tool, and a tool outside the pool all return this same
+`unknown_tool`, so the note depends only on the scope's configuration and never
+on what the catalog holds.
 
 A direct call whose arguments do not match `call_tool` or `call_destructive_tool`
 fails input validation before anything is resolved. The message names the shape:
@@ -2258,7 +2288,8 @@ whatever hints the downstream declared. A deployment `"read"` override never
 produces read annotations for a tool whose source explicitly declares a write;
 `"read-repeatable"` does, and accepts that a host may repeat the call. See
 [deployment overrides](./integrating.md#another-remote-mcp-server). A read-only endpoint or connector
-leaves write tools out of the list, by the same rule search and describe use.
+leaves the writes it refuses out of the list; `connecta.search` and `connecta.describe`
+in a program on that pool list them with `callable: false` ([refused writes](#refused-writes)).
 
 **Calls take the existing paths.** A name selects its route: a read's name is the
 `call_tool` call for its address, and a write's name is the

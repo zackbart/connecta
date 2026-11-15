@@ -461,7 +461,7 @@ interface CatalogSearchEntry extends CatalogSearchConnectorFacts {
     requiredInputKeys?: string[];
     outputKeys?: string[];
     classification?: ToolDef["classification"];
-    /** A read program's marker: this route refuses the tool. See `markUncallableWrites`. */
+    /** This scope or read program refuses the tool. See `uncallable`. */
     callable?: false;
     guideRequired?: true;
     guideRequiredReasons?: GuideRequiredReason[];
@@ -802,6 +802,7 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
           requiredInputKeys: stringListSchema,
           outputKeys: stringListSchema,
           classification: { enum: ["read", "write"] },
+          callable: { const: false },
           ...guideRequiredProperties,
         },
       },
@@ -980,8 +981,8 @@ export class CatalogService {
       /** The request's cancellation; discovery probes end with it. */
       requestSignal?: AbortSignal | undefined;
       /**
-       * A read-only endpoint: search and describe show only reads. Resolution
-       * still finds a write, so the call that names one is refused by code.
+       * A read-only endpoint: search and describe list its writes with `callable: false`.
+       * Resolution still finds a write, so the call that names one is refused by code.
        */
       readOnly?: boolean | undefined;
       /**
@@ -1204,14 +1205,18 @@ export class CatalogService {
     return !this.readOnly && connector !== undefined && !this.registry.refusesWrite(connector, toolName);
   }
 
-  private searchView(
-    id: string,
-    tools: ToolDef[],
-    includeWrites: boolean,
-    safety: CatalogSearchArgs["safety"],
-  ): ToolDef[] {
-    const connector = this.registry.getConnector(id);
-    const key = `${includeWrites}:${safety ?? "all"}`;
+  /** A write no route of this scope can run. */
+  private scopeRefuses(connector: Connector, tool: ToolDef): boolean {
+    return tool.classification !== "read" && !this.servesWrite(connector, tool.name);
+  }
+
+  /** Discovery's `callable: false`: this scope refuses the write, or this read program refuses it. */
+  private uncallable(connector: Connector, tool: ToolDef): boolean {
+    return this.scopeRefuses(connector, tool) || (this.markUncallableWrites && readProgramRefuses(tool));
+  }
+
+  private searchView(tools: ToolDef[], safety: CatalogSearchArgs["safety"]): ToolDef[] {
+    const key = safety ?? "all";
     let views = this.searchViews.get(tools);
     if (!views) {
       views = new Map();
@@ -1219,12 +1224,7 @@ export class CatalogService {
     }
     let view = views.get(key);
     if (!view) {
-      view = toolsForSafety(
-        includeWrites
-          ? tools
-          : tools.filter((tool) => tool.classification === "read" || this.servesWrite(connector, tool.name)),
-        safety ?? "all",
-      );
+      view = toolsForSafety(tools, safety ?? "all");
       carryLexicalCatalog(tools, view);
       const stale = catalogStaleness(tools);
       if (stale) markCatalogStale(view, stale);
@@ -1276,17 +1276,12 @@ export class CatalogService {
    * listing would hide stays hidden: the view is filtered like a live one, and
    * the mark is what makes search and native listing report it.
    */
-  private staleListing(
-    id: string,
-    peek: CatalogPeek,
-    includeWrites: boolean,
-    failure: Omit<CatalogStaleness, "ageMs">,
-  ): ToolDef[] {
+  private staleListing(peek: CatalogPeek, failure: Omit<CatalogStaleness, "ageMs">): ToolDef[] {
     const source = markCatalogStale(
       peek.tools.map((tool) => cloneTool(tool)),
       { ...failure, ageMs: Math.max(0, Date.now() - peek.fetchedAt) },
     );
-    return this.searchView(id, source, includeWrites, "all");
+    return this.searchView(source, "all");
   }
 
   /**
@@ -1377,12 +1372,11 @@ export class CatalogService {
   // each settling in its input slot: an unavailable catalog is a Failure
   // there, not a failed discovery. `route` names the surface in a timeout.
   // A probe also ends with its request, so no listing outlives the caller
-  // that asked for it. On a read-only endpoint a write is absent from search
-  // and describe, as if the connector never had it. Guides are not filtered.
+  // that asked for it. A write the scope refuses stays in the catalog; search
+  // and describe mark it `callable: false`.
   private discoveryCatalogs(
     ids: readonly string[],
     route: SearchRoute | "connecta.describe" | "tools/list",
-    includeWrites = false,
   ): Effect.Effect<Array<Result.Result<ToolDef[], unknown>>> {
     return Effect.forEach(
       ids,
@@ -1390,7 +1384,6 @@ export class CatalogService {
         Effect.result(
           this.probe(
             id,
-            includeWrites,
             this.probeTimeoutMs,
             new ConnectorCallError("timeout", `${route} probe of "${id}" timed out after ${this.probeTimeoutMs}ms`),
           ),
@@ -1418,7 +1411,6 @@ export class CatalogService {
   private searchCatalogs(
     ids: readonly string[],
     mode: "scoped" | "unscoped" | "native",
-    includeWrites = false,
   ): Effect.Effect<Array<Result.Result<ToolDef[], unknown>>> {
     return Effect.gen({ self: this }, function* () {
       const scoped = mode === "scoped";
@@ -1485,7 +1477,6 @@ export class CatalogService {
               result: yield* Effect.result(
                 this.probe(
                   id,
-                  includeWrites,
                   this.probeTimeoutMs,
                   new ConnectorCallError(
                     "timeout",
@@ -1513,7 +1504,7 @@ export class CatalogService {
               if (scoped || this.requestSignal?.aborted) return undefined;
               if (waited) this.peeks.delete(id);
               if (waited || !peek) peek = yield* this.peek(id, STALE_READ_TIMEOUT_MS);
-              return peek ? this.staleListing(id, peek, includeWrites, failure) : undefined;
+              return peek ? this.staleListing(peek, failure) : undefined;
             });
           if (skip && skip.retryAt > Date.now() && !peek?.fresh) {
             const retryAfterMs = Math.ceil(skip.retryAt - Date.now());
@@ -1570,7 +1561,7 @@ export class CatalogService {
                 return { result: Result.fail(plan.timeoutError) as Result.Result<ToolDef[], unknown>, plan };
             }
             const started = Date.now();
-            const result = yield* Effect.result(this.probe(id, includeWrites, plan.timeoutMs, plan.timeoutError));
+            const result = yield* Effect.result(this.probe(id, plan.timeoutMs, plan.timeoutError));
             // Elapsed time is this probe's own, measured as it settles.
             return { result, plan, elapsedMs: Date.now() - started };
           });
@@ -1638,45 +1629,37 @@ export class CatalogService {
     });
   }
 
-  private probe(
-    id: string,
-    includeWrites: boolean,
-    timeoutMs: number,
-    timeoutError: Error,
-  ): Effect.Effect<ToolDef[], unknown> {
+  private probe(id: string, timeoutMs: number, timeoutError: Error): Effect.Effect<ToolDef[], unknown> {
     return withDeadlineEffect(
-      (signal) => Effect.map(this.catalog(id, { signal }), (tools) => this.searchView(id, tools, includeWrites, "all")),
+      (signal) => Effect.map(this.catalog(id, { signal }), (tools) => this.searchView(tools, "all")),
       { ...(this.requestSignal ? { signal: this.requestSignal } : {}), timeoutMs, timeoutError },
     );
   }
 
   /**
-   * Every visible catalog as discovery shows it, for a native `tools/list`:
-   * a read-only endpoint or connector omits its writes, and each catalog
-   * settles on its own, so one unavailable connector is an `error` entry
-   * beside the others rather than a failed listing.
+   * Every visible catalog, writes included, for a native `tools/list`, which
+   * omits the writes this scope refuses. Each catalog settles on its own, so
+   * one unavailable connector is an `error` entry beside the others rather
+   * than a failed listing.
    */
   listCatalogs(
-    includeWrites = false,
     connectors = this.registry.listConnectors(),
     allowStale = false,
   ): Promise<Array<{ connector: Connector; tools: ToolDef[] } | { connector: Connector; error: unknown }>> {
-    return runEdge(this.listCatalogsEffect(includeWrites, connectors, allowStale));
+    return runEdge(this.listCatalogsEffect(connectors, allowStale));
   }
 
   /**
    * `allowStale` is for a listing only. Resolving a native call must not pass
    * it: uniqueness and authority come from a catalog that answered.
    */
-  listCatalogsEffect(includeWrites = false, connectors?: Connector[], allowStale = false) {
+  listCatalogsEffect(connectors?: Connector[], allowStale = false) {
     return duringViewEffect({ requestScope: this.requestScope, signal: this.requestSignal }, () =>
       Effect.suspend(() => {
         const visible = connectors ?? this.registry.listConnectors();
         const ids = visible.map((connector) => connector.id);
         return Effect.map(
-          allowStale
-            ? this.searchCatalogs(ids, "native", includeWrites)
-            : this.discoveryCatalogs(ids, "tools/list", includeWrites),
+          allowStale ? this.searchCatalogs(ids, "native") : this.discoveryCatalogs(ids, "tools/list"),
           (results) =>
             results.map((result, index) => {
               const connector = visible[index]!;
@@ -1732,9 +1715,7 @@ export class CatalogService {
     started: number,
     tools: ToolDef[],
   ): CatalogResolution {
-    // The same view discovery serves: a read-only scope never names a write here.
-    const visible = tools.filter((tool) => tool.classification === "read" || this.servesWrite(connector, tool.name));
-    const suggestions = hasControlCharacters(toolName) ? [] : describeSuggestions(connector.id, toolName, visible);
+    const suggestions = hasControlCharacters(toolName) ? [] : describeSuggestions(connector.id, toolName, tools);
     const unknown = hasControlCharacters(toolName)
       ? `Unknown tool on connector "${connector.id}"`
       : `Unknown tool "${boundedEchoText(toolName)}" on connector "${connector.id}"`;
@@ -1745,7 +1726,7 @@ export class CatalogService {
           "unknown_tool",
           this.servesWrite(connector, toolName)
             ? unknown
-            : `${unknown}. Search omits writes refused here; a write's exact address returns read_only_endpoint, not unknown_tool.`,
+            : `${unknown}. Writes refused here are listed by search with callable: false.`,
         ),
         nextAction: this.searchRecovery(
           { query: hasControlCharacters(toolName) ? "" : recoveryQuery(toolName), connector: connector.id },
@@ -1949,7 +1930,7 @@ export class CatalogService {
               catalogGenerationFor(this.requestScope, id),
             ]),
           );
-          return this.searchView(id, tools, true, safety);
+          return this.searchView(tools, safety);
         }),
       );
       const matches: Array<{
@@ -2169,15 +2150,18 @@ export class CatalogService {
             connectorGuide(connector) !== undefined,
             connectorGuideRequired(connector),
             readProgramRefuses(tool),
+            this.uncallable(connector, tool),
           ]);
-      const fullWriteBytes = (tool: ToolDef) =>
-        args.fullDescriptions !== true && tool.classification !== "read" && tool.description
-          ? encoder.encode(tool.description).length
+      const summarized = ({ connector, tool }: (typeof matches)[number]) =>
+        tool.classification === "read" || this.scopeRefuses(connector, tool);
+      const fullWriteBytes = (match: (typeof matches)[number]) =>
+        args.fullDescriptions !== true && !summarized(match) && match.tool.description
+          ? encoder.encode(match.tool.description).length
           : 0;
       const pageMatches: typeof matches = [];
       let writeDescriptionBytes = 0;
       for (const match of matches.slice(offset, offset + limit)) {
-        const bytes = fullWriteBytes(match.tool);
+        const bytes = fullWriteBytes(match);
         if (pageMatches.length > 0 && writeDescriptionBytes + bytes > MAX_DESCRIBE_DESCRIPTION_BYTES) break;
         pageMatches.push(match);
         writeDescriptionBytes += bytes;
@@ -2215,7 +2199,7 @@ export class CatalogService {
             : undefined;
         const schemaKeys = withSchemas && args.includeSchemaKeys ? schemaKeyMetadata(input, output.schema) : undefined;
         const summary =
-          match.tool.description && args.fullDescriptions !== true && match.tool.classification === "read"
+          match.tool.description && args.fullDescriptions !== true && summarized(selected)
             ? discoverySummary(match.tool.description)
             : undefined;
         const description = summary ? summary.text : match.tool.description || undefined;
@@ -2256,7 +2240,7 @@ export class CatalogService {
               : {}),
             ...(schemaKeys?.outputKeys && !renderedOutput?.truncated ? { outputKeys: schemaKeys.outputKeys } : {}),
             classification: match.tool.classification,
-            ...(this.markUncallableWrites && readProgramRefuses(match.tool) ? { callable: false as const } : {}),
+            ...(this.uncallable(match.connector, match.tool) ? { callable: false as const } : {}),
             ...(requiredReasons
               ? {
                   guideRequired: true as const,
@@ -2736,7 +2720,7 @@ export class CatalogService {
           ...(output.source ? { outputSchemaSource: output.source } : {}),
           ...(tool.annotations ? { annotations: tool.annotations } : {}),
           classification: tool.classification,
-          ...(this.markUncallableWrites && readProgramRefuses(tool) ? { callable: false as const } : {}),
+          ...(this.uncallable(addressResolution.connector, tool) ? { callable: false as const } : {}),
         };
       });
     });

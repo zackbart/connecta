@@ -1,6 +1,7 @@
 import { CATALOG_SEARCH_RESULT_SCHEMA, CatalogService, flatSearchResult } from "../src/catalog-service.js";
 import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
 import { makeRegistry } from "./helpers.js";
+import { connectorWith } from "./fixtures/connectors.js";
 import { EXECUTE_OUTPUT, SEARCH_OUTPUT } from "../src/meta-output.js";
 import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
 // Golden: the input schema of every meta-tool exactly as `tools/list` renders
@@ -360,6 +361,34 @@ describe("search_tools output schema", () => {
       expect(validator.validate(page).errors, draft).toEqual([]);
       for (const bad of malformed) expect(validator.validate(bad).valid, JSON.stringify(bad.readyCalls)).toBe(false);
     }
+  });
+
+  it("INV-2: validates a read-only page's not-callable writes under every host draft", async () => {
+    const connector = connectorWith({
+      id: "tickets",
+      kind: "api",
+      tools: [
+        { name: "get_ticket", description: "Get one ticket.", annotations: { readOnlyHint: true } },
+        { name: "close_ticket", description: "Close one ticket.", annotations: { readOnlyHint: false } },
+      ],
+    });
+    const page = flatSearchResult(
+      await new CatalogService(makeRegistry([connector]), "https://connecta.test", { readOnly: true }).search({
+        connector: "tickets",
+        query: "",
+      }),
+    );
+    expect(page.tools.map((tool) => [tool.name, tool.callable])).toEqual([
+      ["get_ticket", undefined],
+      ["close_ticket", false],
+    ]);
+    const callable = { ...page, tools: page.tools.map((tool) => ({ ...tool, callable: true })) };
+    for (const draft of ["2020-12", "2019-09", "7", "4"] as const) {
+      const validator = new Validator(CATALOG_SEARCH_RESULT_SCHEMA as never, draft);
+      expect(validator.validate(page).errors, draft).toEqual([]);
+      expect(validator.validate(callable).valid, draft).toBe(false);
+    }
+    expect(SEARCH_OUTPUT["~standard"].validate(page)).not.toHaveProperty("issues");
   });
 
   it.each([

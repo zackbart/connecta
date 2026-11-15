@@ -159,7 +159,7 @@
       "id": "tool-annotations",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Read/write routing fails closed. A readOnly endpoint or connector omits write tools from search_tools results and describe and refuses every write call with read_only_endpoint; guides may still name those tools. execute_code's annotations follow the endpoint, and the client owns approval.",
+      "notes": "Read/write routing fails closed. A readOnly endpoint or connector lists write tools in search_tools results and describe with callable: false, omits them from a native pool's tools/list, and refuses every write call with read_only_endpoint. execute_code's annotations follow the endpoint, and the client owns approval.",
       "evidence": [
         "test/execute.test.ts",
         "test/identity-write-journey.node.test.ts",

@@ -698,7 +698,6 @@ function sandboxProvider(
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
     requestSignal: hostAccessSignal,
-    // connecta.search and connecta.describe never show a read-only endpoint's writes.
     readOnly: limits.readOnly,
     // A program that just missed an address cannot call search_tools.
     searchRoute: "connecta.search",
@@ -2474,7 +2473,7 @@ const executeDescription = (
   readRoute = false,
 ) =>
   `${programLead(routes, readOnly, native, readRoute)}
-${native || routes === routeNames("code") || readOnly ? "" : `One known read: ${routes.read}. One known write: ${routes.write}. ${readRoute ? `Read programs: ${READ_PROGRAM_SOURCE}. Programs that write: ${routes.program}.` : `Everything else: ${routes.program}.`} `}${readOnly ? (native ? "Read-only endpoint: writes are omitted and refused." : "Read-only endpoint: search and describe omit write tools, and every write call is refused.") : "Writable endpoint: programs may write; the host approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
+${native || routes === routeNames("code") || readOnly ? "" : `One known read: ${routes.read}. One known write: ${routes.write}. ${readRoute ? `Read programs: ${READ_PROGRAM_SOURCE}. Programs that write: ${routes.program}.` : `Everything else: ${routes.program}.`} `}${readOnly ? (native ? "Read-only endpoint: the tool list omits writes, search lists them with callable: false, and every write call is refused." : "Read-only endpoint: search and describe list writes with callable: false, and every write call is refused.") : "Writable endpoint: programs may write; the host approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or timers. API:

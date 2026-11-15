@@ -382,7 +382,10 @@ describe("agent endpoint admission", () => {
     const refused = await rpc(c, "/agent/readers", bot, "call_destructive_tool", { address: "notes.delete", args: {} });
     expect(JSON.stringify(refused)).toContain("read_only_endpoint");
     expect(JSON.stringify(refused)).toContain("No write route exists on this endpoint");
-    expect(await searchText(c, "/agent/readers", bot)).not.toContain("notes.delete");
+    const listed = await rpc(c, "/agent/readers", bot, "search_tools", { connector: "notes", query: "delete" });
+    expect(listed.result.structuredContent.tools).toContainEqual(
+      expect.objectContaining({ address: "notes.delete", classification: "write", callable: false }),
+    );
     expect(deleted.count).toBe(0);
     const written = await rpc(c, "/agent/writers", bot, "call_destructive_tool", { address: "notes.delete", args: {} });
     expect(written.result.isError).toBeFalsy();
@@ -396,8 +399,7 @@ describe("agent endpoint admission", () => {
     expect(deleted.count).toBe(2);
     const missing = async (path: string, address: string) =>
       (await rpc(c, path, bot, "call_destructive_tool", { address, args: {} })).result.structuredContent.error;
-    const omitted =
-      "Search omits writes refused here; a write's exact address returns read_only_endpoint, not unknown_tool.";
+    const omitted = "Writes refused here are listed by search with callable: false.";
     const outsidePool = await missing("/agent/exact", "notes.search");
     expect(outsidePool).toMatchObject({
       code: "unknown_tool",
