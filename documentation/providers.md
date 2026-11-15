@@ -1701,10 +1701,12 @@ on the first request; pass the signed `page.nextCursor` as top-level `cursor`
 thereafter. An empty vendor page may continue. `query.fields` is Google's wire
 mask; Connecta's `fields` narrows safe returned JSON and preserves paging.
 `incompleteSearch` describes incomplete corpus search, never an exact total.
-An empty first page of `search_files` whose `name` clause holds a value shaped
-like a Drive file id (25 or more letters, digits, `-` or `_`, mixing letters and
-digits) adds `hint: { reason: "name_looks_like_file_id", tool: "get_file", message }`.
-The hint never repeats the value and costs no extra Drive request.
+An empty first page of `search_files` whose un-negated `name =` or
+`name contains` clause holds a value shaped like a Drive file id (25 or more
+letters, digits, `-` or `_`, mixing letters and digits) adds
+`hint: { reason: "name_looks_like_file_id", tool: "get_file", message }`.
+A negated name clause, negation combined with `or`, or an unbalanced query gets
+no hint. The hint never repeats the value and costs no extra Drive request.
 
 ```js
 const { data: result } = await connecta.call("files.drive_api_read", {

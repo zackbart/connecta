@@ -67,18 +67,68 @@ const DRIVE_ID = /^[A-Za-z0-9_-]{1,256}$/;
  */
 const MAX_CURSOR_CHARS = 16_384;
 const FILE_ID_SHAPE = /^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9_-]{25,256}$/;
-const NAME_CLAUSE = /\bname\s*(?:=|contains)\s*'((?:[^'\\]|\\.)*)'/g;
+const QUERY_TOKEN = /\s+|'((?:[^'\\]|\\.)*)'|([()])|(!=|<=|>=|=|<|>)|([^\s'()=<>!]+)/y;
 const ID_HINT = {
   reason: "name_looks_like_file_id",
   tool: "get_file",
   message:
-    "Nothing has this name, and the value looks like a Drive file id. Read it with get_file; Docs, Sheets, Slides and Forms take the same id.",
+    "No file matched, and a name in the query looks like a Drive file id; names never match ids. Read it with get_file; Docs, Sheets, Slides and Forms take the same id.",
 } as const;
-function namesAFileId(query: string | undefined): boolean {
-  for (const [, quoted] of (query ?? "").matchAll(NAME_CLAUSE)) {
-    if (FILE_ID_SHAPE.test(quoted!.replace(/\\(.)/g, "$1"))) return true;
+type QueryToken = { kind: "string" | "paren" | "operator" | "word"; text: string };
+function queryTokens(query: string): QueryToken[] | undefined {
+  const tokens: QueryToken[] = [];
+  QUERY_TOKEN.lastIndex = 0;
+  while (QUERY_TOKEN.lastIndex < query.length) {
+    const match = QUERY_TOKEN.exec(query);
+    if (!match) return undefined;
+    const [, quoted, paren, operator, word] = match;
+    if (quoted !== undefined) tokens.push({ kind: "string", text: quoted.replace(/\\(.)/g, "$1") });
+    else if (paren) tokens.push({ kind: "paren", text: paren });
+    else if (operator) tokens.push({ kind: "operator", text: operator });
+    else if (word) tokens.push({ kind: "word", text: word.toLowerCase() });
   }
-  return false;
+  return tokens;
+}
+function namesAFileId(query: string | undefined): boolean {
+  const tokens = queryTokens(query ?? "");
+  if (!tokens) return false;
+  const negated: boolean[] = [false];
+  let pending = false;
+  let sawNot = false;
+  let sawOr = false;
+  let positive = false;
+  for (let at = 0; at < tokens.length; at += 1) {
+    const token = tokens[at]!;
+    if (token.kind === "word" && token.text === "not") {
+      pending = !pending;
+      sawNot = true;
+    } else if (token.kind === "paren" && token.text === "(") {
+      negated.push(negated.at(-1)! !== pending);
+      pending = false;
+    } else if (token.kind === "paren") {
+      if (negated.length === 1) return false;
+      negated.pop();
+      pending = false;
+    } else if (token.kind === "word" && (token.text === "and" || token.text === "or")) {
+      sawOr ||= token.text === "or";
+      pending = false;
+    } else if (token.kind === "word" && token.text === "name") {
+      const operator = tokens[at + 1];
+      const value = tokens[at + 2];
+      if (
+        value?.kind === "string" &&
+        ((operator?.kind === "operator" && operator.text === "=") ||
+          (operator?.kind === "word" && operator.text === "contains")) &&
+        FILE_ID_SHAPE.test(value.text)
+      ) {
+        if (negated.at(-1)! !== pending) return false;
+        positive = true;
+      }
+      at += 2;
+      pending = false;
+    }
+  }
+  return negated.length === 1 && positive && !(sawNot && sawOr);
 }
 const FOLDER = "application/vnd.google-apps.folder";
 const SHORTCUT = "application/vnd.google-apps.shortcut";

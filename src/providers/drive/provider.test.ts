@@ -593,7 +593,11 @@ describe("an empty name search for a file id", () => {
   };
 
   it("points to get_file with one Drive request and no echoed value", async () => {
-    for (const query of [`name = '${FILE_ID}'`, `name contains '${FILE_ID}' and mimeType = 'application/pdf'`]) {
+    for (const query of [
+      `name = '${FILE_ID}'`,
+      `name contains '${FILE_ID}' and mimeType = 'application/pdf'`,
+      `not (mimeType = 'application/pdf') and (name = '${FILE_ID}')`,
+    ]) {
       calls.length = 0;
       const result = await searchFiles(query);
       expect(result).toEqual({
@@ -607,13 +611,19 @@ describe("an empty name search for a file id", () => {
     }
   });
 
-  it("stays silent for names, matches, continued listings and parent queries", async () => {
+  it("stays silent for names, matches, continued listings, parent queries and any negated or unclear name", async () => {
     for (const [query, files, token] of [
       ["name contains 'budget'", []],
       ["name = 'Quarterly budget 2026 final draft'", []],
       [`name = '${FILE_ID}'`, [{ id: FILE_ID, name: FILE_ID }]],
       [`name = '${FILE_ID}'`, [], "more"],
       [`'${FILE_ID}' in parents`, []],
+      [`not name contains '${FILE_ID}'`, []],
+      [`not (name contains '${FILE_ID}') and mimeType = 'application/pdf'`, []],
+      [`mimeType = 'application/pdf' and not (starred = true and (name = '${FILE_ID}'))`, []],
+      [`name = '${FILE_ID}' or not starred = true`, []],
+      [`(name = '${FILE_ID}'`, []],
+      [`fullText contains 'name = \\'${FILE_ID}\\''`, []],
     ] as [string, unknown[], string?][]) {
       expect((await searchFiles(query, files, token)).hint).toBeUndefined();
     }
