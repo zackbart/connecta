@@ -18,8 +18,16 @@ const GOOGLE_ANSWER_SHAPES: Record<string, { accept: Row[]; reject: Row[] }> = {
       {
         id: "draft-inline",
         changed: false,
-        limitation: "update_draft refuses drafts with attachments, so the draft was left unchanged.",
+        limitation:
+          "update_draft replaces the full body and refuses drafts with attachments because replacement would discard them; the draft has attachment evidence.bin, so it was left unchanged.",
       },
+      {
+        id: "draft-inline",
+        changed: false,
+        limitation:
+          "Draft has an inline attachment; Gmail’s guarded update workflow refuses body replacement because it could discard attachments.",
+      },
+      { id: "draft-inline", changed: false, limitation: "It cannot update a draft that has attachments." },
     ],
     reject: [
       { id: "draft-inline", changed: false, limitation: "The draft is locked by another editor." },
@@ -34,6 +42,7 @@ const GOOGLE_ANSWER_SHAPES: Record<string, { accept: Row[]; reject: Row[] }> = {
         changed: false,
         limitation: "Replacing the body would not discard attachments, but the draft is locked.",
       },
+      { id: "draft-inline", changed: false, limitation: "Replacing the body cannot discard attachments." },
     ],
   },
   "google-drive-2": {
@@ -152,8 +161,10 @@ const GOOGLE_ANSWER_SHAPES: Record<string, { accept: Row[]; reject: Row[] }> = {
       {
         id: "slides1",
         deck: "saved - text1 is bold (revision r2)",
-        comment: "unconfirmed - 'Review checked.' not found in list_comments; not resent",
+        comment: "unconfirmed - 'Review checked.' not found in list_comments (0 threads); not resent",
       },
+      { id: "slides1", deck: "saved — text1 is bold", comment: "unconfirmed — comment not found" },
+      { id: "slides1", deck: "saved — text1 is bold; no replay needed", comment: "unconfirmed" },
     ],
     reject: [
       { id: "slides1", deck: "unconfirmed - text1 is not bold", comment: "unconfirmed" },
@@ -162,6 +173,8 @@ const GOOGLE_ANSWER_SHAPES: Record<string, { accept: Row[]; reject: Row[] }> = {
       { id: "slides1", deck: "saved no changes; text1 is not bold", comment: "unconfirmed" },
       { id: "slides1", deck: "saved - but text1 is not bold", comment: "unconfirmed" },
       { id: "slides1", deck: "saved", comment: "unconfirmed - the comment was found and saved" },
+      { id: "slides1", deck: "saved — text1 remains plain", comment: "unconfirmed" },
+      { id: "slides1", deck: "saved", comment: "unconfirmed — the comment is there" },
     ],
   },
   "google-forms-2": {

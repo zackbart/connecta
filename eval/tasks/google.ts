@@ -201,27 +201,18 @@ const rangeList = (text: string) => {
     .map((m) => (m ? range(Number(m[1]), Number(m[2])) : undefined));
   return ranges.every(Boolean) ? ranges : undefined;
 };
-const NEGATED = String.raw`(?:\b(?:not|no|never)|n['’]t)\s+(?:\w+\s+){0,2}`;
-const statesAttachmentLimit = (text: string) =>
-  /refus\w*\s+(?:\w+\s+){0,3}(?:with|containing|that (?:have|has|contain)|having)\s+(?:\w+\s+)?attachments?\b|\b(?:discard|lose|drop|remove|strip|destroy|wipe)\w*\s+(?:the\s+|its\s+|their\s+|them\b[^.;]{0,40}?)?(?:inline\s+)?attachments?\b|\battachments?\b[^.;]{0,60}\b(?:would|could|might|will)\s+be\s+(?:discarded|lost|dropped|removed|stripped)/i.test(
-    text,
-  ) &&
-  !new RegExp(`${NEGATED}(?:discard|lose|drop|remove|strip|destroy|wipe|refus)`, "i").test(text) &&
-  !/attachments?\s+(?:are|is)\s+(?:\w+\s+)?(?:supported|preserved|kept|safe)/i.test(text);
-const slideStatus = (text: string) => {
-  const match = /^\s*(saved|unconfirmed)\s*(?:$|[-–—:(,;]\s*([\s\S]*)$)/i.exec(text);
-  if (!match) return undefined;
-  const status = match[1]!.toLowerCase();
-  const detail = match[2] ?? "";
-  const contradicts =
-    status === "saved"
-      ? /\b(?:not|no|never|none|un\w+|fail\w*|missing|lost|pending)\b|n['’]t\b/i.test(detail)
-      : new RegExp(
-          String.raw`(?<!${NEGATED})\b(?:saved|confirmed|verified|exists|found|present|added|created|posted)\b`,
-          "i",
-        ).test(detail);
-  return contradicts ? undefined : status;
-};
+const GMAIL_LIMITATIONS = [
+  /\b(?:update_draft|update|workflow) (?:replaces (?:the|its) full body and )?refuses drafts with (?:inline )?attachments(?: or inline images)? because (?:replacement|replacing the body) (?:would|could) discard them\b/i,
+  /\bupdate workflow refuses body replacement because it (?:would|could) discard attachments\b/i,
+  /^(?:It|update_draft|The update) cannot update (?:a|the) draft (?:that has|with) (?:inline )?attachments\.?$/i,
+];
+const SLIDE_STATUSES: [string, RegExp][] = [
+  ["saved", /^saved [-–—] text1 is bold(?: \(revision r\d+\))?(?:; no replay needed)?$/i],
+  [
+    "unconfirmed",
+    /^unconfirmed [-–—] (?:'Review checked\.'|the comment|comment) not found(?: in list_comments(?: \(\d+ threads?\))?)?(?:; not resent)?$/i,
+  ],
+];
 
 function normalizeAnswer(product: GoogleProduct, task: number, answer: Row | undefined): Row | undefined {
   if (!answer || typeof answer !== "object") return answer;
@@ -229,7 +220,11 @@ function normalizeAnswer(product: GoogleProduct, task: number, answer: Row | und
   if (Array.isArray(out.ids))
     out.ids = out.ids.map((id: unknown) => (id && typeof id === "object" ? (id as Row).id : id));
   const at = `${product}-${task}`;
-  if (at === "gmail-7" && typeof out.limitation === "string" && statesAttachmentLimit(out.limitation))
+  if (
+    at === "gmail-7" &&
+    typeof out.limitation === "string" &&
+    GMAIL_LIMITATIONS.some((pattern) => pattern.test(out.limitation))
+  )
     out.limitation = "attachments";
   if (at === "drive-2")
     for (const [key, inherited, role] of [
@@ -264,7 +259,9 @@ function normalizeAnswer(product: GoogleProduct, task: number, answer: Row | und
   if (at === "slides-3" && Array.isArray(out.id) && typeof out.slides === "number" && out.slides === out.id.length)
     Object.assign(out, { id: "slides1", slides: out.id });
   if (at === "slides-7")
-    for (const key of ["deck", "comment"]) if (typeof out[key] === "string") out[key] = slideStatus(out[key]);
+    for (const key of ["deck", "comment"])
+      if (typeof out[key] === "string")
+        out[key] = SLIDE_STATUSES.find(([, pattern]) => pattern.test(out[key]))?.[0] ?? out[key];
   if (at === "forms-2" && out.answers && typeof out.answers === "object")
     out.answers = (
       Array.isArray(out.answers) ? out.answers : Object.entries(out.answers).map(([id, value]) => ({ id, value }))
