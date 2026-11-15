@@ -1766,13 +1766,16 @@ function metaToolsForRequest(
     ),
   };
   if (!opts.activity?.recordOperation) return methods;
-  const track = <P extends unknown[], A>(name: "search" | "skill" | "result", method: (...args: P) => Promise<A>) =>
-    authMethod((...args: P) => operationActivity(opts.activity, registry, name, authCall<A>(method, args)));
+  const track = <P extends unknown[], A>(
+    name: "search" | "skill" | "result" | "authorize",
+    method: (...args: P) => Promise<A>,
+  ) => authMethod((...args: P) => operationActivity(opts.activity, registry, name, authCall<A>(method, args)));
   return {
     ...methods,
     skills: track("skill", methods.skills),
     searchTools: track("search", methods.searchTools),
     readResult: track("result", methods.readResult),
+    authorizeConnector: track("authorize", methods.authorizeConnector),
   };
 }
 

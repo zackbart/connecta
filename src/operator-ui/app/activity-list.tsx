@@ -76,6 +76,7 @@ function CallRow({
     result: "Result page",
     skill: "Skill read",
     program: "Program",
+    authorize: "Authorize",
   };
   const outcome = activityOutcomeClass(event.outcome);
   const badge = activityOutcomeBadge(event.outcome);
