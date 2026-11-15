@@ -429,6 +429,9 @@ describe("always-loaded agent surface budgets", () => {
           if (tool.outputSchema === undefined) expect(schemaBudget, name).toBeUndefined();
           else expect(JSON.stringify(tool.outputSchema).length, name).toBeLessThanOrEqual(schemaBudget!);
         }
+        const upfront = tools.filter((tool) => tool._meta?.["anthropic/alwaysLoad"] === true);
+        expect(upfront.map((tool) => tool.name)).toEqual([readOnly ? "execute_code" : "execute_read_code"]);
+        expect(tools.filter((tool) => tool._meta?.["anthropic/maxResultSizeChars"] !== undefined)).toEqual([]);
         const usage = await callTool(app, "skills", { name: "usage" });
         expect(usage.content[0].text.length).toBeLessThanOrEqual(BUDGETS.usage);
         for (const mode of ["default", "compact"] as const) {
@@ -455,6 +458,71 @@ describe("always-loaded agent surface budgets", () => {
       }
     },
   );
+
+  it.each([false, true])(
+    "keeps the upfront entry tool within a deferring host's upfront description cut at a full inventory (readOnly %s)",
+    async (readOnly) => {
+      const connectors = Array.from({ length: 40 }, (_, i) =>
+        api(`connector_number_${i}`, {
+          title: `A Long Connector Title Number ${i}`,
+          description: `Purpose text that tells connector ${i} apart from its look-alike neighbours here`,
+          usageGuide: { content: "# Guide\n\nRead first.", required: true },
+          tools: [
+            { name: "read", description: "Read one record", annotations: { readOnlyHint: true }, handler: () => 1 },
+          ],
+        }),
+      );
+      const app = makeDeployment({ executor: stubExecutor, readOnly, connectors });
+      try {
+        const { tools } = await fixedSurface(app);
+        const upfront = tools.filter((tool) => tool._meta?.["anthropic/alwaysLoad"] === true);
+        expect(upfront).toHaveLength(1);
+        expect(upfront[0]!.description.length).toBeLessThanOrEqual(4_096);
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it("derives each result-returning tool's host result threshold from its configured cap", async () => {
+    const surfaceMeta = async (config: Parameters<typeof makeDeployment>[0]) => {
+      const app = makeDeployment({ executor: stubExecutor, ...config });
+      try {
+        const { tools } = await fixedSurface(app);
+        return Object.fromEntries(tools.map((tool) => [tool.name, tool._meta?.["anthropic/maxResultSizeChars"]]));
+      } finally {
+        await app.close();
+      }
+    };
+    expect(
+      await surfaceMeta({ readOnly: false, calls: { maxResultBytes: 41_000 }, execute: { maxResultChars: 41_000 } }),
+    ).toEqual(Object.fromEntries(Object.keys(GOLDEN).map((name) => [name, undefined])));
+    expect(
+      await surfaceMeta({ readOnly: false, calls: { maxResultBytes: 45_000 }, execute: { maxResultChars: 600_000 } }),
+    ).toEqual({
+      skills: undefined,
+      search_tools: undefined,
+      authorize_connector: undefined,
+      call_tool: 53_192,
+      call_destructive_tool: 53_192,
+      execute_code: 500_000,
+      execute_read_code: 500_000,
+    });
+    expect(
+      await surfaceMeta({
+        readOnly: true,
+        connectors: [{ ...calcApi(), maxResultBytes: 120_000 }],
+        execute: { maxResultChars: 60_000 },
+      }),
+    ).toEqual({
+      skills: undefined,
+      search_tools: undefined,
+      authorize_connector: undefined,
+      call_tool: 128_192,
+      call_destructive_tool: undefined,
+      execute_code: 68_192,
+    });
+  });
 
   it("keeps live catalog, call and auth state out of the fixed surface", async () => {
     let failing = true;

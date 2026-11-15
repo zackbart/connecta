@@ -53,6 +53,7 @@ import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-write
 import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
 import { EXECUTE_OUTPUT, withinOutputSchema } from "./meta-output.js";
+import { ALWAYS_LOAD_META, resultSizeMeta, toolMeta } from "./host-tool-meta.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { readResource } from "./resource-read.js";
 import { failureRecord, logFailure } from "./operator-record.js";
@@ -2499,6 +2500,7 @@ export function registerExecuteTool(
         : authCall(run, []);
       return withinOutputSchema(EXECUTE_OUTPUT, ctx.native ? (nativeRecovery(result) as typeof result) : result);
     });
+  const programResultMeta = resultSizeMeta(resolveBudget(ctx.maxResultChars, MAX_EXECUTE_RESULT_CHARS));
   const newRunner = (config: RunnerConfig) =>
     createExecuteTool(registry, ctx.baseUrl, ctx.executor, ctx.logger, ctx.activity, config);
   server.registerTool(
@@ -2524,6 +2526,7 @@ export function registerExecuteTool(
       ),
       inputSchema: EXECUTE_INPUT,
       outputSchema: EXECUTE_OUTPUT,
+      ...toolMeta(programResultMeta, ctx.native || ctx.readRoute ? {} : ALWAYS_LOAD_META),
       // The client sees execute_code as a write exactly when the endpoint writes.
       annotations: {
         readOnlyHint: ctx.readOnly === true,
@@ -2540,6 +2543,7 @@ export function registerExecuteTool(
         description: READ_PROGRAM_DESCRIPTION(hostLimits, connectorInventory(connectors)),
         inputSchema: EXECUTE_INPUT,
         outputSchema: EXECUTE_OUTPUT,
+        ...toolMeta(programResultMeta, ALWAYS_LOAD_META),
         annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: true },
       },
       authMethod(

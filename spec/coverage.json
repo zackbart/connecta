@@ -132,8 +132,13 @@
       "id": "tools-list",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "The current meta-tools are listed, with execute_read_code on writable meta endpoints; downstream pages assemble complete catalogs.",
-      "evidence": ["test/server.test.ts", "test/remote-mcp-pagination.test.ts"]
+      "notes": "The current meta-tools are listed, with execute_read_code on writable meta endpoints; downstream pages assemble complete catalogs. Host-specific tool _meta hints (anthropic/alwaysLoad on one meta entry tool, anthropic/maxResultSizeChars derived from configured result caps) are config-derived and non-normative.",
+      "evidence": [
+        "test/server.test.ts",
+        "test/remote-mcp-pagination.test.ts",
+        "test/meta-tool-schemas.test.ts",
+        "test/native-tools.test.ts"
+      ]
     },
     {
       "id": "tools-call",
