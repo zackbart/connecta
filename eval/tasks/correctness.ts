@@ -67,6 +67,12 @@ function reassembledResults(trace: AgentTrace): unknown[] {
 }
 
 /** Facts actually returned to the agent, excluding discovery and final prose. */
+/** A tool result's delivered value, from a direct call's `data` or a program's `result`. */
+export function replyData(reply: { structured: unknown; text: string }): any {
+  const envelope = (reply.structured ?? JSON.parse(reply.text)) as { data?: unknown; result?: unknown };
+  return envelope.data ?? envelope.result ?? envelope;
+}
+
 export function deliveredValues(trace: AgentTrace): any[] {
   const values: any[] = [];
   const visit = (value: unknown) => {

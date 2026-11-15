@@ -29,7 +29,7 @@ import { googleBoundaryControls, googleTransportControls } from "./tasks/google-
  */
 import { CODE_INSTRUCTIONS, CODE_USAGE, codeValue, forSurface } from "./deploy/code-surface.js";
 import type { Connecta } from "@zackbart/connecta";
-import { taskForSurface } from "./tasks/surface.js";
+import { CODE_CAPABILITY_MISMATCHES, notRunOnArm, taskForSurface } from "./tasks/surface.js";
 import { gradeTask, passes, CHECK_KINDS, type Grading } from "./tasks/grading.js";
 import type { Surface } from "./agent/surface.js";
 import { compare } from "./compare.js";
@@ -689,10 +689,20 @@ if (args.has("primary-only"))
   console.log(
     "Primary-only: verified six/route references, saved grades and negative controls; additional surface/mode repeats omitted.",
   );
+for (const id of Object.keys(CODE_CAPABILITY_MISMATCHES)) {
+  const task = ACTIVE_TASKS.find((candidate) => candidate.id === id);
+  if (!task || !notRunOnArm(taskForSurface(task, "code")) || notRunOnArm(task))
+    throw new Error(`Code-arm capability mismatch must name an active task skipped only on that arm: ${id}`);
+}
 for (const surface of args.has("primary-only") ? [] : (["six", "code"] as const))
   for (const grading of ["route", "outcome"] as const) {
     if (surface === "six" && grading === "route") continue;
     for (const task of selected) {
+      const surfaced = taskForSurface(task, surface);
+      if (notRunOnArm(surfaced)) {
+        console.log(`skip ${surface}/${grading} ${task.id}: ${surfaced.runnerSkips!.codex!.reason}`);
+        continue;
+      }
       const played = await play(task, "reference", surface, grading);
       const noop = await play(task, "noop", surface, grading);
       const ok =
