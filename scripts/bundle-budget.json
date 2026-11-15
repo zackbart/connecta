@@ -1,5 +1,7 @@
 {
   "notes": [
+    "2026-11-15: Catalog revalidation at most once per request with stored-evidence checks (#1431, #1433) adds the per-request revalidation record, stale-fallback provenance, the request-memo drop for one connector's cache keys and the storage-only peek before reuse. CI at e0d8ef95 on main at 60b44eac (run 43664489102, build (package)) measures the root at 450,017 B and examples/worker at 838,060 B, 57 B and 70 B past their caps. The root cap moves 449,960 to 450,367 B and the examples/worker cap 837,990 to 838,410 B, each about 350 B over CI.",
+    "2026-11-15: Host-injected argument keys (#1431, #1436) add the wait_for_previous drop before meta-tool validation and the native allowlist walk that strips it only from schemas that provably cannot accept it. CI at 2751f440 on main at 3673ccf6 (run 43661977852, build (package)) measures the root at 449,470 B and examples/worker at 837,531 B. #1438 measured +140 B root and +106 B examples/worker on CI over that main, so the combined head reaches about 449,610 B and 837,637 B. The root cap moves 449,385 to 449,960 B and the examples/worker cap 837,517 to 837,990 B, about 350 B over each.",
     "2026-11-15: Output-schema conformance on error paths (#1431, #1438) adds the advertised-schema check that sends a nonconforming error result as text only, at search_tools, authorize_connector and both program routes. CI at d150c4c6 (run 43660896555, build (package)) measures the root at 449,035 B and examples/worker at 837,167 B, 35 B and 77 B past their caps. The root cap moves 449,000 to 449,385 B and the examples/worker cap 837,090 to 837,517 B, each about 350 B over CI.",
     "2026-11-15: Per-connector last-call reads (#1427) add the connectorId activity filter, the filtered per-connector scan and its cancelling fallback. CI at a44ba2fd (run 43656682090, build (package)) measures examples/worker at 834,672 B, 22 B past its cap; the root (448,629 B) and ./ui (345,899 B) stay under theirs. The examples/worker cap moves 834,650 to 835,020 B, about 350 B over CI.",
     "2026-11-15: Calm operator loading (#1430) adds the boot shell, layout placeholders, pending connector states and the stored-first detail queue to the operator bundle. CI at efeaf1dc, merged with #1427 (run 43657688503, build (package)), measures ./ui at 348,326 B, the root at 448,629 B and examples/worker at 836,741 B. The ./ui cap moves 346,000 to 348,680 B and the examples/worker cap 835,020 to 837,090 B, each about 350 B over CI.",
@@ -107,7 +109,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 449385
+      "maxGzip": 450367
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -202,7 +204,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 837517
+      "maxGzip": 838410
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

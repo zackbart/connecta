@@ -22,7 +22,7 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import * as z from "zod";
 import type { ActivityCallSource, ActivityRequestContext } from "./activity.js";
-import { advertisedSchema } from "./advertised-schema.js";
+import { advertisedInputSchema } from "./advertised-schema.js";
 import {
   boundedDiscoveryText,
   CatalogService,
@@ -1847,9 +1847,9 @@ const CALL_INPUT_SCHEMA = {
 // derived once per process (see advertisedSchema). Nothing here may read
 // deployment configuration or the request's identity: anything that varies
 // belongs in the per-registration description instead.
-const SKILLS_INPUT = advertisedSchema(z.object({ name: z.string().optional() }));
+const SKILLS_INPUT = advertisedInputSchema(z.object({ name: z.string().optional() }));
 
-const SEARCH_INPUT = advertisedSchema(
+const SEARCH_INPUT = advertisedInputSchema(
   z.object({
     query: z.string().optional(),
     connector: z.string().optional(),
@@ -1869,9 +1869,9 @@ const CALL_SHAPE = {
       : undefined,
 };
 
-const CALL_INPUT = advertisedSchema(z.strictObject(CALL_INPUT_SCHEMA, CALL_SHAPE));
+const CALL_INPUT = advertisedInputSchema(z.strictObject(CALL_INPUT_SCHEMA, CALL_SHAPE));
 
-const CALL_DESTRUCTIVE_INPUT = advertisedSchema(
+const CALL_DESTRUCTIVE_INPUT = advertisedInputSchema(
   z.strictObject(
     {
       ...CALL_INPUT_SCHEMA,
@@ -1888,7 +1888,7 @@ const CALL_DESTRUCTIVE_INPUT = advertisedSchema(
 const READ_RESULT_DESC =
   "Page a truncated result: run nextAction, then continue from nextOffset while hasMore. Never repeat a write for output.";
 
-const READ_RESULT_INPUT = advertisedSchema(
+const READ_RESULT_INPUT = advertisedInputSchema(
   z.strictObject({
     id: z.string(),
     offset: z.number().int().nonnegative().optional(),
@@ -1897,7 +1897,7 @@ const READ_RESULT_INPUT = advertisedSchema(
   }),
 );
 
-const AUTHORIZE_INPUT = advertisedSchema(
+const AUTHORIZE_INPUT = advertisedInputSchema(
   z.object({
     connector: z.string(),
     force: z.boolean().optional(),

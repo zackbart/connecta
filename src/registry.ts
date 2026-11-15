@@ -23,11 +23,17 @@ import {
   invalidateCatalogCache,
   observeUncachedCatalogRefresh,
   retainedCatalogIdentity,
+  STALE_FALLBACK_MS,
   storeCustomCatalogFallback,
   type CatalogToolFingerprint,
   type CustomCatalogListing,
 } from "./catalog-cache.js";
-import { carryCatalogFreshness, markCatalogFreshness, markCatalogStale } from "./catalog-freshness.js";
+import {
+  carryCatalogFreshness,
+  markCatalogFallback,
+  markCatalogFreshness,
+  markCatalogStale,
+} from "./catalog-freshness.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { usesCallerIdentity, type ConnectorCaller } from "./connector-caller.js";
@@ -292,6 +298,7 @@ export interface ProgramResultDependency {
 export interface CatalogPeek {
   tools: ToolDef[];
   fetchedAt: number;
+  expiresAt: number;
   /** Whether the connector's own cache would serve this now, with no failure to report. */
   fresh: boolean;
 }
@@ -1205,8 +1212,13 @@ export class Registry implements RegistryView {
       const provenance = catalogExpiry(ctx);
       const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
       // A transient-failure fallback answers the listing; discovery still reports its age.
-      if (provenance?.staleFallback)
+      if (provenance?.staleFallback) {
         markCatalogStale(accepted, { code: "unavailable", ageMs: Math.max(0, Date.now() - provenance.fetchedAt) });
+        markCatalogFallback(accepted, {
+          fetchedAt: provenance.fetchedAt,
+          usableUntil: provenance.expiresAt + STALE_FALLBACK_MS,
+        });
+      }
       // Principal-forwarded listings belong to one caller, never to the shared
       // operator observation store. The actual catalog cache is identity-bound.
       if (!forwardsPrincipal(connector)) {
@@ -1243,6 +1255,7 @@ export class Registry implements RegistryView {
           .filter((tool) => overrides?.[tool.name] !== "hidden")
           .map((tool) => this.publishTool(id, tool)),
         fetchedAt: peek.fetchedAt,
+        expiresAt: peek.expiresAt,
         // A custom catalog is always listed anew, so its retained copy is never current.
         fresh: connector.peekCatalog !== undefined && peek.expiresAt > Date.now(),
       };

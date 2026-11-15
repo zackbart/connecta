@@ -12,7 +12,24 @@ export function markCatalogFreshness(tools: ToolDef[], freshUntil: number): Tool
 export function carryCatalogFreshness(source: readonly ToolDef[], copy: ToolDef[]): ToolDef[] {
   const stale = staleCatalogs.get(source);
   if (stale) staleCatalogs.set(copy, stale);
+  const fallbackDeadline = fallbackDeadlines.get(source);
+  if (fallbackDeadline !== undefined) fallbackDeadlines.set(copy, fallbackDeadline);
   return markCatalogFreshness(copy, deadlines.get(source) ?? 0);
+}
+
+export interface CatalogFallback {
+  fetchedAt: number;
+  usableUntil: number;
+}
+const fallbackDeadlines = new WeakMap<readonly ToolDef[], CatalogFallback>();
+
+export function markCatalogFallback(tools: ToolDef[], fallback: CatalogFallback): ToolDef[] {
+  fallbackDeadlines.set(tools, fallback);
+  return tools;
+}
+
+export function catalogFallback(tools: readonly ToolDef[]): CatalogFallback | undefined {
+  return fallbackDeadlines.get(tools);
 }
 
 /** Why a request served a catalog older than its TTL, and how old it is. */

@@ -167,6 +167,13 @@ export class RequestReads {
     entries.versions.set(key, (entries.versions.get(key) ?? 0) + 1);
   }
 
+  forget(storage: KVStorage, prefix: string): void {
+    const address = this.closed || !this.ref ? undefined : physicalStorageAddress(storage, prefix);
+    const entries = address && this.stores.get(address.store);
+    if (!entries) return;
+    for (const key of entries.values.keys()) if (key.startsWith(address.key)) this.changed(address.store, key);
+  }
+
   /** A memoized answer, or how to record the value a storage read returns. */
   private lookup(
     storage: KVStorage,

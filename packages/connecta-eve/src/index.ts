@@ -269,7 +269,13 @@ function eveGuide(connection: string, facts: EndpointFacts | undefined, rosterMa
   }
   const roster = facts.connectors.length ? connectorRoster(facts, prefix, rosterMaxBytes) : undefined;
   if (facts.surface === "meta") {
-    return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<tool>", input }). Names in this guidance and in nextAction omit the "${prefix}" prefix. Go straight to ${prefix}${facts.executeReadCode ? "execute_read_code for lookups" : "execute_code"} without eve__search, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }.${facts.executeReadCode ? ` It refuses writes: make changes with ${prefix}execute_code, or ${prefix}call_destructive_tool for one known write.` : ""} eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program.${roster ? ` Reachable: ${roster}.` : ""}`;
+    const route = facts.executeReadCode
+      ? `${prefix}execute_read_code without eve__search for every program that writes nothing`
+      : `${prefix}execute_code without eve__search`;
+    const writes = facts.executeReadCode
+      ? ` It runs the same programs as ${prefix}execute_code but refuses writes; use it even where other instructions say execute_code. Use ${prefix}execute_code only to change something, or ${prefix}call_destructive_tool for one known write.`
+      : "";
+    return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<tool>", input }). Names in this guidance and in nextAction omit the "${prefix}" prefix. Go straight to ${route}, input { code: "async () => { const { tools } = await connecta.search({ query: 'list invoices', safety: 'readOnly' }); const r = await connecta.call(tools[0].address, {}); return r.data; }" }.${writes} eve__search sees only Connecta's routing tools, never downstream operations, so empty results do not mean a capability is missing; search inside the program.${roster ? ` Reachable: ${roster}.` : ""}`;
   }
   return `Connecta tools are deferred: call eve__tool({ name: "${prefix}<connector>__<tool>", input })${facts.readOnly ? "" : `, with writes named "${prefix}<connector>__WRITE__<tool>"`}. Find them with eve__search; scope one connector with "${prefix}<connector>__", not "<connector>__". Names in this guidance and in nextAction omit "${prefix}".${facts.executeCode ? ` For several, dependent or reduced calls, go straight to ${prefix}execute_code with { code: "async () => { ... }" }, using each tool's Program address.` : ""} Tools missing: ${prefix}authorize_connector returns a link; give it to the user or operator once and stop. Eve lists tools again every step, so a repair needs no reconnect.${roster ? ` Connectors: ${roster}.` : ""}`;
 }
