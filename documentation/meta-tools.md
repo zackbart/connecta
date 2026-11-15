@@ -155,8 +155,10 @@ loads upfront. The person configuring the server can still override the hint.
 
 `anthropic/maxResultSizeChars` raises the host's inline result threshold, which
 otherwise moves any text result over 50,000 characters to a file. Each value is
-an upper bound on the tool's result text, so a capped result always arrives
-inline:
+an upper bound on the tool's result text, so a capped result arrives inline
+whenever that bound is at most the host's 500,000-character ceiling. A cap
+whose bound exceeds 500,000 is advertised as 500,000, and a result longer than
+that still moves to a file:
 
 - A direct call's text is at most its cap (the connector's `maxResultBytes`,
   else `calls.maxResultBytes`), since a character is at least one UTF-8 byte,
