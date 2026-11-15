@@ -210,6 +210,7 @@ describe("GitHub App provider", () => {
       "github_api_read",
       "github_api_write",
       "list_scopes",
+      "list_pull_requests",
       "search_scoped",
       "merge_pull_request",
     ]);
@@ -800,6 +801,138 @@ describe("GitHub App provider", () => {
         code: "auth_required",
       });
     });
+  });
+
+  it("INV-4: lists a configured repository's pull requests by state with bound page continuation", async () => {
+    const fixture = apiFixture();
+    const path = "/repos/acme/one/pulls";
+    const pull = (number: number, state: string) => ({
+      number,
+      id: 9000 + number,
+      title: `Change ${number}`,
+      state,
+      draft: false,
+      body: "Deploy with SECRET_PR_BODY",
+      user: { login: "alice", id: 1 },
+      head: { ref: "feature/x", sha: "abc", repo: { id: 555, full_name: "outsider/fork" } },
+      base: { ref: "main", sha: "def", repo: { id: 101, full_name: "acme/one" } },
+      labels: [{ name: "bug", color: "red" }],
+      created_at: "2026-11-01T00:00:00Z",
+      updated_at: "2026-11-02T00:00:00Z",
+      closed_at: state === "closed" ? "2026-11-03T00:00:00Z" : null,
+      merged_at: null,
+      html_url: `https://github.com/acme/one/pull/${number}`,
+    });
+    fixture.respond((request) => {
+      if (request.url.pathname !== path) return undefined;
+      const page = Number(request.url.searchParams.get("page"));
+      const state = request.url.searchParams.get("state")!,
+        perPage = request.url.searchParams.get("per_page")!;
+      return Response.json(
+        [pull(page * 10 + 1, state === "all" ? "closed" : state)],
+        page === 1
+          ? {
+              headers: {
+                link: `<https://api.github.com${path}?state=${state}&per_page=${perPage}&page=2>; rel="next"`,
+              },
+            }
+          : {},
+      );
+    });
+    const connector = connection(),
+      ctx = context();
+    const first = value(await connector.callTool("list_pull_requests", { owner: "acme", repo: "one", limit: 1 }, ctx));
+    expect(first.items).toEqual([
+      {
+        number: 11,
+        id: 9011,
+        title: "Change 11",
+        state: "open",
+        draft: false,
+        author: "alice",
+        head: "feature/x",
+        base: "main",
+        labels: ["bug"],
+        created_at: "2026-11-01T00:00:00Z",
+        updated_at: "2026-11-02T00:00:00Z",
+        closed_at: null,
+        merged_at: null,
+        html_url: "https://github.com/acme/one/pull/11",
+      },
+    ]);
+    expect(JSON.stringify(first)).not.toContain("SECRET_PR_BODY");
+    expect(first.page).toEqual({ hasMore: true, nextCursor: expect.any(String) });
+    const sent = fixture.requests.filter((r) => r.url.pathname === path);
+    expect(Object.fromEntries(sent[0]!.url.searchParams)).toEqual({ state: "open", page: "1", per_page: "1" });
+    const token = fixture.tokens.find((t) => sent[0]!.headers.get("authorization") === `Bearer ${t.value}`)!;
+    expect(token.body).toEqual({ permissions: { pull_requests: "read" }, repository_ids: [101] });
+
+    const count = fixture.requests.length;
+    for (const changed of [{ state: "closed" }, { repo: "two" }, { limit: 2 }])
+      await expect(
+        connector.callTool(
+          "list_pull_requests",
+          { owner: "acme", repo: "one", limit: 1, ...changed, cursor: first.page.nextCursor },
+          ctx,
+        ),
+      ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(fixture.requests).toHaveLength(count);
+
+    const last = value(
+      await connector.callTool(
+        "list_pull_requests",
+        { owner: "acme", repo: "one", limit: 1, cursor: first.page.nextCursor, fields: ["number", "state"] },
+        ctx,
+      ),
+    );
+    expect(last).toEqual({ items: [{ number: 21, state: "open" }], page: { hasMore: false } });
+    expect(fixture.requests.at(-1)!.url.searchParams.get("page")).toBe("2");
+
+    const closed = value(
+      await connector.callTool("list_pull_requests", { owner: "acme", repo: "one", state: "closed" }, ctx),
+    );
+    expect(closed.items[0]).toMatchObject({ state: "closed", closed_at: "2026-11-03T00:00:00Z" });
+    expect(fixture.requests.at(-1)!.url.searchParams.get("state")).toBe("closed");
+
+    // A replacement at the bound name, or a row without its binding, withholds the whole page.
+    for (const base of [{ id: 999, full_name: "acme/one" }, { full_name: "acme/one" }, undefined]) {
+      fixture.respond((request) =>
+        request.url.pathname === path
+          ? Response.json([pull(1, "open"), { ...pull(2, "open"), base: base && { ref: "main", repo: base } }])
+          : undefined,
+      );
+      const error = await connector
+        .callTool("list_pull_requests", { owner: "acme", repo: "one" }, ctx)
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "connector_call_failed", message: expect.stringContaining("withheld") });
+      expect(JSON.stringify(error)).not.toContain("Change 2");
+    }
+    fixture.repositories([
+      { id: 101, full_name: "acme/renamed" },
+      { id: 999, full_name: "acme/one" },
+      { id: 104, full_name: "acme/two" },
+    ]);
+    fixture.respond((request) =>
+      request.url.pathname === path
+        ? Response.json([{ ...pull(1, "open"), base: { ref: "main", repo: { id: 999, full_name: "acme/one" } } }])
+        : undefined,
+    );
+    await expect(connector.callTool("list_pull_requests", { owner: "acme", repo: "one" }, ctx)).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
+
+    const before = fixture.requests.length;
+    for (const args of [
+      { owner: "outside", repo: "public" },
+      { owner: "other", repo: "two" },
+      { owner: "acme", repo: "one", state: "merged" },
+    ]) {
+      const error = await connector.callTool("list_pull_requests", args, ctx).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(ConnectorCallError);
+      expect((error as ConnectorCallError).code).toBe("invalid_args");
+      expect((error as ConnectorCallError).message).not.toMatch(/outside|public|merged/);
+    }
+    expect(fixture.requests).toHaveLength(before);
   });
 
   describe("CI reads", () => {

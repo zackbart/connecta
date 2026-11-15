@@ -206,3 +206,22 @@ precludes a latency improvement claim. No timeout policy changes are made.
 Runtime TypeScript source (excluding fixtures and test suites) grows from
 73,767 B to 851,314 B, +777,547 B, including the new 760,257 B generated index.
 The retained upstream JSON is scratch evidence; it is not bundled or shipped.
+
+## Named pull request list (#1431)
+
+`list_pull_requests` serves `GET /repos/{owner}/{repo}/pulls`, already a reviewed
+read with `pull_requests: read`. It admits the owner/repository through the same
+scope policy as the hatch (refused by shape, before authentication, without
+repeating either value), mints a repository-ID-bound token with that single
+permission, and sends only `state` (`open`, `closed` or `all`; default open),
+`per_page` and `page`. Paging follows the shared Link adapter, which accepts only
+a same-origin next link with unchanged filters; the signed cursor binds the
+grants, owner, repository, state and limit, with the same 1,000-page bound as
+the repository listing. Every row must carry `base.repo.id`, and each distinct
+id is checked through the App's bound repository mapping and issued token
+before any row is projected, so a replacement repository created at a renamed
+grant's old name is withheld; a fork's foreign `head.repo` stays valid. Rows project number, id, title, state, draft, author
+login, head and base ref names, label names, timestamps and html_url. Bodies,
+head/base repository objects and SHAs are not projected. Search qualifiers such as
+`is:open` remain refused in `search_scoped` by design (decision 0014); recorded
+traffic needed the hatch to count open pull requests.

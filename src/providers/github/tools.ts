@@ -55,7 +55,24 @@ const common = {
   ),
   cursor: Schema.optionalKey(text("Opaque page.nextCursor from this same search or scope listing.")),
 };
+const PullRow = optional({
+  number: Integer,
+  id: Integer,
+  title: Schema.String,
+  state: Schema.Literals(["open", "closed"]),
+  draft: Schema.Boolean,
+  author: Schema.String,
+  head: Schema.String,
+  base: Schema.String,
+  labels: Schema.Array(Schema.String),
+  created_at: Schema.String,
+  updated_at: Schema.String,
+  closed_at: Schema.NullOr(Schema.String),
+  merged_at: Schema.NullOr(Schema.String),
+  html_url: Schema.String,
+});
 const SCOPE_FIELDS = fieldsContract("item", ScopeRow, "It only narrows already-safe data.");
+const PULL_FIELDS = fieldsContract("item", PullRow, "It only narrows already-safe data.");
 const SEARCH_FIELDS = fieldsContract(
   "item",
   SearchRow,
@@ -122,6 +139,31 @@ function selectorIssues(problems: ArgumentProblems, input: readonly unknown[] | 
           : '"<owner>/<repo>" of a configured repository or one in a configured org; list_scopes names them',
       );
   });
+}
+
+const isString = (value: unknown): value is string => typeof value === "string";
+
+function pullRow(value: unknown): typeof PullRow.Type {
+  const pr = row(value);
+  const labels = Array.isArray(pr.labels) ? pr.labels.map((label) => row(label).name).filter(isString) : undefined;
+  return Object.fromEntries(
+    Object.entries({
+      number: pr.number,
+      id: pr.id,
+      title: pr.title,
+      state: pr.state,
+      draft: pr.draft,
+      author: row(pr.user).login,
+      head: row(pr.head).ref,
+      base: row(pr.base).ref,
+      labels,
+      created_at: pr.created_at,
+      updated_at: pr.updated_at,
+      closed_at: pr.closed_at,
+      merged_at: pr.merged_at,
+      html_url: pr.html_url,
+    }).filter(([, entry]) => entry !== undefined),
+  );
 }
 
 function searchPartitions(
@@ -422,6 +464,86 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
         );
       }),
   });
+  const pullsTool = read(connection, {
+    name: "list_pull_requests",
+    description:
+      "List a configured repository's open, closed or all pull requests, newest first: number, title, author, head and base branches, draft, labels and merge time.",
+    input: Schema.Struct({
+      ...ownerRepo,
+      state: Schema.optionalKey(
+        Schema.Literals(["open", "closed", "all"]).annotate({
+          description: "Pull request state; default open. closed includes merged pull requests.",
+          default: "open",
+        }),
+      ),
+      limit: common.limit,
+      cursor: Schema.optionalKey(text("Opaque page.nextCursor from this same pull request listing.")),
+      fields: Schema.optionalKey(PULL_FIELDS.input),
+    }),
+    output: Schema.Struct({ items: Schema.Array(PullRow), page: StandardPage }),
+    check: (args, problems) => {
+      PULL_FIELDS.issues(problems, args.fields);
+      try {
+        policy.scope(target(args.owner, args.repo));
+      } catch (error) {
+        if (!(error instanceof ConnectorCallError)) throw error;
+        problems.add("/repo", "a configured repository or one in a configured org; list_scopes names them");
+      }
+    },
+    run: (args) =>
+      Effect.gen(function* () {
+        const t = yield* checked(() => target(args.owner, args.repo));
+        yield* checked(() => policy.scope(t));
+        const limit = args.limit ?? 30,
+          state = args.state ?? "open",
+          normalized = { ...args, owner: t.owner, repo: t.repo, state, limit };
+        const raw = yield* decode("list_pull_requests", normalized);
+        const position = yield* checked(() => parse(raw, limit));
+        const page = position.page ?? 1;
+        if (!Number.isSafeInteger(page) || page < 1 || page > 1000)
+          return yield* checked(() => {
+            throw new ConnectorCallError("invalid_args", "This pull request cursor is outside its page bound.");
+          });
+        const permissions: Permissions = { pull_requests: "read" },
+          ctx = yield* contextOf;
+        const token = yield* authCall(ctx, (view) => auth.repo(t, permissions, view));
+        const path = `${repoPath(t)}/pulls`,
+          query = { state, page, per_page: limit };
+        const answer = yield* send({ method: "GET", path, query }, token, {
+          responseHeaders: ["link"],
+          ...refusing(`${t.owner}/${t.repo}`, permissions),
+        });
+        if (!Array.isArray(answer.data))
+          return yield* checked(() => {
+            throw new ConnectorCallError("connector_call_failed", "GitHub returned an invalid pull request list.");
+          });
+        const repositoryIds = new Set(answer.data.map((entry) => row(row(row(entry).base).repo).id));
+        for (const repositoryId of repositoryIds) {
+          if (!Number.isSafeInteger(repositoryId))
+            return yield* checked(() => {
+              throw new ConnectorCallError(
+                "connector_call_failed",
+                "GitHub omitted a pull request's repository binding; results were withheld.",
+              );
+            });
+          yield* authCall(ctx, (view) => auth.checkResult(t, repositoryId, token, view));
+        }
+        const next = yield* checked(() => adapter.next(answer.data, { path, query, headers: answer.headers ?? {} }));
+        if (next !== null && page === 1000)
+          return yield* checked(() => {
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              "The GitHub pull request list exceeded its page bound; narrow the state.",
+            );
+          });
+        return yield* finish(
+          "list_pull_requests",
+          normalized,
+          answer.data.map(pullRow),
+          next === null ? undefined : { page: adapter.decode(next as number | string) },
+        );
+      }),
+  });
   const searchTool = read(connection, {
     name: "search_scoped",
     description:
@@ -451,7 +573,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
       if (!SEARCH_TERMS.test(args.terms) || BOOLEAN_TERMS.test(args.terms))
         problems.add(
           "/terms",
-          "literal words of letters, digits, spaces, _ . or -, at most 128 characters, without qualifiers such as is:open or label:x and without OR, AND or NOT; kind and scopes select the rest",
+          "literal words of letters, digits, spaces, _ . or -, at most 128 characters, without qualifiers such as is:open or label:x and without OR, AND or NOT; kind and scopes select the rest, and list_pull_requests lists a repository's pull requests by state",
         );
       selectorIssues(problems, args.scopes, policy);
     },
@@ -711,6 +833,7 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           },
         }),
         scopesTool,
+        pullsTool,
         searchTool,
         mergeTool,
       ],
