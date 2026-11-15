@@ -89,6 +89,16 @@ export const search_files = {
       }),
     ),
     "incompleteSearch": Schema.optionalKey(Schema.Boolean),
+    "hint": Schema.optionalKey(
+      Schema.Struct({
+        "reason": Schema.Literal("name_looks_like_file_id"),
+        "tool": Schema.Literal("get_file"),
+        "message": Schema.String,
+      }).annotate({
+        "description":
+          "Set when nothing matched a name query whose value has a Drive file id's shape. Names never match ids.",
+      }),
+    ),
     "page": Schema.Struct({ "hasMore": Schema.Boolean, "nextCursor": Schema.optionalKey(Schema.String) }),
   }),
 };

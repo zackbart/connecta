@@ -5,7 +5,8 @@
 ## Finding files and joining Workspace products
 
 Drive searches file data; operation discovery searches API capabilities.
-Use file ids from reads, Drive URLs or the person: an id they give works as is.
+Use file ids from reads, Drive URLs or the person: an id they give works as is
+with `get_file`, and a name query never matches it.
 The same id identifies a Google Doc, Sheet, Slides deck or Form in its product
 connector. Shared-drive ids identify
 membership and the root folder; folder parents determine inherited access.
