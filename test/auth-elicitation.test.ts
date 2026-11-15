@@ -872,10 +872,10 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     }
     const codeState = (await flow.rpc("execute_code", { code: "return await connecta.call('service.read', {});" }))
       .result.requestState;
-    expect(
-      (await flow.rpc("execute_code", { code: "return 1;" }, { state: codeState, action: "accept" })).result
-        .structuredContent.error.code,
-    ).toBe("invalid_request_state");
+    const codeRetry = (await flow.rpc("execute_code", { code: "return 1;" }, { state: codeState, action: "accept" }))
+      .result;
+    expect(codeRetry.structuredContent).toBeUndefined();
+    expect(JSON.parse(codeRetry.content[0].text).error.code).toBe("invalid_request_state");
     expect(flow.call).toHaveBeenCalledTimes(2);
   });
 

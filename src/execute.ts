@@ -52,7 +52,7 @@ import { boundedEchoText, clipSerialized, ConnectorCallError, msg, type CallErro
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
 import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
-import { EXECUTE_OUTPUT } from "./meta-output.js";
+import { EXECUTE_OUTPUT, withinOutputSchema } from "./meta-output.js";
 import { normalizeProgramSource } from "./program-source.js";
 import { readResource } from "./resource-read.js";
 import { failureRecord, logFailure } from "./operator-record.js";
@@ -2494,7 +2494,7 @@ export function registerExecuteTool(
             [name, args, extra, run],
           )
         : authCall(run, []);
-      return ctx.native ? (nativeRecovery(result) as typeof result) : result;
+      return withinOutputSchema(EXECUTE_OUTPUT, ctx.native ? (nativeRecovery(result) as typeof result) : result);
     });
   const newRunner = (config: RunnerConfig) =>
     createExecuteTool(registry, ctx.baseUrl, ctx.executor, ctx.logger, ctx.activity, config);
