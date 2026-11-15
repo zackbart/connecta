@@ -1784,7 +1784,7 @@ function metaToolsForRequest(
 // characters (https://github.com/anomalyco/opencode/issues/63603).
 const SEARCH_DESC = (readOnly: boolean, program: string) =>
   `${readOnly ? `Find a tool's address and schema in this read-only catalog; for read work, search inside one ${program} program.` : `Find a tool's address and schema in the catalog, mainly a write for ${META_ROUTES.write}; read work: ${program}.`}
-${readOnly ? "" : "A program searches, calls and returns the answer in one step. "}Use 2–4 action/object terms and includeSchemas="compact"; set connector when known; an empty query browses. safety filters by classification and grants nothing. Read catalogErrors and absence before choosing a tool.`;
+${readOnly ? "" : "A program searches, calls and returns the answer in one step. "}Use 2–4 action/object terms and includeSchemas="compact"; set connector when known; an empty query browses. safety filters by classification and grants nothing. Read catalogErrors and any absence before choosing a tool.`;
 const CALL_DESC = (readOnly: boolean, program: string) =>
   `Call one read-only tool whose connector.tool address you already know; other read work: ${program}.
 ${readOnly ? "It must be annotated readOnlyHint: true; this endpoint refuses every write." : `Tools not annotated readOnlyHint: true fail closed to ${META_ROUTES.write}.`} A truncated result carries nextAction.`;
@@ -1810,7 +1810,7 @@ const SKILLS_DESC = (connectorGuides: boolean) =>
  * Registration is per connection and reads the configured connector set.
  */
 const GUIDE_NOTES = {
-  search: " guideRequired: true means fetch its named guide before the call.",
+  search: " guideRequired: true is advisory: fetch its named guide first.",
   destructive: " Fetch any connector guide discovery names first.",
 } as const;
 

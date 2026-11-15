@@ -704,7 +704,12 @@ describe("search_tools", () => {
       ["declared.get_record", undefined, undefined],
       ["silent.get_record", undefined, false],
     ]);
-    expect(callable.entries.map((entry) => entry.tool.annotations)).toEqual([
+    expect(callable.entries.map((entry) => [entry.tool.classification, "annotations" in entry.tool])).toEqual([
+      ["read", false],
+      ["read", false],
+    ]);
+    const described = await program.describe({ addresses: ["declared.get_record", "silent.get_record"] });
+    expect(described.map((entry) => entry.annotations)).toEqual([
       { readOnlyHint: true, destructiveHint: false },
       { readOnlyHint: true, destructiveHint: false },
     ]);
@@ -1619,7 +1624,7 @@ describe("search_tools", () => {
     expect(new TextEncoder().encode(JSON.stringify(analysis)).length).toBeLessThan(1_600);
   });
 
-  it("optionally includes compact schemas and annotations for API and MCP tools", async () => {
+  it("optionally includes compact schemas for API and MCP tools and leaves annotations to describe", async () => {
     const apiConnector = api("weather", {
       description: "Weather API",
       tools: [
@@ -1677,19 +1682,19 @@ describe("search_tools", () => {
       outputKeys: ["temperature"],
     });
     expect(required(required(byId.weather).tools[0]).outputSchema).toContain("temperature");
-    expect(required(required(byId.weather).tools[0]).annotations).toEqual({
-      readOnlyHint: true,
-    });
+    expect(required(required(byId.weather).tools[0])).toMatchObject({ classification: "read" });
+    expect(required(required(byId.weather).tools[0])).not.toHaveProperty("annotations");
     const emptyOutput = required(required(byId.weather).tools[1]);
     expect(emptyOutput.inputKeys).toEqual([]);
     expect(emptyOutput.requiredInputKeys).toEqual([]);
     expect(emptyOutput.outputSchema).toBe("{}");
     expect(emptyOutput).not.toHaveProperty("outputKeys");
     expect(required(required(byId.crm).tools[0]).inputSchema).toBe("{ id: string }");
-    expect(required(required(byId.crm).tools[0]).annotations).toMatchObject({
-      readOnlyHint: true,
-      openWorldHint: false,
+    expect(required(required(byId.crm).tools[0])).not.toHaveProperty("annotations");
+    const [described] = await new CatalogService(makeRegistry([apiConnector, mcpConnector]), BASE).describe({
+      address: `crm.${required(required(byId.crm).tools[0]).name}`,
     });
+    expect(required(described).annotations).toMatchObject({ readOnlyHint: true, openWorldHint: false });
   });
 });
 

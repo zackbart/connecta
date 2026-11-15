@@ -29,9 +29,9 @@ Parse \`format: "text"\` only when documented as JSON. Verify collection roots.
 
 \`connecta.read("resource://id/"+encodeURIComponent(uri))\` returns \`{ contents }\` for advertised URIs.
 
-Search/describe return \`{ tools }\`, never an array. Check search's
-\`catalogErrors\` and \`absence\` before selecting a match; a \`stale: true\` error's tools are listed from an older catalog, and a call still checks the live one. Search defaults to a
-TypeScript \`signature\`; text schemas have \`schemaFormat: "text"\` and no .properties.
+Search/describe return \`{ tools }\`, never an array, and omit fields that do not apply. Check search's
+\`catalogErrors\` and any \`absence\` before selecting a match; a \`stale: true\` error's tools are listed from an older catalog, and a call still checks the live one. Search defaults to a
+TypeScript \`signature\` (that format only); text schemas have \`schemaFormat: "text"\` and no .properties.
 A \`readyCalls\` entry is a complete read: \`connecta.call(entry.address, entry.args)\`. Select the exact tool and
 account/environment, inspect its schema, and supply its required keys and types.
 
@@ -83,7 +83,7 @@ Split remaining reads. Never replay writes for their output.
 
 Fetch a listed guide by its exact name with the skills tool, or
 \`connecta.skill(name)\` inside a program; it returns \`{ name, text, format: "text" }\`.
-\`guideRequired: true\` is a hard stop. connector_required and approval_required
+\`guideRequired: true\` is advisory: read that guide first. connector_required and approval_required
 remain after schema expansion; schema_truncated clears after exact describe.
 Otherwise fetch for units, pagination, aliases, or sequences.
 
