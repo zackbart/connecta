@@ -3899,10 +3899,16 @@ The Node listener counts active ServerResponses per socket. Its server overrides
 `close()`, so every caller (an embedder, a test harness, `Symbol.asyncDispose` or
 the signal handler) marks the listener closing before Node's own close runs.
 Once closing, each finish/close removes its response; the last completion calls
-`destroySoon` to flush queued bytes and close the connection. Responses never
+`destroySoon` to flush queued bytes and close the connection. Admission ends at
+`close()`: a request whose `request` event fires while closing is counted but
+never reaches the application, and is answered `503` with `Retry-After: 1` and
+`Connection: close`. Node queues that answer behind the socket's earlier
+responses, so they are written whole and in order, and a client that pipelines
+continuously cannot keep the count above zero. Admitted responses never
 add `Connection: close`: Node destroys the socket once such a response finishes,
 discarding a pipelined response admitted behind it before its headers went out,
-whatever the per-socket count says. This also
+whatever the per-socket count says. Only a refusal may carry it, because every
+request behind a refusal on that socket also arrived after close. This also
 covers SSE whose headers were sent before close and pipelined responses waiting
 behind an inflight response. Until close, idle sockets close after
 `keepAliveTimeoutMs` (default 100 s). Node's `close()` closes idle sockets; the

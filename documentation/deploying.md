@@ -80,9 +80,14 @@ of a request, never a streamed or SSE response.
 Calling `close()` on the server `listen()` returns, directly or through the
 shutdown below, ends keep-alive at once: idle connections and accepted sockets
 without a first HTTP request close, and a connection closes as soon as all its
-admitted responses finish, including requests pipelined on it after `close()`. The `close()`
-callback therefore waits only for active responses, never for the keep-alive
-timeout.
+admitted responses finish. Requests already received at `close()` are admitted
+and answered normally, including ones pipelined behind an active response. A
+request that arrives on an open connection after `close()` never reaches the
+application: once every earlier response on that connection has been written,
+it is answered `503` with `Retry-After: 1` and `Connection: close`, and the
+connection ends. A client that keeps pipelining therefore cannot hold `close()`
+open. The `close()` callback waits only for admitted responses, never for the
+keep-alive timeout.
 `listen()` answers `400` with `Connection: close`, before reading any body, when
 `Host` is anything but a host with an optional port, when `X-Forwarded-Proto` is
 anything but `http` or `https`, or when the request target does not start with
@@ -100,7 +105,8 @@ connections, closes idle connections and accepted sockets without a first HTTP
 request, closes request and code admission, reaps sandbox children, and drains
 active responses and deferred work. A connection serving an active response
 closes as soon as all its admitted responses finish, including SSE, without
-waiting for the keep-alive timeout or for the client to close. Its shutdown deadline defaults to ten seconds
+waiting for the keep-alive timeout or for the client to close. Requests arriving
+on it after the signal are refused as described above. Its shutdown deadline defaults to ten seconds
 (`shutdownTimeoutMs`). For example, retain the template's `listen(connecta, port)` when running it under
 Docker Compose so `docker compose stop` uses this cleanup.
 
