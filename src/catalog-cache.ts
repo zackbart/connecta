@@ -448,7 +448,7 @@ export function observeCatalogExpiry(
 // Tool facts remain available for ordinary calls after a transient listing
 // failure for five minutes. Resources never use stale inventories. A fallback
 // carries its original expired deadline and cannot authorize auth recovery.
-const STALE_FALLBACK_MS = 300_000;
+export const STALE_FALLBACK_MS = 300_000;
 /**
  * How long past its expiry a complete tool catalog stays listable when its
  * connector does not answer discovery in time. The listing only: a call always

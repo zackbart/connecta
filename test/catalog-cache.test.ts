@@ -1398,35 +1398,75 @@ it("INV-9 INV-8: stale tool fallback preserves expiry, remains partitioned and e
   await expect(f.read(root)).rejects.toMatchObject({ code: "connector_call_failed" });
 });
 
-it("INV-1 INV-8: a request revalidates an expired catalog at most once, whatever its relisting brings back", async () => {
-  const calls = 5;
-  const revalidatingCalls = async (f: Awaited<ReturnType<typeof fixture>>, root: Registry) => {
+it("INV-1 INV-8: a request relists a failed or stale revalidation once, and keeps a fresh or zero-TTL catalog's rules", async () => {
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const revalidatingCalls = async (
+    f: Awaited<ReturnType<typeof fixture>>,
+    root: Registry,
+    steps: Array<() => void>,
+  ) => {
     const before = f.listings();
     const resolved = await f.discover(f.viewFor(root), async (service) => {
       const results = [];
-      for (let call = 0; call < calls; call++) results.push(await runEdge(service.resolve(`${f.id}.read`, {}, true)));
+      for (const step of steps) {
+        step();
+        results.push(await runEdge(service.resolve(`${f.id}.read`, {}, true)));
+      }
       return results;
     });
-    return { ok: resolved.map((resolution) => resolution.ok), listings: f.listings() - before };
+    return {
+      outcomes: resolved.map((resolution) => (resolution.ok ? "ok" : resolution.error.code)),
+      listings: f.listings() - before,
+    };
   };
-  const everyCall = Array(calls).fill(true);
+  const expire = (f: Awaited<ReturnType<typeof fixture>>, mode: Parameters<typeof f.mode>[0]) => () => {
+    now += 1_100;
+    f.mode(mode);
+  };
+  const keep = () => {};
 
-  const zeroTtl = await fixture({ ttl: 0 });
-  expect(await revalidatingCalls(zeroTtl, zeroTtl.registry())).toEqual({ ok: everyCall, listings: 2 });
+  const refused = await fixture({ ttl: 1_000 });
+  const refusedRoot = refused.registry();
+  await refused.read(refusedRoot);
+  expect(await revalidatingCalls(refused, refusedRoot, [keep, expire(refused, "error"), keep, keep, keep])).toEqual({
+    outcomes: ["ok", ...Array(4).fill("provider_permission_denied")],
+    listings: 1,
+  });
 
   const unavailable = await fixture({ ttl: 1_000 });
-  let now = Date.now();
-  vi.spyOn(Date, "now").mockImplementation(() => now);
-  const root = unavailable.registry();
-  await unavailable.read(root);
-  now += 1_100;
-  unavailable.mode("transient");
-  expect(await revalidatingCalls(unavailable, root)).toEqual({ ok: everyCall, listings: 2 });
+  const unavailableRoot = unavailable.registry();
+  await unavailable.read(unavailableRoot);
+  const pastFallback = () => {
+    now += 300_000;
+  };
+  expect(
+    await revalidatingCalls(unavailable, unavailableRoot, [
+      keep,
+      expire(unavailable, "transient"),
+      keep,
+      keep,
+      pastFallback,
+      keep,
+    ]),
+  ).toEqual({
+    outcomes: ["ok", "ok", "ok", "ok", "connector_call_failed", "connector_call_failed"],
+    listings: 2,
+  });
+
+  const zeroTtl = await fixture({ ttl: 0 });
+  expect(await revalidatingCalls(zeroTtl, zeroTtl.registry(), [keep, keep, keep, keep, keep])).toEqual({
+    outcomes: Array(5).fill("ok"),
+    listings: 5,
+  });
 
   const fresh = await fixture({ ttl: 60_000 });
   const freshRoot = fresh.registry();
   await fresh.read(freshRoot);
-  expect(await revalidatingCalls(fresh, freshRoot)).toEqual({ ok: everyCall, listings: 0 });
+  expect(await revalidatingCalls(fresh, freshRoot, [keep, keep, keep, keep, keep])).toEqual({
+    outcomes: Array(5).fill("ok"),
+    listings: 0,
+  });
 });
 
 describe("stale catalog listing", () => {

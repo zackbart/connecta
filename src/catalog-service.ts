@@ -10,6 +10,7 @@ import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import {
   carryCatalogFreshness,
   catalogGenerationFor,
+  catalogFallbackUsable,
   catalogIsFresh,
   catalogStaleness,
   markCatalogStale,
@@ -63,6 +64,12 @@ import { keepErrorName } from "./redaction-identity.js";
 import { operationVocabularyMatches, searchSynonyms } from "./operation-vocabulary.js";
 
 /** One search probe's outcome, and what its health record settles from. */
+interface RetainedCatalog {
+  identity: string;
+  read: SharedRead<ToolDef[]>;
+  settled: boolean;
+}
+
 interface SearchProbe {
   id: string;
   result: Result.Result<ToolDef[], unknown>;
@@ -840,8 +847,11 @@ export class CatalogService {
   // reads still in flight and is kept for what the registry's cannot do: hold
   // the success for the rest of the request, recorded by the read itself
   // rather than by an asker, whose probe deadline may have ended its wait.
-  private readonly catalogs = new Map<string, { identity: string; read: SharedRead<ToolDef[]>; settled: boolean }>();
-  private readonly revalidatedIdentities = new Map<string, string>();
+  private readonly catalogs = new Map<string, RetainedCatalog>();
+  private readonly revalidations = new Map<
+    string,
+    { identity: string; read: SharedRead<ToolDef[]>; failure?: { error: unknown } }
+  >();
   // Key by the private source array, never connector id: a replacement read
   // gets new views and indexes. Each service belongs to one request and one
   // registry visibility view (caller/pool, hidden tools and classification).
@@ -965,61 +975,79 @@ export class CatalogService {
         : retainedCatalogIdentity(this.registry.contextFor(id, this.baseUrl, this.requestScope, callOptions));
       let retained = this.catalogs.get(id);
       if (!retained || retained.identity !== identity) {
-        const started: SharedRead<ToolDef[]> = new SharedRead(
-          (signal) =>
-            registryProgram(this.registry, "getTools", id, this.baseUrl, this.requestScope, {
-              signal,
-              timeoutMs: this.probeTimeoutMs,
-              ...(this.defer ? { defer: this.defer } : {}),
-            }).pipe(
-              Effect.map((tools) => {
-                traceFor(this.requestScope)?.record(
-                  "catalog.accepted",
-                  0,
-                  utf8Length(JSON.stringify(tools)),
-                  0,
-                  0,
-                  tools.length,
-                );
-                // An authored catalog lists its declared descriptions for this request's surface.
-                const connector = this.registry.getConnector(id);
-                return carryCatalogFreshness(
-                  tools,
-                  tools.map((tool) => {
-                    // The request's own copy, which keeps the source classification.
-                    const copy = cloneTool(tool);
-                    routeToolInPlace(connector, copy, this.routes);
-                    return copy;
-                  }),
-                );
-              }),
-            ),
-          (succeeded) => {
-            const kept = this.catalogs.get(id);
-            if (kept?.read !== started) return;
-            kept.settled = true;
-            // Evicted before the read resumes anyone, so an asker that
-            // retries on hearing of the failure starts a fresh read.
-            if (!succeeded) this.catalogs.delete(id);
-          },
-          this.requestScope,
-        );
-        retained = { identity, read: started, settled: false };
-        this.catalogs.set(id, retained);
+        const failed = revalidateExpired ? this.revalidations.get(id) : undefined;
+        if (failed?.identity === identity && failed.failure) return Effect.fail(failed.failure.error);
+        retained = this.retainCatalog(id, identity);
       }
       if (!revalidateExpired) return retained.read.join(callOptions.signal);
       const joined = retained;
       const listedForThisCall = !joined.settled;
       return Effect.flatMap(joined.read.join(callOptions.signal), (tools) => {
         if (listedForThisCall || catalogIsFresh(tools)) return Effect.succeed(tools);
+        if (
+          this.revalidations.get(id)?.read === joined.read &&
+          catalogStaleness(tools) !== undefined &&
+          catalogFallbackUsable(tools)
+        )
+          return Effect.succeed(tools);
         if (this.catalogs.get(id) === joined) {
-          if (this.revalidatedIdentities.get(id) === joined.identity) return Effect.succeed(tools);
-          this.revalidatedIdentities.set(id, joined.identity);
           this.catalogs.delete(id);
+          this.revalidations.set(id, { identity, read: this.retainCatalog(id, identity).read });
         }
         return this.catalog(id, callOptions);
       });
     });
+  }
+
+  private retainCatalog(id: string, identity: string): RetainedCatalog {
+    const started: SharedRead<ToolDef[]> = new SharedRead(
+      (signal) =>
+        registryProgram(this.registry, "getTools", id, this.baseUrl, this.requestScope, {
+          signal,
+          timeoutMs: this.probeTimeoutMs,
+          ...(this.defer ? { defer: this.defer } : {}),
+        }).pipe(
+          Effect.map((tools) => {
+            traceFor(this.requestScope)?.record(
+              "catalog.accepted",
+              0,
+              utf8Length(JSON.stringify(tools)),
+              0,
+              0,
+              tools.length,
+            );
+            // An authored catalog lists its declared descriptions for this request's surface.
+            const connector = this.registry.getConnector(id);
+            return carryCatalogFreshness(
+              tools,
+              tools.map((tool) => {
+                // The request's own copy, which keeps the source classification.
+                const copy = cloneTool(tool);
+                routeToolInPlace(connector, copy, this.routes);
+                return copy;
+              }),
+            );
+          }),
+          Effect.tapError((failure) =>
+            Effect.sync(() => {
+              const revalidation = this.revalidations.get(id);
+              if (revalidation?.read === started && !signal.aborted) revalidation.failure = { error: failure };
+            }),
+          ),
+        ),
+      (succeeded) => {
+        const kept = this.catalogs.get(id);
+        if (kept?.read !== started) return;
+        kept.settled = true;
+        // Evicted before the read resumes anyone, so an asker that
+        // retries on hearing of the failure starts a fresh read.
+        if (!succeeded) this.catalogs.delete(id);
+      },
+      this.requestScope,
+    );
+    const retained = { identity, read: started, settled: false };
+    this.catalogs.set(id, retained);
+    return retained;
   }
 
   private servesWrite(connector: Connector | undefined, toolName: string): boolean {

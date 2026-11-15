@@ -23,11 +23,17 @@ import {
   invalidateCatalogCache,
   observeUncachedCatalogRefresh,
   retainedCatalogIdentity,
+  STALE_FALLBACK_MS,
   storeCustomCatalogFallback,
   type CatalogToolFingerprint,
   type CustomCatalogListing,
 } from "./catalog-cache.js";
-import { carryCatalogFreshness, markCatalogFreshness, markCatalogStale } from "./catalog-freshness.js";
+import {
+  carryCatalogFreshness,
+  markCatalogFallbackUntil,
+  markCatalogFreshness,
+  markCatalogStale,
+} from "./catalog-freshness.js";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "./catalog-limits.js";
 import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import { usesCallerIdentity, type ConnectorCaller } from "./connector-caller.js";
@@ -1205,8 +1211,10 @@ export class Registry implements RegistryView {
       const provenance = catalogExpiry(ctx);
       const freshUntil = provenance && !provenance.staleFallback ? provenance.expiresAt : 0;
       // A transient-failure fallback answers the listing; discovery still reports its age.
-      if (provenance?.staleFallback)
+      if (provenance?.staleFallback) {
         markCatalogStale(accepted, { code: "unavailable", ageMs: Math.max(0, Date.now() - provenance.fetchedAt) });
+        markCatalogFallbackUntil(accepted, provenance.expiresAt + STALE_FALLBACK_MS);
+      }
       // Principal-forwarded listings belong to one caller, never to the shared
       // operator observation store. The actual catalog cache is identity-bound.
       if (!forwardsPrincipal(connector)) {

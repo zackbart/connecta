@@ -172,21 +172,21 @@ catalog has passed its TTL, and admits against the new listing. Such calls are:
 A tool the downstream has since reclassified as a write is then refused, with
 `destructive_tool_requires_approval` or `read_only_endpoint`, and nothing is
 sent, whether or not the downstream sent `notifications/tools/list_changed`.
-Concurrent calls share one relisting. A request relists each connector this way
-at most once: its later calls admit against that relisting for the rest of the
-request, whether it came back fresh, with a zero TTL, or through the stale
-fallback. A downstream's reclassification therefore reaches such a call no later
-than its catalog TTL (`ttlMs`, or `discovery.catalogTtlSeconds` for a listing
-without one), or, once the request has relisted that connector, no later than
-the next request.
+Concurrent calls share one relisting. A downstream's reclassification therefore
+reaches such a call no later than its catalog TTL (`ttlMs`, or
+`discovery.catalogTtlSeconds` for a listing without one).
 
-Two costs follow, only for those calls. A request whose retained catalog has
-expired sends one more `tools/list` to that connector, including a catalog with a
-zero TTL, which is the MCP SDK server's default. A relisting that fails
-transiently resolves the call through the bounded stale fallback in
+Two costs follow, only for those calls. A catalog with a zero TTL, which is the
+MCP SDK server's default, is listed again before every such call after the
+request's first to that connector, one `tools/list` round trip each. A relisting
+that fails transiently resolves the call through the bounded stale fallback in
 [architecture](./architecture.md#storage-credentials-and-connectors), so while a
-downstream cannot list, the bound extends by at most five minutes, and the
-request does not ask that downstream again.
+downstream cannot list, the bound extends by at most five minutes.
+
+A relisting that cannot list is not repeated within the request. Its later such
+calls to that connector admit against the same stale fallback until that
+fallback's five minutes end, then list once more. A relisting that failed with no
+fallback refuses them with the same error, without listing again.
 
 Every other call keeps the catalog its request retained, with no relisting:
 writable `execute_code` and `call_destructive_tool` to an unrestricted connector
