@@ -256,7 +256,7 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(url.href).toMatch(SHORT_LINK);
     const stored = await flow.app.registry
       .contextFor("service", BASE)
-      .storage.get(oauthConnectKeys.link(await sha256Hex(url.searchParams.get("h")!)));
+      .storage.get(oauthConnectKeys.link(await sha256Hex(JSON.stringify(["service", url.searchParams.get("h")!]))));
     const [version, encrypted] = required(stored ?? undefined).split(".");
     expect(version).toBe("v4");
     expect(atob(encrypted!.replace(/-/g, "+").replace(/_/g, "/"))).not.toContain("alice");

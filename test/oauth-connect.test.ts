@@ -4,6 +4,7 @@ import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { identityStorageKey } from "../src/identity.js";
+import { tagGrantOwner } from "../src/oauth-grant-owner.js";
 import { sha256Hex } from "../src/bytes.js";
 import { oauthConnectKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -24,7 +25,9 @@ afterEach(async () => {
 });
 
 async function storedLink(flow: ReturnType<typeof setup>, token: string) {
-  return flow.app.registry.contextFor("service", BASE).storage.get(oauthConnectKeys.link(await sha256Hex(token)));
+  return flow.app.registry
+    .contextFor("service", BASE)
+    .storage.get(oauthConnectKeys.link(await sha256Hex(JSON.stringify(["service", token]))));
 }
 
 function setup(
@@ -37,6 +40,7 @@ function setup(
     bobMember?: boolean;
     hostedSignIn?: boolean;
     ui?: boolean;
+    sibling?: boolean;
   } = {},
 ) {
   const storage = memoryStorage();
@@ -60,6 +64,13 @@ function setup(
     verifyState: async (candidate, ctx) => candidate !== null && candidate === (await ctx.storage.get("state")),
     disconnectAuth: async () => {},
   };
+  const grant = {};
+  const connectors = options.sibling
+    ? [
+        tagGrantOwner(connector, "service", grant),
+        tagGrantOwner({ ...connector, id: "service_drive" }, "service", grant),
+      ]
+    : [connector];
   const auth =
     options.interactive === false
       ? machineAuth("machine")
@@ -81,7 +92,7 @@ function setup(
   const build = (maintainerIds: string[]) => {
     const deployment = createTestConnecta({
       ...(options.ui === false ? { ui: undefined } : {}),
-      connectors: [connector],
+      connectors,
       auth,
       ...(options.interactive === false ? {} : { maintainers: maintainerIds.map((id) => ({ namespace, id })) }),
       ...(options.bobMember ? { pools: { team: { tools: ["service"], members: [{ namespace, id: "bob" }] } } } : {}),
@@ -409,6 +420,37 @@ describe.each([
     const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
     expect(await cost(later)).toEqual(unknownId);
     clock.mockRestore();
+  });
+
+  it("INV-4: a sibling sharing the grant resolves no other account's short link, at the same storage cost", async () => {
+    const flow = setup(provider, scope, { sibling: true });
+    const { authorizationUrl } = await flow.authorize();
+    const token = new URL(authorizationUrl).searchParams.get("h")!;
+    expect(authorizationUrl).toBe(`${BASE}/connect/service?h=${token}`);
+    const operations: string[] = [];
+    for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
+      const original = flow.storage[method].bind(flow.storage) as (...args: unknown[]) => unknown;
+      vi.spyOn(flow.storage, method).mockImplementation(((...args: unknown[]) => {
+        operations.push(method);
+        return original(...args);
+      }) as never);
+    }
+    const verify = vi.spyOn(flow.vault, "verifyOAuthHandoff");
+    const open = vi.spyOn(flow.vault, "open");
+    const cost = async (url: string) => {
+      operations.length = 0;
+      const response = await flow.browser(url, "alice");
+      expect(response.status).toBe(400);
+      return [...operations];
+    };
+    const unconfigured = await cost(`${BASE}/connect/unconfigured?h=${token}`);
+    expect(unconfigured).toEqual(["get", "get"]);
+    expect(await cost(`${BASE}/connect/service_drive?h=${token}`)).toEqual(unconfigured);
+    expect(await cost(`${BASE}/connect/service_drive?h=${"a".repeat(26)}`)).toEqual(unconfigured);
+    expect(verify).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect((await flow.browser(authorizationUrl, "alice")).status).toBe(302);
+    expect(verify).toHaveBeenCalled();
   });
 
   it("INV-4: falls back to the sealed link when storage refuses the short one, and still accepts it", async () => {

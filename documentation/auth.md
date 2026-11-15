@@ -3073,8 +3073,12 @@ they copy them. Each sealed link an MCP endpoint issues is therefore short:
 lowercase base32 characters (`a`–`z`, `2`–`7`) encoding 128 random bits.
 
 - Connecta stores the sealed, signed handoff in the owning connector's storage
-  under the SHA-256 of the id, never the id itself, expiring with the link at
-  fifteen minutes. A record holds under 1 KB. Issuance follows handoff issuance:
+  under the SHA-256 of the connector id the link names together with the id,
+  never the id itself, expiring with the link at fifteen minutes. An id
+  therefore resolves only at its own `/connect/<connector>` path: a connector
+  that shares another's grant (see
+  [one grant for several connectors](#one-grant-for-several-connectors))
+  finds no record for that account's link. A record holds under 1 KB. Issuance follows handoff issuance:
   at most one per connector per call or program run, for an admitted caller,
   and SQL writes reclaim expired rows.
 - A visit resolves the id to that stored handoff and then verifies it exactly as
@@ -3083,7 +3087,8 @@ lowercase base32 characters (`a`–`z`, `2`–`7`) encoding 128 random bits.
   in gets 403. Unknown, altered, expired, spent and misrouted ids get the same
   `400 Invalid or expired connection link` refusal as any invalid link, after
   the same storage work: one read of the link record and one of a used-nonce
-  marker, whether or not the path names a configured connector, so neither the
+  marker, whether or not the path names a configured connector or one sharing
+  another's grant, and no signature check or decryption, so neither the
   response nor its storage round trips reveal which connectors exist. This
   removes the I/O-versus-none gap, not every timing difference: a hit and a miss
   are not identical in a key-value store.

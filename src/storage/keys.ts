@@ -432,7 +432,8 @@ export const oauthRefreshActiveKeys = {
 
 /**
  * Single-use browser links and forced resets (`used`/`started`/`failed`), MRTR
- * rounds, and short links: a sealed, signed link under the SHA-256 of its id.
+ * rounds, and short links: a sealed, signed link under the SHA-256 of the
+ * connector id it names and its id.
  */
 export const oauthConnectKeys = {
   family: {

@@ -98,14 +98,16 @@ function shortLinkId(): string {
   return id + SHORT_LINK_ALPHABET[(value << (5 - bits)) & 31];
 }
 
-function* shortLinkKey(id: string) {
-  return oauthConnectKeys.link(yield* upwardStep(authValue<string>(() => sha256Hex(id))));
+function* shortLinkKey(connectorId: string, id: string) {
+  return oauthConnectKeys.link(
+    yield* upwardStep(authValue<string>(() => sha256Hex(JSON.stringify([connectorId, id])))),
+  );
 }
 
-function* storeShortLink(storage: KVStorage, token: string, expiresAtMs: number) {
+function* storeShortLink(storage: KVStorage, connectorId: string, token: string, expiresAtMs: number) {
   const id = shortLinkId();
   try {
-    const key = yield* shortLinkKey(id);
+    const key = yield* shortLinkKey(connectorId, id);
     return (yield* upwardStep(authStorage<boolean>(storage, "compareAndSet", [key, null, token, { expiresAtMs }])))
       ? id
       : token;
@@ -218,7 +220,12 @@ const oauthConnectLinkNative = /* @__PURE__ */ registerAuth(
       url.searchParams.set(
         "h",
         opaque
-          ? yield* storeShortLink(opts.registry.contextFor(connectorId, baseUrl).storage, token, handoff.expiresAt)
+          ? yield* storeShortLink(
+              opts.registry.contextFor(connectorId, baseUrl).storage,
+              connectorId,
+              token,
+              handoff.expiresAt,
+            )
           : token,
       );
       return { url: url.toString(), nonce: handoff.nonce };
@@ -287,7 +294,7 @@ const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
       let h: Handoff | null = null;
       let unusedKey: string;
       if (SHORT_LINK.test(token)) {
-        const linkKey = yield* shortLinkKey(token);
+        const linkKey = yield* shortLinkKey(connectorId, token);
         try {
           const stored = yield* upwardStep(authStorage<string | null>(storage, "get", [linkKey]));
           if (stored?.startsWith("v4.")) h = yield* signedHandoff(opts, baseUrl, connectorId, stored);
