@@ -132,6 +132,21 @@ callable. Independently captured number params require decimal syntax with a
 canonical integer part; fractional trailing zeros are accepted, while negative
 zero, hex, exponents, leading plus and whitespace remain refused.
 
+Zone ids are refused locally unless they are 32 hexadecimal characters, in a
+zone path segment and in GraphQL `zoneTag`, `zoneTag_in` and `accountTag`
+filters. At the pinned revision, 504 operations under `/zones/{zone_id}` declare
+`maxLength: 32` with a hex example and 48 declare `^[0-9a-f]{32}$` or
+`^[a-f0-9]{32}$` (two declare both); the other 143 declare neither, and no
+operation documents a non-hex zone id. The check ignores case so an uppercase
+id reaches the existing pin comparison. GraphQL tags have no published schema
+in the vendored envelope; the same shape is applied because a domain-name tag
+can be answered with analytics rather than a refusal. Tags are read as GraphQL
+resolves them: block strings are normalized, a scalar `zoneTag_in` is a
+one-item list, and only the selected operation's variable defaults and
+reachable fragments count. When the operation that runs is unclear (several
+operations without `operationName`, or duplicate fragment names) the shape check
+refuses nothing, while a pin still refuses every unresolved tag.
+
 ## Public identifier header
 
 The Global API Key scheme sends the account email in `X-Auth-Email` and proves it with `X-Auth-Key`. The provider declares only `x-auth-email` a public identifier: the whole email stays matched in output, and fragments of it, such as the account's domain, stay usable. The key stays fully matched.

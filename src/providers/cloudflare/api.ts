@@ -257,6 +257,9 @@ export function invalid(message: string): never {
   throw new ConnectorCallError("invalid_args", message);
 }
 
+export const CLOUDFLARE_ID = /^[0-9a-f]{32}$/i;
+export const ZONE_LOOKUP = "Find a zone's id by its domain name with list_zones.";
+
 interface EnvelopeError {
   code?: number;
   message?: string;
@@ -401,8 +404,7 @@ function isEnvelope(body: unknown): body is JsonRecord {
 const ACCOUNT_KEYS = new Set(["account_id", "accountId", "account.id", "account_tag", "accountTag"]);
 const ZONE_KEYS = new Set(["zone_id", "zoneId", "zone.id", "zone_tag", "zoneTag"]);
 
-/** Every account and zone id a call names in its path, query, or top-level body. */
-function scopeIds(call: RestCall): { accounts: string[]; zones: string[]; template: readonly string[] } {
+function pathIds(call: RestCall): { accounts: string[]; zones: string[]; template: readonly string[] } {
   const template = call.op.path.slice(1).split("/");
   const accounts: string[] = [];
   const zones: string[] = [];
@@ -413,6 +415,12 @@ function scopeIds(call: RestCall): { accounts: string[]; zones: string[]; templa
     if (template[index - 1] === "accounts") accounts.push(decodeURIComponent(value));
     if (template[index - 1] === "zones") zones.push(decodeURIComponent(value));
   });
+  return { accounts, zones, template };
+}
+
+/** Every account and zone id a call names in its path, query, or top-level body. */
+function scopeIds(call: RestCall): { accounts: string[]; zones: string[]; template: readonly string[] } {
+  const { accounts, zones, template } = pathIds(call);
   const scan = (source: JsonRecord): void => {
     for (const [key, value] of Object.entries(source)) {
       const values = Array.isArray(value) ? value : [value];
@@ -778,6 +786,13 @@ function makeRuntime(connection: Connection, options: CloudflareRestOptions) {
     });
   const admit = (call: RestCall) =>
     Effect.gen(function* () {
+      if (pathIds(call).zones.some((zone) => !CLOUDFLARE_ID.test(zone))) {
+        yield* checked(() =>
+          invalid(
+            `${call.op.path} takes a zone id, 32 hexadecimal characters, where this path has something else, such as a domain name. ${ZONE_LOOKUP}`,
+          ),
+        );
+      }
       if (
         call.method !== "GET" &&
         call.method !== "HEAD" &&
