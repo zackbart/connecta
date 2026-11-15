@@ -2,6 +2,7 @@ import { CATALOG_SEARCH_RESULT_SCHEMA, CatalogService, flatSearchResult } from "
 import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
 import { makeRegistry } from "./helpers.js";
 import { EXECUTE_OUTPUT, SEARCH_OUTPUT } from "../src/meta-output.js";
+import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
 // Golden: the input schema of every meta-tool exactly as `tools/list` renders
 // it today, from the zod definitions in meta-tools.ts and execute.ts.
 //
@@ -262,9 +263,10 @@ describe("meta-tool output schemas", () => {
 // execute_code description varies with connector count, so the fixture below
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
-  total: 8_800,
+  // Grew for each description's routing first line, the only line some hosts show.
+  total: 9_000,
   // A writable endpoint's execute_read_code: description, shared input and output schemas.
-  readRouteTotal: 1_500,
+  readRouteTotal: 1_560,
   readRouteInstructions: 550,
   readRouteInstructionsPeak: 1_130,
   // The pinned fixture's instructions, then the most a pool can serve: a
@@ -272,16 +274,16 @@ const BUDGETS = {
   instructions: 460,
   instructionsPeak: 1_040,
   description: {
-    skills: 150,
+    skills: 130,
     search_tools: 480,
     call_tool: 240,
-    call_destructive_tool: 300,
+    call_destructive_tool: 350,
     // Grew to say when no call is needed: an auth error that already carries its link.
-    authorize_connector: 510,
+    authorize_connector: 580,
     // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial.
-    execute_code: 2_890,
+    execute_code: 2_990,
     // Carries the same inventory: a host may load only this tool for read work.
-    execute_read_code: 730,
+    execute_read_code: 790,
   },
   // Open summaries: the full contracts stay on the server, in meta-output.ts.
   outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170, execute_read_code: 170 },
@@ -594,6 +596,76 @@ describe("always-loaded agent surface budgets", () => {
       await app.close();
     }
   });
+});
+
+describe("meta-tool descriptions", () => {
+  const roster = (readGuide: boolean) =>
+    Array.from({ length: 15 }, (_, index) =>
+      api(`service_${String(index).padStart(2, "0")}`, {
+        title: `Workspace ${index} production account (EU)`,
+        description: `Workspace ${index} records, reports and exports — the long-running team account`,
+        ...(readGuide ? { usageGuide: { content: `# Workspace ${index}`, required: true } } : {}),
+        tools: [],
+      }),
+    );
+  const largest = (readRoute: boolean) => () =>
+    makeDeployment({
+      executor: { ...stubExecutor, deadlineMs: 50_000 },
+      readOnly: false,
+      execute: {
+        readRoute,
+        maxHostCalls: 1_000,
+        hostCallTimeoutMs: 123_000,
+        maxEmittedBytes: 99_999_999,
+        maxEmittedBlocks: 999,
+        maxWrites: 999,
+      },
+      calls: { defaultTimeoutMs: 654_000 },
+      connectors: [calcApi(), ...roster(true)],
+    });
+  const surfaces: Record<string, () => ReturnType<typeof makeDeployment>> = {
+    writable: () => budgetFixture(false),
+    "read-only": () => budgetFixture(true),
+    "without the read route": () =>
+      makeDeployment({
+        executor: stubExecutor,
+        readOnly: false,
+        execute: { readRoute: false },
+        connectors: [calcApi()],
+      }),
+    "without guides": () => makeDeployment({ executor: stubExecutor, readOnly: false, connectors: roster(false) }),
+    "at the largest inventory": largest(false),
+    "at the largest inventory with the read route": largest(true),
+  };
+
+  it.each(Object.keys(surfaces))(
+    "opens with a routing line of at most 120 characters and stays within 4,096, byte-stable (%s)",
+    async (name) => {
+      const app = surfaces[name]!();
+      const twin = surfaces[name]!();
+      try {
+        const surface = await fixedSurface(app);
+        expect(await fixedSurface(app)).toStrictEqual(surface);
+        expect(await fixedSurface(twin)).toStrictEqual(surface);
+        for (const tool of surface.tools) {
+          const lead = tool.description.split("\n")[0];
+          expect(lead.length, tool.name).toBeLessThanOrEqual(120);
+          expect(lead, tool.name).toMatch(/^[A-Z].*\.$/);
+          expect(tool.description.length, tool.name).toBeLessThanOrEqual(4_096);
+        }
+        if (name.startsWith("at the largest")) {
+          const inventory = surface.tools
+            .find((tool) => tool.name === "execute_code")!
+            .description.split("\n")
+            .find((line: string) => line.startsWith("Connectors: "));
+          expect(new TextEncoder().encode(inventory).length).toBeGreaterThan(CONNECTOR_INVENTORY_MAX_BYTES - 100);
+        }
+      } finally {
+        await app.close();
+        await twin.close();
+      }
+    },
+  );
 });
 
 it("names the right call shape when a direct call uses MCP's own argument names, accepting nothing new", async () => {

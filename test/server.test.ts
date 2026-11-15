@@ -395,6 +395,20 @@ describe("server /mcp end-to-end", () => {
     expect(await inventory([{ id: "crm", title: "Customer CRM", description: "é".repeat(40) }])).toBe(
       "Connectors: crm (Customer CRM).",
     );
+    // A purpose drops leading words that repeat the title and clips on a whole clause, never inside parentheses.
+    expect(
+      await inventory([
+        {
+          id: "billing",
+          title: "Billing (Global API Key)",
+          description: "Billing v4 API over REST (Global API Key, pinned) — invoices, refunds and disputes",
+        },
+        { id: "warehouse", description: "Analytics exports (CSV, JSON, Parquet and Avro files, refreshed nightly)" },
+        { id: "shop", description: "Orders, invoices and refunds for the retail storefront and the wholesale portal" },
+      ]),
+    ).toBe(
+      "Connectors: billing (Billing (Global API Key); v4 API over REST (Global API Key, pinned) — invoices…), warehouse (Analytics exports…), shop (Orders, invoices and refunds for the retail storefront…).",
+    );
     // Past the cap purposes go first, from the end of registry order, before any title or name.
     const described = Array.from({ length: 16 }, (_, index) => ({
       id: `service_${String(index).padStart(2, "0")}`,
@@ -469,7 +483,7 @@ describe("server /mcp end-to-end", () => {
     for (const line of [full, untitled, first]) {
       expect(bytes(line)).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
     }
-    expect((await executeDescription(ids)).length).toBeLessThan(3_750);
+    expect((await executeDescription(ids)).length).toBeLessThan(3_850);
     // Codex repeats instructions on every tool, so purposes stay in this inventory alone.
     const purposeApp = createTestConnecta({
       connectors: [connector({ id: "crm", title: "Customer CRM", description: "Current accounts and contracts" })],

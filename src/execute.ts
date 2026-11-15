@@ -75,9 +75,8 @@ import { executorProgram } from "./runtime/executor.js";
 import {
   connectorGuide,
   connectorGuideRequired,
-  addsInformation,
+  connectorInventoryPurpose,
   connectorInventoryTitle,
-  inventoryNote,
   hasConnectorGuides,
   SkillsRegistry,
 } from "./skills.js";
@@ -2313,12 +2312,7 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
   const entry = (connector: (typeof connectors)[number], titled: boolean, withPurpose = false): string => {
     const name = guideFirst(connector) ? `${connector.id}*` : connector.id;
     const title = titled ? connectorInventoryTitle(connector) : undefined;
-    const description = connector.description?.replace(/\s+/g, " ").trim().replace(/\.$/, "");
-    const shown = `${connector.id} ${connector.title?.replace(/\s+/g, " ").trim() ?? ""}`;
-    const purpose =
-      withPurpose && description && addsInformation(shown, description)
-        ? inventoryNote(description, CONNECTOR_PURPOSE_MAX_BYTES)
-        : undefined;
+    const purpose = withPurpose ? connectorInventoryPurpose(connector, CONNECTOR_PURPOSE_MAX_BYTES) : undefined;
     const notes = [title, purpose].filter((note) => note !== undefined);
     return notes.length > 0 ? `${name} (${notes.join("; ")})` : name;
   };
@@ -2354,8 +2348,21 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
  * program and tell similar connectors apart.
  */
 const READ_PROGRAM_DESCRIPTION = (hostLimits: { maxHostCalls: number }, inventory: string) =>
-  `Run a read-only JavaScript program without write approval: same sandbox and connecta API as ${META_ROUTES.program}, ${hostLimits.maxHostCalls} host calls. Use it for read work at an unknown address, joins, loops and reductions. Each call that can write is refused before dispatch with its next step, and catching the refusal leaves it unsent. search and describe list those tools with callable: false; ${META_ROUTES.write} and ${META_ROUTES.program} run them. Use async () => { ... } with connecta.search({ query }), connecta.describe({ address }), connecta.call(address, args), connecta.result(resultId, { page }), and return the answer.
+  `Run a read-only JavaScript program across connected services, no write approval; programs that write: ${META_ROUTES.program}.
+Same sandbox and connecta API as ${META_ROUTES.program}, ${hostLimits.maxHostCalls} host calls. Use it for read work at an unknown address, joins, loops and reductions. Each call that can write is refused before dispatch with its next step, and catching the refusal leaves it unsent. search and describe list those tools with callable: false; ${META_ROUTES.write} and ${META_ROUTES.program} run them. Use async () => { ... } with connecta.search({ query }), connecta.describe({ address }), connecta.call(address, args), connecta.result(resultId, { page }), and return the answer.
 ${inventory}`;
+
+function programLead(routes: AgentRouteNames, readOnly: boolean, native: boolean, readRoute: boolean): string {
+  if (native)
+    return "Run a JavaScript program that combines several of this endpoint's tools by program address; call one tool directly.";
+  if (routes === routeNames("code"))
+    return `Run a JavaScript program for every operation: search, call and combine the connected services' tools.`;
+  if (readOnly)
+    return `Run a read-only JavaScript program to search, call and combine connected services' tools; one known read: ${routes.read}.`;
+  if (readRoute)
+    return `Run a JavaScript program that can write to connected services; read-only programs belong in ${READ_PROGRAM_SOURCE}.`;
+  return `Run a JavaScript program to search, call and combine connected services' tools; use it beyond one known call.`;
+}
 
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
@@ -2368,7 +2375,8 @@ const executeDescription = (
   routes: AgentRouteNames = META_ROUTES,
   readRoute = false,
 ) =>
-  `${native ? `Call tools directly; combine work here using their program addresses. ${readOnly ? "Read-only endpoint: writes are omitted and refused." : "Writable endpoint: programs may write; the host approves."}` : `${routes === routeNames("code") ? `Every operation uses ${routes.program}.` : readOnly ? `One known read: ${routes.read}. Everything else: ${routes.program}.` : readRoute ? `One known read: ${routes.read}. One known write: ${routes.write}. Read programs: ${READ_PROGRAM_SOURCE}. Other: ${routes.program}.` : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}.`} ${readOnly ? "Read-only endpoint: search and describe omit write tools, and every write call is refused." : "Writable endpoint: programs may write; the host approves."}`} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
+  `${programLead(routes, readOnly, native, readRoute)}
+${native || routes === routeNames("code") || readOnly ? "" : `One known read: ${routes.read}. One known write: ${routes.write}. Everything else: ${routes.program}. `}${readOnly ? (native ? "Read-only endpoint: writes are omitted and refused." : "Read-only endpoint: search and describe omit write tools, and every write call is refused.") : "Writable endpoint: programs may write; the host approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
 ${connectorInventory(connectors)}
 
 Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or timers. API:
