@@ -1,7 +1,7 @@
 /** Calendar scheduling and invitation journeys, graded on independent fake state and the physical ledger. */
 import { isDeepStrictEqual as same } from "node:util";
 import { ALICE, BOB, CAROL, CONFERENCE_PIN, FREE_SLOT, INVITE_ID } from "./fake.js";
-import { deliveredValues } from "../../../../eval/tasks/correctness.js";
+import { deliveredValues, replyData } from "../../../../eval/tasks/correctness.js";
 import { check } from "../../../../eval/tasks/baseline.js";
 import type { ActiveTask, ReferenceContext } from "../../../../eval/tasks/types.js";
 import type { ProviderTasks } from "../../../../eval/support/provider-eval.js";
@@ -74,7 +74,7 @@ const SCHEDULE_TASK: ActiveTask = {
       sendUpdates: "none",
     });
     if (reply.isError) throw new Error(reply.text);
-    const event = (reply.structured as Row).data;
+    const event = replyData(reply) as Row;
     ctx.answer(
       `ANSWER: ${JSON.stringify({ eventId: event.id, start: event.start.dateTime, end: event.end.dateTime, meetLink: event.meetLink })}`,
     );

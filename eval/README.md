@@ -673,6 +673,11 @@ one-fetch and export-once requirements stay the same. Known reads use programs,
 and rich output reaches the host through `connecta.emit`. This experiment does
 not implement the record's future native block passthrough, large-result handles
 or in-program authorization API. The existing bridge and emission limits apply.
+Tasks in `CODE_CAPABILITY_MISMATCHES` ([tasks/surface.ts](tasks/surface.ts)) are
+recorded as `capability-mismatch` skips for every runner on this arm, and the
+selftest's code-arm pass skips them. `p5-preview-program-refused` is one: its host
+refuses `execute_code`, the arm's only operation route, so no agent can reach the
+preview it measures.
 
 `--grading route` is the default and requires the selected arm's route plus the
 existing outcome checks. `--grading outcome` ignores route verdicts while
