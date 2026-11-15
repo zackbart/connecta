@@ -185,6 +185,15 @@ Follow-up text from `call_tool`, `search_tools` and both program routes names th
 on endpoints that list it, including paging a writing program's oversized return, so
 paging costs no write approval and cannot resend the write.
 
+**Route names in its messages.** Every message a read program's run produces names
+`execute_read_code`, never `execute_code`: budget stops
+(`execute_read_code host-call budget exceeded (20 calls maximum); …`), the source-size
+limit, response-ceiling and sandbox timeouts with `details.operation: "execute_read_code"`,
+including timeouts the executor reports, and the truncation fallback's
+filter/map/slice instruction. Its host-call stop omits the warning against resending
+writes, since the run sent none. Only the write refusal above names the write routes.
+`execute_code` messages keep their existing text.
+
 **Off switch.** `execute: { readRoute: false }` in deployment code stops listing it
 on every writable endpoint. It is the deployment's choice alone, and suits a deployment
 that wants a person to see every program, given the limit below.

@@ -117,8 +117,15 @@ function runDispatchFloorMs(executor: Executor, ceiling: ResponseCeiling): numbe
   return dispatchFloorMs(Math.min(executor.deadlineMs ?? ceiling.ms, ceiling.ms));
 }
 
+type ProgramRoute = "execute_code" | typeof READ_PROGRAM_SOURCE;
+
+const programRoute = (readProgram: boolean | undefined): ProgramRoute =>
+  readProgram ? READ_PROGRAM_SOURCE : "execute_code";
+
 /** The time by which a request must have its answer, counted from its arrival (`execute.watchdogMs`). */
 interface ResponseCeiling {
+  /** The program tool whose request this ceiling bounds; its messages name it. */
+  route: ProgramRoute;
   ms: number;
   at: number;
   startedAt: number;
@@ -133,9 +140,9 @@ interface ResponseCeiling {
 /** Past the ceiling, room to store what a run leaves behind. Default 57 s against a 60 s client. */
 const RESPONSE_STORAGE_MARGIN_MS = 2_000;
 
-function responseCeiling(startedAt: number, ms: number): ResponseCeiling {
+function responseCeiling(route: ProgramRoute, startedAt: number, ms: number): ResponseCeiling {
   const at = startedAt + ms;
-  return { ms, at, startedAt, answerBy: at + Math.min(RESPONSE_STORAGE_MARGIN_MS, Math.floor(ms / 10)) };
+  return { route, ms, at, startedAt, answerBy: at + Math.min(RESPONSE_STORAGE_MARGIN_MS, Math.floor(ms / 10)) };
 }
 
 /** Refuse a run with no time left to start. Nothing has run, so running it again is safe. */
@@ -147,9 +154,9 @@ const startable = (ceiling: ResponseCeiling): Effect.Effect<void, InvocationFail
       : Effect.fail(
           new InvocationFailure({
             code: "timeout",
-            message: `Operation "execute_code" used its ${ceiling.ms}ms response ceiling before it started, so it did not run and sent nothing. Run it again.`,
+            message: `Operation "${ceiling.route}" used its ${ceiling.ms}ms response ceiling before it started, so it did not run and sent nothing. Run it again.`,
             retryable: true,
-            details: { operation: "execute_code", stage: "response ceiling", elapsedMs, deadlineMs: ceiling.ms },
+            details: { operation: ceiling.route, stage: "response ceiling", elapsedMs, deadlineMs: ceiling.ms },
           }),
         );
   });
@@ -621,10 +628,11 @@ class HostCallBudgetExceeded extends InvocationFailure {
       failed: number;
     },
     maxHostCalls: number,
+    route: ProgramRoute,
   ) {
     super({
       code: "budget_exceeded",
-      message: `execute_code host-call budget exceeded (${maxHostCalls} calls maximum); the run returned nothing. Split the rest across programs of at most ${maxHostCalls} calls each; do not resend any write it sent.`,
+      message: `${route} host-call budget exceeded (${maxHostCalls} calls maximum); the run returned nothing. Split the rest across programs of at most ${maxHostCalls} calls each${route === READ_PROGRAM_SOURCE ? "." : "; do not resend any write it sent."}`,
       retryable: false,
     });
   }
@@ -683,6 +691,7 @@ function sandboxProvider(
     routes: limits.routes,
   });
   const invocation = new InvocationService(registry, catalog, activity);
+  const route = programRoute(limits.readProgram);
   const maxHostCalls = Math.max(1, Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS));
   const hostCallTimeoutMs = Math.max(1, Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS));
   const { signal, diagnostics, programWrites } = limits;
@@ -773,7 +782,7 @@ function sandboxProvider(
     writeTimeoutMs: number,
     refusal?: CallErrorDetails,
   ) => ({
-    source: limits.readProgram ? READ_PROGRAM_SOURCE : ("execute_code" as const),
+    source: route,
     sentSecrets,
     timeoutMs,
     writeTimeoutMs,
@@ -941,7 +950,7 @@ function sandboxProvider(
             kind: "refuse",
             error: {
               code: "budget_exceeded",
-              message: `execute_code write budget exceeded (${maxWrites} writes per run); ${target.connector.id}.${target.toolName} was not sent. Check the run's writes count, then send only the rest in a new program; do not resend those that succeeded.`,
+              message: `${route} write budget exceeded (${maxWrites} writes per run); ${target.connector.id}.${target.toolName} was not sent. Check the run's writes count, then send only the rest in a new program; do not resend those that succeeded.`,
               retryable: false,
             },
           };
@@ -1415,7 +1424,7 @@ function sandboxProvider(
             // Uncounted: one per run; any further call through the bridge ends the run.
             if (budget === "once") {
               if (++notices > 1)
-                return endRun(guestFailure("budget_exceeded", `execute_code ${fn.label} is limited to one per run.`));
+                return endRun(guestFailure("budget_exceeded", `${route} ${fn.label} is limited to one per run.`));
               operation();
               return Promise.resolve();
             }
@@ -1425,7 +1434,7 @@ function sandboxProvider(
               return endRun(
                 guestFailure(
                   "budget_exceeded",
-                  `execute_code emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`,
+                  `${route} emission-attempt budget exceeded (${maxEmitAttempts} attempts maximum).`,
                 ),
               );
             // L4/M7: spend on entry, before even invalid arguments are checked;
@@ -1435,7 +1444,7 @@ function sandboxProvider(
               budget === "hostCall" && !(name === "result" && typeof args[0] === "string" && transfers.has(args[0]));
             if (counted && ++hostCalls.attempted > maxHostCalls) {
               hostCalls.failed++;
-              return endRun(new HostCallBudgetExceeded(hostCalls, maxHostCalls));
+              return endRun(new HostCallBudgetExceeded(hostCalls, maxHostCalls, route));
             }
             if (counted) hostCalls.admitted++;
             const started = Date.now();
@@ -1465,7 +1474,7 @@ function sandboxProvider(
                     name as "search" | "describe" | "result" | "skill",
                     guarded,
                     undefined,
-                    limits.readProgram ? READ_PROGRAM_SOURCE : undefined,
+                    route === READ_PROGRAM_SOURCE ? route : undefined,
                   )
                 : guarded;
             const running = runEdge(
@@ -1590,7 +1599,7 @@ function awaitExecutor<A>(
       untilCeiling(watchdog.ceiling).pipe(
         Effect.andThen(
           Effect.suspend(() => {
-            const { ms: deadlineMs, startedAt } = watchdog.ceiling;
+            const { ms: deadlineMs, startedAt, route } = watchdog.ceiling;
             const elapsedMs = Date.now() - startedAt;
             // Time ran out before the executor's own deadline could: queueing
             // spent it, or that deadline is set past the ceiling. Nothing is wedged.
@@ -1598,9 +1607,9 @@ function awaitExecutor<A>(
               return Effect.fail(
                 new InvocationFailure({
                   code: "timeout",
-                  message: `Operation "execute_code" timed out during response ceiling after ${elapsedMs}ms (effective deadline ${deadlineMs}ms). Return sooner, or do less in one program.`,
+                  message: `Operation "${route}" timed out during response ceiling after ${elapsedMs}ms (effective deadline ${deadlineMs}ms). Return sooner, or do less in one program.`,
                   retryable: true,
-                  details: { operation: "execute_code", stage: "response ceiling", elapsedMs, deadlineMs },
+                  details: { operation: route, stage: "response ceiling", elapsedMs, deadlineMs },
                 }),
               );
             }
@@ -1610,9 +1619,9 @@ function awaitExecutor<A>(
             return Effect.fail(
               new InvocationFailure({
                 code: "timeout",
-                message: `Operation "execute_code" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${deadlineMs}ms); sandbox unresponsive.`,
+                message: `Operation "${route}" timed out during sandbox watchdog after ${elapsedMs}ms (effective deadline ${deadlineMs}ms); sandbox unresponsive.`,
                 retryable: false,
-                details: { operation: "execute_code", stage: "sandbox watchdog", elapsedMs, deadlineMs },
+                details: { operation: route, stage: "sandbox watchdog", elapsedMs, deadlineMs },
               }),
             );
           }),
@@ -1900,6 +1909,7 @@ export function createExecuteTool(
         );
       });
       const reported = {
+        route: ceiling.route,
         emitted,
         diagnostics,
         program,
@@ -1920,6 +1930,7 @@ export function createExecuteTool(
             ceiling.answerBy,
             readBytes,
             config.followUpRoutes,
+            ceiling.route,
           ]),
       };
       const exited = Effect.exit(Effect.scoped(run)).pipe(
@@ -1988,7 +1999,11 @@ export function createExecuteTool(
         const programWrites = new ProgramWrites();
         const unawaited = { read: false };
         const retention: { note?: string } = {};
-        const ceiling = responseCeiling(config.requestStartedAt ?? Date.now(), watchdog.ms);
+        const ceiling = responseCeiling(
+          programRoute(config.readProgram),
+          config.requestStartedAt ?? Date.now(),
+          watchdog.ms,
+        );
         const response = Effect.suspend(() => {
           // A code-unit count above the cap is already too large in UTF-8. Check
           // that first so a huge direct-call string is never encoded in full.
@@ -1996,7 +2011,7 @@ export function createExecuteTool(
             code.length > EXECUTE_MAX_CODE_BYTES ||
             new TextEncoder().encode(code).byteLength > EXECUTE_MAX_CODE_BYTES
           ) {
-            const message = `execute_code code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
+            const message = `${ceiling.route} code exceeds the ${EXECUTE_MAX_CODE_BYTES}-byte UTF-8 limit.`;
             return Effect.succeed(
               failureResponse(message, { code: { code: "invalid_args", message, retryable: false } }),
             );
@@ -2080,6 +2095,7 @@ function finishedRunNote(
 }
 
 interface RunReport {
+  route: ProgramRoute;
   emitted: EmitCollector;
   diagnostics: ExecuteDiagnostics | undefined;
   program: string;
@@ -2087,11 +2103,25 @@ interface RunReport {
   guardResult: (value: unknown) => Effect.Effect<unknown, unknown>;
 }
 
+function executorFailureOnRoute(failure: CallErrorDetails, route: ProgramRoute): CallErrorDetails {
+  const executorPrefix = 'Operation "execute_code" ';
+  if (route === "execute_code" || failure.details?.operation !== "execute_code") return failure;
+  return {
+    ...failure,
+    message: failure.message.startsWith(executorPrefix)
+      ? `Operation "${route}" ${failure.message.slice(executorPrefix.length)}`
+      : failure.message,
+    details: { ...failure.details, operation: route },
+  };
+}
+
 /** An execution that never produced an ExecuteResult, as the model sees it. */
-function failedRun(err: unknown, logger: Logger, { emitted, diagnostics, program }: RunReport): ToolResult {
+function failedRun(err: unknown, logger: Logger, { route, emitted, diagnostics, program }: RunReport): ToolResult {
   const logs = err !== null && typeof err === "object" && "logs" in err ? executeLogs(err.logs) : undefined;
-  if (err instanceof InvocationFailure)
-    return failureResponse(err.details.message, { logs, emitted, diagnostics, code: err.details });
+  if (err instanceof InvocationFailure) {
+    const details = executorFailureOnRoute(err.details, route);
+    return failureResponse(details.message, { logs, emitted, diagnostics, code: details });
+  }
   if (err instanceof SyntaxError)
     return failureResponse(err.message, {
       logs,
@@ -2129,7 +2159,7 @@ function failedRun(err: unknown, logger: Logger, { emitted, diagnostics, program
 /** The response for an ExecuteResult: the program's error or its value. */
 function finishedRun(
   outcome: ExecuteResult,
-  { emitted, diagnostics, program, unawaited, guardResult }: RunReport,
+  { route, emitted, diagnostics, program, unawaited, guardResult }: RunReport,
 ): Effect.Effect<ToolResult, unknown> {
   return authFlow<ToolResult>(function* () {
     if (outcome === null || typeof outcome !== "object" || Array.isArray(outcome)) {
@@ -2152,7 +2182,7 @@ function finishedRun(
       const failure = outcome.failure?.call;
       if (outcome.failure?.timeout) {
         const { elapsedMs, deadlineMs } = outcome.failure.timeout;
-        const message = `Operation "execute_code" timed out during sandbox after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`;
+        const message = `Operation "${route}" timed out during sandbox after ${elapsedMs}ms (effective deadline ${deadlineMs}ms).`;
         return failureResponse(message, {
           logs,
           emitted,
@@ -2161,7 +2191,7 @@ function finishedRun(
             code: "timeout",
             message,
             retryable: false,
-            details: { operation: "execute_code", stage: "sandbox", elapsedMs, deadlineMs },
+            details: { operation: route, stage: "sandbox", elapsedMs, deadlineMs },
           },
         });
       }
