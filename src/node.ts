@@ -212,6 +212,14 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
     };
     res.once("finish", finished);
     res.once("close", finished);
+    if (closing) {
+      res.statusCode = 503;
+      res.setHeader("Retry-After", "1");
+      // Node drops responses queued behind this one; their requests also arrived after close().
+      res.setHeader("Connection", "close");
+      res.end("Service Unavailable");
+      return;
+    }
     void (async () => {
       const controller = new AbortController();
       let heldBodyBytes = 0;
@@ -317,7 +325,10 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
       return;
     }
     awaitingRequest.add(socket);
-    socket.once("close", () => awaitingRequest.delete(socket));
+    socket.once("close", () => {
+      awaitingRequest.delete(socket);
+      activeResponses.delete(socket);
+    });
   });
 
   if (opts.gracefulShutdown !== false) {

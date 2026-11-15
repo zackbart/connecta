@@ -345,11 +345,37 @@ describe("Node listen adapter", () => {
       const firstChunk = gate();
       const streamEnd = gate();
       const arrived = new Set<string>();
+      let briefs = 0;
+      let requests = 0;
+      const requestSeen = new Set<() => void>();
+      const laterRequest = (after: number) =>
+        new Promise<void>((resolve) => {
+          const check = () => {
+            if (requests <= after) return;
+            requestSeen.delete(check);
+            resolve();
+          };
+          requestSeen.add(check);
+          check();
+        });
       const app = {
         ...core,
         fetch: async (request: Request) => {
           const path = new URL(request.url).pathname;
           arrived.add(path);
+          if (path === "/brief") {
+            briefs += 1;
+            const index = requests;
+            return new Response(
+              new ReadableStream<Uint8Array>({
+                async start(controller) {
+                  controller.enqueue(new TextEncoder().encode("first"));
+                  await laterRequest(index);
+                  controller.close();
+                },
+              }),
+            );
+          }
           if (path === "/held") {
             await held.opened;
             return new Response("held");
@@ -369,6 +395,10 @@ describe("Node listen adapter", () => {
         },
       };
       const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+      server.prependListener("request", () => {
+        requests += 1;
+        for (const check of requestSeen) check();
+      });
       await once(server, "listening");
       const address = server.address();
       if (!address || typeof address === "string") throw new Error("Expected TCP address");
@@ -377,9 +407,19 @@ describe("Node listen adapter", () => {
         await once(socket, "connect");
         let received = "";
         socket.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
-        const closed = once(socket, "close");
-        const send = (path: string) => socket.write(`GET ${path} HTTP/1.1\r\nHost: connecta.example\r\n\r\n`);
-        return { closed, send, received: () => received };
+        socket.on("error", () => {});
+        const closed = new Promise((resolve) => socket.once("close", resolve));
+        const send = (path: string) => {
+          if (socket.writable) socket.write(`GET ${path} HTTP/1.1\r\nHost: connecta.example\r\n\r\n`);
+        };
+        return { socket, closed, send, received: () => received };
+      };
+      const responses = (received: string) => received.split(/(?=^HTTP\/1\.1 )/m);
+      const refusedAfterClose = (response: string | undefined) => {
+        expect(response).toMatch(/^HTTP\/1\.1 503 /);
+        expect(response).toMatch(/^Retry-After: 1\r$/m);
+        expect(response).toMatch(/^Connection: close\r$/m);
+        expect(response).toMatch(/\r\n\r\nService Unavailable$/);
       };
       const close = () => {
         const started = Date.now();
@@ -390,7 +430,20 @@ describe("Node listen adapter", () => {
         server.closeAllConnections();
         await core.close();
       };
-      return { arrived, held, responseReady, firstChunk, streamEnd, open, close, stop };
+      return {
+        arrived,
+        briefs: () => briefs,
+        requests: () => requests,
+        held,
+        responseReady,
+        firstChunk,
+        streamEnd,
+        open,
+        close,
+        stop,
+        responses,
+        refusedAfterClose,
+      };
     };
 
     it("closes keep-alive connections whose responses finish after close() instead of idling them", async () => {
@@ -418,27 +471,73 @@ describe("Node listen adapter", () => {
       }
     });
 
-    it("answers a request pipelined after close() behind a response whose headers are still unsent", async () => {
-      const { arrived, responseReady, firstChunk, streamEnd, open, close, stop } = await closingServer();
+    it("completes admitted pipelined responses behind unsent headers and refuses requests pipelined after close()", async () => {
+      const {
+        arrived,
+        requests,
+        responseReady,
+        firstChunk,
+        streamEnd,
+        open,
+        close,
+        stop,
+        responses,
+        refusedAfterClose,
+      } = await closingServer();
       try {
         const peer = await open();
         peer.send("/delayed");
-        await vi.waitFor(() => expect(arrived).toEqual(new Set(["/delayed"])));
+        peer.send("/after");
+        await vi.waitFor(() => expect(arrived).toEqual(new Set(["/delayed", "/after"])));
 
         const closing = close();
         responseReady.open();
         await new Promise((resolve) => setImmediate(resolve));
-        peer.send("/after");
-        await vi.waitFor(() => expect(arrived).toEqual(new Set(["/delayed", "/after"])));
+        peer.send("/late");
+        await vi.waitFor(() => expect(requests()).toBe(3));
         firstChunk.open();
         streamEnd.open();
         await Promise.all([peer.closed, closing.closed]);
 
         expect(Date.now() - closing.started).toBeLessThan(5_000);
-        const responses = peer.received().split(/(?=^HTTP\/1\.1 )/m);
-        expect(responses).toHaveLength(2);
-        expect(responses[0]).toMatch(/^HTTP\/1\.1 200 [\s\S]*\r\nfirst\r\n0\r\n\r\n$/);
-        expect(responses[1]).toMatch(/^HTTP\/1\.1 200 [\s\S]*\r\nafter\r\n0\r\n\r\n$/);
+        expect(arrived).toEqual(new Set(["/delayed", "/after"]));
+        const answers = responses(peer.received());
+        expect(answers).toHaveLength(3);
+        expect(answers[0]).toMatch(/^HTTP\/1\.1 200 [\s\S]*\r\nfirst\r\n0\r\n\r\n$/);
+        expect(answers[0]).not.toMatch(/^Connection: close\r$/m);
+        expect(answers[1]).toMatch(/^HTTP\/1\.1 200 [\s\S]*\r\nafter\r\n0\r\n\r\n$/);
+        refusedAfterClose(answers[2]);
+      } finally {
+        await stop();
+      }
+    });
+
+    it("bounds close() on a client that keeps pipelining onto a busy socket", async () => {
+      const { briefs, requests, open, close, stop, responses, refusedAfterClose } = await closingServer();
+      try {
+        const peer = await open();
+        let answered = 0;
+        peer.socket.on("data", () => {
+          const started = responses(peer.received()).filter((response) => response.startsWith("HTTP/1.1 ")).length;
+          for (; answered < started; answered++) peer.send("/brief");
+        });
+        peer.send("/brief");
+        peer.send("/brief");
+        await vi.waitFor(() => expect(briefs()).toBeGreaterThan(5));
+
+        const closing = close();
+        const admitted = briefs();
+        await Promise.all([peer.closed, closing.closed]);
+
+        expect(Date.now() - closing.started).toBeLessThan(5_000);
+        expect(briefs()).toBe(admitted);
+        expect(requests()).toBeGreaterThan(admitted);
+        const answers = responses(peer.received());
+        expect(answers).toHaveLength(admitted + 1);
+        for (const answer of answers.slice(0, -1)) {
+          expect(answer).toMatch(/^HTTP\/1\.1 200 [\s\S]*\r\nfirst\r\n0\r\n\r\n$/);
+        }
+        refusedAfterClose(answers.at(-1));
       } finally {
         await stop();
       }
