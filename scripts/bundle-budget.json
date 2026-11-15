@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-15: Short connect links rebased over the program call log (#1431, #1452). CI at 8a438ae3 merged with main (run 43673567065, build (package)) measures the root at 453,367 B, 52 B past its cap. The root cap moves 453,315 to 453,717 B, about 350 B over CI.",
     "2026-11-15: Short connect links (#1431, #1452) add short link minting, path-bound storage lookup and equalized refusal reads. CI at 95c29f55 merged with main (run 43672988160, build (package)) measures ./ui at 349,034 B, 354 B past its cap. The ./ui cap moves 348,680 to 349,384 B, about 350 B over CI.",
     "2026-11-15: Program call log and retained reads (#1431, #1448) add the per-call log, the recovery ledger with its shared storage deadline and reused-handle confirmation. CI at a76a4ce2 merged with main (run 43672270931, build (package)) measures the root at 452,965 B and examples/worker at 840,559 B, 908 B and 858 B past their caps. The root cap moves 452,057 to 453,315 B and the examples/worker cap 839,701 to 840,909 B, each about 350 B over CI.",
     "2026-11-15: Description-first routing (#1431, #1444) adds the routing first lines, balanced title stripping and the capped native authorization roster. CI at 5f3e73ff on main at 826d8fc1 (run 43671316936, build (package)) measures the root at 451,707 B and examples/worker at 839,351 B, 177 B and 106 B past their caps. The root cap moves 451,530 to 452,057 B and the examples/worker cap 839,245 to 839,701 B, each about 350 B over CI.",
@@ -114,7 +115,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 453315
+      "maxGzip": 453717
     },
     "./json-schema": {
       "baselineGzip": 5870,
