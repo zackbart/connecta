@@ -283,100 +283,107 @@ const verifyOAuthHandoffNative = /* @__PURE__ */ registerAuth(
   function (opts: ServerOptions, baseUrl: string, connectorId: string, token: string | null) {
     return authFlow<Handoff | null>(function* () {
       if (!token || token.length > 4096) return null;
+      const storage = opts.registry.contextFor(connectorId, baseUrl).storage;
+      let h: Handoff | null = null;
+      let unusedKey: string;
+      if (SHORT_LINK.test(token)) {
+        const linkKey = yield* shortLinkKey(token);
+        try {
+          const stored = yield* upwardStep(authStorage<string | null>(storage, "get", [linkKey]));
+          if (stored?.startsWith("v4.")) h = yield* signedHandoff(opts, baseUrl, connectorId, stored);
+        } catch {
+          h = null;
+        }
+        unusedKey = oauthConnectKeys.used(h?.nonce ?? linkKey);
+      } else {
+        h = yield* signedHandoff(opts, baseUrl, connectorId, token);
+        if (!h) return null;
+        unusedKey = oauthConnectKeys.used(h.nonce);
+      }
       try {
-        if (SHORT_LINK.test(token)) {
-          if (!opts.registry.getConnector(connectorId)) return null;
-          const stored = yield* upwardStep(
-            authStorage<string | null>(opts.registry.contextFor(connectorId, baseUrl).storage, "get", [
-              yield* shortLinkKey(token),
-            ]),
-          );
-          if (!stored?.startsWith("v4.")) return null;
-          token = stored;
-        }
-        const parts = token.split(".");
-        let h: Handoff;
-        if (parts.length === 3 && (parts[0] === "v3" || parts[0] === "v4")) {
-          const [version, body, signature] = parts;
-          const payload = `${version}.${body}`;
-          if (
-            !(yield* upwardStep(
-              authInvoke<boolean | undefined>(opts.config.vault, "verifyOAuthHandoff", [
-                payload,
-                decodeSegment(signature!),
-              ]),
-            ))
-          )
-            return null;
-          const decoded = decodeSegment(body!);
-          h = decodeHandoff(
-            version === "v4"
-              ? yield* upwardStep(
-                  authInvoke<string>(opts.config.vault!, "open", [connectorId, "connecta:connect-link:v4", decoded]),
-                )
-              : decoded,
-          );
-        } else {
-          // Keep pre-upgrade JSON and sealed v2 links until their original expiry.
-          // Authenticate their exact original text; never normalize before verifying.
-          const [payload, signature, ...rest] = parts;
-          if (!payload || !signature || rest.length) return null;
-          if (
-            !(yield* upwardStep(
-              authInvoke<boolean | undefined>(opts.config.vault, "verifyOAuthHandoff", [payload, signature]),
-            ))
-          )
-            return null;
-          h = JSON.parse(
-            payload.startsWith("v2:")
-              ? yield* upwardStep(
-                  authInvoke<string>(opts.config.vault!, "open", [
-                    connectorId,
-                    "connecta:connect-link:v2",
-                    atob(payload.slice(3)),
-                  ]),
-                )
-              : atob(payload),
-          );
-          // A retired predecessor binding: nothing here can honor it, so it must not be ignored.
-          if ("after" in h) return null;
-        }
-        const connector = opts.registry.getConnector(connectorId);
-        if (
-          !connector ||
-          h.connector !== connectorId ||
-          typeof h.principal !== "string" ||
-          !h.principal ||
-          h.owner !== (connector.authScope === "personal" ? h.principal : "shared") ||
-          h.origin !== new URL(baseUrl).origin ||
-          !Number.isSafeInteger(h.expiresAt) ||
-          h.expiresAt <= Date.now() ||
-          h.expiresAt > Date.now() + HANDOFF_TTL_MS ||
-          typeof h.nonce !== "string" ||
-          !h.nonce ||
-          typeof h.force !== "boolean"
-        )
-          return null;
-        if (
-          h.flow !== undefined &&
-          (typeof h.flow !== "string" || !/^[a-f0-9-]{36}$/.test(h.flow) || h.flow === h.nonce || !h.force)
-        )
-          return null;
-        if (
-          yield* upwardStep(
-            authStorage<string | null>(opts.registry.contextFor(connectorId, baseUrl).storage, "get", [
-              oauthConnectKeys.used(h.nonce),
-            ]),
-          )
-        )
-          return null;
-        return h;
+        return (yield* upwardStep(authStorage<string | null>(storage, "get", [unusedKey]))) || !h ? null : h;
       } catch {
         return null;
       }
     });
   },
 );
+
+function* signedHandoff(opts: ServerOptions, baseUrl: string, connectorId: string, token: string) {
+  try {
+    const parts = token.split(".");
+    let h: Handoff;
+    if (parts.length === 3 && (parts[0] === "v3" || parts[0] === "v4")) {
+      const [version, body, signature] = parts;
+      const payload = `${version}.${body}`;
+      if (
+        !(yield* upwardStep(
+          authInvoke<boolean | undefined>(opts.config.vault, "verifyOAuthHandoff", [
+            payload,
+            decodeSegment(signature!),
+          ]),
+        ))
+      )
+        return null;
+      const decoded = decodeSegment(body!);
+      h = decodeHandoff(
+        version === "v4"
+          ? yield* upwardStep(
+              authInvoke<string>(opts.config.vault!, "open", [connectorId, "connecta:connect-link:v4", decoded]),
+            )
+          : decoded,
+      );
+    } else {
+      // Keep pre-upgrade JSON and sealed v2 links until their original expiry.
+      // Authenticate their exact original text; never normalize before verifying.
+      const [payload, signature, ...rest] = parts;
+      if (!payload || !signature || rest.length) return null;
+      if (
+        !(yield* upwardStep(
+          authInvoke<boolean | undefined>(opts.config.vault, "verifyOAuthHandoff", [payload, signature]),
+        ))
+      )
+        return null;
+      h = JSON.parse(
+        payload.startsWith("v2:")
+          ? yield* upwardStep(
+              authInvoke<string>(opts.config.vault!, "open", [
+                connectorId,
+                "connecta:connect-link:v2",
+                atob(payload.slice(3)),
+              ]),
+            )
+          : atob(payload),
+      );
+      // A retired predecessor binding: nothing here can honor it, so it must not be ignored.
+      if ("after" in h) return null;
+    }
+    const connector = opts.registry.getConnector(connectorId);
+    if (
+      !connector ||
+      h.connector !== connectorId ||
+      typeof h.principal !== "string" ||
+      !h.principal ||
+      h.owner !== (connector.authScope === "personal" ? h.principal : "shared") ||
+      h.origin !== new URL(baseUrl).origin ||
+      !Number.isSafeInteger(h.expiresAt) ||
+      h.expiresAt <= Date.now() ||
+      h.expiresAt > Date.now() + HANDOFF_TTL_MS ||
+      typeof h.nonce !== "string" ||
+      !h.nonce ||
+      typeof h.force !== "boolean"
+    )
+      return null;
+    if (
+      h.flow !== undefined &&
+      (typeof h.flow !== "string" || !/^[a-f0-9-]{36}$/.test(h.flow) || h.flow === h.nonce || !h.force)
+    )
+      return null;
+    return h;
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Claim only after browser identity and permissions pass, before starting OAuth.

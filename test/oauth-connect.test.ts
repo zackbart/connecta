@@ -379,6 +379,38 @@ describe.each([
     expect(flow.startAuth).toHaveBeenCalledOnce();
   });
 
+  it("INV-4: every refused short link costs the same storage work, configured connector or not", async () => {
+    const flow = setup(provider, scope);
+    const { authorizationUrl } = await flow.authorize();
+    const token = new URL(authorizationUrl).searchParams.get("h")!;
+    const altered = `${token.slice(0, 25)}${token.endsWith("a") ? "b" : "a"}`;
+    const operations: string[] = [];
+    for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
+      const original = flow.storage[method].bind(flow.storage) as (...args: unknown[]) => unknown;
+      vi.spyOn(flow.storage, method).mockImplementation(((...args: unknown[]) => {
+        operations.push(method);
+        return original(...args);
+      }) as never);
+    }
+    const cost = async (url: string) => {
+      operations.length = 0;
+      const response = await flow.browser(url, "alice");
+      expect(response.status).toBe(400);
+      return [...operations];
+    };
+    const unknownId = await cost(`${BASE}/connect/service?h=${"a".repeat(26)}`);
+    expect(unknownId).toEqual(["get", "get"]);
+    expect(await cost(`${BASE}/connect/unconfigured?h=${"a".repeat(26)}`)).toEqual(unknownId);
+    expect(await cost(`${BASE}/connect/unconfigured?h=${token}`)).toEqual(unknownId);
+    expect(await cost(`${BASE}/connect/service?h=${altered}`)).toEqual(unknownId);
+    const later = (await flow.authorize()).authorizationUrl;
+    expect((await flow.browser(authorizationUrl, "alice")).status).toBe(302);
+    expect(await cost(authorizationUrl)).toEqual(unknownId);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
+    expect(await cost(later)).toEqual(unknownId);
+    clock.mockRestore();
+  });
+
   it("INV-4: falls back to the sealed link when storage refuses the short one, and still accepts it", async () => {
     const flow = setup(provider, scope);
     const compareAndSet = flow.storage.compareAndSet.bind(flow.storage);

@@ -3081,7 +3081,12 @@ lowercase base32 characters (`a`–`z`, `2`–`7`) encoding 128 random bits.
   a sealed link: signature, seal, connector, origin, expiry, initiating
   principal, management permission and single-use nonce. Another person signed
   in gets 403. Unknown, altered, expired, spent and misrouted ids get the same
-  `400 Invalid or expired connection link` refusal as any invalid link.
+  `400 Invalid or expired connection link` refusal as any invalid link, after
+  the same storage work: one read of the link record and one of a used-nonce
+  marker, whether or not the path names a configured connector, so neither the
+  response nor its storage round trips reveal which connectors exist. This
+  removes the I/O-versus-none gap, not every timing difference: a hit and a miss
+  are not identical in a key-value store.
 - When storage cannot record the handoff, the link carries the sealed handoff
   itself (`h=v4.<sealed>.<signature>`, about 560 characters), which verifies the
   same way. Sealed links issued before short links also verify until they
