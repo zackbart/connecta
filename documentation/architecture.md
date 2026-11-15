@@ -3895,14 +3895,20 @@ POSTs; forms and registration JSON are. Discovery GETs remain native fetch.
 
 ### Contributor reference: Node response drain
 
-The Node listener counts active ServerResponses per socket. Once shutdown starts,
-each finish/close removes its response; the last completion calls `destroySoon`
-to flush queued bytes and close the connection. This also covers SSE whose
-headers were sent before shutdown and pipelined responses waiting behind an
-inflight response. Until shutdown, idle sockets close after `keepAliveTimeoutMs`
-(default 100 s). Idle and
-never-admitted sockets retain their separate close paths, and the configured
-shutdown deadline still forces exit 1 for work that never completes.
+The Node listener counts active ServerResponses per socket. Its server overrides
+`close()`, so every caller (an embedder, a test harness, `Symbol.asyncDispose` or
+the signal handler) marks the listener closing before Node's own close runs.
+Once closing, each finish/close removes its response; the last completion calls
+`destroySoon` to flush queued bytes and close the connection. Responses never
+add `Connection: close`: Node destroys the socket once such a response finishes,
+discarding a pipelined response admitted behind it before its headers went out,
+whatever the per-socket count says. This also
+covers SSE whose headers were sent before close and pipelined responses waiting
+behind an inflight response. Until close, idle sockets close after
+`keepAliveTimeoutMs` (default 100 s). Node's `close()` closes idle sockets; the
+listener destroys accepted sockets without a first request and refuses new ones.
+The configured shutdown deadline still forces exit 1 for work that never
+completes.
 
 ### Native auth programs (contributor)
 

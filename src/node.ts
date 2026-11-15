@@ -1,5 +1,5 @@
-import { createServer } from "node:http";
-import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import { Server } from "node:http";
+import type { IncomingMessage, RequestListener, ServerResponse } from "node:http";
 import type { Socket } from "node:net";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
@@ -130,6 +130,20 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
   await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]), res);
 }
 
+class ClosingServer extends Server {
+  readonly #onClose: () => void;
+
+  constructor(onClose: () => void, listener: RequestListener) {
+    super(listener);
+    this.#onClose = onClose;
+  }
+
+  override close(callback?: (err?: Error) => void): this {
+    this.#onClose();
+    return super.close(callback);
+  }
+}
+
 /**
  * Serve a Connecta over node:http. Thin adapter: IncomingMessage → Request,
  * Response → ServerResponse, plus the process-level concerns a long-running
@@ -169,8 +183,14 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
 
   const awaitingRequest = new Set<Socket>();
   const activeResponses = new Map<Socket, number>();
+  let closing = false;
   let shuttingDown = false;
-  const server = createServer((req, res) => {
+  const markClosing = (): void => {
+    if (closing) return;
+    closing = true;
+    for (const socket of awaitingRequest) socket.destroy();
+  };
+  const server = new ClosingServer(markClosing, (req, res) => {
     // Before the body: a client's timer has been running through its upload too.
     const requestArrivedAt = Date.now();
     awaitingRequest.delete(req.socket);
@@ -187,7 +207,7 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
         // flushes its queued bytes before closing, including an SSE trailer.
         // Count pipelined responses so an earlier finish cannot cut a later
         // admitted response off.
-        if (shuttingDown) socket.destroySoon();
+        if (closing) socket.destroySoon();
       }
     };
     res.once("finish", finished);
@@ -288,20 +308,20 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
     })();
   });
   server.keepAliveTimeout = keepAliveTimeoutMs;
+  // closeIdleConnections() only knows sockets that have served a request.
+  // A client's spare connection (or incomplete first headers) must not hold
+  // close open without ever having been admitted to the application.
+  server.on("connection", (socket: Socket) => {
+    if (closing) {
+      socket.destroy();
+      return;
+    }
+    awaitingRequest.add(socket);
+    socket.once("close", () => awaitingRequest.delete(socket));
+  });
 
   if (opts.gracefulShutdown !== false) {
     const timeoutMs = opts.shutdownTimeoutMs ?? 10_000;
-    // closeIdleConnections() only knows sockets that have served a request.
-    // A client's spare connection (or incomplete first headers) must not hold
-    // shutdown open without ever having been admitted to the application.
-    server.on("connection", (socket) => {
-      if (shuttingDown) {
-        socket.destroy();
-        return;
-      }
-      awaitingRequest.add(socket);
-      socket.once("close", () => awaitingRequest.delete(socket));
-    });
     const shutdown = (signal: string): void => {
       if (shuttingDown) return;
       shuttingDown = true;
@@ -320,8 +340,6 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
           process.exit(0);
         });
       });
-      server.closeIdleConnections();
-      for (const socket of awaitingRequest) socket.destroy();
     };
     process.on("SIGTERM", () => shutdown("SIGTERM"));
     process.on("SIGINT", () => shutdown("SIGINT"));

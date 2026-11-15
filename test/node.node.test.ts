@@ -333,6 +333,117 @@ describe("Node listen adapter", () => {
       }
     });
 
+    const gate = () => {
+      let open!: () => void;
+      const opened = new Promise<void>((resolve) => (open = resolve));
+      return { opened, open };
+    };
+    const closingServer = async () => {
+      const core = createTestConnecta({ connectors: [] });
+      const held = gate();
+      const responseReady = gate();
+      const firstChunk = gate();
+      const streamEnd = gate();
+      const arrived = new Set<string>();
+      const app = {
+        ...core,
+        fetch: async (request: Request) => {
+          const path = new URL(request.url).pathname;
+          arrived.add(path);
+          if (path === "/held") {
+            await held.opened;
+            return new Response("held");
+          }
+          if (path === "/after") return new Response("after");
+          if (path === "/delayed") await responseReady.opened;
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              async start(controller) {
+                if (path === "/delayed") await firstChunk.opened;
+                controller.enqueue(new TextEncoder().encode("first"));
+                await streamEnd.opened;
+                controller.close();
+              },
+            }),
+          );
+        },
+      };
+      const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      const open = async () => {
+        const socket = connect(address.port, "127.0.0.1");
+        await once(socket, "connect");
+        let received = "";
+        socket.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
+        const closed = once(socket, "close");
+        const send = (path: string) => socket.write(`GET ${path} HTTP/1.1\r\nHost: connecta.example\r\n\r\n`);
+        return { closed, send, received: () => received };
+      };
+      const close = () => {
+        const started = Date.now();
+        const closed = new Promise<void>((resolve) => server.close(() => resolve()));
+        return { closed, started };
+      };
+      const stop = async () => {
+        server.closeAllConnections();
+        await core.close();
+      };
+      return { arrived, held, responseReady, firstChunk, streamEnd, open, close, stop };
+    };
+
+    it("closes keep-alive connections whose responses finish after close() instead of idling them", async () => {
+      const { arrived, held, streamEnd, open, close, stop } = await closingServer();
+      try {
+        const waiting = await open();
+        waiting.send("/held");
+        const streaming = await open();
+        streaming.send("/streaming");
+        await vi.waitFor(() => expect(arrived).toEqual(new Set(["/held", "/streaming"])));
+        await vi.waitFor(() => expect(streaming.received()).toMatch(/first/));
+        expect(streaming.received()).toMatch(/^Connection: keep-alive\r$/m);
+
+        const closing = close();
+        held.open();
+        streamEnd.open();
+        await Promise.all([waiting.closed, streaming.closed, closing.closed]);
+
+        expect(Date.now() - closing.started).toBeLessThan(5_000);
+        expect(waiting.received()).toMatch(/^HTTP\/1\.1 200 /);
+        expect(waiting.received()).toMatch(/\r\nheld\r\n0\r\n\r\n$/);
+        expect(streaming.received()).toMatch(/\r\nfirst\r\n0\r\n\r\n$/);
+      } finally {
+        await stop();
+      }
+    });
+
+    it("answers a request pipelined after close() behind a response whose headers are still unsent", async () => {
+      const { arrived, responseReady, firstChunk, streamEnd, open, close, stop } = await closingServer();
+      try {
+        const peer = await open();
+        peer.send("/delayed");
+        await vi.waitFor(() => expect(arrived).toEqual(new Set(["/delayed"])));
+
+        const closing = close();
+        responseReady.open();
+        await new Promise((resolve) => setImmediate(resolve));
+        peer.send("/after");
+        await vi.waitFor(() => expect(arrived).toEqual(new Set(["/delayed", "/after"])));
+        firstChunk.open();
+        streamEnd.open();
+        await Promise.all([peer.closed, closing.closed]);
+
+        expect(Date.now() - closing.started).toBeLessThan(5_000);
+        const responses = peer.received().split(/(?=^HTTP\/1\.1 )/m);
+        expect(responses).toHaveLength(2);
+        expect(responses[0]).toMatch(/^HTTP\/1\.1 200 [\s\S]*\r\nfirst\r\n0\r\n\r\n$/);
+        expect(responses[1]).toMatch(/^HTTP\/1\.1 200 [\s\S]*\r\nafter\r\n0\r\n\r\n$/);
+      } finally {
+        await stop();
+      }
+    });
+
     it.each([0, -1, 1.5, Number.NaN, 24 * 60 * 60 * 1000 + 1])(
       "refuses keepAliveTimeoutMs %s",
       (keepAliveTimeoutMs) => {
