@@ -17,6 +17,20 @@ function refuse(message: string): never {
   throw new ConnectorCallError("invalid_args", message);
 }
 
+function blockStringValue(raw: string): string {
+  const lines = raw.split(/\r\n|\n|\r/);
+  const indents = lines
+    .slice(1)
+    .filter((line) => /[^ \t]/.test(line))
+    .map((line) => /^[ \t]*/.exec(line)![0].length);
+  const common = indents.length > 0 ? Math.min(...indents) : 0;
+  const trimmed = lines.map((line, index) => (index === 0 ? line : line.slice(common)));
+  const blank = (line: string) => !/[^ \t]/.test(line);
+  while (trimmed.length > 0 && blank(trimmed[0]!)) trimmed.shift();
+  while (trimmed.length > 0 && blank(trimmed.at(-1)!)) trimmed.pop();
+  return trimmed.join("\n");
+}
+
 function tokenize(source: string): Token[] {
   const tokens: Token[] = [];
   let at = 0;
@@ -72,7 +86,7 @@ function tokenize(source: string): Token[] {
         text += source[end];
         end += 1;
       }
-      tokens.push({ kind: "string", value: text });
+      tokens.push({ kind: "string", value: blockStringValue(text) });
       at = end + 3;
       continue;
     }
@@ -129,6 +143,7 @@ export interface GraphqlScope {
   readonly openTags: readonly string[];
   /** `accounts` or `zones` fields whose filter is missing, unresolvable, or names no tag. */
   readonly unscopedFields: readonly string[];
+  readonly fromSelectedOperation: boolean;
 }
 
 const OPENERS: Record<string, string> = { "(": ")", "[": "]", "{": "}" };
@@ -208,6 +223,22 @@ export function inspectGraphqlQuery(
     refuse("graphql_query accepts only query operations and fragments.");
   }
   if (operations === 0) refuse("The GraphQL document has no query operation.");
+  const fragments = new Map<string, { start: number; end: number }>();
+  let distinctFragments = true;
+  for (const definition of definitions) {
+    if (definition.kind !== "fragment") continue;
+    if (!definition.name || definition.name === "on" || fragments.has(definition.name)) distinctFragments = false;
+    else fragments.set(definition.name, definition);
+  }
+  const spreads = (range: { start: number; end: number }): string[] => {
+    const names: string[] = [];
+    for (let at = range.start; at < range.end; at += 1) {
+      if (tokens[at]!.value === "..." && tokens[at + 1]?.kind === "name" && tokens[at + 1]!.value !== "on") {
+        names.push(tokens[at + 1]!.value);
+      }
+    }
+    return names;
+  };
   if (options.strict) {
     // One operation, so every variable default belongs to the query that
     // runs; and every fragment reachable from it, defined, used, and acyclic,
@@ -217,23 +248,7 @@ export function inspectGraphqlQuery(
     if (options.operationName !== undefined && options.operationName !== operation.name) {
       refuse(`operationName ${options.operationName} names no query in this document.`);
     }
-    const fragments = new Map<string, { start: number; end: number }>();
-    for (const definition of definitions) {
-      if (definition.kind !== "fragment") continue;
-      if (!definition.name || definition.name === "on" || fragments.has(definition.name)) {
-        refuse("A GraphQL fragment must have one unique name.");
-      }
-      fragments.set(definition.name, definition);
-    }
-    const spreads = (range: { start: number; end: number }): string[] => {
-      const names: string[] = [];
-      for (let at = range.start; at < range.end; at += 1) {
-        if (tokens[at]!.value === "..." && tokens[at + 1]?.kind === "name" && tokens[at + 1]!.value !== "on") {
-          names.push(tokens[at + 1]!.value);
-        }
-      }
-      return names;
-    };
+    if (!distinctFragments) refuse("A GraphQL fragment must have one unique name.");
     const used = new Set<string>();
     const visit = (range: { start: number; end: number }, path: readonly string[]): void => {
       for (const name of spreads(range)) {
@@ -248,6 +263,30 @@ export function inspectGraphqlQuery(
     const unused = [...fragments.keys()].filter((name) => !used.has(name));
     if (unused.length > 0) refuse(`The GraphQL document defines unused fragments: ${unused.join(", ")}.`);
   }
+  const queries = definitions.filter((definition) => definition.kind === "query");
+  const selected =
+    options.operationName !== undefined
+      ? queries.find((definition) => definition.name === options.operationName)
+      : queries.length === 1
+        ? queries[0]
+        : undefined;
+  const scanned: { start: number; end: number }[] = [];
+  if (selected && distinctFragments) {
+    scanned.push(selected);
+    const reached = new Set<string>();
+    for (let next = 0; next < scanned.length; next += 1) {
+      for (const name of spreads(scanned[next]!)) {
+        const fragment = fragments.get(name);
+        if (fragment && !reached.has(name)) {
+          reached.add(name);
+          scanned.push(fragment);
+        }
+      }
+    }
+  } else {
+    scanned.push({ start: 0, end: tokens.length });
+  }
+  const runs = (at: number): boolean => scanned.some((range) => at >= range.start && at < range.end);
 
   const accountTags: string[] = [];
   const zoneTags: string[] = [];
@@ -304,7 +343,7 @@ export function inspectGraphqlQuery(
 
   for (let at = 0; at + 2 < tokens.length; at += 1) {
     const [dollar, name, colon] = [tokens[at]!, tokens[at + 1]!, tokens[at + 2]!];
-    if (dollar.value !== "$" || name.kind !== "name" || colon.value !== ":") continue;
+    if (dollar.value !== "$" || name.kind !== "name" || colon.value !== ":" || !runs(at)) continue;
     declared.add(at + 1);
     for (let scan = at + 3; scan < tokens.length; scan += 1) {
       const token = tokens[scan]!;
@@ -334,6 +373,9 @@ export function inspectGraphqlQuery(
       if (key === `${prefix}Tag` && typeof value === "string") {
         target.push(value);
         tagged = true;
+      } else if (key === `${prefix}Tag_in` && typeof value === "string") {
+        target.push(value);
+        tagged = true;
       } else if (
         key === `${prefix}Tag_in` &&
         Array.isArray(value) &&
@@ -351,7 +393,7 @@ export function inspectGraphqlQuery(
 
   for (let at = 0; at < tokens.length; at += 1) {
     const token = tokens[at]!;
-    if (token.kind !== "name" || !SCOPED_FIELDS.has(token.value) || declared.has(at)) continue;
+    if (token.kind !== "name" || !SCOPED_FIELDS.has(token.value) || declared.has(at) || !runs(at)) continue;
     const previous = tokens[at - 1]?.value;
     const next = tokens[at + 1];
     if (previous === "$" || previous === "on" || previous === "...") continue;
@@ -376,5 +418,5 @@ export function inspectGraphqlQuery(
     }
     checkField(token.value, filter);
   }
-  return { accountTags, zoneTags, openTags, unscopedFields };
+  return { accountTags, zoneTags, openTags, unscopedFields, fromSelectedOperation: scanned[0] === selected };
 }

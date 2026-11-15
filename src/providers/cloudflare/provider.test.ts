@@ -1586,6 +1586,14 @@ describe("cloudflare() over a key", () => {
         { query: `query Q($z: String!) { viewer { zones(filter: { zoneTag: $z }) { x } } }`, variables: { z: domain } },
       ],
       ["graphql_query", { query: `{ viewer { accounts(filter: { accountTag: "alice-account" }) { x } } }` }],
+      ["graphql_query", { query: daily(`{ zoneTag_in: "${domain}" }`) }],
+      [
+        "graphql_query",
+        {
+          query: `query Q($t: [String!]) { viewer { zones(filter: { zoneTag_in: $t }) { x } } }`,
+          variables: { t: domain },
+        },
+      ],
       ["cloudflare_api_read", { path: `/zones/${domain}/dns_records` }],
       ["cloudflare_api_write", { method: "POST", path: `/zones/${domain}/purge_cache`, body: { files: [] } }],
     ];
@@ -1601,13 +1609,28 @@ describe("cloudflare() over a key", () => {
         expect(error.message).not.toContain("alice-account");
       }
     }
+    const operations = (first: string, second: string) =>
+      `query A($z: String = "${first}") { viewer { zones(filter: { zoneTag: $z }) { x } } }
+       query B($z: String = "${second}") { viewer { zones(filter: { zoneTag: $z }) { x } } }`;
+    const unpinned = cloudflare("cf", TOKEN);
+    const selectedDefault = await refusal(
+      unpinned.callTool("graphql_query", { query: operations(domain, ZONE), operationName: "A" }, token()),
+    );
+    expect(selectedDefault.message).toContain("32 hexadecimal characters");
     expect(sent).toEqual([]);
     respond = () => Response.json({ data: { viewer: { zones: [] } } });
-    await cloudflare("cf", TOKEN).callTool(
-      "graphql_query",
-      { query: daily(`{ zoneTag: "${ZONE.toUpperCase()}" }`) },
-      token(),
-    );
-    expect(sent).toHaveLength(1);
+    const block = daily(`{ zoneTag: """\n      ${ZONE}\n    """ }`);
+    const admitted: Array<[ReturnType<typeof cloudflare>, Record<string, unknown>]> = [
+      [unpinned, { query: daily(`{ zoneTag: "${ZONE.toUpperCase()}" }`) }],
+      [unpinned, { query: operations(ZONE, domain), operationName: "A" }],
+      [unpinned, { query: operations(domain, ZONE), operationName: "B" }],
+      [unpinned, { query: operations(domain, ZONE) }],
+      [unpinned, { query: block }],
+      [cloudflare("cf", { ...TOKEN, pin: { zoneIds: [ZONE] } }), { query: block }],
+    ];
+    for (const [connector, args] of admitted) {
+      await connector.callTool("graphql_query", args, token());
+    }
+    expect(sent.map((request) => request.url.pathname)).toEqual(admitted.map(() => "/client/v4/graphql"));
   });
 });

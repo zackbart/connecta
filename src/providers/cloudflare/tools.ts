@@ -118,10 +118,12 @@ export function cloudflareTools({
               ...(typeof args["operationName"] === "string" ? { operationName: args["operationName"] } : {}),
             }),
           );
-          const malformed = [
-            ...(scoped.zoneTags.some((tag) => !CLOUDFLARE_ID.test(tag)) ? ["zoneTag"] : []),
-            ...(scoped.accountTags.some((tag) => !CLOUDFLARE_ID.test(tag)) ? ["accountTag"] : []),
-          ];
+          const malformed = scoped.fromSelectedOperation
+            ? [
+                ...(scoped.zoneTags.some((tag) => !CLOUDFLARE_ID.test(tag)) ? ["zoneTag"] : []),
+                ...(scoped.accountTags.some((tag) => !CLOUDFLARE_ID.test(tag)) ? ["accountTag"] : []),
+              ]
+            : [];
           if (malformed.length > 0) {
             yield* checked(() =>
               invalid(

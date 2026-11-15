@@ -1069,9 +1069,11 @@ account/zone ids, and scoped lists filter their results. Unscoped operations
 are refused except reviewed public and identity/list routes. `accountId` and
 `zoneId` fill existing path placeholders and do not impose a boundary; use `pin`
 for that. Account pins may spend an extra zone-ownership read. A zone path
-segment and every GraphQL `zoneTag`, `zoneTag_in` or `accountTag` value must be a
-32-character hexadecimal id; anything else, such as a domain name, fails
-`invalid_args` before any request, pinned or not, without repeating the value.
+segment and every GraphQL `zoneTag`, `zoneTag_in` or `accountTag` value the
+selected operation resolves, including variable defaults, block strings and a
+single `zoneTag_in` string, must be a 32-character hexadecimal id. Anything
+else, such as a domain name, fails `invalid_args` before any request, pinned or
+not, without repeating the value.
 `readOnly: true` omits and refuses writes. No argument or sensitive-data option returns secrets;
 credential values and private destinations remain unavailable. `baseUrl` is an
 HTTPS proxy override (HTTP is allowed on loopback for tests).
