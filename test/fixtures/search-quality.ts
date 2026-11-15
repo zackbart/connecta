@@ -120,7 +120,7 @@ export const LABELLED_QUERIES: readonly LabelledQuery[] = [
   // Audit reproductions, known before this fixture existed.
   { query: "cancel a subscription", expect: ["billing.update_subscription", "stripe.stripe_api_search"], audit: true },
   { query: "send a customer email", expect: ["mailer.send_customer_email"], audit: true },
-  { query: "find a conversation with a user", expect: ["support.search_conversations"], audit: true },
+  { query: "find a conversation with a user", expect: ["support.search_conversations", "support.search"], audit: true },
   { query: "vercel environment variables", expect: ["vercel.list_project_env_vars"], audit: true },
   // Maintained providers: named tools.
   { query: "list upcoming service plans", expect: ["planning-center.list_plans"] },

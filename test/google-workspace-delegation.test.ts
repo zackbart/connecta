@@ -1107,7 +1107,11 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expect(skills.structuredContent.skills.map((skill: { name: string }) => skill.name)).not.toContain(
           "connector:forms",
         );
-        expect(addresses(await rpc(assistant, group, "search_tools", { query: "form" }))).toEqual([]);
+        expect(
+          addresses(await rpc(assistant, group, "search_tools", { query: "form" })).filter((address) =>
+            address.startsWith("forms."),
+          ),
+        ).toEqual([]);
         expect(
           (await rpc(assistant, group, "call_tool", { address: "forms.get_form", args: { formId: "f" } }))
             .structuredContent.error.code,
@@ -1149,9 +1153,12 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
 
     it.each([
       {
-        name: "connector-id no-match guidance",
+        name: "connector-word partial-match guidance",
         args: { query: "mail zzzzzqwerty" },
-        expected: { tools: [], queryAnalysis: { guidance: expect.stringContaining('"mail"') } },
+        expected: {
+          matchMode: "partial",
+          queryAnalysis: { representedTerms: ["mail"], unmatchedTerms: ["zzzzzqwerty"] },
+        },
       },
       {
         name: "absent-service connector roster",
@@ -1169,8 +1176,9 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       {
         name: "off-page aggregate counts",
         args: { query: "labels", offset: 10_000 },
-        // Ten label tools and the operation index, offered identically by both Gmail connectors.
-        expected: { tools: [], total: 10, hasMore: false },
+        // The label tools, the operation index and the tools whose input properties name labels,
+        // each offered identically by both Gmail connectors.
+        expected: { tools: [], total: 12, hasMore: false },
       },
       {
         name: "fixed-subject guide control",
@@ -1258,7 +1266,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
               ),
             ),
           );
-          expect(fresh.result.structuredContent).toMatchObject({ tools: [], total: 10, hasMore: false });
+          expect(fresh.result.structuredContent).toMatchObject({ tools: [], total: 12, hasMore: false });
         }
         const page = await run(ownerless);
         if (name === "fixed-subject guide control") {

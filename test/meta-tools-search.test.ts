@@ -5,6 +5,9 @@ import {
   compactSchema,
   discoverySummary,
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+  MAX_INPUT_TEXT_PER_CATALOG,
+  MAX_INPUT_TEXT_PER_TOOL,
+  SEARCH_SYNONYMS,
 } from "../src/catalog.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -59,7 +62,7 @@ function expectStructurallyCompleteTypeShape(text: string): void {
   expect(text).not.toContain("\uFFFD");
 }
 
-/** Just below the measured 0.879, 28 and 0.845, 38, and above main's 0.797, 24 and 0.766, 37. */
+/** Just below the measured 0.914, 28 and 0.868, 38. */
 const FLOOR = { tune: { mrr: 0.87, top3: 28 }, heldOut: { mrr: 0.84, top3: 38 } };
 
 describe("description summaries", () => {
@@ -952,6 +955,172 @@ describe("search_tools", () => {
     expect(changed.tools.map((tool) => tool.address)).toEqual(["ops.op_1"]);
   });
 
+  it("counts connector identity and input properties as weak evidence and widens by a short shared synonym map", async () => {
+    const ledger = connectorWith({
+      id: "ledger",
+      title: "Money tracker",
+      description: "Household budgets and accounts.",
+      kind: "api",
+      tools: [
+        {
+          name: "list_entries",
+          description: "List ledger entries, newest first.",
+          annotations: { readOnlyHint: true },
+        },
+        { name: "get_report", description: "One monthly report.", annotations: { readOnlyHint: true } },
+      ],
+    });
+    const records = connectorWith({
+      id: "records",
+      kind: "api",
+      tools: [
+        { name: "list_entries", description: "List journal entries by day.", annotations: { readOnlyHint: true } },
+        {
+          name: "find_records",
+          description: "Find records by field.",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            properties: { invoiceNumber: { type: "string", description: "Exact purchase order code." } },
+          },
+        },
+        { name: "get_invoice", description: "One invoice by id.", annotations: { readOnlyHint: true } },
+        { name: "list_mail", description: "List inbound mail.", annotations: { readOnlyHint: true } },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([records, ledger]), BASE);
+    const addresses = async (query: string) =>
+      ((textOf(await mt.searchTools({ query })) as SearchResult).tools ?? []).map((tool) => tool.address);
+
+    // A word only the connector's title or description states still covers its tools.
+    expect((await addresses("money entries"))[0]).toBe("ledger.list_entries");
+    expect((await addresses("household entries"))[0]).toBe("ledger.list_entries");
+    // A property name or description counts, below a tool that names the word.
+    expect((await addresses("purchase order"))[0]).toBe("records.find_records");
+    expect(await addresses("invoice")).toEqual(["records.get_invoice", "records.find_records"]);
+    // Shared synonyms reach every connector, below the word itself.
+    expect((await addresses("email"))[0]).toBe("records.list_mail");
+    expect((await addresses("mail"))[0]).toBe("records.list_mail");
+
+    // Short groups of distinct lowercase words; a word that has a common second
+    // sense ("run", "chat") or ties unrelated records ("message") stays out.
+    expect(SEARCH_SYNONYMS.length).toBeLessThanOrEqual(20);
+    const words = SEARCH_SYNONYMS.flat();
+    for (const group of SEARCH_SYNONYMS) {
+      expect(group.length).toBeGreaterThanOrEqual(2);
+      expect(group.length).toBeLessThanOrEqual(4);
+      expect(new Set(group).size).toBe(group.length);
+      for (const word of group) expect(word).toMatch(/^[a-z]+$/);
+    }
+    for (const word of [
+      "run",
+      "chat",
+      "message",
+      "conference",
+      "build",
+      "activity",
+      "recurring",
+      "post",
+      "list",
+      "get",
+      "create",
+    ])
+      expect(words, word).not.toContain(word);
+  });
+
+  it("ranks a literal match above a shared synonym and keeps unrelated records apart", async () => {
+    const read = { annotations: { readOnlyHint: true } };
+    const mt = createMetaTools(
+      makeRegistry([
+        connectorWith({
+          id: "accounts",
+          kind: "api",
+          tools: [
+            { name: "list_activity", description: "List account activity log entries.", ...read },
+            { name: "list_invoices", description: "List invoices, newest first.", ...read },
+            { name: "list_documents", description: "List shared documents.", ...read },
+          ],
+        }),
+        connectorWith({
+          id: "fitness",
+          kind: "api",
+          tools: [{ name: "list_workouts", description: "List recorded workouts.", ...read }],
+        }),
+        connectorWith({
+          id: "plans",
+          kind: "api",
+          tools: [{ name: "list_recurring_payments", description: "List recurring payment plans.", ...read }],
+        }),
+        connectorWith({
+          id: "social",
+          kind: "api",
+          tools: [
+            { name: "list_tweets", description: "List recent tweets.", ...read },
+            { name: "list_posts", description: "List message board posts.", ...read },
+          ],
+        }),
+        connectorWith({
+          id: "storage",
+          kind: "api",
+          tools: [{ name: "list_files", description: "List stored files.", ...read }],
+        }),
+      ]),
+      BASE,
+    );
+    const addresses = async (query: string) =>
+      ((textOf(await mt.searchTools({ query })) as SearchResult).tools ?? []).map((tool) => tool.address);
+    expect((await addresses("list workouts"))[0]).toBe("fitness.list_workouts");
+    expect((await addresses("recurring"))[0]).toBe("plans.list_recurring_payments");
+    expect((await addresses("list tweets"))[0]).toBe("social.list_tweets");
+    // `document` is a shared synonym of `file`: the literal tool leads and the synonym follows.
+    expect((await addresses("list files")).slice(0, 2)).toEqual(["storage.list_files", "accounts.list_documents"]);
+  });
+
+  it("indexes input property text within per-tool and per-catalog budgets", async () => {
+    const words = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_, index) => `${prefix}${index.toString(36)}`).join(" ");
+    const hostile = connectorWith({
+      id: "hostile",
+      kind: "api",
+      tools: [
+        {
+          name: "find_entries",
+          description: "Find entries.",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            properties: {
+              filter: { type: "string", description: `alphaword ${words("w", 400_000)} omegaword` },
+            },
+          },
+        },
+        ...Array.from({ length: 400 }, (_, index) => ({
+          name: `get_item_${index}`,
+          description: "Get one item.",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            properties: {
+              key: {
+                type: "string",
+                description: `${index === 0 ? "firstword " : index === 399 ? "lastword " : ""}${"x".repeat(MAX_INPUT_TEXT_PER_TOOL)}`,
+              },
+            },
+          },
+        })),
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([hostile]), BASE);
+    const addresses = async (query: string) =>
+      ((textOf(await mt.searchTools({ query })) as SearchResult).tools ?? []).map((tool) => tool.address);
+    expect(await addresses("alphaword")).toEqual(["hostile.find_entries"]);
+    // Past one tool's budget, and past the catalog's, input text is not indexed.
+    expect(await addresses("omegaword")).toEqual([]);
+    expect(401 * MAX_INPUT_TEXT_PER_TOOL).toBeGreaterThan(MAX_INPUT_TEXT_PER_CATALOG);
+    expect(await addresses("firstword")).toEqual(["hostile.get_item_0"]);
+    expect(await addresses("lastword")).toEqual([]);
+  });
+
   it("matches a small abbreviation map as whole tokens in both directions", async () => {
     const conn = connectorWith({
       id: "host",
@@ -1021,8 +1190,9 @@ describe("search_tools", () => {
       const page = textOf(await mt.searchTools({ query })) as SearchResult;
       const rank = page.tools.findIndex((tool) => answers.includes(tool.address)) + 1;
       expect(rank, query).toBeGreaterThan(0);
-      // `get refunds`: two deposit getters state both words, so they rightly lead.
-      expect(rank, query).toBeLessThanOrEqual(query === "get refunds" ? 4 : 3);
+      // `get refunds`: two deposit getters state both words, so they rightly lead; so do Google
+      // Meet's three transcript tools for `get meeting transcripts`, through Meet's description.
+      expect(rank, query).toBeLessThanOrEqual(query === "get refunds" || query === "get meeting transcripts" ? 4 : 3);
       // The stuffed console mentions every guard's words and names none of them.
       expect(page.tools[0]?.address, query).not.toBe("admin.admin_console");
     }
@@ -1362,9 +1532,17 @@ describe("search_tools", () => {
         },
       ],
     });
-    const identity = textOf(
+    const titled = textOf(
       await createMetaTools(makeRegistry([hatch("gifts"), warehouse]), BASE).searchTools({
         query: "warehouse pallets",
+      }),
+    ) as SearchResult;
+    // A title word covers the connector's tools, so it finds them instead of explaining a miss.
+    expect(titled.tools.map((tool) => tool.address)).toEqual(["inventory.list_items"]);
+    expect(titled.matchMode).toBe("partial");
+    const identity = textOf(
+      await createMetaTools(makeRegistry([hatch("gifts"), warehouse]), BASE).searchTools({
+        query: "inventory pallets",
       }),
     ) as SearchResult;
     const guidance = identity.queryAnalysis!.guidance!;
@@ -1375,7 +1553,7 @@ describe("search_tools", () => {
     for (const safety of ["readOnly", "approvalRequired"] as const) {
       for (const connectors of [[warehouse], [hatch("gifts"), warehouse]]) {
         const result = textOf(
-          await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query: "warehouse pallets", safety }),
+          await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query: "inventory pallets", safety }),
         ) as SearchResult;
         expect(result.queryAnalysis!.guidance!.match(/Change safety to inspect the other tools\./g)).toHaveLength(1);
       }

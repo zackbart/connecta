@@ -199,9 +199,11 @@ interface SearchDocument {
   summaryTokens: readonly string[];
   /** The description's remaining tokens: searchable, but weak evidence. */
   tailTokens: readonly string[];
+  /** Top-level input property names and their descriptions: weaker still. */
+  inputTokens: readonly string[];
 }
 
-const ZONES = ["nameTokens", "titleTokens", "summaryTokens", "tailTokens"] as const;
+const ZONES = ["nameTokens", "titleTokens", "summaryTokens", "tailTokens", "inputTokens"] as const;
 
 interface SearchIndex {
   documents: readonly SearchDocument[];
@@ -242,7 +244,35 @@ function toolTitle(tool: ToolDef): string {
   return typeof title === "string" ? title : "";
 }
 
-function buildIndex(tools: ToolDef[]): SearchIndex {
+export const MAX_INPUT_TEXT_PER_TOOL = 512;
+export const MAX_INPUT_TEXT_PER_CATALOG = 128 * 1024;
+
+function inputTexts(tools: ToolDef[]): string[] {
+  let catalogLeft = MAX_INPUT_TEXT_PER_CATALOG;
+  return tools.map((tool) => {
+    const properties: unknown = tool.inputSchema?.properties;
+    if (properties === null || typeof properties !== "object" || Array.isArray(properties)) return "";
+    let left = Math.min(MAX_INPUT_TEXT_PER_TOOL, catalogLeft);
+    const parts: string[] = [];
+    for (const name in properties) {
+      if (left <= 0) break;
+      if (!Object.hasOwn(properties, name)) continue;
+      const description = ((properties as Record<string, unknown>)[name] as { description?: unknown } | null)
+        ?.description;
+      for (const text of typeof description === "string" ? [name, description] : [name]) {
+        if (left <= 0) break;
+        const part = text.length > left ? text.slice(0, left) : text;
+        parts.push(part);
+        left -= part.length + 1;
+      }
+    }
+    const text = parts.join(" ");
+    catalogLeft -= text.length;
+    return text;
+  });
+}
+
+function buildIndex(tools: ToolDef[], inputs = inputTexts(tools)): SearchIndex {
   const postings = ZONES.map(() => new Map<string, number[]>());
   const documents = tools.map((tool, position) => {
     const description = tool.description ?? "";
@@ -254,6 +284,7 @@ function buildIndex(tools: ToolDef[]): SearchIndex {
       titleTokens: [...new Set(lexicalTokens(toolTitle(tool)))],
       summaryTokens: [...summary],
       tailTokens: [...new Set(lexicalTokens(description))].filter((token) => !summary.has(token)),
+      inputTokens: [...new Set(lexicalTokens(inputs[position]!))],
     };
     ZONES.forEach((zone, index) => {
       Object.freeze(doc[zone]);
@@ -279,13 +310,17 @@ function bindIndex(tools: ToolDef[], index: SearchIndex): SearchView {
 /** Only call after complete catalog acceptance, redaction and classification. */
 export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void {
   if (searchIndexes.has(tools)) return;
-  const key = JSON.stringify([partition, tools.map((tool) => [tool.name, tool.description ?? "", toolTitle(tool)])]);
+  const inputs = inputTexts(tools);
+  const key = JSON.stringify([
+    partition,
+    tools.map((tool, position) => [tool.name, tool.description ?? "", toolTitle(tool), inputs[position]!]),
+  ]);
   const retained = retainedIndexes.get(key);
   if (retained) {
     bindIndex(tools, retained.index);
     return;
   }
-  const index = buildIndex(tools);
+  const index = buildIndex(tools, inputs);
   bindIndex(tools, index);
   let bytes = key.length * 2 + 128;
   for (const doc of index.documents) {
@@ -380,13 +415,9 @@ function matchingTokenCandidates(term: string): Set<string> {
 
 /**
  * Whether one query term matches a whole token of arbitrary text, under the
- * same inflection rules the tool index uses.
- *
- * Connector identity — an `id` or a `title` — is deliberately not a document in
- * that index: making it one would move ranking for every query that already
- * matches tools. This lets a caller ask the index's question of a string that
- * never became a document, which is what the no-match analysis needs to tell
- * "nothing like this exists here" from "that word is a connector".
+ * same inflection rules the tool index uses. The no-match analysis asks it of
+ * connector identity to tell "nothing like this exists here" from "that word
+ * is a connector".
  */
 export function matchesLexicalTerm(text: string, term: string): boolean {
   const tokens = new Set(lexicalTokens(text));
@@ -405,6 +436,10 @@ export interface LexicalCorpusStatistics {
   descriptionMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
   /** The zones a tool can be complete on: name, title and summary. */
   headMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
+  /** Every tool of a connector whose title or description has the term: coverage, never completeness. */
+  connectorMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
+  /** Tools whose input property names or descriptions alone have the term. */
+  inputMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
 }
 
 /**
@@ -413,25 +448,64 @@ export interface LexicalCorpusStatistics {
  * connector rank, so ubiquitous words contribute less than discriminative
  * ones without making any action word a stopword.
  */
-/** Whole-token candidates for one term, widened by a catalog's lexical synonyms. */
-function synonymCandidates(term: string, synonyms: ((word: string) => readonly string[]) | undefined): Set<string> {
+/**
+ * Words people and services use for the same thing across connectors. Each
+ * group widens a query word to the others as an ordinary whole-token match,
+ * ranked below the word itself.
+ */
+export const SEARCH_SYNONYMS: readonly (readonly string[])[] = [
+  ["email", "mail", "gmail"],
+  ["schedule", "calendar", "agenda"],
+  ["meeting", "event"],
+  ["money", "finance", "financial", "payment"],
+  ["spend", "spending", "expense", "transaction"],
+  ["bill", "invoice"],
+  ["file", "document"],
+  ["changed", "modified", "updated"],
+  ["task", "todo"],
+  ["workout", "exercise"],
+  ["revenue", "mrr", "income", "sales"],
+  ["subscriber", "subscription"],
+  ["deploy", "deployment"],
+  ["contact", "person", "people"],
+  ["feed", "timeline"],
+];
+
+const searchSynonymGroups = new Map<string, string[]>();
+for (const group of SEARCH_SYNONYMS)
+  for (const word of group)
+    searchSynonymGroups.set(word, [
+      ...new Set([...(searchSynonymGroups.get(word) ?? []), ...group.filter((other) => other !== word)]),
+    ]);
+
+/** Whole-token candidates for one term: its own and its catalog's synonyms, then the shared ones. */
+function synonymCandidates(
+  term: string,
+  synonyms: ((word: string) => readonly string[]) | undefined,
+): { literal: Set<string>; shared: Set<string> } {
   const own = matchingTokenCandidates(term);
-  if (!synonyms) return own;
-  const candidates = new Set(own);
+  const literal = new Set(own);
   for (const candidate of own)
-    for (const synonym of synonyms(candidate))
-      for (const variant of matchingTokenCandidates(synonym)) candidates.add(variant);
-  return candidates;
+    for (const synonym of synonyms?.(candidate) ?? [])
+      for (const variant of matchingTokenCandidates(synonym)) literal.add(variant);
+  const shared = new Set<string>();
+  for (const candidate of own)
+    for (const synonym of searchSynonymGroups.get(candidate) ?? [])
+      for (const variant of matchingTokenCandidates(synonym)) if (!literal.has(variant)) shared.add(variant);
+  return { literal, shared };
 }
 
 /**
  * `synonymsFor` gives a catalog's lexical synonyms, word to equivalent words:
  * a term then matches a tool through any of them, as plain whole tokens.
+ * `connectorTextFor` gives the title and description of the connector that
+ * owns a catalog: a term there matches each of its tools.
  */
 export function lexicalCorpusStatistics(
   toolSets: ToolDef[][],
   query: string,
   synonymsFor?: (tools: ToolDef[]) => ((word: string) => readonly string[]) | undefined,
+  connectorTextFor?: (tools: ToolDef[]) => string | undefined,
 ): LexicalCorpusStatistics {
   const terms = lexicalQueryTerms(query);
   if (terms.length === 0) {
@@ -441,40 +515,65 @@ export function lexicalCorpusStatistics(
       nameMatches: new Map(),
       descriptionMatches: new Map(),
       headMatches: new Map(),
+      connectorMatches: new Map(),
+      inputMatches: new Map(),
     };
   }
   const nameMatches = new Map<string, Set<ToolDef>>();
   const descriptionMatches = new Map<string, Set<ToolDef>>();
   const headMatches = new Map<string, Set<ToolDef>>();
+  const connectorMatches = new Map<string, Set<ToolDef>>();
+  const inputMatches = new Map<string, Set<ToolDef>>();
+  const connectorTokens = new Map(
+    toolSets.map((tools) => [tools, new Set(lexicalTokens(connectorTextFor?.(tools) ?? ""))]),
+  );
   for (const term of terms) {
     const termNameMatches = new Set<ToolDef>();
     const termDescriptionMatches = new Set<ToolDef>();
     const termHeadMatches = new Set<ToolDef>();
+    const termSharedHeadMatches = new Set<ToolDef>();
+    const termConnectorMatches = new Set<ToolDef>();
+    const termInputMatches = new Set<ToolDef>();
     for (const tools of toolSets) {
       const index = indexFor(tools);
-      for (const candidate of synonymCandidates(term, synonymsFor?.(tools))) {
-        // Name and title, summary and tail: only the tail is outside the head.
-        [
-          [termNameMatches, termHeadMatches],
-          [termDescriptionMatches, termHeadMatches],
-          [termDescriptionMatches, termHeadMatches],
-          [termDescriptionMatches],
-        ].forEach((targets, zone) => {
-          for (const position of index.index.postings[zone]!.get(candidate) ?? []) {
-            const tool = index.tools.get(position);
-            if (tool) for (const target of targets) target.add(tool);
-          }
-        });
-      }
+      const { literal, shared } = synonymCandidates(term, synonymsFor?.(tools));
+      const identity = connectorTokens.get(tools)!;
+      if ([...literal, ...shared].some((candidate) => identity.has(candidate)))
+        for (const tool of index.tools.values()) termConnectorMatches.add(tool);
+      for (const [candidates, head] of [
+        [literal, termHeadMatches],
+        [shared, termSharedHeadMatches],
+      ] as const)
+        for (const candidate of candidates) {
+          // Name and title, summary and tail: only the tail is outside the head.
+          [
+            [termNameMatches, head],
+            [termDescriptionMatches, head],
+            [termDescriptionMatches, head],
+            [termDescriptionMatches],
+            [termInputMatches],
+          ].forEach((targets, zone) => {
+            for (const position of index.index.postings[zone]!.get(candidate) ?? []) {
+              const tool = index.tools.get(position);
+              if (tool) for (const target of targets) target.add(tool);
+            }
+          });
+        }
     }
     nameMatches.set(term, termNameMatches);
     descriptionMatches.set(term, termDescriptionMatches);
-    headMatches.set(term, termHeadMatches);
+    headMatches.set(term, termHeadMatches.size > 0 ? termHeadMatches : termSharedHeadMatches);
+    connectorMatches.set(term, termConnectorMatches);
+    inputMatches.set(term, termInputMatches);
   }
   const documentFrequency = new Map(
     terms.map((term) => [
       term,
-      new Set([...(nameMatches.get(term) ?? []), ...(descriptionMatches.get(term) ?? [])]).size,
+      new Set([
+        ...(nameMatches.get(term) ?? []),
+        ...(descriptionMatches.get(term) ?? []),
+        ...(inputMatches.get(term) ?? []),
+      ]).size,
     ]),
   );
   return {
@@ -483,6 +582,8 @@ export function lexicalCorpusStatistics(
     nameMatches,
     descriptionMatches,
     headMatches,
+    connectorMatches,
+    inputMatches,
   };
 }
 
@@ -504,8 +605,12 @@ function scoreDocument(
   statistics: LexicalCorpusStatistics,
 ): Pick<RankedTool, "score" | "matchedTermCount" | "headTerms" | "nameTerms" | "namesDistinctiveTerm"> | null {
   if (!phrase) return { score: 0, matchedTermCount: 0, headTerms: [], nameTerms: [], namesDistinctiveTerm: false };
+  const inName = (term: string) => statistics.nameMatches.get(term)?.has(doc.tool) === true;
+  const inDescription = (term: string) => statistics.descriptionMatches.get(term)?.has(doc.tool) === true;
+  const inConnector = (term: string) => statistics.connectorMatches.get(term)?.has(doc.tool) === true;
+  const inInput = (term: string) => statistics.inputMatches.get(term)?.has(doc.tool) === true;
   const matchedTerms = terms.filter(
-    (term) => statistics.nameMatches.get(term)?.has(doc.tool) || statistics.descriptionMatches.get(term)?.has(doc.tool),
+    (term) => inName(term) || inDescription(term) || inConnector(term) || inInput(term),
   );
   if (mode === "all" && matchedTerms.length !== terms.length) return null;
   if (matchedTerms.length === 0) return null;
@@ -537,14 +642,16 @@ function scoreDocument(
     else if (doc.titleTokens.includes(term)) score += 2 * weight;
     else if (doc.tailTokens.includes(term)) score += 0.5 * weight;
     else if (inHead(term)) score += 1.5 * weight;
-    else if (statistics.descriptionMatches.get(term)?.has(doc.tool)) score += 0.25 * weight;
+    else if (inDescription(term)) score += 0.25 * weight;
+    if (inConnector(term) && !inName(term)) score += weight;
+    if (inInput(term) && !inName(term) && !inDescription(term)) score += 0.5 * weight;
   }
   // Partial evidence earns only its squared share of the query's rarity, wherever
   // it appears, so a common verb in a name cannot outweigh rare words in a tail.
   const covered = matchedTerms.reduce((total, term) => total + inverseDocumentFrequency(term, statistics), 0);
   score *= (covered / phraseWeight) ** 2;
   const averageWeight = phraseWeight / terms.length;
-  const nameTerms = matchedTerms.filter((term) => statistics.nameMatches.get(term)?.has(doc.tool));
+  const nameTerms = matchedTerms.filter(inName);
   return {
     score,
     matchedTermCount: matchedTerms.length,
