@@ -954,6 +954,37 @@ describe("classification and pool endpoints (#706)", () => {
     }
   });
 
+  it("INV-1 INV-2: a read-only program's guessed write is refused only at its exact address; hidden and absent names fail alike", async () => {
+    const attempt: Program = async (connecta) => {
+      const settled = await Promise.allSettled(
+        ["close_issue", "update_issue", "post"].map((name) => connecta.call!(`tracker.${name}`, { id: "WEB-105" })),
+      );
+      return settled.map((call) =>
+        call.status === "rejected" ? { code: call.reason.code, message: call.reason.message } : "sent",
+      );
+    };
+    const omitted =
+      "Search omits writes refused here; a write's exact address returns read_only_endpoint, not unknown_tool.";
+    const classification = { tracker: { post: "hidden" as const } };
+    const readOnly = world({ readOnly: true, classification });
+    const [exact, absent, hidden] = value(await readOnly.run(attempt)).result;
+    expect(exact).toMatchObject({ code: "read_only_endpoint", message: expect.stringContaining("tell the user") });
+    expect(absent).toEqual({
+      code: "unknown_tool",
+      message: `Unknown tool "update_issue" on connector "tracker". ${omitted}`,
+    });
+    expect(hidden).toEqual({ code: "unknown_tool", message: `Unknown tool "post" on connector "tracker". ${omitted}` });
+    expect(readOnly.writes()).toEqual([]);
+
+    const writable = world({ readOnly: false, classification, write: () => ({ closed: true }) });
+    const [sent, ...missing] = value(await writable.run(attempt)).result;
+    expect(sent).toBe("sent");
+    expect(missing.map((error: { message: string }) => error.message)).toEqual([
+      'Unknown tool "update_issue" on connector "tracker"',
+      'Unknown tool "post" on connector "tracker"',
+    ]);
+  });
+
   it("INV-1 INV-2: a read override cannot make a declared write a read, and warns once per catalog change", async () => {
     const logger = { ...silentLogger, warn: vi.fn() };
     let sent = 0;

@@ -26,6 +26,10 @@ export function useCloseOnRecovery(state: OperatorState, close: () => void): voi
   }, [recovering]);
 }
 
+export function contractLoading(state: OperatorState): boolean {
+  return !contractRecovering(state) && !state.loadFailure && !state.recoveryPending && state.contractPhase !== "error";
+}
+
 export function ContractState({ state }: { state: OperatorState }) {
   // The shell's recovery banner owns Retry while a mounted page is stale.
   if (contractRecovering(state)) return <StateBlock busy>Reloading configuration…</StateBlock>;

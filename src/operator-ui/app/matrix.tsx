@@ -17,7 +17,13 @@ import { useCloseOnRecovery } from "./contract-state.js";
 import { RunsAs } from "./endpoints.js";
 import { Monogram, SharePie } from "./marks.js";
 
-export type MatrixRow = OperatorConnectorOverlay & { title: string; readOnly?: boolean };
+export interface MatrixRow {
+  id: string;
+  title: string;
+  readOnly?: boolean;
+  /** Null while the connector's details have not loaded. */
+  live: OperatorConnectorOverlay | null;
+}
 
 interface OpenCell {
   key: string;
@@ -246,7 +252,11 @@ export function ConnectorMatrix({
                         <Monogram id={row.id} title={row.title} size="sm" />
                         {link(row)}
                         {row.readOnly ? <span className="badge tag accent">Read-only</span> : null}
-                        <ConnectorStatus id={row.id} name={row.title} live={row} health={health} compact />
+                        {row.live ? (
+                          <ConnectorStatus id={row.id} name={row.title} live={row.live} health={health} compact />
+                        ) : (
+                          <span className="meta">Checking…</span>
+                        )}
                       </span>
                     </th>
                     {columns.map((column) => {

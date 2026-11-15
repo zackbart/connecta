@@ -863,7 +863,8 @@ connector when any of its tools is in the pool — `docs.read` permits the
 `docs` handoff. Without one it is absent: discovery omits it, and
 `authorize_connector` returns the same "Unknown connector" refusal as for a
 connector that does not exist. A tool outside the pool fails exactly like one
-the connector never had: `unknown_tool`, with no hint that it exists. That is
+the connector never had: `unknown_tool`, with no hint that it exists (a
+read-only scope's note on writes is the same for every unknown name). That is
 the whole security claim, in one place on purpose.
 
 A connector's own `members` narrow this view further for that connector
