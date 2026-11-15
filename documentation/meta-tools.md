@@ -2092,13 +2092,17 @@ is why no `outputSchema` is advertised. A truncated result's notice pages with
 
 A native downstream tool's arguments lose a [host-injected key](#the-meta-tools)
 only when its input schema provably cannot accept that key as an argument;
-otherwise the downstream tool receives it unchanged. The schema may accept it
-when any local `$ref` target or `allOf`, `anyOf`, `oneOf`, `if`, `then`, `else`,
-`dependentSchemas` or `dependencies` branch names it in `properties`,
-`required`, `dependentRequired` or a matching `patternProperties` pattern, or
-carries a schema-valued `additionalProperties` or `unevaluatedProperties`. An
-unresolvable or non-local `$ref`, a `$dynamicRef` or `$recursiveRef`, an
-invalid pattern, or a malformed keyword also keeps the key.
+otherwise the downstream tool receives it unchanged. The proof walks every
+schema reachable from the root through local `$ref`, `allOf`, `anyOf` and
+`oneOf`, visiting each at most once and at most 256 in all. It understands only
+`properties`, `required`, boolean `additionalProperties`, those four, and the
+annotations `type`, `title`, `description`, `default`, `examples`, `$schema`,
+`$id`, `$comment`, `$defs`, `definitions`, `deprecated`, `readOnly`,
+`writeOnly` and `x-` extensions. The key is kept when a reachable schema names
+it in `properties` or `required`, uses any other keyword (such as `not`, `if`,
+`patternProperties`, a schema-valued `additionalProperties` or `$dynamicRef`),
+has an unresolvable or non-local `$ref` or a malformed keyword, or when the walk
+exceeds 256 schemas.
 
 **Approval is the host's, enforcement is Connecta's.** The host approves from
 the annotations of the list it cached, and some hosts resend calls they believe

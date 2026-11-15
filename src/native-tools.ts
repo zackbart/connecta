@@ -268,62 +268,78 @@ function passThroughSchema(schema: JsonSchema | undefined): StandardSchemaWithJS
   } as StandardSchemaWithJSON;
 }
 
-const COMPOSED = ["allOf", "anyOf", "oneOf", "if", "then", "else"] as const;
-const UNFOLLOWED = ["$dynamicRef", "$recursiveRef"] as const;
-const MAX_DECLARATION_DEPTH = 32;
+const IGNORED_KEYWORDS = new Set([
+  "type",
+  "title",
+  "description",
+  "default",
+  "examples",
+  "$schema",
+  "$id",
+  "$comment",
+  "$defs",
+  "definitions",
+  "deprecated",
+  "readOnly",
+  "writeOnly",
+]);
+const MAX_DECLARATION_NODES = 256;
+const declarations = new WeakMap<JsonSchema, Map<string, boolean>>();
 
 function plainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function mayDeclare(root: JsonSchema | undefined, key: string): boolean {
-  if (root === undefined) return false;
-  const schema = root;
-  function visit(value: unknown, depth: number, seen: Set<unknown>): boolean {
-    if (typeof value === "boolean") return false;
-    if (!plainObject(value) || depth > MAX_DECLARATION_DEPTH) return true;
-    if (seen.has(value)) return false;
-    const next = new Set(seen).add(value);
-    const node = value as JsonSchema;
-    if (UNFOLLOWED.some((keyword) => node[keyword] !== undefined)) return true;
-    if (node.properties !== undefined && (!plainObject(node.properties) || Object.hasOwn(node.properties, key)))
-      return true;
-    if (Array.isArray(node.required) && node.required.includes(key)) return true;
-    if (node.patternProperties !== undefined) {
-      if (!plainObject(node.patternProperties)) return true;
-      for (const pattern of Object.keys(node.patternProperties)) {
-        try {
-          if (new RegExp(pattern, "u").test(key)) return true;
-        } catch {
-          return true;
-        }
-      }
-    }
-    for (const keyword of ["additionalProperties", "unevaluatedProperties"]) {
-      if (node[keyword] !== undefined && typeof node[keyword] !== "boolean") return true;
-    }
-    if (node.$ref !== undefined) {
-      const target = localRef(schema, node.$ref);
-      if (target === undefined || visit(target, depth + 1, next)) return true;
-    }
-    for (const keyword of COMPOSED) {
-      const branches = node[keyword];
-      if (branches === undefined) continue;
-      const list = keyword.endsWith("Of") ? branches : [branches];
-      if (!Array.isArray(list) || list.some((branch) => visit(branch, depth + 1, next))) return true;
-    }
-    for (const keyword of ["dependentSchemas", "dependencies", "dependentRequired"]) {
-      const map = node[keyword];
-      if (map === undefined) continue;
-      if (!plainObject(map)) return true;
-      for (const [trigger, dependent] of Object.entries(map)) {
-        if (trigger === key) return true;
-        if (Array.isArray(dependent) ? dependent.includes(key) : visit(dependent, depth + 1, next)) return true;
-      }
-    }
-    return false;
+function mayDeclare(schema: JsonSchema | undefined, key: string): boolean {
+  if (schema === undefined) return false;
+  let known = declarations.get(schema);
+  let result = known?.get(key);
+  if (result === undefined) {
+    result = !provablyUndeclared(schema, key);
+    if (!known) declarations.set(schema, (known = new Map()));
+    known.set(key, result);
   }
-  return visit(schema, 0, new Set());
+  return result;
+}
+
+function provablyUndeclared(root: JsonSchema, key: string): boolean {
+  const pending: unknown[] = [root];
+  const visited = new Set<unknown>();
+  while (pending.length > 0) {
+    const node = pending.pop();
+    if (typeof node === "boolean" || visited.has(node)) continue;
+    if (!plainObject(node) || visited.size === MAX_DECLARATION_NODES) return false;
+    visited.add(node);
+    for (const [keyword, operand] of Object.entries(node)) {
+      if (IGNORED_KEYWORDS.has(keyword) || keyword.startsWith("x-")) continue;
+      switch (keyword) {
+        case "properties":
+          if (!plainObject(operand) || Object.hasOwn(operand, key)) return false;
+          break;
+        case "required":
+          if (!Array.isArray(operand) || operand.includes(key)) return false;
+          break;
+        case "additionalProperties":
+          if (typeof operand !== "boolean") return false;
+          break;
+        case "$ref": {
+          const target = localRef(root, operand);
+          if (target === undefined) return false;
+          pending.push(target);
+          break;
+        }
+        case "allOf":
+        case "anyOf":
+        case "oneOf":
+          if (!Array.isArray(operand)) return false;
+          pending.push(...operand);
+          break;
+        default:
+          return false;
+      }
+    }
+  }
+  return true;
 }
 
 function describe(entry: NativeTool, executeCode: boolean, guideName?: string): string {

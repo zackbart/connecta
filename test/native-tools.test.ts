@@ -871,6 +871,26 @@ describe("native tool surface", () => {
               },
             },
             {
+              name: "fanout",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                $ref: "#/$defs/d9",
+                $defs: Object.fromEntries(
+                  Array.from({ length: 10 }, (_, index) => [
+                    `d${index}`,
+                    index === 0
+                      ? { type: "object", properties: { id: { type: "string" } } }
+                      : { anyOf: Array.from({ length: 4 }, () => ({ $ref: `#/$defs/d${index - 1}` })) },
+                  ]),
+                ),
+              },
+            },
+            {
+              name: "negated",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object", not: { not: { required: ["wait_for_previous"] } } },
+            },
+            {
               name: "opaque",
               annotations: { readOnlyHint: true },
               inputSchema: {
@@ -907,6 +927,8 @@ describe("native tool surface", () => {
         ["crm__queue_ref", {}],
         ["crm__WRITE__enqueue", { name: "Bob" }],
         ["crm__opaque", { id: "p1" }],
+        ["crm__fanout", { id: "p1" }],
+        ["crm__negated", {}],
       ] as const) {
         const result = await call(name, { ...args, wait_for_previous: true });
         expect(result.isError, name).toBeFalsy();
@@ -919,6 +941,8 @@ describe("native tool surface", () => {
         ["queue_ref", { wait_for_previous: true }],
         ["enqueue", { name: "Bob", wait_for_previous: true }],
         ["opaque", { id: "p1", wait_for_previous: true }],
+        ["fanout", { id: "p1" }],
+        ["negated", { wait_for_previous: true }],
       ]);
       expect((await call("skills", { wait_for_previous: true })).isError).toBeFalsy();
       const unknown = await call("read_result", { id: "res_missing", wait_for_previous: true });
