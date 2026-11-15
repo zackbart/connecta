@@ -564,6 +564,46 @@ describe("search_tools", () => {
     expect((await search({ query: "" })).total).toBe(10);
   });
 
+  it("groups on declared facts only, so an isolate's observed output schemas never move a page", async () => {
+    const record = (id: string, description = "Get one record by id.") =>
+      connectorWith({
+        id,
+        kind: "api",
+        tools: [{ name: "get_record", description, annotations: { readOnlyHint: true } }],
+      });
+    const connectors = () => [record("a"), record("b"), record("c", "Get one archived record by id.")];
+    const cold = makeRegistry(connectors());
+    const warm = makeRegistry(connectors());
+    for (const id of ["a", "c"]) {
+      const published = (await warm.getTools(id, BASE)).find((tool) => tool.name === "get_record")!;
+      warm.observeOutputShape(id, published, { id: "r1", title: "First" });
+    }
+    const services = [new CatalogService(warm, BASE), new CatalogService(cold, BASE)];
+    const page = (service: CatalogService, offset: number, includeSchemas?: "json") =>
+      service.search({ query: "get record", limit: 1, offset, ...(includeSchemas ? { includeSchemas } : {}) });
+
+    // A walk whose pages land on different isolates still reaches every tool once.
+    const walked: Array<[string, string[] | undefined]> = [];
+    for (let offset: number | undefined = 0, turn = 0; offset !== undefined; turn++) {
+      const current = await page(services[turn % 2]!, offset);
+      expect(current.total).toBe(2);
+      walked.push(
+        ...current.entries.map((entry): [string, string[] | undefined] => [entry.tool.address, entry.tool.alsoOn]),
+      );
+      offset = current.nextOffset;
+    }
+    expect(walked).toEqual([
+      ["a.get_record", ["b.get_record"]],
+      ["c.get_record", undefined],
+    ]);
+
+    // A collapsed row shows no observed schema; a single address still shows its own.
+    const [collapsed, single] = await Promise.all([page(services[0]!, 0, "json"), page(services[0]!, 1, "json")]);
+    expect(collapsed.entries[0]!.tool).not.toHaveProperty("outputSchema");
+    expect(collapsed.entries[0]!.tool).not.toHaveProperty("outputSchemaSource");
+    expect(single.entries[0]!.tool).toMatchObject({ address: "c.get_record", outputSchemaSource: "observed" });
+  });
+
   it("keeps rows apart when any per-address fact differs: output schema, guide, read-program callability", async () => {
     const wide = {
       type: "object",
