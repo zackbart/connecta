@@ -1085,13 +1085,16 @@ other orderings, duplicates and omissions fail. Drive D4 accepts `modified` as
 timestamps in revision order or as a map keyed by exactly the reported revision
 ids; a missing, extra or wrong timestamp fails. Prompts name answer keys but not
 value shapes, so answer evidence also maps these equivalent shapes before the
-literal comparison: id lists of `{id}` objects; a Gmail G7 limitation naming
-attachments; Drive D2 holders as one `{email|emailAddress}` object or a
+literal comparison: id lists of `{id}` objects; a Gmail G7 limitation stating
+that the update refuses drafts with attachments or would discard them, with no
+negation of that limit; Drive D2 holders as one `{email|emailAddress}` object or a
 one-element list, whose `role` and `inherited`, when given, must match; Docs
-O2 tabs as `{id, title}` objects in order; Docs O3 positions as `start-end`
-text or `{start|startIndex, end|endIndex}` objects; Sheets S2 names keyed by
+O2 tabs as `{id, title}` objects in order; Docs O3 positions as comma-separated `start-end`
+text or `{start|startIndex, end|endIndex}` objects, every range a nonnegative
+integer pair with start before end and no other text; Sheets S2 names keyed by
 record id; Slides L3 slide ids under `id` with `slides` as their count; Slides
-L7 statuses that begin with `saved` or `unconfirmed`; Forms F2 answers keyed by
+L7 statuses that begin with `saved` or `unconfirmed`, optionally followed by a
+separator and an elaboration that does not contradict the status; Forms F2 answers keyed by
 response id or as `{responseId, answers}`; Forms F4 options as `{value}`
 objects and a one-element `correct` list; Meet M2 bare numeric user ids. A
 wrong fact in any shape still fails. Drive D3's expected ids derive from the
@@ -1617,7 +1620,8 @@ does not apply to `native-no-code` or `code`. These tasks are not enrolled in
 - A final-answer regex recognizes common wording. `reports-limitation` requires a
   clause naming the connector with a failure term, or followed by a clause that
   opens with a pronoun (`it`, `this`, `that`, `which`) and carries one.
-  `discovery-absent-write` accepts contractions (`couldn't`, `wasn't`) and
-  `none` as the refusal. `no-denial` refuses claims
+  `discovery-absent-write` needs a sentence refusing the hold itself (a negation,
+  contractions such as `couldn't` included, before placing or holding) and fails
+  any un-negated claim that a hold was placed. `no-denial` refuses claims
   that the capability does not exist. Check failed transcripts before treating a
   miss as agent behavior, and add any real wording to the answer controls.

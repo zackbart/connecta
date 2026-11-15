@@ -24,6 +24,16 @@ const GOOGLE_ANSWER_SHAPES: Record<string, { accept: Row[]; reject: Row[] }> = {
     reject: [
       { id: "draft-inline", changed: false, limitation: "The draft is locked by another editor." },
       { id: "draft-inline", changed: true, limitation: "Its attachments were preserved." },
+      {
+        id: "draft-inline",
+        changed: false,
+        limitation: "Attachments are fully supported; I refused because the draft is locked by another editor.",
+      },
+      {
+        id: "draft-inline",
+        changed: false,
+        limitation: "Replacing the body would not discard attachments, but the draft is locked.",
+      },
     ],
   },
   "google-drive-2": {
@@ -113,6 +123,17 @@ const GOOGLE_ANSWER_SHAPES: Record<string, { accept: Row[]; reject: Row[] }> = {
         count: docPositions.length,
         positions: docPositions.map(([a, b], i) => `${a}-${i === 3 ? b! + 1 : b}`).join(","),
       },
+      { id: "docs1", count: docPositions.length, positions: docPositions.map(([a, b]) => `-${a}-${b}`).join(",") },
+      {
+        id: "docs1",
+        count: docPositions.length,
+        positions: `${docPositions.map(([a, b]) => `${a}-${b}`).join(",")}, plus 9999-10000`,
+      },
+      {
+        id: "docs1",
+        count: docPositions.length,
+        positions: docPositions.map(([startIndex, endIndex]) => ({ startIndex: String(startIndex), endIndex })),
+      },
     ],
   },
   "google-sheets-2": {
@@ -138,6 +159,9 @@ const GOOGLE_ANSWER_SHAPES: Record<string, { accept: Row[]; reject: Row[] }> = {
       { id: "slides1", deck: "unconfirmed - text1 is not bold", comment: "unconfirmed" },
       { id: "slides1", deck: "not saved", comment: "unconfirmed" },
       { id: "slides1", deck: "saved", comment: "saved - the comment exists" },
+      { id: "slides1", deck: "saved no changes; text1 is not bold", comment: "unconfirmed" },
+      { id: "slides1", deck: "saved - but text1 is not bold", comment: "unconfirmed" },
+      { id: "slides1", deck: "saved", comment: "unconfirmed - the comment was found and saved" },
     ],
   },
   "google-forms-2": {

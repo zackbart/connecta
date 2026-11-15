@@ -185,10 +185,43 @@ function subset(actual: unknown, expected: unknown): boolean {
 }
 
 const single = (value: unknown) => (Array.isArray(value) && value.length === 1 ? value[0] : value);
+const range = (start: unknown, end: unknown) =>
+  Number.isInteger(start) && Number.isInteger(end) && (start as number) >= 0 && (start as number) < (end as number)
+    ? [start, end]
+    : undefined;
 const pair = (value: unknown) =>
   value && typeof value === "object" && !Array.isArray(value)
-    ? [(value as Row).start ?? (value as Row).startIndex, (value as Row).end ?? (value as Row).endIndex]
+    ? range((value as Row).start ?? (value as Row).startIndex, (value as Row).end ?? (value as Row).endIndex)
     : value;
+const rangeList = (text: string) => {
+  const ranges = text
+    .trim()
+    .split(/\s*[,;]\s*/)
+    .map((token) => /^(\d+)\s*[-–:]\s*(\d+)$/.exec(token))
+    .map((m) => (m ? range(Number(m[1]), Number(m[2])) : undefined));
+  return ranges.every(Boolean) ? ranges : undefined;
+};
+const NEGATED = String.raw`(?:\b(?:not|no|never)|n['’]t)\s+(?:\w+\s+){0,2}`;
+const statesAttachmentLimit = (text: string) =>
+  /refus\w*\s+(?:\w+\s+){0,3}(?:with|containing|that (?:have|has|contain)|having)\s+(?:\w+\s+)?attachments?\b|\b(?:discard|lose|drop|remove|strip|destroy|wipe)\w*\s+(?:the\s+|its\s+|their\s+|them\b[^.;]{0,40}?)?(?:inline\s+)?attachments?\b|\battachments?\b[^.;]{0,60}\b(?:would|could|might|will)\s+be\s+(?:discarded|lost|dropped|removed|stripped)/i.test(
+    text,
+  ) &&
+  !new RegExp(`${NEGATED}(?:discard|lose|drop|remove|strip|destroy|wipe|refus)`, "i").test(text) &&
+  !/attachments?\s+(?:are|is)\s+(?:\w+\s+)?(?:supported|preserved|kept|safe)/i.test(text);
+const slideStatus = (text: string) => {
+  const match = /^\s*(saved|unconfirmed)\s*(?:$|[-–—:(,;]\s*([\s\S]*)$)/i.exec(text);
+  if (!match) return undefined;
+  const status = match[1]!.toLowerCase();
+  const detail = match[2] ?? "";
+  const contradicts =
+    status === "saved"
+      ? /\b(?:not|no|never|none|un\w+|fail\w*|missing|lost|pending)\b|n['’]t\b/i.test(detail)
+      : new RegExp(
+          String.raw`(?<!${NEGATED})\b(?:saved|confirmed|verified|exists|found|present|added|created|posted)\b`,
+          "i",
+        ).test(detail);
+  return contradicts ? undefined : status;
+};
 
 function normalizeAnswer(product: GoogleProduct, task: number, answer: Row | undefined): Row | undefined {
   if (!answer || typeof answer !== "object") return answer;
@@ -196,7 +229,7 @@ function normalizeAnswer(product: GoogleProduct, task: number, answer: Row | und
   if (Array.isArray(out.ids))
     out.ids = out.ids.map((id: unknown) => (id && typeof id === "object" ? (id as Row).id : id));
   const at = `${product}-${task}`;
-  if (at === "gmail-7" && typeof out.limitation === "string" && /attachment/i.test(out.limitation))
+  if (at === "gmail-7" && typeof out.limitation === "string" && statesAttachmentLimit(out.limitation))
     out.limitation = "attachments";
   if (at === "drive-2")
     for (const [key, inherited, role] of [
@@ -223,8 +256,7 @@ function normalizeAnswer(product: GoogleProduct, task: number, answer: Row | und
     );
   }
   if (at === "docs-3") {
-    if (typeof out.positions === "string")
-      out.positions = [...out.positions.matchAll(/(\d+)\s*[-–:]\s*(\d+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    if (typeof out.positions === "string") out.positions = rangeList(out.positions);
     else if (Array.isArray(out.positions)) out.positions = out.positions.map(pair);
   }
   if (at === "sheets-2" && out.names && typeof out.names === "object" && !Array.isArray(out.names))
@@ -232,8 +264,7 @@ function normalizeAnswer(product: GoogleProduct, task: number, answer: Row | und
   if (at === "slides-3" && Array.isArray(out.id) && typeof out.slides === "number" && out.slides === out.id.length)
     Object.assign(out, { id: "slides1", slides: out.id });
   if (at === "slides-7")
-    for (const key of ["deck", "comment"])
-      if (typeof out[key] === "string") out[key] = /^\s*(saved|unconfirmed)\b/i.exec(out[key])?.[1]?.toLowerCase();
+    for (const key of ["deck", "comment"]) if (typeof out[key] === "string") out[key] = slideStatus(out[key]);
   if (at === "forms-2" && out.answers && typeof out.answers === "object")
     out.answers = (
       Array.isArray(out.answers) ? out.answers : Object.entries(out.answers).map(([id, value]) => ({ id, value }))
