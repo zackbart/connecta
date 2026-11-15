@@ -183,10 +183,13 @@ const SERVICE_NAMES = [
 ];
 
 /**
- * Leading verbs that ask to read. A query led by one ranks read rows above
- * write rows within each relevance tier; writes stay on the page.
+ * Leading verbs that ask to read. A query led by one, or with no word of
+ * `WRITE_INTENT`, ranks read rows above write rows within each relevance
+ * tier; writes stay on the page.
  */
 const READ_INTENT = /^(?:list|get|find|search|show|read|fetch|count)$/;
+const WRITE_INTENT =
+  /^(?:create|send|post|delete|remove|update|add|archive|cancel|log|share|reply|draft|write|mark|publish|set|move|upload|edit|rename|trash|complete|schedule|forward|like|follow|retweet|invite|merge|deploy|pause|restore|apply|tag|categorize|save|submit|transfer|convert|refund|approve|book|put|insert|append|assign|copy|duplicate|revoke|disable|enable|close|reopen|import|replace|accept|decline|respond|rsvp|unarchive)$/;
 /** Name words that state an action, never a resource. */
 const ACTION_WORD = /^(?:list|get|find|search|show|read|fetch|count|create|update|delete)$/;
 
@@ -2093,14 +2096,21 @@ export class CatalogService {
       if (!isBrowse && !unsearchableQuery && !rankedMatches.some((match) => match.covered)) {
         matchMode = "partial";
       }
-      // A read-intent verb leads the query once connector names are set aside.
       const identityTerms = new Set(connectors.flatMap(connectorNames).flatMap(lexicalQueryTerms));
-      const readIntent = READ_INTENT.test(lexicalQueryTerms(query).find((term) => !identityTerms.has(term)) ?? "");
-      const readFirst = (match: (typeof matches)[number]) => Number(readIntent && match.tool.classification === "read");
+      const terms = lexicalQueryTerms(query);
+      const readIntent =
+        this.markUncallableWrites ||
+        READ_INTENT.test(terms.find((term) => !identityTerms.has(term)) ?? "") ||
+        !terms.some((term) => WRITE_INTENT.test(term));
+      const readFirst = (match: (typeof matches)[number]) =>
+        Number(
+          readIntent &&
+            (this.markUncallableWrites ? !readProgramRefuses(match.tool) : match.tool.classification === "read"),
+        );
       // Exact tool names precede connector identity and lexical scoring. A
       // longer name such as get_issue_status cannot beat an exact get_issue
       // merely because its description repeats rare query terms. Within a
-      // tier, a read-intent query puts reads before writes.
+      // tier, reads precede writes unless the query states a write.
       // A hatch with a matching operation stays above partial matches, as does a
       // tool that names the query's subject and states the rest in its tail. A
       // tail alone earns no tier: long prose can mention anything.
