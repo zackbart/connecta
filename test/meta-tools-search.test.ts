@@ -11,8 +11,13 @@ import {
 } from "../src/catalog.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { createExecuteTool } from "../src/execute.js";
-import { createMetaTools, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
+import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
+import {
+  createMetaTools,
+  MAX_DISCOVERY_RESULT_BYTES,
+  MAX_INLINE_DISCOVERY_BYTES,
+  MAX_SEARCH_LIMIT,
+} from "../src/meta-tools.js";
 import type { Connector, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, connectorIds, textOf, toolsByConnector, type SearchResult } from "./fixtures/meta-tools.js";
@@ -206,10 +211,15 @@ describe("description summaries", () => {
       descriptionTruncated: true,
     });
     expect(textOf(await mt.searchTools({ query: "deactivate", connector: "directory" }))).toEqual(pages[0]);
-    const unabridged = textOf(
-      await mt.searchTools({ query: "deactivate", connector: "directory", fullDescriptions: true }),
-    ) as SearchResult;
-    expect(unabridged.tools).toHaveLength(tools.length);
+    const unabridged: SearchResult["tools"] = [];
+    for (let offset: number | undefined = 0; offset !== undefined;) {
+      const page = textOf(
+        await mt.searchTools({ query: "deactivate", connector: "directory", fullDescriptions: true, offset }),
+      ) as SearchResult & { nextOffset?: number };
+      unabridged.push(...page.tools);
+      offset = page.nextOffset;
+    }
+    expect(unabridged.map((tool) => tool.description).sort()).toEqual(tools.map((tool) => tool.description).sort());
 
     const program = (await createExecuteTool(
       registry,
@@ -1851,4 +1861,58 @@ it("counts both discovery copies and their JSON escaping against the ceiling", a
   expect(result.isError).toBe(true);
   expect(textOf(result)).toMatchObject({ error: { code: "result_too_large" } });
   expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
+});
+
+it("ends a page before the row that would pass the inline ceiling, keeping a lone oversized row whole", async () => {
+  const utf8 = (text: string) => new TextEncoder().encode(text).length;
+  const note = (index: number) => ({
+    name: `read_note_${String(index).padStart(2, "0")}`,
+    description: `Read note ${index}. ${"Body text. ".repeat(800)}`,
+    annotations: { readOnlyHint: true },
+  });
+  const tools: ToolDef[] = [
+    ...Array.from({ length: 30 }, (_, index) => note(index)),
+    {
+      name: "read_note_zz",
+      description: `Read the archive. ${"Archive. ".repeat(6_000)}`,
+      annotations: { readOnlyHint: true },
+    },
+  ];
+  const registry = makeRegistry([connectorWith({ id: "notes_alice", kind: "api", tools })]);
+  const mt = createMetaTools(registry, BASE);
+  const pages: (SearchResult & { limit: number; nextOffset?: number })[] = [];
+  for (let offset: number | undefined = 0; offset !== undefined;) {
+    const result = await mt.searchTools({ connector: "notes_alice", limit: 30, offset, fullDescriptions: true });
+    expect(result.isError).toBeFalsy();
+    const text = result.content[0]!.text;
+    const page = JSON.parse(text) as (typeof pages)[number];
+    expect(result.structuredContent).toEqual(page);
+    expect(page.tools.length).toBeGreaterThan(0);
+    expect(page.limit).toBe(30);
+    if (page.tools.length > 1) expect(utf8(text)).toBeLessThanOrEqual(MAX_INLINE_DISCOVERY_BYTES);
+    expect(page.nextOffset).toBe(page.hasMore ? offset + page.tools.length : undefined);
+    pages.push(page);
+    offset = page.nextOffset;
+  }
+  const rows = pages.flatMap((page) => page.tools);
+  expect(rows.map((tool) => tool.name)).toEqual(tools.map((tool) => tool.name));
+  expect(rows.map((tool) => tool.description)).toEqual(tools.map((tool) => tool.description));
+  expect(pages.length).toBeGreaterThan(Math.ceil(30 / 4));
+  const lone = pages.at(-1)!;
+  expect(lone.tools.map((tool) => tool.name)).toEqual(["read_note_zz"]);
+  expect(utf8(JSON.stringify(lone))).toBeGreaterThan(MAX_INLINE_DISCOVERY_BYTES);
+
+  const providers = await buildSandboxProviders(registry, BASE, silentLogger);
+  const search = required(providers.find((provider) => provider.name === "connecta")!.fns.search);
+  const programPage = (await search({
+    connector: "notes_alice",
+    limit: 30,
+    fullDescriptions: true,
+  })) as SearchResult & {
+    nextOffset?: number;
+  };
+  expect(programPage.tools.length).toBeGreaterThan(pages[0]!.tools.length);
+  expect(utf8(JSON.stringify(programPage))).toBeLessThanOrEqual(MAX_DISCOVERY_RESULT_BYTES);
+  expect(programPage.hasMore).toBe(true);
+  expect(programPage.nextOffset).toBe(programPage.tools.length);
 });

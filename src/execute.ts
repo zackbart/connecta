@@ -26,6 +26,7 @@ import {
   CatalogService,
   DiscoveryPolicyError,
   flatSearchResult,
+  MAX_DISCOVERY_RESULT_BYTES,
   type ResolvedCatalogTool,
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
@@ -1425,6 +1426,7 @@ function sandboxProvider(
               ...args,
               includeSchemas: args.includeSchemas ?? "typescript",
               includeSchemaKeys: args.includeSchemaKeys !== false,
+              maxTextBytes: MAX_DISCOVERY_RESULT_BYTES,
             },
             catalogDependency,
           )
@@ -1433,7 +1435,7 @@ function sandboxProvider(
               const result = flatSearchResult(page);
               boundedDiscoveryText(
                 result,
-                "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
+                "One row exceeds it alone: use compact schemas, omit fullDescriptions, or pass includeSchemaKeys: false.",
               );
               return result;
             }),

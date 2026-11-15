@@ -797,13 +797,22 @@ describe("meta-tool results under advertised output schemas", () => {
     });
     const big = api("big", {
       description: "Many verbose tools",
-      tools: Array.from({ length: 100 }, (_, index) => ({
-        name: `tool_${index}`,
-        description: `Lists records ${index}. ${"Detail ".repeat(600)}`,
-        inputSchema: { type: "object" },
-        annotations: { readOnlyHint: true },
-        handler: () => ({}),
-      })),
+      tools: [
+        ...Array.from({ length: 100 }, (_, index) => ({
+          name: `tool_${index}`,
+          description: `Lists records ${index}. ${"Detail ".repeat(600)}`,
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+          handler: () => ({}),
+        })),
+        {
+          name: "read_archive",
+          description: `Reads the whole archive. ${"Volume ".repeat(20_000)}`,
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+          handler: () => ({}),
+        },
+      ],
     });
     const settle = async (run: () => Promise<unknown>): Promise<ExecuteResult> => {
       try {
@@ -982,10 +991,17 @@ describe("meta-tool results under advertised output schemas", () => {
           { error: { code: "invalid_args", message: "connector must be at most 512 UTF-8 bytes.", retryable: false } },
         ),
         path(
-          "search over the discovery ceiling",
+          "search page ended by the inline budget",
           "meta",
           "search_tools",
           () => send("meta", "search_tools", { connector: "big", fullDescriptions: true, limit: 100 }),
+          "structured",
+        ),
+        path(
+          "search row over the discovery ceiling",
+          "meta",
+          "search_tools",
+          () => send("meta", "search_tools", { connector: "big", query: "archive", fullDescriptions: true }),
           "text",
           {
             error: {
