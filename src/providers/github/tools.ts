@@ -517,6 +517,17 @@ export function restConnector(id: string, auth: AppAuth, policy: ScopePolicy) {
           return yield* checked(() => {
             throw new ConnectorCallError("connector_call_failed", "GitHub returned an invalid pull request list.");
           });
+        const repositoryIds = new Set(answer.data.map((entry) => row(row(row(entry).base).repo).id));
+        for (const repositoryId of repositoryIds) {
+          if (!Number.isSafeInteger(repositoryId))
+            return yield* checked(() => {
+              throw new ConnectorCallError(
+                "connector_call_failed",
+                "GitHub omitted a pull request's repository binding; results were withheld.",
+              );
+            });
+          yield* authCall(ctx, (view) => auth.checkResult(t, repositoryId, token, view));
+        }
         const next = yield* checked(() => adapter.next(answer.data, { path, query, headers: answer.headers ?? {} }));
         if (next !== null && page === 1000)
           return yield* checked(() => {

@@ -814,8 +814,8 @@ describe("GitHub App provider", () => {
       draft: false,
       body: "Deploy with SECRET_PR_BODY",
       user: { login: "alice", id: 1 },
-      head: { ref: "feature/x", sha: "abc", repo: { full_name: "acme/one" } },
-      base: { ref: "main", sha: "def", repo: { full_name: "acme/one" } },
+      head: { ref: "feature/x", sha: "abc", repo: { id: 555, full_name: "outsider/fork" } },
+      base: { ref: "main", sha: "def", repo: { id: 101, full_name: "acme/one" } },
       labels: [{ name: "bug", color: "red" }],
       created_at: "2026-11-01T00:00:00Z",
       updated_at: "2026-11-02T00:00:00Z",
@@ -893,6 +893,33 @@ describe("GitHub App provider", () => {
     );
     expect(closed.items[0]).toMatchObject({ state: "closed", closed_at: "2026-11-03T00:00:00Z" });
     expect(fixture.requests.at(-1)!.url.searchParams.get("state")).toBe("closed");
+
+    // A replacement at the bound name, or a row without its binding, withholds the whole page.
+    for (const base of [{ id: 999, full_name: "acme/one" }, { full_name: "acme/one" }, undefined]) {
+      fixture.respond((request) =>
+        request.url.pathname === path
+          ? Response.json([pull(1, "open"), { ...pull(2, "open"), base: base && { ref: "main", repo: base } }])
+          : undefined,
+      );
+      const error = await connector
+        .callTool("list_pull_requests", { owner: "acme", repo: "one" }, ctx)
+        .catch((caught: unknown) => caught);
+      expect(error).toMatchObject({ code: "connector_call_failed", message: expect.stringContaining("withheld") });
+      expect(JSON.stringify(error)).not.toContain("Change 2");
+    }
+    fixture.repositories([
+      { id: 101, full_name: "acme/renamed" },
+      { id: 999, full_name: "acme/one" },
+      { id: 104, full_name: "acme/two" },
+    ]);
+    fixture.respond((request) =>
+      request.url.pathname === path
+        ? Response.json([{ ...pull(1, "open"), base: { ref: "main", repo: { id: 999, full_name: "acme/one" } } }])
+        : undefined,
+    );
+    await expect(connector.callTool("list_pull_requests", { owner: "acme", repo: "one" }, ctx)).rejects.toMatchObject({
+      code: "connector_call_failed",
+    });
 
     const before = fixture.requests.length;
     for (const args of [

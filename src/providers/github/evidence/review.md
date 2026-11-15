@@ -217,7 +217,10 @@ permission, and sends only `state` (`open`, `closed` or `all`; default open),
 `per_page` and `page`. Paging follows the shared Link adapter, which accepts only
 a same-origin next link with unchanged filters; the signed cursor binds the
 grants, owner, repository, state and limit, with the same 1,000-page bound as
-the repository listing. Rows project number, id, title, state, draft, author
+the repository listing. Every row must carry `base.repo.id`, and each distinct
+id is checked through the App's bound repository mapping and issued token
+before any row is projected, so a replacement repository created at a renamed
+grant's old name is withheld; a fork's foreign `head.repo` stays valid. Rows project number, id, title, state, draft, author
 login, head and base ref names, label names, timestamps and html_url. Bodies,
 head/base repository objects and SHAs are not projected. Search qualifiers such as
 `is:open` remain refused in `search_scoped` by design (decision 0014); recorded
