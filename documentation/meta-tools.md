@@ -185,6 +185,15 @@ Follow-up text from `call_tool`, `search_tools` and both program routes names th
 on endpoints that list it, including paging a writing program's oversized return, so
 paging costs no write approval and cannot resend the write.
 
+**Route names in its messages.** Every message a read program's run produces names
+`execute_read_code`, never `execute_code`: budget stops
+(`execute_read_code host-call budget exceeded (20 calls maximum); …`), the source-size
+limit, response-ceiling and sandbox timeouts with `details.operation: "execute_read_code"`,
+including timeouts the executor reports, and the truncation fallback's
+filter/map/slice instruction. Its host-call stop omits the warning against resending
+writes, since the run sent none. Only the write refusal above names the write routes.
+`execute_code` messages keep their existing text.
+
 **Off switch.** `execute: { readRoute: false }` in deployment code stops listing it
 on every writable endpoint. It is the deployment's choice alone, and suits a deployment
 that wants a person to see every program, given the limit below.
@@ -1751,6 +1760,15 @@ list connectors from another pool or identity's grants.
 An `unknown_tool` error from a direct call or a program carries `suggestions`
 when the connector has a tool with a near name: canonical addresses ranked as
 describe ranks them, and only reads on a read-only endpoint or connector.
+
+Where this scope refuses the connector's writes (a read-only endpoint, a
+`readOnly` connector, or a write a read-only pool's `writes` does not grant),
+the `unknown_tool` message adds: `Search omits writes refused here; a write's
+exact address returns read_only_endpoint, not unknown_tool.` A write that exists
+in the scope's catalog is refused with `read_only_endpoint` before validation or
+dispatch; a guessed name that does not exist, a hidden tool, and a tool outside
+the pool all return this same `unknown_tool`, so the note depends only on the
+scope's configuration and never on what the catalog holds.
 
 A direct call whose arguments do not match `call_tool` or `call_destructive_tool`
 fails input validation before anything is resolved. The message names the shape:

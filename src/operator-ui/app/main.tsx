@@ -29,7 +29,8 @@ import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
 import { MemberPage } from "./member.js";
-import { ContractState } from "./contract-state.js";
+import { ContractState, contractLoading } from "./contract-state.js";
+import { PageSkeleton } from "./skeletons.js";
 import { HealthProvider } from "./health.js";
 import { NoticeLine, PageLink, StateBlock } from "./parts.js";
 import { Icon } from "./icons.js";
@@ -46,6 +47,7 @@ import {
   signInWithBearer,
   signOut,
   navHint,
+  sessionPresumed,
   subscribe,
   configureNavigation,
   routeChanged,
@@ -298,8 +300,10 @@ function NoAccess() {
 
 /** Signed in, role not yet known: the page's name and its loading or error state. */
 function RolePending({ state }: { state: OperatorState }) {
+  if (contractLoading(state) && state.page === "overview") return <OverviewPage state={state} />;
+  if (contractLoading(state) && state.page === "connections") return <ConnectorsPage state={state} />;
   return (
-    <section id="rolePending">
+    <section id="rolePending" aria-busy={contractLoading(state) ? "true" : "false"}>
       <div className="page-heading">
         <div>
           <h1 id={`${state.page}Heading`} tabIndex={-1}>
@@ -308,7 +312,7 @@ function RolePending({ state }: { state: OperatorState }) {
           <p className="meta">{pageDescription(state.page, productDescription)}</p>
         </div>
       </div>
-      <ContractState state={state} />
+      {contractLoading(state) ? <PageSkeleton /> : <ContractState state={state} />}
     </section>
   );
 }
@@ -426,6 +430,8 @@ function OperatorApp() {
     </>
   ) : state.session === "denied" ? (
     <NoAccess />
+  ) : state.session === "loading" && sessionPresumed() ? (
+    <RolePending state={state} />
   ) : (
     <Gate state={state} />
   );

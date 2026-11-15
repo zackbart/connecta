@@ -317,7 +317,10 @@ both. Search and describe rows carry `classification`. These filters grant no
 authority and change no call admission decision. On a read-only endpoint or connector,
 search and describe omit write tools (`W12`): a write is absent from every
 filter, and describing one is `unknown_tool`. `connecta.skill` guides are not
-filtered and may name such a write; calling it is still refused.
+filtered and may name such a write; calling it is still refused with
+`read_only_endpoint`. Calling a name the scope's catalog lacks is `unknown_tool`,
+whose message there says search omits refused writes and that only a write's exact
+address returns `read_only_endpoint` ([meta-tools](./meta-tools.md#argument-recovery)).
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`
 (declared properties only), and `outputKeys`: the names the rendered schema

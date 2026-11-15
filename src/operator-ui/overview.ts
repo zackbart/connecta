@@ -3,7 +3,7 @@ import type { FixPromptKind } from "./fix-prompts.js";
 import type { UiProblem } from "./model.js";
 import { endpointRows } from "./endpoints.js";
 import { joinList, type ConnectionMap } from "./connection-map.js";
-import { connectorVerdict, type ConnectorSignals } from "./view.js";
+import { connectorVerdict, PENDING_VERDICT, type ConnectorSignals } from "./view.js";
 
 /**
  * The Overview's headline and its "Needs attention" list, from operator
@@ -18,6 +18,7 @@ export interface OverviewHeadline {
   /** Connectors with a warning, then failing ones. */
   warn: number;
   danger: number;
+  pending: number;
   /** One tone per connector, in config order, for the health bar. */
   bar: Array<{ id: string; title: string; tone: "ok" | "warn" | "danger" | "neutral"; label: string }>;
   endpoints: number;
@@ -158,11 +159,14 @@ export function overviewHeadline(
   items: readonly AttentionItem[],
   signals: Readonly<Record<string, ConnectorSignals>> = {},
 ): OverviewHeadline {
-  const bar = (contract.config?.connectors ?? []).flatMap((config) => {
+  let pending = 0;
+  const bar = (contract.config?.connectors ?? []).map((config) => {
     const live = contract.live.connectors.find((c) => c.id === config.id);
-    if (!live) return [];
-    const health = connectorVerdict(live, Object.hasOwn(signals, config.id) ? signals[config.id] : undefined);
-    return [{ id: config.id, title: config.title ?? config.id, tone: health.tone, label: health.label }];
+    if (!live) pending++;
+    const health = live
+      ? connectorVerdict(live, Object.hasOwn(signals, config.id) ? signals[config.id] : undefined)
+      : PENDING_VERDICT;
+    return { id: config.id, title: config.title ?? config.id, tone: health.tone, label: health.label };
   });
   const healthy = bar.filter((entry) => entry.tone === "ok").length;
   const warn = bar.filter((entry) => entry.tone === "warn").length;
@@ -173,6 +177,7 @@ export function overviewHeadline(
     healthy,
     warn,
     danger,
+    pending,
     bar,
     endpoints: count("endpoint"),
     readOnlyEndpoints: map.nodes.filter((node) => node.kind === "endpoint" && node.readOnly).length,

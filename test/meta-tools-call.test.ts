@@ -269,6 +269,20 @@ describe("call_tool", () => {
       error: { suggestions?: string[] };
     };
     expect(readOnly.error.suggestions).toEqual(["tickets.get_ticket"]);
+    const readOnlyTools = createMetaTools(nearby, BASE, { readOnly: true });
+    const omitted =
+      "Search omits writes refused here; a write's exact address returns read_only_endpoint, not unknown_tool.";
+    for (const call of [readOnlyTools.callTool, readOnlyTools.callDestructiveTool]) {
+      expect((await call({ address: "tickets.set_ticket" })).structuredContent).toMatchObject({
+        error: { code: "read_only_endpoint" },
+      });
+      expect((await call({ address: "tickets.close_ticket" })).structuredContent).toMatchObject({
+        error: { code: "unknown_tool", message: `Unknown tool "close_ticket" on connector "tickets". ${omitted}` },
+      });
+    }
+    expect(
+      (await createMetaTools(nearby, BASE).callDestructiveTool({ address: "tickets.close_ticket" })).structuredContent,
+    ).toMatchObject({ error: { message: 'Unknown tool "close_ticket" on connector "tickets"' } });
     const distant = textOf(await createMetaTools(nearby, BASE).callTool({ address: "tickets.zzzzzzzzzzzzzzzzzz" })) as {
       error: Record<string, unknown>;
     };

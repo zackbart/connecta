@@ -60,13 +60,17 @@ parameters such as signed handoffs. A pool member sees the
 
 ### Overview
 
-- **Status pill.** "N need attention" (red when a connector is failing) or
-  "All healthy". No pill without connectors.
+- **Status pill.** "N need attention" (red when a connector is failing),
+  "Checking" while a connector has no verdict yet and nothing needs attention,
+  or "All healthy". No pill without connectors.
 - **Stat tiles.** Connectors (healthy of total, a bar with one segment per
   connector in its health color), Endpoints (count, a bar split read-only and
   read-write), and People · Agents (both counts, up to eight avatars and agent
   marks; a tokenless agent's mark is hollow). A dot legend counts each segment
-  kind; the first two tiles link to their pages. At 760px and below the tiles
+  kind; the first two tiles link to their pages. The total is the configured
+  connector count from the first render. A connector without a verdict yet is
+  a neutral segment counted as "checking", never healthy, and the healthy count
+  is a placeholder until the first verdict lands. At 760px and below the tiles
   sit two up, with People · Agents as one row across both.
 - **Needs attention.** One row per connector whose health is not ok, in
   configuration order, then one per agent in a pool whose token is missing or revoked. A
@@ -77,16 +81,24 @@ parameters such as signed handoffs. A pool member sees the
   problem code also has Copy fix prompt. A problem keeps its row and
   prompt when the connector's detail read failed, prefixed "Details didn't
   load". Surviving connector rows retain their order as individual reads settle,
-  even when their severity changes. With no rows it reads "All clear".
+  even when their severity changes. While any connector has no verdict yet, a
+  "Checking N connectors…" line follows the rows. "All clear" shows only when
+  there are no rows and every connector has a verdict.
 - **Who reaches what.** The [connection map](#connection-map).
 
 ### Connection map
 
 An SVG flow of callers (people in contract order, then declared agents) to
 endpoints (`/mcp`, then pools) to connectors in config order, with a last
-column of each connector's read and write tool counts. A connector whose
-catalog is unknown (failed or not yet observed) draws a muted dash there
-instead of "0 tools".
+column of each connector's read and write tool counts. Every configured
+connector has its node from the first render; one without a verdict yet is
+neutral and reads "Checking". A connector whose catalog is unknown (failed,
+not yet read, or a stored row) draws a muted dash there instead of "0 tools";
+a stored row that carries a tool count shows that count over an empty bar.
+The Tools column count reads "–" until every connector has a verdict and a
+count. Grant links, endpoint rows and reach sentences come from configuration,
+so a connector still checking keeps its links and is never described as
+unreachable.
 
 - A grant link takes its connector's health color. Grants on a read-only
   endpoint are dashed; an agent's link to its pool is dotted while it has no
@@ -134,7 +146,8 @@ Setup button.
   still shows two URLs labeled People and Agents; the People URL
   (`/mcp/<pool>`) admits no one, because the pool has no people.
 - Expanding a row lists everyone by name, then each connector with what it
-  runs as and its tools, write tools amber with a pencil. Runs-as comes from
+  runs as and its tools, write tools amber with a pencil, or "Checking…"
+  while its details or live tools have not loaded. Runs-as comes from
   the endpoint's matrix cell: "Shared · saved <date>", "Shared · connected
   <date>", "Shared · not configured", "Shared · set in deployment", "Shared ·
   no credential needed", "Personal · N of M connected", "Workspace · people:
@@ -145,14 +158,23 @@ Setup button.
   with a copy button. No snippet carries a token.
 
 Counts intersect live tools with the pool's declared tools (the `/mcp` matrix
-cells for the root), guarded grants' live verdicts, and read-only mode.
+cells for the root), guarded grants' live verdicts, and read-only mode. While
+any of an endpoint's connectors has no live tools yet (details pending, a
+stored row awaiting its live read, or a parked stored timeout), the row's
+count reads "–" and the map's sentences say its tools are not known yet,
+never zero.
 
 ### Connectors
 
 One card per connector: title and id, one status pill, a Shared or Per person
 badge, a Read-only badge when connector `readOnly` is enabled, its tool count over a read and write bar, and when it was last called.
+All cards form one list in configuration order from the first render. A card
+whose connector has no verdict yet is a placeholder of the same height: its
+title, id and description, with the pill, badges, tool bar and last call as
+placeholders that pulse unless reduced motion is requested. Before the
+contract answers, the page shows placeholder cards and filters.
 All, Needs attention and Healthy filter the cards, with counts, beside a
-search field. A connector that is not fine adds one action (Connect, Replace
+search field. A connector without a verdict counts in All only. A connector that is not fine adds one action (Connect, Replace
 key or Inspect) that opens its Connection tab.
 
 Every view shares one verdict per connector: the server's problem code first
@@ -167,7 +189,7 @@ connector's Refresh) keeps the verdict the page last showed for it on every
 view (cards, filter counts, the Overview headline, bar, attention list and map,
 Endpoints and the connector page) until that read settles, never "Loading
 details" or an in-between verdict. A connector with no earlier verdict shows
-its contract status. Each connector changes only when its own read settles,
+its contract status, or "Checking" while the contract has no row for it. Each connector changes only when its own read settles,
 so one slow read never holds back the others and no row moves for an
 in-between verdict. A new signed-in identity starts fresh. Cards reserve the action footer
 even when no action is needed and the tool bar row even when the catalog is
@@ -187,7 +209,9 @@ endpoint, `/mcp` first. A row header is the connector's monogram and name, plus
 a status dot linking to Connection when it needs fixing. Each cell is a pie of
 how much of the live catalog it grants, with "all", a count, or a dash for
 none; read-only columns are hatched. Only granted names still in the live
-catalog count. An unknown catalog shows a dashed empty ring and "?". A cell
+catalog count. An unknown catalog shows a dashed empty ring and "?". A
+connector whose details are pending keeps its row in config order, marked
+"Checking…" in place of its status dot, with unknown cells. A cell
 with grants is a button named like "GitHub on /mcp/support: 1 of 2 live
 tools, read-only"; it opens a popover of that cell's tools, each with a read
 or write pill (a write struck through on a read-only endpoint), and its
@@ -332,7 +356,12 @@ private 404 shows "No access" with who to ask and Sign out or Change token,
 and a 200 renders by `role`. `/ui/data`, connector details, activity and
 tokens are requested only after the contract says `maintainer`, and each read
 checks the role again when it is sent. Until a role is confirmed the page
-shows its loading or error state and no navigation. Activity and Tokens keep
+shows its loading or error state and no navigation. While the session is
+checked and one is plausibly established already (Cloudflare Access, a Clerk
+session once Clerk has loaded, or a stored bearer token), the requested page
+shows its heading and a placeholder of its layout, marked busy, instead of the
+sign-in card; the gate shows "Sign in" only when no session is apparent, and
+on a refusal, a denial or a failure. Activity and Tokens keep
 their own permission gates.
 
 The store keeps the last confirmed role through a failed refresh: a
@@ -639,11 +668,17 @@ no `ctx.waitUntil`.
 The browser asks each connector for its stored observation on the page load
 that follows admission, and fixes the observation time once as each stored
 row lands. The list card and the connector page mark a stored row the same
-way, "Stored status, checked … ago", with an age that keeps counting, and
-show its tools as awaiting the live read rather than as none. The browser then
-sends one plain live read per stored row, through the same queue of eight
-detail reads. A stored `connector_timeout` row is not read again on its own;
-its mark says to Refresh, and it waits for Refresh like a live timeout.
+way: a quiet "Checking…" whose hover names the stored observation's time, and
+a tool bar that shows the stored tool count over an empty bar (a placeholder
+when the count is unknown, including every stored observation that is not
+`ok` or carries a problem), never "No tools". The browser then
+sends one plain live read per stored row, through the same queue of twelve
+detail reads; queued stored reads start before any queued live read. A stored
+`connector_timeout` row is not read again on its own; its mark reads "Stored
+status, checked … ago. Refresh to check again." with an age that keeps
+counting, and it waits for Refresh like a live timeout. On a card that mark
+stays on one line, truncated with its full text on hover, so a card keeps its
+height when its placeholder resolves.
 Refresh, a single connector's read, recovery retries and OAuth polls always
 read live.
 
@@ -713,19 +748,25 @@ are discarded without clearing the snapshot or showing sign-in. A late full
 admission may publish behind its original identity and revision fences. HTTP
 401/403 refusal, identity change and sign-out clear immediately;
 member failures still remove their actionable projection. Retry aborts the old
-admission cycle; navigation and identity transitions cancel its reads. Passive
+admission cycle; navigation and identity transitions cancel its reads. The
+connector reads that follow a successful admission belong to the identity, not
+the cycle: navigation and Retry leave them running, a newer cycle reuses them,
+and only an identity change cancels them. Passive
 attempts coalesce even after the deadline. Automatic admission retries remain
 bounded at 2, 2, 4 and 8 seconds; a later focus return can try again after backoff.
 
 Connector Refresh, focus recovery and mutation follow-ups read only affected
 connectors. Focus probes unhealthy rows, never healthy siblings. All detail reads
-in one tab share an eight-request limit and coalesce per connector, so a page of
-up to eight connectors loads in one round. The limit is fixed, not configured.
+in one tab share a twelve-request limit and coalesce per connector, so a page of
+up to twelve connectors loads in one round. Queued stored reads start before
+queued live reads, so every card shows its stored verdict before any waits on
+a slow downstream. The limit is fixed, not configured; it keeps one tab's burst
+below the sixteen concurrent authentications an isolate admits before queueing.
 It bounds how many connectors one tab waits on at once; a tab still reads each
 connector once per load, so the limit adds no requests to any one connector.
 Detail reads do not consume `admission.requests` permits, which govern `/mcp`
 only. They still share isolate CPU and memory, D1, and downstream account quotas
-with agent traffic; each tab adds up to eight concurrent downstream reads, and
+with agent traffic; each tab adds up to twelve concurrent downstream reads, and
 several connectors on one vendor account share that vendor's rate limit. Over HTTP/1.1 the browser itself allows about six
 connections per origin.
 Failures retry only their

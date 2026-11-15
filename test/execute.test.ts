@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { routeNames } from "../src/agent-routes.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { buildSandboxProviders, createExecuteTool } from "../src/execute.js";
 import { AdmissionController, withExecutorAdmission } from "../src/executor-admission.js";
@@ -679,6 +680,148 @@ describe("execute_code executor watchdog", () => {
       retryable: false,
     });
     expect(admission.snapshot().active).toBe(0);
+  });
+});
+
+describe.each([
+  { route: "execute_code", config: {} },
+  {
+    route: "execute_read_code",
+    config: { readProgram: true, routes: routeNames("read-route"), followUpRoutes: routeNames("read-route") },
+  },
+] as const)("program-path messages on $route", ({ route, config }) => {
+  type RunnerConfig = NonNullable<Parameters<typeof createExecuteTool>[5]>;
+  const run = (executor: Executor, extra: RunnerConfig = {}, code = "async () => null") =>
+    createExecuteTool(makeRegistry([calcConnector]), BASE, executor, silentLogger, undefined, {
+      ...config,
+      ...extra,
+    })({ code });
+  const errorOf = (out: Awaited<ReturnType<typeof run>>) => {
+    expect(out.isError).toBe(true);
+    const error = required(out.structuredContent).error as CallErrorDetails;
+    if (route === "execute_read_code") expect(JSON.stringify(out.structuredContent)).not.toContain("execute_code");
+    return error;
+  };
+  const bridge = (body: (fns: ExecutorProvider["fns"]) => void): Executor => ({
+    async execute(_code, providers) {
+      body(connectaProvider(providers).fns);
+      return { result: "must not be returned" };
+    },
+  });
+
+  it("budget stops name the route, and only a writing route warns against resending writes", async () => {
+    const hostCalls = errorOf(
+      await run(
+        bridge((fns) => {
+          for (let i = 0; i < 21; i++) void required(fns.call)("calc.add", { a: 1, b: 1 }).catch(() => {});
+        }),
+      ),
+    );
+    expect(hostCalls).toMatchObject({ code: "budget_exceeded", retryable: false });
+    expect(hostCalls.message).toBe(
+      route === "execute_code"
+        ? "execute_code host-call budget exceeded (20 calls maximum); the run returned nothing. Split the rest across programs of at most 20 calls each; do not resend any write it sent."
+        : "execute_read_code host-call budget exceeded (20 calls maximum); the run returned nothing. Split the rest across programs of at most 20 calls each.",
+    );
+
+    const notice = errorOf(
+      await run(
+        bridge((fns) => {
+          for (let i = 0; i < 2; i++) void Promise.resolve(required(fns.unawaited)()).catch(() => {});
+        }),
+      ),
+    );
+    expect(notice.message).toBe(`${route} missing-await notice is limited to one per run.`);
+
+    const emits = errorOf(
+      await run(
+        bridge((fns) => {
+          for (let i = 0; i < 1_000; i++) void Promise.resolve(required(fns.emit)("not a block")).catch(() => {});
+        }),
+      ),
+    );
+    expect(emits.code).toBe("budget_exceeded");
+    expect(emits.message).toMatch(
+      new RegExp(`^${route} emission-attempt budget exceeded \\(\\d+ attempts maximum\\)\\.$`),
+    );
+  });
+
+  it("limits and timeouts name the route", { timeout: 8_000 }, async () => {
+    const tooLong = errorOf(await run(fakeExecutor(), {}, "x".repeat(65_537)));
+    expect(tooLong.message).toBe(`${route} code exceeds the 65536-byte UTF-8 limit.`);
+
+    const unstarted = errorOf(await run(fakeExecutor(), { watchdogMs: 1_000, requestStartedAt: Date.now() - 2_000 }));
+    expect(unstarted).toMatchObject({
+      message: `Operation "${route}" used its 1000ms response ceiling before it started, so it did not run and sent nothing. Run it again.`,
+      details: { operation: route, stage: "response ceiling" },
+    });
+
+    const sandbox = errorOf(
+      await run({
+        execute: async () => ({
+          result: undefined,
+          error: "Timed out",
+          failure: { name: "Error", timeout: { elapsedMs: 12, deadlineMs: 10 } },
+        }),
+      }),
+    );
+    expect(sandbox).toMatchObject({
+      message: `Operation "${route}" timed out during sandbox after 12ms (effective deadline 10ms).`,
+      details: { operation: route, stage: "sandbox", elapsedMs: 12, deadlineMs: 10 },
+    });
+
+    const terminated = errorOf(
+      await run({
+        execute: () =>
+          Promise.reject(
+            new InvocationFailure({
+              code: "timeout",
+              message:
+                'Operation "execute_code" timed out during sandbox termination after 7ms (effective deadline 5ms).',
+              retryable: false,
+              details: { operation: "execute_code", stage: "sandbox termination", elapsedMs: 7, deadlineMs: 5 },
+            }),
+          ),
+      }),
+    );
+    expect(terminated).toMatchObject({
+      message: `Operation "${route}" timed out during sandbox termination after 7ms (effective deadline 5ms).`,
+      details: { operation: route, stage: "sandbox termination" },
+    });
+
+    const wedged = { execute: () => new Promise<never>(() => {}) };
+    const unresponsive = errorOf(await run(wedged, { watchdogMs: 200 }));
+    expect(unresponsive.message).toMatch(
+      new RegExp(
+        `^Operation "${route}" timed out during sandbox watchdog after \\d+ms \\(effective deadline 200ms\\); sandbox unresponsive\\.$`,
+      ),
+    );
+    expect(unresponsive.details).toMatchObject({ operation: route, stage: "sandbox watchdog" });
+
+    const ceiling = errorOf(await run({ ...wedged, deadlineMs: 60_000 }, { watchdogMs: 200 }));
+    expect(ceiling.message).toMatch(
+      new RegExp(
+        `^Operation "${route}" timed out during response ceiling after \\d+ms \\(effective deadline 200ms\\)\\. Return sooner, or do less in one program\\.$`,
+      ),
+    );
+    expect(ceiling.details).toMatchObject({ operation: route, stage: "response ceiling" });
+  });
+
+  it("an oversized return that cannot page tells the agent to reduce it on the same route", async () => {
+    const stalled = memoryStorage();
+    stalled.set = () => new Promise<never>(() => {});
+    const out = await createExecuteTool(
+      makeRegistry([calcConnector], { storage: stalled }),
+      BASE,
+      fakeExecutor({ result: "x".repeat(100_000) }),
+      silentLogger,
+      undefined,
+      { ...config, watchdogMs: 2_000, requestStartedAt: Date.now() - 1_500 },
+    )({ code: "async () => {}" });
+    expect(out.isError, JSON.stringify(out.structuredContent)).toBeFalsy();
+    const { hint } = required(out.structuredContent).result as { hint: string };
+    expect(hint).toMatch(new RegExp(` filter/map/slice data inside ${route} and return only what you need$`));
+    if (route === "execute_read_code") expect(hint).not.toContain("execute_code");
   });
 });
 

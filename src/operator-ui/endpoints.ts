@@ -19,7 +19,8 @@ import type { DescribedConnector } from "../describe-config.js";
 
 export interface EndpointGroup {
   config: DescribedConnector;
-  live: OperatorConnectorOverlay;
+  /** Null while the connector's details have not loaded. */
+  live: OperatorConnectorOverlay | null;
   /** Live tools this endpoint serves, after grants, guards and read-only mode. */
   tools: OperatorTool[];
   /** The matching matrix cell's subject, or null when the matrix has no cell. */
@@ -39,7 +40,8 @@ export interface EndpointRow {
   readOnly: boolean;
   surface: "meta" | "native";
   executeCode: boolean;
-  toolCount: number;
+  /** Null while any connector's tools have not loaded. */
+  toolCount: number | null;
   groups: EndpointGroup[];
   /** Who can use it: root.maintainers for /mcp, the pool's members otherwise. */
   access: AccessChip[];
@@ -129,10 +131,10 @@ function endpointGroups(
 ): EndpointGroup[] {
   const cells = cellsFor(contract, pool);
   return (contract.config?.connectors ?? []).flatMap((config) => {
-    const live = contract.live.connectors.find((c) => c.id === config.id);
+    const live = contract.live.connectors.find((c) => c.id === config.id) ?? null;
     const grant = grants.find((g) => g.connectorId === config.id);
-    if (!live || !grant) return [];
-    const tools = live.tools.filter((tool) => {
+    if (!grant) return [];
+    const tools = (live?.tools ?? []).filter((tool) => {
       if (
         tool.classification !== "read" &&
         (config.readOnly || (readOnly && !writes.includes(`${config.id}.${tool.name}`)))
@@ -150,7 +152,12 @@ function endpointGroups(
   });
 }
 
-const toolCount = (groups: EndpointGroup[]) => groups.reduce((n, group) => n + group.tools.length, 0);
+/** The connector's details or live tools have not loaded, so its tools are unknown. */
+export const toolsPending = (group: EndpointGroup): boolean =>
+  !group.live || (group.live.observedAt !== undefined && group.live.tools.length === 0);
+
+const toolCount = (groups: EndpointGroup[]) =>
+  groups.some(toolsPending) ? null : groups.reduce((n, group) => n + group.tools.length, 0);
 
 /** How many of these tools read and how many write; an unclassified tool counts as neither. */
 export function toolSplit(tools: ReadonlyArray<{ classification: "read" | "write" | null }>): {

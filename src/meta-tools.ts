@@ -712,6 +712,7 @@ export function guardProgramReturn(
   storeBy?: number,
   readBytes?: number,
   routes?: AgentRouteNames,
+  program?: string,
 ): Promise<unknown> {
   return runEdge(
     guardProgramReturnNative(
@@ -728,6 +729,7 @@ export function guardProgramReturn(
       storeBy,
       readBytes,
       routes,
+      program,
     ),
   );
 }
@@ -748,6 +750,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
     storeBy?: number,
     readBytes?: number,
     routes: AgentRouteNames = META_ROUTES,
+    program?: string,
   ) {
     return authFlow<unknown>(function* () {
       if (serializeResultText(value).length <= maxChars) return value;
@@ -795,7 +798,7 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
         const budget = Math.max(0, maxChars - JSON.stringify(base).length);
         return { ...base, preview: escapedHeadOf(bytes, Math.min(512, budget)) };
       }
-      const fallback = guardExecuteResultValue(secrets.redact(value), maxChars, notice.hint) as {
+      const fallback = guardExecuteResultValue(secrets.redact(value), maxChars, notice.hint, program) as {
         truncated: true;
         preview: string;
         totalChars: number;
