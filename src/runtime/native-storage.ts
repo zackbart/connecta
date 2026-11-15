@@ -2,7 +2,7 @@
 // Custom KVStorage implementations continue through the existing Promise lift.
 import { Effect } from "effect";
 import type { KVStorage } from "../types.js";
-import type { ActivityPage, ActivityStore, ToolCallActivityEvent } from "../activity.js";
+import type { ActivityListOptions, ActivityPage, ActivityStore, ToolCallActivityEvent } from "../activity.js";
 
 export interface NativeStorage {
   get(key: string): Effect.Effect<string | null, unknown>;
@@ -37,7 +37,7 @@ export interface NativeStorage {
 
 export interface NativeActivityStore {
   record(event: ToolCallActivityEvent): Effect.Effect<void, unknown>;
-  list(options: { cursor?: string; limit: number }): Effect.Effect<ActivityPage, unknown>;
+  list(options: ActivityListOptions): Effect.Effect<ActivityPage, unknown>;
 }
 
 // Match the custom Promise-store lift: operation construction, validation and
