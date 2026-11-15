@@ -558,6 +558,22 @@ export function sqlStorageContract(open: () => Promise<SqlFixture>): void {
     expect(seen).toEqual([7, 6, 5, 4, 3, 2, 1, 0].map((index) => id(index)));
   });
 
+  it("pages one connector's activity newest first past other connectors' rows", async () => {
+    const activity = (await open()).activity();
+    for (let index = 0; index < 9; index++)
+      await activity.record(event(index, { connectorId: index % 3 === 0 ? "crm" : "notes" }));
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await activity.list!({ limit: 2, connectorId: "crm", ...(cursor ? { cursor } : {}) });
+      expect(page.events.every((entry) => entry.connectorId === "crm")).toBe(true);
+      seen.push(...page.events.map((entry) => entry.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(seen).toEqual([6, 3, 0].map((index) => id(index)));
+    expect((await activity.list!({ limit: 5, connectorId: "tickets" })).events).toEqual([]);
+  });
+
   it("INV-6: validates package versions on SQL writes and historical reads", async () => {
     const db = await open();
     const activity = db.activity();

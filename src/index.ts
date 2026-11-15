@@ -586,6 +586,7 @@ export type {
 export type {
   ActivityActor,
   ActivityCatalogChange,
+  ActivityListOptions,
   ActivityCallSource,
   ActivityOutcome,
   ActivityPage,
