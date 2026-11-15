@@ -112,7 +112,10 @@ const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
-/** UTF-8 bytes of full tool purposes one describe call returns; fallback summaries have their own bound. */
+/**
+ * UTF-8 bytes of full tool purposes one describe call returns, and of full
+ * write purposes one search page returns; fallback summaries have their own bound.
+ */
 export const MAX_DESCRIBE_DESCRIPTION_BYTES = 32 * 1024;
 const MAX_QUERY_TERMS = 8;
 const MAX_QUERY_TERM_LENGTH = 64;
@@ -1954,7 +1957,19 @@ export class CatalogService {
           a.order - b.order
         );
       });
-      const pageMatches = matches.slice(offset, offset + limit);
+      const fullWriteBytes = (tool: ToolDef) =>
+        args.fullDescriptions !== true && tool.classification !== "read" && tool.description
+          ? encoder.encode(tool.description).length
+          : 0;
+      const pageMatches: typeof matches = [];
+      let writeDescriptionBytes = 0;
+      for (const match of matches.slice(offset, offset + limit)) {
+        const bytes = fullWriteBytes(match.tool);
+        if (pageMatches.length > 0 && writeDescriptionBytes + bytes > MAX_DESCRIBE_DESCRIPTION_BYTES) break;
+        pageMatches.push(match);
+        writeDescriptionBytes += bytes;
+        if (writeDescriptionBytes > MAX_DESCRIBE_DESCRIPTION_BYTES) break;
+      }
       const withSchemas = args.includeSchemas;
       const entries = pageMatches.map((selected) => {
         const match = { ...selected, tool: cloneTool(selected.tool) };
@@ -1980,7 +1995,7 @@ export class CatalogService {
             : undefined;
         const schemaKeys = withSchemas && args.includeSchemaKeys ? schemaKeyMetadata(input, output.schema) : undefined;
         const summary =
-          match.tool.description && args.fullDescriptions !== true
+          match.tool.description && args.fullDescriptions !== true && match.tool.classification === "read"
             ? discoverySummary(match.tool.description)
             : undefined;
         const description = summary ? summary.text : match.tool.description || undefined;

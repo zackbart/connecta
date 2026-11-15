@@ -919,7 +919,7 @@ export class InvocationService {
           } else if (refusal === "destructive_tool_requires_approval") {
             return framingError(
               "destructive_tool_requires_approval",
-              `Tool "${canonicalAddress}" is a write. ${routePhrases(context).writeNeedsApproval}`,
+              `Tool "${canonicalAddress}" is a write. ${routePhrases(context).writeNeedsApproval}${target.definition.description ? ` Its full description, which may state steps required before it: ${target.definition.description}` : ""}`,
             );
           }
           // Remote MCP tools advertise their input schema in the catalog. Validate

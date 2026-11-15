@@ -8,11 +8,12 @@ import {
 } from "../src/catalog.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
 import type { Connector, ToolDef } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, connectorIds, textOf, toolsByConnector, type SearchResult } from "./fixtures/meta-tools.js";
-import { calcConnector, makeRegistry, remoteConnector, required } from "./helpers.js";
+import { calcConnector, makeRegistry, remoteConnector, required, silentLogger } from "./helpers.js";
 import { fixture as overflowFixture } from "../src/providers/overflow/fixtures.js";
 import { fixture as ccbFixture } from "../src/providers/ccb/fixtures.js";
 import { fixture as granolaFixture } from "../src/providers/granola/fixtures.js";
@@ -113,6 +114,11 @@ describe("description summaries", () => {
       expect(full.tools.every((tool) => tool.descriptionTruncated === undefined)).toBe(true);
       summaries.tools.forEach((tool, index) => {
         const description = tool.description ?? "";
+        if (tool.classification === "write") {
+          expect(tool.descriptionTruncated, tool.address).toBeUndefined();
+          expect(description, tool.address).toBe(full.tools[index]!.description ?? "");
+          return;
+        }
         expect(description.length, tool.address).toBeLessThanOrEqual(160);
         expect(description.length, tool.address).toBeGreaterThan(0);
         if (!tool.descriptionTruncated) return;
@@ -141,6 +147,89 @@ describe("description summaries", () => {
       description: "List tickets in one queue, newest ticket first.",
       descriptionTruncated: true,
     });
+  });
+
+  it("never cuts a write's description on a search page, ending the page before the budget would", async () => {
+    const utf8 = (text: string | undefined) => new TextEncoder().encode(text ?? "").length;
+    const precondition = "Before deactivating a person, first call transfer_resources to move what they own.";
+    const deactivate = `Deactivate a directory account so the person can no longer sign in. ${"Audit records are kept. ".repeat(20)}${precondition}`;
+    const half = (subject: string) =>
+      `Deactivate one ${subject} with everything in it. ${"x".repeat(17 * 1024)} ${precondition}`;
+    const oversized = `Deactivate one archive with its whole history. ${"y".repeat(MAX_DESCRIBE_DESCRIPTION_BYTES)} ${precondition}`;
+    const tools: ToolDef[] = [
+      { name: "deactivate_user", description: deactivate, annotations: { destructiveHint: true } },
+      { name: "deactivate_team", description: half("team"), annotations: { destructiveHint: true } },
+      { name: "deactivate_group", description: half("group"), annotations: { destructiveHint: true } },
+      { name: "deactivate_device", description: `Deactivate one device. ${"Details. ".repeat(40)}` },
+      { name: "deactivate_archive", description: oversized, annotations: { destructiveHint: true } },
+      {
+        name: "deactivate_report",
+        description: `Report deactivated accounts, newest first. ${"Filters follow. ".repeat(20)}`,
+        annotations: { readOnlyHint: true },
+      },
+    ];
+    const conn = connectorWith({ id: "directory", kind: "api", tools });
+    const registry = makeRegistry([conn]);
+    const mt = createMetaTools(registry, BASE);
+    const pages: SearchResult[] = [];
+    for (let offset: number | undefined = 0; offset !== undefined;) {
+      const page = textOf(
+        await mt.searchTools({ query: "deactivate", connector: "directory", offset }),
+      ) as SearchResult & { nextOffset?: number };
+      pages.push(page);
+      offset = page.nextOffset;
+    }
+    const byName = new Map(tools.map((tool) => [tool.name, tool.description]));
+    for (const page of pages) {
+      const writes = page.tools.filter((tool) => tool.classification === "write");
+      for (const tool of writes) {
+        expect(tool.description, tool.address).toBe(byName.get(tool.name));
+        expect(tool.descriptionTruncated, tool.address).toBeUndefined();
+      }
+      const bytes = writes.reduce((total, tool) => total + utf8(tool.description), 0);
+      if (bytes > MAX_DESCRIBE_DESCRIPTION_BYTES) expect(page.tools.length, "an oversized write stands alone").toBe(1);
+    }
+    expect(pages.flatMap((page) => page.tools.map((tool) => tool.name)).sort()).toEqual(
+      tools.map((tool) => tool.name).sort(),
+    );
+    const pageOf = (name: string) => pages.findIndex((page) => page.tools.some((tool) => tool.name === name));
+    expect(pageOf("deactivate_team")).not.toBe(pageOf("deactivate_group"));
+    expect(pages[pageOf("deactivate_archive")]!.tools.map((tool) => tool.name)).toEqual(["deactivate_archive"]);
+    expect(pages[0]!.hasMore).toBe(true);
+    const report = pages.flatMap((page) => page.tools).find((tool) => tool.name === "deactivate_report");
+    expect(report).toMatchObject({
+      classification: "read",
+      description: "Report deactivated accounts, newest first.",
+      descriptionTruncated: true,
+    });
+    expect(textOf(await mt.searchTools({ query: "deactivate", connector: "directory" }))).toEqual(pages[0]);
+    const unabridged = textOf(
+      await mt.searchTools({ query: "deactivate", connector: "directory", fullDescriptions: true }),
+    ) as SearchResult;
+    expect(unabridged.tools).toHaveLength(tools.length);
+
+    const program = (await createExecuteTool(
+      registry,
+      BASE,
+      {
+        async execute(_code, providers) {
+          const connecta = providers.find((provider) => provider.name === "connecta")!.fns;
+          return { result: await required(connecta.search)({ query: "deactivate", connector: "directory" }) };
+        },
+      },
+      silentLogger,
+    )({ code: "async () => null" })) as { content: { text: string }[] };
+    const view = (rows: SearchResult["tools"]) => rows.map(({ name, description }) => ({ name, description }));
+    expect(view((JSON.parse(program.content[0]!.text) as { result: SearchResult }).result.tools)).toEqual(
+      view(pages[0]!.tools),
+    );
+
+    const refused = textOf(await mt.callTool({ address: "directory.deactivate_user", args: { userId: "u_1" } })) as {
+      error: { code: string; message: string };
+    };
+    expect(refused.error.code).toBe("destructive_tool_requires_approval");
+    expect(refused.error.message).toContain("call_destructive_tool");
+    expect(refused.error.message).toContain(deactivate);
   });
 
   it("describes full text by default, within one budget per call", async () => {

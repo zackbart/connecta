@@ -294,7 +294,7 @@ discovery. Both take the same arguments.
 | `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe client approval policy; a read-only endpoint has no write rows. |
 | `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                                                        |
 | `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                                                 |
-| `fullDescriptions` | unabridged tool purposes instead of the one-sentence summary, at the obvious cost                                                                                                                                                                                                                   |
+| `fullDescriptions` | unabridged tool purposes instead of the one-sentence summary, at the obvious cost; write rows are always full                                                                                                                                                                                       |
 
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
@@ -1174,7 +1174,16 @@ A row's `description` is a summary: the first complete sentence, joined to the
 following ones until it reaches 40 characters, within 160 UTF-16 code units. Text
 with no sentence end in that range is cut at a word and marked `…`. The row
 carries `descriptionTruncated: true` whenever text was left out;
-`fullDescriptions: true` returns the original text and no flag.
+`fullDescriptions: true` returns the original text and no flag. Only `read`
+rows are summarized. A `write` row always carries its full, original
+description and never `descriptionTruncated`, so a precondition stated late in
+a write's description is on the page that finds it. Write descriptions share
+one budget of 32 KiB UTF-8 per page in rank order: when the next write would
+exceed what remains, the page ends before it with `hasMore: true` and a
+`nextOffset` that starts at that write. A write whose description alone exceeds
+the budget is returned alone on its page, complete. The 256,000-byte page
+ceiling and its smaller-limit recovery still apply. `fullDescriptions: true`
+lifts the budget, and pages stay deterministic for an unchanged catalog.
 
 Search tokenizes tool names, titles and full descriptions at punctuation and
 camel-case boundaries. Whole-token matches, a small set of inflectional variants
@@ -1541,7 +1550,9 @@ answered. The suggested route follows the route the caller took:
 the same arguments when the miss happened inside `execute_code`, which has no
 way to call a tool. On a writable endpoint, `call_tool` reaching an unannotated,
 write-capable, or destructive tool returns `destructive_tool_requires_approval`
-with `nextAction` for `call_destructive_tool` and the canonical address. On a
+with `nextAction` for `call_destructive_tool` and the canonical address. Nothing
+is dispatched, and the message ends with the tool's full description, so steps
+the description requires before the write are seen before it is sent. On a
 read-only endpoint every write path returns `read_only_endpoint` with no
 `nextAction`. Its message says no write route exists, not to try another route,
 to tell the user, and that only the operator can provide a writable connection.
