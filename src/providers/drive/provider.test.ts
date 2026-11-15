@@ -582,6 +582,44 @@ describe("every default result crosses into execute_code", { timeout: 60_000 }, 
   });
 });
 
+describe("an empty name search for a file id", () => {
+  const FILE_ID = "1Xk9bQ2vR7mT4pL0sW3yZ8cN5dF6gH1jK";
+  const searchFiles = (query: string, files: unknown[] = [], nextPageToken?: string) => {
+    route = (request) =>
+      request.url.pathname.endsWith("/files")
+        ? { body: { files, ...(nextPageToken ? { nextPageToken } : {}) } }
+        : undefined;
+    return call(connection(), "search_files", { query });
+  };
+
+  it("points to get_file with one Drive request and no echoed value", async () => {
+    for (const query of [`name = '${FILE_ID}'`, `name contains '${FILE_ID}' and mimeType = 'application/pdf'`]) {
+      calls.length = 0;
+      const result = await searchFiles(query);
+      expect(result).toEqual({
+        items: [],
+        page: { hasMore: false },
+        hint: { reason: "name_looks_like_file_id", tool: "get_file", message: expect.stringContaining("get_file") },
+      });
+      expect(JSON.stringify(result)).not.toContain(FILE_ID);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.url.searchParams.get("q")).toBe(`(${query}) and trashed = false`);
+    }
+  });
+
+  it("stays silent for names, matches, continued listings and parent queries", async () => {
+    for (const [query, files, token] of [
+      ["name contains 'budget'", []],
+      ["name = 'Quarterly budget 2026 final draft'", []],
+      [`name = '${FILE_ID}'`, [{ id: FILE_ID, name: FILE_ID }]],
+      [`name = '${FILE_ID}'`, [], "more"],
+      [`'${FILE_ID}' in parents`, []],
+    ] as [string, unknown[], string?][]) {
+      expect((await searchFiles(query, files, token)).hint).toBeUndefined();
+    }
+  });
+});
+
 describe("a cursor resumes only the listing, and the page, it was issued for", () => {
   // A hundred rows of 1,900-character names: a 64 KiB result holds about
   // thirty, so the first call stops mid-page and its cursor resumes by position.

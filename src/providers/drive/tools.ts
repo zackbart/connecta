@@ -66,6 +66,20 @@ const DRIVE_ID = /^[A-Za-z0-9_-]{1,256}$/;
  * issued and then refused on replay.
  */
 const MAX_CURSOR_CHARS = 16_384;
+const FILE_ID_SHAPE = /^(?=.*[0-9])(?=.*[A-Za-z])[A-Za-z0-9_-]{25,256}$/;
+const NAME_CLAUSE = /\bname\s*(?:=|contains)\s*'((?:[^'\\]|\\.)*)'/g;
+const ID_HINT = {
+  reason: "name_looks_like_file_id",
+  tool: "get_file",
+  message:
+    "Nothing has this name, and the value looks like a Drive file id. Read it with get_file; Docs, Sheets, Slides and Forms take the same id.",
+} as const;
+function namesAFileId(query: string | undefined): boolean {
+  for (const [, quoted] of (query ?? "").matchAll(NAME_CLAUSE)) {
+    if (FILE_ID_SHAPE.test(quoted!.replace(/\\(.)/g, "$1"))) return true;
+  }
+  return false;
+}
 const FOLDER = "application/vnd.google-apps.folder";
 const SHORTCUT = "application/vnd.google-apps.shortcut";
 const NATIVE = "application/vnd.google-apps.";
@@ -930,12 +944,17 @@ export function driveTools({
           const query = text(args["query"]);
           const q =
             args["includeTrashed"] === true ? query : query ? `(${query}) and trashed = false` : "trashed = false";
-          return yield* list(ctx, "search_files", args, {
+          const result = yield* list(ctx, "search_files", args, {
             q,
             corpora,
             driveId: args["driveId"],
             orderBy: args["orderBy"],
           });
+          const empty =
+            args["cursor"] === undefined &&
+            asArray(result["items"]).length === 0 &&
+            asRecord(result["page"])["hasMore"] !== true;
+          return empty && namesAFileId(query) ? { ...result, hint: ID_HINT } : result;
         }),
     },
     {
