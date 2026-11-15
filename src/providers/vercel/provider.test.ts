@@ -666,6 +666,21 @@ describe("vercel() over an access token", () => {
     )) as any;
     expect(sent.at(-1)!.url.searchParams.get("until")).toBe("1699999999000");
     expect(last).toEqual({ items: [], page: { hasMore: false } });
+
+    respond = () => Response.json({ projects: [project], pagination: { count: 1, next: 1699999999000 } });
+    for (const selectors of [{}, { teamId: "team_default" }, { teamId: null }, { slug: "studio" }]) {
+      const issued = (await connector.callTool("list_projects", selectors, ctx)) as any;
+      for (const changed of [
+        vercel("hosting", { ...TOKEN, teamId: "team_other" }),
+        vercel("hosting", { purpose: TOKEN.purpose, auth: TOKEN.auth }),
+      ]) {
+        const count = sent.length;
+        await expect(
+          changed.callTool("list_projects", { ...selectors, cursor: issued.page.nextCursor }, ctx),
+        ).rejects.toMatchObject({ code: "invalid_args" });
+        expect(sent).toHaveLength(count);
+      }
+    }
   });
 
   it("reads Vercel's x-ratelimit-reset as the retry delay", async () => {

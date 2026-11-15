@@ -798,7 +798,9 @@ export function vercelTools({
       }),
       limit: { default: 20, max: 100, description: "Projects per page, default 20, maximum 100." },
       cursor: "bound",
-      ...(options.pin ? { cursorScope: Object.freeze({ vercelTeamPin: options.pin.teamId }) } : {}),
+      cursorScope: Object.freeze(
+        options.pin ? { vercelTeamPin: options.pin.teamId } : { vercelDefaultTeam: teamId ?? null },
+      ),
       page: (args, cursor) =>
         Effect.gen(function* () {
           const result = yield* send("GET", "/v10/projects", {
