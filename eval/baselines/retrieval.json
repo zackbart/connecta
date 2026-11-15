@@ -3,39 +3,39 @@
     "main": {
       "all": {
         "n": 143,
-        "r1": 0.5594,
-        "r5": 0.7413,
-        "r8": 0.7902,
-        "mrr": 0.6371
+        "r1": 0.5874,
+        "r5": 0.7902,
+        "r8": 0.8392,
+        "mrr": 0.6731
       },
       "readOnly": {
         "n": 127,
-        "r1": 0.5906,
-        "r5": 0.7874,
-        "r8": 0.811,
-        "mrr": 0.6677
+        "r1": 0.622,
+        "r5": 0.8268,
+        "r8": 0.8425,
+        "mrr": 0.7045
       },
       "types": {
         "intent": {
           "n": 54,
           "r1": 0.3704,
-          "r5": 0.6111,
-          "r8": 0.6852,
-          "mrr": 0.4746
+          "r5": 0.6481,
+          "r8": 0.7407,
+          "mrr": 0.4965
         },
         "precise": {
           "n": 42,
           "r1": 0.8571,
-          "r5": 0.9286,
-          "r8": 0.9524,
-          "mrr": 0.8836
+          "r5": 0.9762,
+          "r8": 0.9762,
+          "mrr": 0.8917
         },
         "write": {
           "n": 16,
           "r1": 0.6875,
           "r5": 0.8125,
-          "r8": 0.8125,
-          "mrr": 0.7533
+          "r8": 0.875,
+          "mrr": 0.7589
         },
         "hatch": {
           "n": 15,
@@ -53,42 +53,42 @@
         },
         "multi": {
           "n": 8,
-          "r1": 0.125,
-          "r5": 0.25,
-          "r8": 0.5,
-          "mrr": 0.2001
+          "r1": 0.625,
+          "r5": 0.625,
+          "r8": 0.75,
+          "mrr": 0.6429
         }
       },
       "certain": {
         "n": 135,
-        "r1": 0.5704,
-        "r5": 0.7481,
-        "r8": 0.8,
-        "mrr": 0.6474
+        "r1": 0.6,
+        "r5": 0.8,
+        "r8": 0.8519,
+        "mrr": 0.6856
       }
     },
     "holdout": {
       "all": {
         "n": 32,
-        "r1": 0.5313,
-        "r5": 0.5625,
-        "r8": 0.5938,
-        "mrr": 0.5501
+        "r1": 0.5625,
+        "r5": 0.5938,
+        "r8": 0.625,
+        "mrr": 0.5829
       },
       "readOnly": {
         "n": 28,
-        "r1": 0.5,
-        "r5": 0.5357,
-        "r8": 0.5714,
-        "mrr": 0.5238
+        "r1": 0.5357,
+        "r5": 0.6071,
+        "r8": 0.6429,
+        "mrr": 0.5643
       },
       "types": {
         "intent": {
           "n": 19,
           "r1": 0.4737,
-          "r5": 0.4737,
+          "r5": 0.5263,
           "r8": 0.5263,
-          "mrr": 0.4812
+          "mrr": 0.4953
         },
         "precise": {
           "n": 3,
@@ -113,18 +113,18 @@
         },
         "multi": {
           "n": 3,
-          "r1": 0,
+          "r1": 0.3333,
           "r5": 0.3333,
-          "r8": 0.3333,
-          "mrr": 0.1278
+          "r8": 0.6667,
+          "mrr": 0.3889
         }
       },
       "certain": {
         "n": 32,
-        "r1": 0.5313,
-        "r5": 0.5625,
-        "r8": 0.5938,
-        "mrr": 0.5501
+        "r1": 0.5625,
+        "r5": 0.5938,
+        "r8": 0.625,
+        "mrr": 0.5829
       }
     }
   },
@@ -133,9 +133,9 @@
     "main:personal:what's on my schedule": "0/0",
     "main:personal:list transactions": "3/3",
     "main:personal:recent runs workout": "4/1",
-    "main:personal:files changed this week": "8/2",
+    "main:personal:files changed this week": "4/2",
     "main:personal:money": "0/0",
-    "main:personal:search messages unread": "10/4",
+    "main:personal:search messages unread": "4/2",
     "main:personal:list files": "1/1",
     "main:personal:calendar events tomorrow": "3/1",
     "main:personal:how much did I spend on restaurants last month": "0/0",
@@ -153,9 +153,9 @@
     "main:personal:calories this week": "2/2",
     "main:personal:find cheap flights to denver": "1/1",
     "main:personal:airport code for lisbon": "1/1",
-    "main:personal:posts about typescript": "4/4",
+    "main:personal:posts about typescript": "2/2",
     "main:personal:my social feed": "0/0",
-    "main:personal:who follows me": "18/18",
+    "main:personal:who follows me": "8/8",
     "main:personal:publish a post": "1/-",
     "main:personal:send an email": "1/-",
     "main:personal:reply to an email": "1/-",
@@ -163,24 +163,24 @@
     "main:personal:archive an email": "1/-",
     "main:personal:open the pdf attached to an email": "0/0",
     "main:personal:gmail search threads": "1/1",
-    "main:personal:read a google doc": "19/16",
-    "main:personal:spreadsheet cell values": "7/7",
-    "main:personal:add a row to a spreadsheet": "19/-",
+    "main:personal:read a google doc": "7/6",
+    "main:personal:spreadsheet cell values": "3/3",
+    "main:personal:add a row to a spreadsheet": "7/-",
     "main:personal:create calendar event": "1/-",
     "main:personal:am I free thursday afternoon": "1/1",
-    "main:personal:meeting transcript": "4/4",
-    "main:personal:phone number for a contact": "10/4",
+    "main:personal:meeting transcript": "2/2",
+    "main:personal:phone number for a contact": "4/2",
     "main:personal:share a file with someone": "1/-",
     "main:personal:cancel a meeting on my calendar": "0/-",
     "main:personal:form responses": "1/1",
-    "main:personal:text of a slide deck": "4/1",
+    "main:personal:text of a slide deck": "2/1",
     "main:personal:drive search files": "1/1",
     "main:personal:calendar list events": "1/1",
     "main:personal:finance search_transactions": "1/1",
     "main:personal:fitness querySportRecords": "1/1",
     "main:personal:alice inbox unread email": "0/0",
-    "main:personal:bob calendar today": "0/17",
-    "main:personal:alice drive files": "0/12",
+    "main:personal:bob calendar today": "7/5",
+    "main:personal:alice drive files": "1/1",
     "main:personal:search bob gmail": "1/1",
     "main:personal:gmail forwarding settings": "1/1",
     "main:personal:drive file revisions": "1/1",
@@ -238,7 +238,7 @@
     "main:product:stripe balance": "1/1",
     "main:product:support conversations": "11/2",
     "main:product:help center articles": "0/0",
-    "main:product:query the database": "2/5",
+    "main:product:query the database": "2/4",
     "main:product:warehouse tables": "1/1",
     "main:product:run sql on the warehouse": "1/1",
     "main:product:app database tables": "1/1",
@@ -269,32 +269,32 @@
     "main:product:app store benchmarks": "1/1",
     "main:product:mrr trend chart": "1/1",
     "main:product:reader android subscribers": "0/0",
-    "main:product:reader stripe balance": "7/6",
-    "main:product:reader android app database tables": "3/2",
-    "main:product:bob warehouse tables": "8/8",
+    "main:product:reader stripe balance": "1/1",
+    "main:product:reader android app database tables": "1/1",
+    "main:product:bob warehouse tables": "1/1",
     "holdout:personal:emails from my landlord": "0/0",
     "holdout:personal:did anyone email me today": "0/0",
     "holdout:personal:meetings next week": "0/0",
-    "holdout:personal:how much is in my checking account": "0/14",
+    "holdout:personal:how much is in my checking account": "13/6",
     "holdout:personal:groceries spending this month": "1/1",
     "holdout:personal:my heart rate yesterday": "1/1",
     "holdout:personal:last bike ride": "1/1",
     "holdout:personal:what did I have for breakfast": "0/0",
     "holdout:personal:flights from sfo to nyc in december": "1/1",
-    "holdout:personal:my saved posts": "0/18",
+    "holdout:personal:my saved posts": "0/10",
     "holdout:personal:forward this email to my accountant": "1/-",
     "holdout:personal:put lunch with sam on my calendar friday": "1/-",
     "holdout:personal:get file content": "1/1",
     "holdout:personal:contents of a spreadsheet": "0/0",
     "holdout:personal:bob inbox unread": "0/0",
-    "holdout:personal:alice calendar this week": "20/16",
+    "holdout:personal:alice calendar this week": "6/5",
     "holdout:studio:what am I assigned to": "1/1",
     "holdout:studio:comments on a todo": "1/1",
     "holdout:studio:runtime errors on the website": "1/1",
     "holdout:studio:company handbook": "0/0",
     "holdout:studio:cloudflare page rules": "1/1",
     "holdout:studio:post a message to the project": "13/-",
-    "holdout:product:churn last month": "7/7",
+    "holdout:product:churn last month": "3/3",
     "holdout:product:look up a subscriber by app user id": "1/1",
     "holdout:product:bugs assigned to me": "0/0",
     "holdout:product:event volume for signup": "1/1",
@@ -303,6 +303,6 @@
     "holdout:product:dataset ids in the warehouse": "1/1",
     "holdout:product:github workflow runs": "1/1",
     "holdout:product:send a message from the agent inbox": "1/-",
-    "holdout:product:reader paywalls": "3/3"
+    "holdout:product:reader paywalls": "1/1"
   }
 }
