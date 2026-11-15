@@ -1458,6 +1458,49 @@ describe("connecta.budget (L9)", () => {
     expect(body.calls.map(({ outcome }) => outcome)).toEqual(["success", "refused"]);
   });
 
+  it("counts a write its gate admitted that fails unsent, never one refused before the gate", async () => {
+    let sent = 0;
+    const locked: Connector = connectorWith({
+      id: "locked",
+      kind: "mcp",
+      credential: { label: "Token" },
+      tools: [
+        {
+          name: "put",
+          annotations: { readOnlyHint: false },
+          inputSchema: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+        },
+      ],
+      call: async () => {
+        sent++;
+        return { ok: true };
+      },
+    });
+    const seen: unknown[] = [];
+    const out = await createExecuteTool(
+      makeRegistry([locked]),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        const attempt = (args: unknown) =>
+          required(fns.call)("locked.put", args).then(
+            () => "sent",
+            (error: { code?: string }) => error.code,
+          );
+        const left = async () => ((await required(fns.budget)()) as Left).writesLeft;
+        seen.push(await attempt({}), await left());
+        seen.push(await attempt({ id: "a" }), await left());
+        seen.push(await attempt({ id: "b" }), await left());
+        return "done";
+      }),
+      silentLogger,
+      undefined,
+      { maxWrites: 1 },
+    )({ code: "" });
+    expect(out.isError).toBeFalsy();
+    expect(seen).toEqual(["invalid_args", 1, "auth_required", 0, "budget_exceeded", 0]);
+    expect(sent).toBe(0);
+  });
+
   it("reports no writes left in a read program, whatever the write budget", async () => {
     let left: unknown;
     const out = await run(

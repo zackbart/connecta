@@ -3700,6 +3700,20 @@ return fs;
     },
   },
   {
+    clauses: "L9, L3, X1",
+    name: "a program polling budget() still ends at its run deadline",
+    runDeadline: true,
+    code: `async () => {
+      for (let index = 0; index < 1000000; index += 1) await connecta.budget();
+      return "never";
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.text.toLowerCase()).toMatch(/timed out|timeout|wall budget/);
+      expect(outcome.value).not.toHaveProperty("result");
+    },
+  },
+  {
     clauses: "L9, E6",
     name: "INV-6: program errors name a missing await on budget()",
     code: `async () => {\nreturn connecta.budget().hostCallsLeft.toFixed();\n}`,
