@@ -456,6 +456,7 @@ function connectorFacts(connector: Connector): CatalogSearchConnectorFacts {
 function collapseIdentical<Row extends { connector: Connector; tool: ToolDef }>(
   rows: Row[],
   query: string,
+  identity: (row: Row) => unknown,
 ): Map<Row, Row[]> {
   const named = new Set(lexicalQueryTerms(query));
   const namedWords = (connector: Connector) =>
@@ -467,15 +468,7 @@ function collapseIdentical<Row extends { connector: Connector; tool: ToolDef }>(
   let length = 0;
   for (const row of rows) {
     if (sameName.get(row.tool.name)! > 1) {
-      const { name, classification, description, annotations, inputSchema } = row.tool;
-      const key = JSON.stringify([
-        name,
-        classification,
-        description ?? "",
-        annotations ?? null,
-        inputSchema ?? null,
-        guideRequiredReasons(row.connector, row.tool, false) ?? [],
-      ]);
+      const key = JSON.stringify(identity(row));
       const first = kept.get(key);
       if (first) {
         groups.get(first.row)!.push(row);
@@ -2125,7 +2118,19 @@ export class CatalogService {
           a.order - b.order
         );
       });
-      const alsoOn = isBrowse ? new Map<(typeof matches)[number], typeof matches>() : collapseIdentical(matches, query);
+      const alsoOn = isBrowse
+        ? new Map<(typeof matches)[number], typeof matches>()
+        : collapseIdentical(matches, query, ({ connector, tool }) => [
+            tool.name,
+            tool.classification,
+            tool.description ?? "",
+            tool.annotations ?? null,
+            tool.inputSchema ?? null,
+            this.outputSchema(connector.id, tool),
+            connectorGuide(connector) !== undefined,
+            connectorGuideRequired(connector),
+            readProgramRefuses(tool),
+          ]);
       const fullWriteBytes = (tool: ToolDef) =>
         args.fullDescriptions !== true && tool.classification !== "read" && tool.description
           ? encoder.encode(tool.description).length

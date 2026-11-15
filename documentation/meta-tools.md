@@ -1320,8 +1320,10 @@ whose first word outside connector names is `list`, `get`, `find`, `search`,
 on the page. Score and catalog order break the remaining ties.
 
 A searched tool that several connectors offer identically (same name,
-classification, description, annotations, input schema and connector guide
-requirements) appears once, at its best rank. The row's `alsoOn` lists the other
+classification, description, annotations, input schema, resolved output schema,
+whether its connector has a guide and requires it, and whether
+`execute_read_code` can call it) appears once, at its best rank. Any per-address
+fact a row shows is part of that identity. The row's `alsoOn` lists the other
 addresses in rank order; each is callable as its own address, and `connectors`
 carries its connector's title and guide. The row shown is the group member whose
 connector ID and title words the query names most, then the best-ranked, so
