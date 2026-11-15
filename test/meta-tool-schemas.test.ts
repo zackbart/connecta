@@ -25,7 +25,12 @@ import type { Connector, ExecuteResult, ExecutorProvider } from "../src/types.js
 import { fakeClerkAuth } from "./fixtures/http.js";
 import { guestErrorText, guestFailureFacts } from "./fixtures/misc.js";
 import { CREDENTIAL_KEY } from "./fixtures/ui.js";
-import { createTestConnecta, required } from "./helpers.js";
+import { createTestConnecta, required, silentLogger } from "./helpers.js";
+import { ExecutorAdmissionError } from "../src/executor-admission.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { inputRequired } from "@modelcontextprotocol/server";
+import * as z from "zod";
 
 const TOKEN = "test-token-123";
 const DRAFT = "https://json-schema.org/draft/2020-12/schema";
@@ -525,6 +530,28 @@ describe("meta-tool results under advertised output schemas", () => {
         authorizationUrl: `https://consent.test/authorize?state=${crypto.randomUUID()}`,
       }),
     };
+    const HEADER_SECRET = "HEADER_CREDENTIAL_VALUE";
+    const OPAQUE = "DOWNSTREAM_OPAQUE_STATE";
+    const SECRETS = [HEADER_SECRET, OPAQUE, "Pick a name", "consent.test"];
+    const downstream = httpDownstream((server) => {
+      server.registerTool("ask", { inputSchema: z.object({}).loose(), annotations: { readOnlyHint: true } }, async () =>
+        inputRequired({
+          requestState: OPAQUE,
+          inputRequests: {
+            question: inputRequired.elicit({
+              message: "Pick a name",
+              requestedSchema: { type: "object", properties: { name: { type: "string" } } },
+            }),
+          },
+        }),
+      );
+    });
+    const asker = remoteMcp("asker", {
+      url: downstream.url,
+      fetch: downstream.fetch,
+      auth: { type: "headers", headers: { Authorization: `Bearer ${HEADER_SECRET}` } },
+      logger: silentLogger,
+    });
     const flaky: Connector = {
       id: "flaky",
       kind: "api",
@@ -587,6 +614,10 @@ describe("meta-tool results under advertised output schemas", () => {
         return { result: undefined, error: "Error: after the write", failure: { name: "Error" } };
       },
       auth: (fns) => settle(() => fns.call!("service.read", {})),
+      ask: (fns) => settle(() => fns.call!("asker.ask", {})),
+      cancel: async () => {
+        throw new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled during result processing.");
+      },
     };
     const executor: Executor = {
       execute: async (code, providers) => {
@@ -596,7 +627,7 @@ describe("meta-tool results under advertised output schemas", () => {
     };
     const member = [{ namespace: "https://clerk.example.test", id: "alice" }];
     const app = createTestConnecta({
-      connectors: [calcApi(), notes, flaky, big, service],
+      connectors: [calcApi(), notes, flaky, big, service, asker],
       storage,
       vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
       publicUrl: HANDOFF_BASE,
@@ -605,9 +636,9 @@ describe("meta-tool results under advertised output schemas", () => {
       auth: fakeClerkAuth({ token: "alice", userId: "alice" }),
       maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }],
       pools: {
-        meta: { tools: ["calc", "notes", "flaky", "big", "service"], members: member, readOnly: false },
+        meta: { tools: ["calc", "notes", "flaky", "big", "service", "asker"], members: member, readOnly: false },
         native: {
-          tools: ["calc", "notes", "service"],
+          tools: ["calc", "notes", "service", "asker"],
           members: member,
           readOnly: false,
           surface: "native",
@@ -632,7 +663,7 @@ describe("meta-tool results under advertised output schemas", () => {
               _meta: {
                 "io.modelcontextprotocol/protocolVersion": "2026-07-28",
                 "io.modelcontextprotocol/clientInfo": { name: "schema-test", version: "1" },
-                "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {} } },
+                "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {}, form: {} } },
               },
             }
           : {}),
@@ -650,6 +681,14 @@ describe("meta-tool results under advertised output schemas", () => {
       const opened = await send(pool, tool, args, {});
       expect(opened.result.resultType, `${pool} ${tool}`).toBe("input_required");
       return send(pool, tool, args, { state: opened.result.requestState, action: "decline" });
+    };
+    const roundLimit = async (pool: string, tool: string, args: Record<string, unknown>) => {
+      let round = await send(pool, tool, args, {});
+      for (let accepted = 0; accepted < 3; accepted++) {
+        expect(round.result.resultType, `${pool} ${tool} round ${accepted}`).toBe("input_required");
+        round = await send(pool, tool, args, { state: round.result.requestState, action: "accept" });
+      }
+      return round;
     };
     try {
       const ajv = new AjvJsonSchemaValidator();
@@ -673,132 +712,196 @@ describe("meta-tool results under advertised output schemas", () => {
       expect(Object.keys(declaring.native!).sort()).toEqual(["authorize_connector", "execute_code"]);
       expect(Object.keys(declaring.results!)).toEqual(["authorize_connector"]);
 
-      type Path = [label: string, pool: string, tool: string, run: () => Promise<any>, shape: string];
+      const handoff = {
+        connector: "service",
+        recovery: "oauth",
+        authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=`),
+        nextAction: { url: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=`) },
+      };
+      type Path = {
+        label: string;
+        pool: string;
+        tool: string;
+        run: () => Promise<any>;
+        shape: "structured" | "text" | "input" | "protocol";
+        text?: Record<string, unknown> | string;
+      };
+      const path = (
+        label: string,
+        pool: string,
+        tool: string,
+        run: () => Promise<any>,
+        shape: Path["shape"],
+        text?: Path["text"],
+      ): Path => ({ label, pool, tool, run, shape, ...(text === undefined ? {} : { text }) });
       const paths: Path[] = [
-        [
+        path(
           "search page",
           "meta",
           "search_tools",
           () => send("meta", "search_tools", { connector: "calc" }),
           "structured",
-        ],
-        ["search catalog failure", "meta", "search_tools", () => send("meta", "search_tools", {}), "structured"],
-        [
+        ),
+        path("search catalog failure", "meta", "search_tools", () => send("meta", "search_tools", {}), "structured"),
+        path(
           "search scoped catalog failure",
           "meta",
           "search_tools",
           () => send("meta", "search_tools", { connector: "flaky" }),
           "structured",
-        ],
-        [
+        ),
+        path(
           "search refusal",
           "meta",
           "search_tools",
           () => send("meta", "search_tools", { connector: "c".repeat(513) }),
           "text",
-        ],
-        [
+          { error: { code: "invalid_args", message: "connector must be at most 512 UTF-8 bytes.", retryable: false } },
+        ),
+        path(
           "search over the discovery ceiling",
           "meta",
           "search_tools",
           () => send("meta", "search_tools", { connector: "big", fullDescriptions: true, limit: 100 }),
           "text",
-        ],
-        ["search invalid input", "meta", "search_tools", () => send("meta", "search_tools", { limit: 0 }), "text"],
-        [
+          {
+            error: {
+              code: "result_too_large",
+              message: expect.stringContaining("256000-byte ceiling"),
+              retryable: false,
+            },
+          },
+        ),
+        path(
+          "search invalid input",
+          "meta",
+          "search_tools",
+          () => send("meta", "search_tools", { limit: 0 }),
+          "text",
+          "Invalid arguments for tool search_tools: limit",
+        ),
+        path(
           "authorize handoff",
           "meta",
           "authorize_connector",
           () => send("meta", "authorize_connector", { connector: "service" }),
           "structured",
-        ],
-        [
+        ),
+        path(
           "authorize unknown connector",
           "meta",
           "authorize_connector",
           () => send("meta", "authorize_connector", { connector: "missing" }),
           "text",
-        ],
-        [
+          'Unknown connector "missing"',
+        ),
+        path(
           "authorize elicitation",
           "meta",
           "authorize_connector",
           () => send("meta", "authorize_connector", { connector: "service" }, {}),
           "input",
-        ],
-        [
+        ),
+        path(
           "authorize elicitation declined",
           "meta",
           "authorize_connector",
           () => declined("meta", "authorize_connector", { connector: "service" }),
           "structured",
-        ],
-        [
+        ),
+        path(
           "authorize invalid request state",
           "meta",
           "authorize_connector",
           () => send("meta", "authorize_connector", { connector: "service" }, { state: "forged", action: "accept" }),
           "protocol",
-        ],
-        [
+        ),
+        path(
+          "authorize round limit",
+          "meta",
+          "authorize_connector",
+          () => roundLimit("meta", "authorize_connector", { connector: "service" }),
+          "structured",
+        ),
+        path(
           "native authorize handoff",
           "results",
           "authorize_connector",
           () => send("results", "authorize_connector", { connector: "calc" }),
           "structured",
-        ],
+        ),
         ...(["execute_code", "execute_read_code"] as const).flatMap((tool) =>
           (
             [
-              ["value", "structured"],
-              ["thrown", "structured"],
-              ["timeout", "structured"],
-              ["crash", "structured"],
-              ["syntax", "structured"],
-              ["malformed", "structured"],
-              ["oversized", "structured"],
-              ["budget", "structured"],
-              ["wrote", "structured"],
-              ["auth", "structured"],
+              ["value", { result: { answer: 42 } }],
+              ["thrown", { error: { code: "program_error" } }],
+              ["timeout", { error: { code: "timeout" } }],
+              ["crash", { error: { code: "executor_failed" } }],
+              ["syntax", { error: { code: "program_error", details: { name: "SyntaxError" } } }],
+              ["malformed", { error: { code: "executor_failed" } }],
+              ["oversized", { result: { truncated: true, resultId: expect.any(String) } }],
+              ["budget", { error: { code: "budget_exceeded" } }],
+              ["wrote", { error: { code: "program_error" } }],
+              ["auth", { error: { code: "downstream_oauth_required", ...handoff } }],
+              ["ask", { error: { code: "input_required_unsupported" } }],
             ] as const
-          ).map(([name, shape]): Path => [
-            `${tool} ${name}`,
-            "meta",
-            tool,
-            () => send("meta", tool, program(name)),
-            shape,
-          ]),
+          ).map(([name, body]) =>
+            path(
+              `${tool} ${name}`,
+              "meta",
+              tool,
+              () => send("meta", tool, program(name), name === "ask" ? {} : undefined),
+              "structured",
+              body,
+            ),
+          ),
         ),
-        [
+        path(
+          "execute_code cancelled",
+          "meta",
+          "execute_code",
+          () => send("meta", "execute_code", program("cancel")),
+          "structured",
+          { error: { code: "executor_cancelled", retryable: false } },
+        ),
+        path(
           "execute_code over the code cap",
           "meta",
           "execute_code",
           () => send("meta", "execute_code", { code: `async () => "${"x".repeat(70_000)}"` }),
           "structured",
-        ],
-        ["execute_code invalid input", "meta", "execute_code", () => send("meta", "execute_code", {}), "text"],
-        [
+        ),
+        path(
+          "execute_code invalid input",
+          "meta",
+          "execute_code",
+          () => send("meta", "execute_code", {}),
+          "text",
+          "Invalid arguments for tool execute_code: code",
+        ),
+        path(
           "execute_code elicitation",
           "meta",
           "execute_code",
           () => send("meta", "execute_code", program("auth"), {}),
           "input",
-        ],
-        [
+        ),
+        path(
           "execute_code elicitation declined",
           "meta",
           "execute_code",
           () => declined("meta", "execute_code", program("auth")),
           "text",
-        ],
-        [
+          { ok: false, error: { code: "auth_declined", retryable: false, ...handoff } },
+        ),
+        path(
           "execute_code invalid request state",
           "meta",
           "execute_code",
           () => send("meta", "execute_code", program("auth"), { state: "forged", action: "accept" }),
           "protocol",
-        ],
-        [
+        ),
+        path(
           "execute_code request state for other code",
           "meta",
           "execute_code",
@@ -810,39 +913,87 @@ describe("meta-tool results under advertised output schemas", () => {
             });
           },
           "text",
-        ],
-        [
+          {
+            ok: false,
+            error: { code: "invalid_request_state", message: "Invalid or expired requestState", retryable: false },
+          },
+        ),
+        path(
+          "execute_code round limit",
+          "meta",
+          "execute_code",
+          () => roundLimit("meta", "execute_code", program("auth")),
+          "text",
+          {
+            ok: false,
+            error: { code: "auth_round_limit", message: expect.stringContaining("three prompts"), retryable: false },
+          },
+        ),
+        path(
           "execute_read_code elicitation declined",
           "meta",
           "execute_read_code",
           () => declined("meta", "execute_read_code", program("auth")),
           "text",
-        ],
-        [
+          { ok: false, error: { code: "auth_declined", retryable: false, ...handoff } },
+        ),
+        path(
+          "execute_read_code round limit",
+          "meta",
+          "execute_read_code",
+          () => roundLimit("meta", "execute_read_code", program("auth")),
+          "text",
+          { ok: false, error: { code: "auth_round_limit", retryable: false } },
+        ),
+        path(
           "native execute_code value",
           "native",
           "execute_code",
           () => send("native", "execute_code", program("value")),
           "structured",
-        ],
-        [
+        ),
+        path(
           "native execute_code auth",
           "native",
           "execute_code",
           () => send("native", "execute_code", program("auth")),
           "structured",
-        ],
-        [
+          {
+            error: { code: "downstream_oauth_required", nextAction: { url: expect.any(String) } },
+          },
+        ),
+        path(
+          "native execute_code input",
+          "native",
+          "execute_code",
+          () => send("native", "execute_code", program("ask"), {}),
+          "structured",
+          {
+            error: { code: "input_required_unsupported" },
+          },
+        ),
+        path(
           "native execute_code elicitation declined",
           "native",
           "execute_code",
           () => declined("native", "execute_code", program("auth")),
           "text",
-        ],
+          { ok: false, error: { code: "auth_declined", retryable: false, ...handoff } },
+        ),
+        path(
+          "native execute_code round limit",
+          "native",
+          "execute_code",
+          () => roundLimit("native", "execute_code", program("auth")),
+          "text",
+          { ok: false, error: { code: "auth_round_limit", retryable: false } },
+        ),
       ];
       const shapes: Record<string, string> = {};
-      for (const [label, pool, tool, run] of paths) {
+      for (const { label, pool, tool, run, text } of paths) {
         const response = await run();
+        const wire = JSON.stringify(response);
+        for (const secret of SECRETS) expect(wire, `${label} leaks ${secret}`).not.toContain(secret);
         if (response.error) {
           expect(response.result, label).toBeUndefined();
           shapes[label] = "protocol";
@@ -857,15 +1008,18 @@ describe("meta-tool results under advertised output schemas", () => {
         expect(result.content[0].type, label).toBe("text");
         if (result.structuredContent === undefined) {
           expect(result.isError, label).toBe(true);
+          if (typeof text === "string") expect(result.content[0].text, label).toContain(text);
+          else expect(JSON.parse(result.content[0].text), label).toMatchObject(required(text, `${label} text`));
           shapes[label] = "text";
           continue;
         }
+        if (text !== undefined) expect(result.structuredContent, label).toMatchObject(text as object);
         const verdict = required(declaring[pool]![tool], tool)(result.structuredContent);
         expect(verdict.errorMessage, label).toBeUndefined();
         expect(JSON.parse(result.content[0].text), label).toEqual(result.structuredContent);
         shapes[label] = "structured";
       }
-      expect(shapes).toEqual(Object.fromEntries(paths.map(([label, , , , shape]) => [label, shape])));
+      expect(shapes).toEqual(Object.fromEntries(paths.map(({ label, shape }) => [label, shape])));
     } finally {
       await app.close();
     }
