@@ -345,8 +345,9 @@ schema omits the corresponding list. `search_tools` carries the same metadata
 whenever schemas are requested, and `includeSchemaKeys: false` buys the bytes
 back.
 
-**S3.** Discovery bounds throw rather than silently shrink. `invalid_args`
-covers a `limit` outside 1–100, an `offset` that is not a non-negative integer,
+**S3.** Invalid discovery arguments and a row too large to return throw;
+byte-limited pages shrink instead, so a program that needs the complete result
+must follow `nextOffset` while `hasMore` is true. `invalid_args` covers a `limit` outside 1–100, an `offset` that is not a non-negative integer,
 a supplied `query` that is not a string, and a `connector` over 512 UTF-8 bytes
 — refused whole, since a clipped scope names a different connector. Omitted
 `offset` starts at 0; omitted `query` browses. A page ends before the row that
