@@ -10,13 +10,13 @@ import { withAuthorizationHandoffEffect } from "./authorization-handoff.js";
 import {
   carryCatalogFreshness,
   catalogGenerationFor,
-  catalogFallbackUsable,
+  catalogFallback,
   catalogIsFresh,
   catalogStaleness,
   markCatalogStale,
   type CatalogStaleness,
 } from "./catalog-freshness.js";
-import { retainedCatalogIdentity } from "./catalog-cache.js";
+import { retainedCatalogIdentity, STALE_FALLBACK_MS } from "./catalog-cache.js";
 import { cloneTool } from "./tool-safety.js";
 import { hasControlCharacters } from "./tool-name.js";
 import { Effect, Result, Semaphore } from "effect";
@@ -43,7 +43,9 @@ import type { DeferredWork } from "./connector-scope.js";
 import { connectorGuide, connectorGuideRequired, connectorGuideSummary, connectorSkillName } from "./skills.js";
 import { detach, runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { registryProgram } from "./runtime/registry.js";
+import { requestReads } from "./runtime/request-scope.js";
 import { SharedRead } from "./runtime/shared-read.js";
+import { responseCacheKeys } from "./storage/keys.js";
 import { closeScope } from "./runtime/connector-scope.js";
 import { duringViewEffect } from "./runtime/call.js";
 import {
@@ -976,7 +978,17 @@ export class CatalogService {
       let retained = this.catalogs.get(id);
       if (!retained || retained.identity !== identity) {
         const failed = revalidateExpired ? this.revalidations.get(id) : undefined;
-        if (failed?.identity === identity && failed.failure) return Effect.fail(failed.failure.error);
+        if (failed?.identity === identity && failed.failure) {
+          const { error } = failed.failure;
+          return Effect.flatMap(
+            this.storedCatalogSince(
+              id,
+              (stored) => stored !== undefined && (stored.fresh || stored.expiresAt + STALE_FALLBACK_MS > Date.now()),
+              callOptions.signal,
+            ),
+            (changed) => (changed ? this.relistForRevalidation(id, identity, callOptions) : Effect.fail(error)),
+          );
+        }
         retained = this.retainCatalog(id, identity);
       }
       if (!revalidateExpired) return retained.read.join(callOptions.signal);
@@ -984,19 +996,65 @@ export class CatalogService {
       const listedForThisCall = !joined.settled;
       return Effect.flatMap(joined.read.join(callOptions.signal), (tools) => {
         if (listedForThisCall || catalogIsFresh(tools)) return Effect.succeed(tools);
+        const relist = () => {
+          if (this.catalogs.get(id) === joined) this.catalogs.delete(id);
+          return this.relistForRevalidation(id, identity, callOptions);
+        };
+        const fallback = catalogFallback(tools);
         if (
-          this.revalidations.get(id)?.read === joined.read &&
-          catalogStaleness(tools) !== undefined &&
-          catalogFallbackUsable(tools)
+          !fallback ||
+          fallback.usableUntil <= Date.now() ||
+          catalogStaleness(tools) === undefined ||
+          this.revalidations.get(id)?.read !== joined.read
         )
-          return Effect.succeed(tools);
-        if (this.catalogs.get(id) === joined) {
-          this.catalogs.delete(id);
-          this.revalidations.set(id, { identity, read: this.retainCatalog(id, identity).read });
-        }
-        return this.catalog(id, callOptions);
+          return relist();
+        return Effect.flatMap(
+          this.storedCatalogSince(
+            id,
+            (stored) => stored === undefined || stored.fresh || stored.fetchedAt !== fallback.fetchedAt,
+            callOptions.signal,
+          ),
+          (changed) => (changed ? relist() : Effect.succeed(tools)),
+        );
       });
     });
+  }
+
+  private relistForRevalidation(
+    id: string,
+    identity: string,
+    callOptions: ConnectorOperationOptions,
+  ): Effect.Effect<ToolDef[], unknown> {
+    const current = this.catalogs.get(id);
+    if (!current || current.identity !== identity)
+      this.revalidations.set(id, { identity, read: this.retainCatalog(id, identity).read });
+    return this.catalog(id, callOptions);
+  }
+
+  private storedCatalogSince(
+    id: string,
+    changed: (stored: CatalogPeek | undefined) => boolean,
+    callerSignal: AbortSignal | undefined,
+  ): Effect.Effect<boolean> {
+    const signal = callerSignal ?? this.requestSignal;
+    return Effect.suspend(() => {
+      requestReads(this.requestScope).forget(
+        catalogOwnerPartition(this.registry.contextFor(id, this.baseUrl, this.requestScope)).storage,
+        responseCacheKeys.prefix(id),
+      );
+      return withDeadlineEffect<CatalogPeek | undefined, unknown, never>(
+        (peekSignal) =>
+          registryProgram(this.registry, "peekCatalog", id, this.baseUrl, this.requestScope, { signal: peekSignal }),
+        {
+          ...(signal ? { signal } : {}),
+          timeoutMs: STALE_READ_TIMEOUT_MS,
+          timeoutError: new ConnectorCallError("timeout", `catalog peek of "${id}" timed out`),
+        },
+      );
+    }).pipe(
+      Effect.map((stored) => changed(stored)),
+      Effect.catchCause(() => Effect.succeed(true)),
+    );
   }
 
   private retainCatalog(id: string, identity: string): RetainedCatalog {

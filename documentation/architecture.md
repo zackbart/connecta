@@ -868,12 +868,17 @@ reclassification reaches such a program within the TTL without a `list_changed`
 notification. Concurrent askers share the one relisting, and a listing still in
 flight when a call asks is accepted. A relisting that succeeds follows its own
 TTL, so a zero-TTL or uncached catalog is relisted before each such call. The
-service records each revalidation's read per connector and retained identity:
-while that read's stale fallback (`markCatalogFallbackUntil`, the fallback's
-expiry plus `STALE_FALLBACK_MS`) still holds, later revalidating calls admit
-against it without listing, and a read that failed, other than by cancellation,
-answers them with its failure until another read replaces it. Discovery and all
-other calls keep the retained catalog for the request.
+service records each revalidation's read per connector and retained identity.
+While that read's stale fallback (`markCatalogFallback`: its `fetchedAt`, and its
+expiry plus `STALE_FALLBACK_MS`) still holds, a later revalidating call admits
+against it without listing; a read that failed, other than by cancellation,
+answers later calls with its failure until another read replaces it. Before
+either reuse, the call drops the request's memoized `response-cache` reads for
+that connector (`RequestReads.forget`) and peeks storage. A missing entry (fenced,
+regenerated or gone), a fresh one, or one with another `fetchedAt` relists
+instead of reusing a fallback; a fresh entry, or one still inside the fallback
+window, does the same for a failure. Discovery and all other calls keep
+the retained catalog for the request.
 
 **Stale listings.** Discovery alone may list a tool catalog up to 24 hours past
 its expiry (`STALE_DISCOVERY_MS`), so chunks and manifests keep that storage TTL
