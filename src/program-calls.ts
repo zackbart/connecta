@@ -45,6 +45,7 @@ export function callOutcome(outcome: InvocationOutcome<unknown>): CallOutcome {
 
 export class ProgramCalls {
   private readonly entries: Entry[] = [];
+  private readonly reused: Array<{ entry: Entry; id: string }> = [];
   private omitted = 0;
 
   begin(
@@ -79,7 +80,7 @@ export class ProgramCalls {
       const kept = this.entries
         .filter((entry) => entry.reuse !== undefined || entry.retain)
         .slice(0, MAX_RETAINED_READS);
-      for (const entry of kept) if (entry.reuse !== undefined) entry.resultId = entry.reuse;
+      for (const entry of kept) if (entry.reuse !== undefined) this.reused.push({ entry, id: entry.reuse });
       const pending = kept.filter((entry) => entry.reuse === undefined);
       if (pending.length === 0) return Effect.void;
       const budgetMs = Math.max(2, Math.min(RETAIN_BUDGET_MS, Math.floor((options.answerBy - Date.now()) / 4)));
@@ -116,6 +117,10 @@ export class ProgramCalls {
         Effect.asVoid,
       );
     });
+  }
+
+  confirmReused(published: ReadonlySet<string>): void {
+    for (const { entry, id } of this.reused) if (published.has(id)) entry.resultId = id;
   }
 
   get retained(): boolean {

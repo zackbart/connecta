@@ -1550,6 +1550,53 @@ describe("program call log", () => {
     ]);
   });
 
+  it("omits a reused handle's result id when sealing could not publish it", async () => {
+    const inner = memoryStorage();
+    const storage: typeof inner = {
+      capabilities: inner.capabilities,
+      get: (key) => inner.get(key),
+      delete: (key) => inner.delete(key),
+      list: (prefix) => inner.list(prefix),
+      compareAndSet: (...args) => inner.compareAndSet(...args),
+      set: async (key, value, options) => {
+        if (value.startsWith("connecta-result-v4:")) throw new Error("header write failed");
+        return inner.set(key, value, options);
+      },
+    };
+    const native: Connector = {
+      id: "native",
+      kind: "mcp",
+      listTools: async () => [{ name: "shot", annotations: { readOnlyHint: true } }],
+      callTool: async () => ({
+        content: [
+          { type: "text", text: "x".repeat(1_100_000) },
+          { type: "image", data: "aGkA", mimeType: "image/png" },
+        ],
+      }),
+    };
+    const registry = makeRegistry([native], { storage });
+    let handle: unknown;
+    const out = await createExecuteTool(
+      registry,
+      BASE,
+      scriptedExecutor(async (fns) => {
+        handle = await required(fns.call)("native.shot", {});
+        throw new TypeError("x is undefined");
+      }),
+      silentLogger,
+    )({ code: "" });
+    const resultId = required((handle as { resultId?: string }).resultId);
+    expect(body(out).calls).toEqual([{ address: "native.shot", outcome: "success", durationMs: expect.any(Number) }]);
+    expect(body(out).note ?? "").not.toContain("calls[].resultId");
+    const paged = await createExecuteTool(
+      registry,
+      BASE,
+      scriptedExecutor((fns) => required(fns.result)(resultId, { offset: 0 })),
+      silentLogger,
+    )({ code: "" });
+    expect(body(paged).error?.code).toBe("result_not_retained");
+  });
+
   it("retains nothing when a write-budget refusal ends the program", async () => {
     const out = await createExecuteTool(
       makeRegistry([ledger]),

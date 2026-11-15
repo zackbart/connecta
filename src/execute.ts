@@ -2009,8 +2009,9 @@ export function createExecuteTool(
       const sealRun = Effect.suspend(() =>
         sealHeldResults(heldResults, registry.resultsStorage(), ceiling.answerBy, callerSignal),
       ).pipe(
-        Effect.tap(({ refused, refusedWrite }) =>
+        Effect.tap(({ refused, refusedWrite, published }) =>
           Effect.sync(() => {
+            programCalls.confirmReused(published);
             if (refused === 0) return;
             retention.note = refusedWrite ? RESULTS_REFUSED_WRITE_NOTE : RESULTS_REFUSED_NOTE;
             logFailure(logger, "result paging unavailable", failureRecord({}));
