@@ -394,6 +394,24 @@ describe("agent endpoint admission", () => {
     const exact = await rpc(c, "/agent/exact", bot, "call_destructive_tool", { address: "notes.delete", args: {} });
     expect(JSON.stringify(exact)).toContain("read_only_endpoint");
     expect(deleted.count).toBe(2);
+    const missing = async (path: string, address: string) =>
+      (await rpc(c, path, bot, "call_destructive_tool", { address, args: {} })).result.structuredContent.error;
+    const omitted =
+      "Search omits writes refused here; a write's exact address returns read_only_endpoint, not unknown_tool.";
+    const outsidePool = await missing("/agent/exact", "notes.search");
+    expect(outsidePool).toMatchObject({
+      code: "unknown_tool",
+      message: `Unknown tool "search" on connector "notes". ${omitted}`,
+    });
+    expect(outsidePool).not.toHaveProperty("suggestions");
+    for (const path of ["/agent/readers", "/agent/granted"]) {
+      expect(await missing(path, "notes.purge")).toMatchObject({
+        code: "unknown_tool",
+        message: `Unknown tool "purge" on connector "notes". ${omitted}`,
+      });
+    }
+    expect((await missing("/agent/writers", "notes.purge")).message).toBe('Unknown tool "purge" on connector "notes"');
+    expect(deleted.count).toBe(2);
     await c.close();
   });
 
