@@ -133,6 +133,40 @@ describe("meta-tool input schemas", () => {
       expect(rendered[name], name).toStrictEqual(schema);
     }
   });
+
+  it("drops a host's wait_for_previous from every call and still refuses unknown keys", async () => {
+    const app = makeDeployment({ executor: stubExecutor, readOnly: false, connectors: [calcApi()] });
+    const cases: Record<string, Record<string, unknown>> = {
+      skills: {},
+      search_tools: { connector: "calc" },
+      call_tool: { address: "calc.add", args: { a: 2, b: 3 }, resultMode: "value" },
+      call_destructive_tool: { address: "calc.add", args: { a: 2, b: 3 }, resultMode: "value", reason: "Test." },
+      authorize_connector: { connector: "calc" },
+      execute_code: { code: "async () => null" },
+      execute_read_code: { code: "async () => null" },
+    };
+    const call = async (name: string, args: Record<string, unknown>) =>
+      (await readJsonRpc(await mcpRpc(app, "tools/call", { name, arguments: args }, { token: TOKEN }))).result;
+    const untimed = (result: unknown) => JSON.stringify(result).replace(/(\\?")durationMs\1:\d+/g, "$1durationMs$1:0");
+    try {
+      expect(Object.keys(cases).sort()).toEqual(Object.keys(GOLDEN).sort());
+      for (const [name, args] of Object.entries(cases)) {
+        for (const wait_for_previous of [true, false]) {
+          const hosted = await call(name, { ...args, wait_for_previous });
+          expect(hosted.isError, name).toBeFalsy();
+          expect(untimed(hosted), name).toBe(untimed(await call(name, args)));
+        }
+      }
+      for (const name of ["call_tool", "call_destructive_tool"]) {
+        const refused = await call(name, { ...cases[name], wait_for_previous: true, wait_for_prev: true });
+        expect(refused.isError, name).toBe(true);
+        expect(refused.content[0].text, name).toContain('Unrecognized key: "wait_for_prev". Send { address, args }');
+        expect(refused.content[0].text, name).not.toContain('"wait_for_previous"');
+      }
+    } finally {
+      await app.close();
+    }
+  });
 });
 
 describe("meta-tool output schemas", () => {

@@ -820,6 +820,76 @@ describe("native tool surface", () => {
     }
   });
 
+  it("drops a host's wait_for_previous unless the downstream tool declares it", async () => {
+    const storage = memoryStorage();
+    const received: Array<[string, unknown]> = [];
+    const app = createTestConnecta({
+      connectors: [
+        {
+          id: "crm",
+          listTools: async () => [
+            {
+              name: "get",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object", properties: { id: { type: "string" } } },
+            },
+            {
+              name: "create",
+              annotations: { readOnlyHint: false },
+              inputSchema: { type: "object", properties: { name: { type: "string" } }, additionalProperties: false },
+            },
+            {
+              name: "queue",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object", properties: { wait_for_previous: { type: "boolean" } } },
+            },
+          ],
+          callTool: async (name, args) => {
+            received.push([name, args]);
+            return { content: [{ type: "text", text: "ok" }] };
+          },
+        },
+      ],
+      agents: ["assistant"],
+      pools: { nocode: { tools: ["crm"], members: ["agent:assistant"], surface: "native", executeCode: false } },
+      storage,
+      accessTokens: accessTokens(storage),
+      logger: silentLogger,
+    });
+    try {
+      const token = await issueAgentToken(storage, "assistant");
+      const call = async (name: string, args: Record<string, unknown>) =>
+        (await rpc(app, token, "nocode", "tools/call", { name, arguments: args })).result;
+      const listed = await rpc(app, token, "nocode", "tools/list", {});
+      for (const tool of listed.result.tools as Array<{ name: string; inputSchema: { properties?: object } }>) {
+        if (tool.name !== "crm__queue")
+          expect(tool.inputSchema.properties ?? {}, tool.name).not.toHaveProperty("wait_for_previous");
+      }
+      for (const [name, args] of [
+        ["crm__get", { id: "p1" }],
+        ["crm__WRITE__create", { name: "Bob" }],
+        ["crm__queue", {}],
+      ] as const) {
+        const result = await call(name, { ...args, wait_for_previous: true });
+        expect(result.isError, name).toBeFalsy();
+      }
+      expect(received).toEqual([
+        ["get", { id: "p1" }],
+        ["create", { name: "Bob" }],
+        ["queue", { wait_for_previous: true }],
+      ]);
+      expect((await call("skills", { wait_for_previous: true })).isError).toBeFalsy();
+      const unknown = await call("read_result", { id: "res_missing", wait_for_previous: true });
+      expect(unknown.content[0].text).toContain("Unknown or expired result id");
+      const typo = await call("read_result", { id: "res_missing", wait_for_previous: true, ofset: 2 });
+      expect(typo.isError).toBe(true);
+      expect(typo.content[0].text).toMatch(/Unrecognized key.*"ofset"/);
+      expect(typo.content[0].text).not.toContain("wait_for_previous");
+    } finally {
+      await app.close();
+    }
+  });
+
   it("INV-6: a tool's long error reaches a native write's agent whole and no activity record", async () => {
     const { connecta, token, sent, events } = await admitted();
     const called = await rpc(connecta, token, "hosted", "tools/call", {

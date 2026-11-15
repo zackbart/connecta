@@ -20,7 +20,7 @@ import type { McpServer, ServerContext } from "@modelcontextprotocol/server";
 import { Cause, Deferred, Duration, Effect, Exit, type Scope } from "effect";
 import * as z from "zod";
 import type { ActivityRequestContext } from "./activity.js";
-import { advertisedSchema } from "./advertised-schema.js";
+import { advertisedInputSchema } from "./advertised-schema.js";
 import {
   boundedDiscoveryText,
   CatalogService,
@@ -2370,7 +2370,7 @@ ${readOnly ? "" : "Never repeat writes for output. "}emit(result) needs native c
 // Module scope, like the other five meta-tool inputs: its JSON Schema is
 // derived once per process. Budgets and connectors vary by deployment and
 // view, so they live in the description, never here.
-const EXECUTE_INPUT = advertisedSchema(
+const EXECUTE_INPUT = advertisedInputSchema(
   z.object({
     code: z
       .string()

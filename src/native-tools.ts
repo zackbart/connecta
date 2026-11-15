@@ -28,6 +28,7 @@ import { nativeRecovery } from "./native-recovery.js";
 import { CatalogService } from "./catalog-service.js";
 import { catalogStaleness, type CatalogStaleness } from "./catalog-freshness.js";
 import { jsonResult, type ToolResult } from "./meta-tools.js";
+import { withoutHostControlKeys } from "./advertised-schema.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import type { RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
@@ -260,6 +261,11 @@ function passThroughSchema(schema: JsonSchema | undefined): StandardSchemaWithJS
       jsonSchema: { input: () => json, output: () => json },
     },
   } as StandardSchemaWithJSON;
+}
+
+function declaredKeys(schema: JsonSchema | undefined): string[] {
+  const properties = schema?.properties;
+  return properties && typeof properties === "object" ? Object.keys(properties) : [];
 }
 
 function describe(entry: NativeTool, executeCode: boolean, guideName?: string): string {
@@ -514,7 +520,7 @@ export class NativeSurface {
               const result = yield* upwardStep(
                 authInvoke<unknown>(self.options, "route", [
                   boundClassification(name) === "read" ? "call_tool" : "call_destructive_tool",
-                  { address, args },
+                  { address, args: withoutHostControlKeys(args, declaredKeys(target.entry.tool.inputSchema)) },
                   request,
                 ]),
               );
