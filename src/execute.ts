@@ -2,7 +2,7 @@ import { operationActivity } from "./operation-activity.js";
 import { SkillLookupError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES, routeNames } from "./agent-routes.js";
-import { READ_PROGRAM_SOURCE } from "./tool-safety.js";
+import { isWriteLike, READ_PROGRAM_SOURCE } from "./tool-safety.js";
 import type { AgentRouteNames } from "./types.js";
 import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
 import { nativeRecovery } from "./native-recovery.js";
@@ -661,6 +661,7 @@ interface Sending {
   settle?: SettleWrite;
   rewritten: boolean;
   retain?: RetainRead;
+  reuse?: string;
 }
 
 type GuestOperation = (...args: unknown[]) => Effect.Effect<unknown, unknown>;
@@ -842,16 +843,32 @@ function sandboxProvider(
             ]);
           type Presented = Awaited<ReturnType<typeof pageProgramResult>>;
           const stashedId = (presented: Presented) => (presented.format === "paged" ? presented.resultId : undefined);
-          if (!write) sending.retain = () => page(value, format, 0).pipe(Effect.map(stashedId));
+          const retainable = !isWriteLike(resolved.definition);
+          if (retainable)
+            sending.retain = (held) =>
+              authCall<Presented>(pageProgramResult, [
+                registry,
+                baseUrl,
+                resolved,
+                value,
+                format,
+                secrets,
+                requestScope,
+                { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
+                0,
+                limits.followUpRoutes,
+                held,
+                readBytes,
+              ]).pipe(Effect.map(stashedId));
           const shown = (presented: Presented) => {
             const id = stashedId(presented);
             if (
-              !write &&
+              retainable &&
               id !== undefined &&
               presented.format === "paged" &&
               presented.totalBytes > PROGRAM_RESULT_INLINE_BYTES
             )
-              sending.retain = () => Effect.succeed(id);
+              sending.reuse = id;
             return presented;
           };
           const envelope =
@@ -918,6 +935,7 @@ function sandboxProvider(
           const [result, native] = yield* Effect.all([resultPending ?? Effect.succeed(undefined), nativePending], {
             concurrency: "unbounded",
           });
+          shown(result ?? native);
           let valueResult: unknown;
           if (native.format === "paged") {
             valueResult = result ? transportResult(result, write) : undefined;
@@ -1051,7 +1069,11 @@ function sandboxProvider(
                 ...(settled.resolved && (settled.ok || settled.dispatched)
                   ? { address: `${settled.resolved.connector.id}.${settled.resolved.toolName}` }
                   : {}),
-                ...(settled.ok && sending.retain ? { retain: sending.retain } : {}),
+                ...(settled.ok && sending.reuse !== undefined
+                  ? { reuse: sending.reuse }
+                  : settled.ok && sending.retain
+                    ? { retain: sending.retain }
+                    : {}),
               });
             }),
           ),
@@ -2026,11 +2048,21 @@ export function createExecuteTool(
           ),
         );
       });
-      const retained = Effect.tap(answered, (result) =>
-        !budgetFailure && (result.isError || programWrites.outcomeUnknown)
-          ? programCalls.retainReads(ceiling.answerBy, callerSignal)
-          : Effect.void,
-      );
+      const retained = Effect.tap(answered, (result) => {
+        if (budgetFailure || failureCode(result) === "budget_exceeded") return Effect.void;
+        if (!result.isError && !programWrites.outcomeUnknown) return Effect.void;
+        const recovered = new HeldResults(sentSecrets, requestOwner(requestScope).credentialReads);
+        return programCalls.retainReads({
+          answerBy: ceiling.answerBy,
+          signal: callerSignal,
+          ready: heldResults.settled,
+          stash: (retain) => retain(recovered),
+          seal: (deadlineAt) =>
+            sealHeldResults(recovered, registry.resultsStorage(), deadlineAt, callerSignal).pipe(
+              Effect.map(({ published }) => published),
+            ),
+        });
+      });
       return Effect.tap(retained, () => sealRun);
     });
 
@@ -2298,6 +2330,11 @@ function finishedRun(
     }
     return response;
   });
+}
+
+function failureCode(result: ToolResult): unknown {
+  const error = result.structuredContent?.error;
+  return error !== null && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
 }
 
 function executeLogs(value: unknown): string | undefined {

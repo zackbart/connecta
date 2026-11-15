@@ -1492,6 +1492,87 @@ describe("program call log", () => {
     expect(silent.structuredContent).not.toHaveProperty("calls");
   });
 
+  it("bounds retention by its storage deadline and drops ids whose header was not written", async () => {
+    const inner = memoryStorage();
+    const storage: typeof inner = {
+      capabilities: inner.capabilities,
+      get: (key) => inner.get(key),
+      delete: (key) => inner.delete(key),
+      list: (prefix) => inner.list(prefix),
+      compareAndSet: (...args) => inner.compareAndSet(...args),
+      set: async (key, value, options) => {
+        if (value.startsWith("connecta-result-v4:")) await new Promise((resolve) => setTimeout(resolve, 2_500));
+        return inner.set(key, value, options);
+      },
+    };
+    const started = Date.now();
+    const out = await createExecuteTool(
+      makeRegistry([ledger], { storage }),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        await required(fns.call)("ledger.get", {});
+        throw new TypeError("x is undefined");
+      }),
+      silentLogger,
+    )({ code: "" });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(out.isError).toBe(true);
+    expect(body(out).calls).toEqual([{ address: "ledger.get", outcome: "success", durationMs: expect.any(Number) }]);
+    expect(body(out).note ?? "").not.toContain("calls[].resultId");
+  });
+
+  it("reuses the stash of an oversized native result the program saw, even when the stash is full", async () => {
+    const native: Connector = {
+      id: "native",
+      kind: "mcp",
+      listTools: async () => [{ name: "shot", annotations: { readOnlyHint: true } }],
+      callTool: async () => ({
+        content: [
+          { type: "text", text: "x".repeat(1_100_000) },
+          { type: "image", data: "aGkA", mimeType: "image/png" },
+        ],
+      }),
+    };
+    let handle: unknown;
+    const out = await createExecuteTool(
+      makeRegistry([native], { results: { maxStashEntries: 1 } }),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        handle = await required(fns.call)("native.shot", {});
+        throw new TypeError("x is undefined");
+      }),
+      silentLogger,
+    )({ code: "" });
+    const resultId = (handle as { resultId?: string }).resultId;
+    expect(resultId).toEqual(expect.any(String));
+    expect(body(out).calls).toEqual([
+      { address: "native.shot", outcome: "success", durationMs: expect.any(Number), resultId },
+    ]);
+  });
+
+  it("retains nothing when a write-budget refusal ends the program", async () => {
+    const out = await createExecuteTool(
+      makeRegistry([ledger]),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        const call = required(fns.call);
+        await call("ledger.get", {});
+        await call("ledger.record", {});
+        await call("ledger.record", {});
+      }),
+      silentLogger,
+      undefined,
+      { readOnly: false, maxWrites: 1 },
+    )({ code: "" });
+    expect(body(out).error?.code).toBe("budget_exceeded");
+    expect(body(out).calls).toEqual([
+      { address: "ledger.get", outcome: "success", durationMs: expect.any(Number) },
+      { address: "ledger.record", outcome: "success", durationMs: expect.any(Number) },
+      { address: "ledger.record", outcome: "refused", durationMs: expect.any(Number) },
+    ]);
+    expect(body(out).note ?? "").not.toContain("calls[].resultId");
+  });
+
   it("keeps budget_exceeded terminal with the log and no retained result", async () => {
     const out = await createExecuteTool(
       makeRegistry([ledger]),
