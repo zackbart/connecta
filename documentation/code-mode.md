@@ -927,6 +927,54 @@ addresses, arguments, results, code, credentials, logs, or raw errors. Result
 sizes are numbers, never previews. The collector exists only for the opted-in
 request; it is not activity, a session, or a stream.
 
+**R9.** A run whose program made `connecta.call` calls returns a top-level `calls`
+log beside `hostCalls`, on success and on every failure, `budget_exceeded`
+included. A run with no such calls omits it. Each entry is
+`{ address, outcome, durationMs }` in the order the calls started, plus `resultId`
+as described below. It holds no arguments, values or error text, and it sits outside
+`diagnostics` (`R8`) and outside the `maxResultChars` envelope. Other host calls
+(`search`, `describe`, `result`, `read`, `skill`) are not listed.
+
+- `address` is the canonical `connector.tool` when the call was dispatched or
+  succeeded. For a call refused before dispatch, including an unknown or hidden
+  address, it is the program's own text, cut at 256 UTF-8 bytes with `…`, so the
+  log names nothing the endpoint's scope did not already show the program.
+- `outcome` is `success`, `failure` (dispatched and failed; for a write, proven
+  not applied), `unknown` (a write whose outcome is unknown, including a source
+  write served as a read whose answer was lost, or a call still open
+  when the response was built), or `refused` (never sent: refusals, unknown
+  addresses, invalid arguments, the write gate and write budget, and an invalid
+  `connecta.call` timeout).
+- `durationMs` runs from the call's entry to its outcome.
+- The first 100 calls are listed; `callsOmitted` counts the rest.
+
+When the run fails for any reason other than a budget refusal (an uncaught error,
+a timeout, an executor failure, or a write with an unknown outcome), each read that
+completed gets a `resultId`. A read here is a call whose source and served
+classification are both read; a source write served as `read` or `read-repeatable`
+is treated as a write. The read's value is stashed under the read's own binding
+through the same store and 15-minute expiry as `R4`, and a fixed `note` says to
+read each `calls[].resultId` with `connecta.result(resultId, { all: true })` in a
+new program instead of repeating the read.
+
+These recovery entries share one storage deadline: 1 s, or a quarter of the time
+left before the answer-by time if that is less. Within it they wait for the run's
+host calls to settle, are stored, and are sealed against the run's final secret set
+as `R4a` describes, in a ledger of their own. An entry whose header was not written
+by the deadline gets no `resultId` and stays unreadable, so slow storage costs the
+retention, never the response. At most the first 20 completed reads are kept, and
+a read the stash refuses has no `resultId`. A completed read whose handle the
+program already saw (a value or native presentation over the 1 MiB transfer limit)
+reuses that stash and costs no storage; its entry gets the `resultId` only once the
+run's own sealing publishes it. In every case an id appears in `calls` only after its
+header was written, and the `note` appears only when at least one id did.
+
+A write never gets a `resultId`: its entry reports the outcome only, and it
+already ran. A successful run returns no `resultId`s, since its return is the
+answer. A run whose final error is `budget_exceeded` (the host-call budget (`L4`),
+the write budget (`W10`), or an emission or once-per-run budget) returns the log
+without any `resultId`.
+
 ## Emitted output
 
 Guest-authored images accept only `image/png`, `image/jpeg`, `image/gif`, or `image/webp`
@@ -1187,7 +1235,8 @@ admission lease is released, so wedged runs cannot fill the code pool. A run tha
 reaches the ceiling first, because it queued or because its executor's deadline
 is set past the ceiling, ends as a retryable `timeout` at
 `details.stage: "response ceiling"`. Neither has a partial result. Each still
-carries `hostCalls`, and `writes` when the program sent any. A write still on the
+carries `hostCalls`, the `calls` log with its completed reads retained (`R9`), and
+`writes` when the program sent any. A write still on the
 wire reaches its deadline at the ceiling and makes the result
 `write_outcome_unknown`, once, with no replay (`W9`).
 
@@ -1255,7 +1304,7 @@ continue briefly, including a timer escaping the bridge (`X3`), with no host
 access. The Promise executor contract carries typed failures separately from guest values.
 
 The failure adds payload-free `hostCalls: { attempted, admitted, succeeded, failed }`
-without diagnostics. `attempted` includes the first refusal, normally 21; `admitted`
+without diagnostics, and the `calls` log (`R9`) without any `resultId`. `attempted` includes the first refusal, normally 21; `admitted`
 counts the 20 calls past the gate, local refusals included. `succeeded` and `failed`
 count outcomes at response time, the budget refusal and abandoned pending calls
 as failed, so `succeeded + failed === attempted`. `emit` and later attempts are
@@ -1714,7 +1763,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `R1`, `R2`, `R3`, `R4` | `test/guest-api-contract.test.ts` and `test/guest-api-contract-quickjs.node.test.ts` (small pass-through, shared return paging and unavailable fallback, no repeated writes, live authority), `test/program-result-cases.ts` (reconstruction, redaction, notice survives a 2,000-character spill)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `M6`, `M9`             | verdicts; `R2`'s guard, `M1`'s strict typing, and `M2`'s collect-then-deliver are their enforcement                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `R5`                   | `test/guest-api-contract.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `R6`–`R8`              | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `R6`–`R9`              | `test/guest-api-contract.test.ts` (normal result keys, a throw after a completed read pages it from the log), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion, the call log's outcomes, retained reads, slow header writes, reused native handles in a full stash and after a failed header write, writes and host-call and write budget refusals), `test/program-writes.test.ts` (a source write served as `read-repeatable` whose answer was lost logs `unknown`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `Y1`, `Y2`, `Y3`       | `test/guest-api-contract.test.ts` (one attempt per call, retryable flags by code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `Y4`                   | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `L1`, `L2`             | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls, discovery included, and refuses discovery after the run; a cancelled wedged executor, or one whose `acquire()` ignores the signal, returns promptly and releases its lease)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |

@@ -329,6 +329,7 @@ or hands out, and a change usually belongs in exactly one of them:
 | `src/invocation.ts`      | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record.                                                                         |
 | `src/catalog.ts`         | Ranking, description summarizing, and the compact and TypeScript schema renderers discovery shows.                                                                                                                               |
 | `src/result-shapes.ts`   | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none.                                                                                              |
+| `src/program-calls.ts`   | Program call log: each `connecta.call` address, outcome and duration, and the completed reads a failed run retains for paging.                                                                                                   |
 | `src/program-writes.ts`  | Program write accounting on writable endpoints: write budgets, dispatch draining, and known or unknown outcomes.                                                                                                                 |
 
 `src/meta-tools.ts` and `src/execute.ts` are two front doors onto the same two

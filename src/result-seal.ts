@@ -125,9 +125,10 @@ export interface SealOutcome {
   /** Results not published to later runs, and whether any of them is a write's output. */
   readonly refused: number;
   readonly refusedWrite: boolean;
+  readonly published: ReadonlySet<string>;
 }
 
-const SEALED: SealOutcome = { refused: 0, refusedWrite: false };
+const SEALED: SealOutcome = { refused: 0, refusedWrite: false, published: new Set() };
 
 /**
  * Publish what can be published. Never fails. Nothing is published until the run's work
@@ -203,9 +204,11 @@ export function sealHeldResults(
       Effect.ignore,
       Effect.flatMap(() => {
         const refused = entries.filter((entry) => !published.has(entry));
-        const outcome: SealOutcome = refused.length
-          ? { refused: refused.length, refusedWrite: refused.some((entry) => entry.write) }
-          : SEALED;
+        const outcome: SealOutcome = {
+          refused: refused.length,
+          refusedWrite: refused.some((entry) => entry.write),
+          published: new Set([...published].map((entry) => entry.id)),
+        };
         if (refused.length === 0 || signal?.aborted) return Effect.succeed(outcome);
         return Effect.forEach(refused, refuse, { concurrency: SEAL_CONCURRENCY, discard: true }).pipe(
           Effect.timeoutOrElse({

@@ -2,7 +2,7 @@ import { operationActivity } from "./operation-activity.js";
 import { SkillLookupError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES, routeNames } from "./agent-routes.js";
-import { READ_PROGRAM_SOURCE } from "./tool-safety.js";
+import { isWriteLike, READ_PROGRAM_SOURCE } from "./tool-safety.js";
 import type { AgentRouteNames } from "./types.js";
 import { authCall, authFlow, authInvoke, authMethod } from "./auth/native.js";
 import { nativeRecovery } from "./native-recovery.js";
@@ -57,6 +57,7 @@ import {
   type CallErrorDetails,
 } from "./errors.js";
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
+import { callOutcome, ProgramCalls, RETAINED_READS_NOTE, type RetainRead } from "./program-calls.js";
 import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
 import { EXECUTE_OUTPUT, withinOutputSchema } from "./meta-output.js";
@@ -87,6 +88,7 @@ const EXECUTE_MAX_HOST_CALLS = CONFIG_DEFAULTS.execute.maxHostCalls;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = CONFIG_DEFAULTS.execute.hostCallTimeoutMs;
 /** Above every program in the recorded evals, below the QuickJS IPC ceiling. */
 const EXECUTE_MAX_CODE_BYTES = 64 * 1024;
+const MAX_LOGGED_ADDRESS_BYTES = 256;
 /** All of one run's stash reclaim, in milliseconds of waiting on storage. */
 const RECLAIM_BUDGET_MS = 1_000;
 /**
@@ -623,6 +625,7 @@ interface SandboxLimits {
   unawaited?: { read: boolean } | undefined;
   /** The run's retained results, which it seals when it ends. */
   heldResults?: HeldResults | undefined;
+  programCalls?: ProgramCalls | undefined;
 }
 
 /** Numeric accounting only; no addresses, arguments, or results. */
@@ -653,6 +656,13 @@ interface HostCalls {
 }
 
 type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
+
+interface Sending {
+  settle?: SettleWrite;
+  rewritten: boolean;
+  retain?: RetainRead;
+  reuse?: string;
+}
 
 type GuestOperation = (...args: unknown[]) => Effect.Effect<unknown, unknown>;
 
@@ -784,7 +794,7 @@ function sandboxProvider(
   const dispatchDeadlineAt = limits.readDeadlineAt ?? limits.programDeadlineAt;
   /** Budget and account for writes a writable endpoint admits. */
   const invocationContext = (
-    sending: { settle?: SettleWrite; rewritten: boolean },
+    sending: Sending,
     timeoutMs: number,
     writeTimeoutMs: number,
     refusal?: CallErrorDetails,
@@ -831,6 +841,36 @@ function sandboxProvider(
               limits.heldResults,
               readBytes,
             ]);
+          type Presented = Awaited<ReturnType<typeof pageProgramResult>>;
+          const stashedId = (presented: Presented) => (presented.format === "paged" ? presented.resultId : undefined);
+          const retainable = !isWriteLike(resolved.definition);
+          if (retainable)
+            sending.retain = (held) =>
+              authCall<Presented>(pageProgramResult, [
+                registry,
+                baseUrl,
+                resolved,
+                value,
+                format,
+                secrets,
+                requestScope,
+                { max: maxHostCalls, left: maxHostCalls - hostCalls.attempted },
+                0,
+                limits.followUpRoutes,
+                held,
+                readBytes,
+              ]).pipe(Effect.map(stashedId));
+          const shown = (presented: Presented) => {
+            const id = stashedId(presented);
+            if (
+              retainable &&
+              id !== undefined &&
+              presented.format === "paged" &&
+              presented.totalBytes > PROGRAM_RESULT_INLINE_BYTES
+            )
+              sending.reuse = id;
+            return presented;
+          };
           const envelope =
             resolved.connector.kind === "mcp" && raw !== null && typeof raw === "object"
               ? (raw as Record<string, unknown>)
@@ -848,14 +888,14 @@ function sandboxProvider(
             dataKey !== undefined &&
             diagnosticsEncoder.encode(JSON.stringify(value)).byteLength > PROGRAM_RESULT_INLINE_BYTES
           ) {
-            return yield* page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024);
+            return shown(yield* page(value, format, PROGRAM_RESULT_WIRE_BYTES - 1024));
           }
           const content = envelope?.content;
           if (
             !Array.isArray(content) ||
             !content.some((block) => block && ["image", "audio", "resource", "resource_link"].includes(block.type))
           ) {
-            return transportResult(yield* page(value, format), write);
+            return transportResult(shown(yield* page(value, format)), write);
           }
           const unavailablePresentation = (): ProgramResultHandle => ({
             format: "paged",
@@ -895,6 +935,7 @@ function sandboxProvider(
           const [result, native] = yield* Effect.all([resultPending ?? Effect.succeed(undefined), nativePending], {
             concurrency: "unbounded",
           });
+          shown(result ?? native);
           let valueResult: unknown;
           if (native.format === "paged") {
             valueResult = result ? transportResult(result, write) : undefined;
@@ -997,10 +1038,11 @@ function sandboxProvider(
         }
         timeout = (options as { timeoutMs?: unknown }).timeoutMs;
       }
-      if (
-        typeof address !== "string" ||
-        (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1))
-      ) {
+      if (typeof address !== "string") return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
+      const guestAddress = boundedEchoText(address, MAX_LOGGED_ADDRESS_BYTES);
+      const logged = limits.programCalls?.begin(guestAddress);
+      if (timeout !== undefined && (typeof timeout !== "number" || !Number.isSafeInteger(timeout) || timeout < 1)) {
+        logged?.("refused");
         return yield* Effect.fail(guestFailure("invalid_args", CALL_SIGNATURE));
       }
       const requestedMs =
@@ -1012,13 +1054,28 @@ function sandboxProvider(
       // A program write settles here — unknown if the call never returned an
       // outcome. Credentials are filtered from arguments; submitted private values are not.
       const filtered = sentSecrets.filterCredentials(args ?? {});
-      const sending: { settle?: SettleWrite; rewritten: boolean } = { rewritten: filtered.changed };
+      const sending: Sending = { rewritten: filtered.changed };
       const refusal = outOfTime() ? outOfTimeRefusal(boundedEchoText(address, 512), "run deadline") : undefined;
       const outcome = yield* invocation
         .pipeline(address, filtered.value, invocationContext(sending, timeoutMs, writeTimeoutMs, refusal))
         .pipe(
           Effect.onExit((exit) =>
-            Effect.sync(() => sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown")),
+            Effect.sync(() => {
+              sending.settle?.(Exit.isSuccess(exit) ? writeStateOf(exit.value) : "unknown");
+              if (!logged) return;
+              if (Exit.isFailure(exit)) return logged("unknown");
+              const settled = exit.value;
+              logged(callOutcome(settled), {
+                ...(settled.resolved && (settled.ok || settled.dispatched)
+                  ? { address: `${settled.resolved.connector.id}.${settled.resolved.toolName}` }
+                  : {}),
+                ...(settled.ok && sending.reuse !== undefined
+                  ? { reuse: sending.reuse }
+                  : settled.ok && sending.retain
+                    ? { retain: sending.retain }
+                    : {}),
+              });
+            }),
           ),
         );
       if (outcome.resolved) {
@@ -1754,6 +1811,7 @@ export function createExecuteTool(
     requestScope: object,
     hostCalls: HostCalls,
     programWrites: ProgramWrites,
+    programCalls: ProgramCalls,
     unawaited: { read: boolean },
     retention: { note?: string },
     ceiling: ResponseCeiling,
@@ -1848,6 +1906,7 @@ export function createExecuteTool(
                 dispatchController,
                 unawaited,
                 heldResults,
+                programCalls,
               },
               requestScope,
             ),
@@ -1950,8 +2009,9 @@ export function createExecuteTool(
       const sealRun = Effect.suspend(() =>
         sealHeldResults(heldResults, registry.resultsStorage(), ceiling.answerBy, callerSignal),
       ).pipe(
-        Effect.tap(({ refused, refusedWrite }) =>
+        Effect.tap(({ refused, refusedWrite, published }) =>
           Effect.sync(() => {
+            programCalls.confirmReused(published);
             if (refused === 0) return;
             retention.note = refusedWrite ? RESULTS_REFUSED_WRITE_NOTE : RESULTS_REFUSED_NOTE;
             logFailure(logger, "result paging unavailable", failureRecord({}));
@@ -1989,7 +2049,22 @@ export function createExecuteTool(
           ),
         );
       });
-      return Effect.tap(answered, () => sealRun);
+      const retained = Effect.tap(answered, (result) => {
+        if (budgetFailure || failureCode(result) === "budget_exceeded") return Effect.void;
+        if (!result.isError && !programWrites.outcomeUnknown) return Effect.void;
+        const recovered = new HeldResults(sentSecrets, requestOwner(requestScope).credentialReads);
+        return programCalls.retainReads({
+          answerBy: ceiling.answerBy,
+          signal: callerSignal,
+          ready: heldResults.settled,
+          stash: (retain) => retain(recovered),
+          seal: (deadlineAt) =>
+            sealHeldResults(recovered, registry.resultsStorage(), deadlineAt, callerSignal).pipe(
+              Effect.map(({ published }) => published),
+            ),
+        });
+      });
+      return Effect.tap(retained, () => sealRun);
     });
 
   return authMethod(
@@ -2001,6 +2076,7 @@ export function createExecuteTool(
         if (!owner.open) return Effect.fail(owner.controller.signal.reason);
         const hostCalls: HostCalls = { attempted: 0, admitted: 0, succeeded: 0, failed: 0 };
         const programWrites = new ProgramWrites();
+        const programCalls = new ProgramCalls();
         const unawaited = { read: false };
         const retention: { note?: string } = {};
         const stop = { budget: false };
@@ -2028,6 +2104,7 @@ export function createExecuteTool(
             requestScope,
             hostCalls,
             programWrites,
+            programCalls,
             unawaited,
             retention,
             ceiling,
@@ -2052,6 +2129,7 @@ export function createExecuteTool(
               const counts = { ...hostCalls, failed: hostCalls.attempted - hostCalls.succeeded };
               const note = [
                 finishedRunNote(result, hostCalls.attempted, programWrites.sent, unawaited.read),
+                result.isError && programCalls.retained ? RETAINED_READS_NOTE : undefined,
                 retention.note,
               ]
                 .filter(Boolean)
@@ -2060,6 +2138,7 @@ export function createExecuteTool(
                 ...result.structuredContent,
                 ...(note ? { note } : {}),
                 hostCalls: counts,
+                ...redactAgentOutput(sentSecrets, programCalls.report()),
               };
               if (result.content[0]?.type === "text") result.content[0].text = JSON.stringify(result.structuredContent);
               return result;
@@ -2252,6 +2331,11 @@ function finishedRun(
     }
     return response;
   });
+}
+
+function failureCode(result: ToolResult): unknown {
+  const error = result.structuredContent?.error;
+  return error !== null && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
 }
 
 function executeLogs(value: unknown): string | undefined {

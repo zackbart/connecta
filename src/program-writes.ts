@@ -182,6 +182,10 @@ export class ProgramWrites {
     };
   }
 
+  get outcomeUnknown(): boolean {
+    return this.states.includes("unknown");
+  }
+
   /** Whether this run dispatched any write, whatever became of it. */
   get sent(): boolean {
     return this.states.length > 0 || this.inFlight.size > 0;

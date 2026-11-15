@@ -283,7 +283,10 @@ describe("read programs (execute_read_code)", () => {
       },
     });
     const failed = value(await failing.run((connecta) => connecta.call!("tracker.close_issue", { id: 1 })));
-    expect(failed.error).toMatchObject({ retryable: false });
+    expect(failed.error).toMatchObject({ code: "write_outcome_unknown", retryable: false, writes: { unknown: 1 } });
+    expect(failed.calls).toEqual([
+      { address: "tracker.close_issue", outcome: "unknown", durationMs: expect.any(Number) },
+    ]);
     expect(failing.writes()).toHaveLength(1);
   });
 
