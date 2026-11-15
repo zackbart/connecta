@@ -486,6 +486,84 @@ describe("search_tools", () => {
     expect((await ranked("update project settings"))[0]).toBe("update_project_settings:write");
   });
 
+  it("folds one tool offered by several connectors into its best-ranked row and routes to a named account", async () => {
+    const tools = (connector: string): ToolDef[] => [
+      {
+        name: "search_threads",
+        description: "Search mail threads by sender, subject or label.",
+        annotations: { readOnlyHint: true },
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      },
+      {
+        name: "send_message",
+        description: `Send one message from ${connector}.`,
+        annotations: { readOnlyHint: false },
+      },
+      { name: "archive_thread", description: "Archive one mail thread.", annotations: { readOnlyHint: false } },
+    ];
+    const mail = (id: string, title: string, extra: Partial<Connector> = {}) =>
+      connectorWith({ id, title, kind: "api", tools: tools(id), ...extra });
+    const changed = connectorWith({
+      id: "mail_beta",
+      kind: "api",
+      tools: tools("mail_beta").map((tool) =>
+        tool.name === "search_threads" ? { ...tool, inputSchema: { type: "object", properties: { q: {} } } } : tool,
+      ),
+    });
+    const mt = createMetaTools(
+      makeRegistry([
+        mail("mail", "Mail"),
+        mail("mail_work", "Mail (Work)"),
+        mail("mail_home", "Mail (Home)", { readOnly: true }),
+        changed,
+      ]),
+      BASE,
+    );
+    const search = async (args: Parameters<typeof mt.searchTools>[0]) =>
+      textOf(await mt.searchTools({ limit: MAX_SEARCH_LIMIT, ...args })) as SearchResult;
+    const rows = (page: SearchResult) => page.tools.map((tool) => [tool.address, tool.alsoOn]);
+
+    const threads = await search({ query: "search threads" });
+    expect(rows(threads)).toEqual([
+      ["mail.search_threads", ["mail_work.search_threads", "mail_home.search_threads"]],
+      ["mail_beta.search_threads", undefined],
+    ]);
+    expect(threads.total).toBe(2);
+    expect(threads.connectors).toEqual({
+      mail: { title: "Mail" },
+      mail_work: { title: "Mail (Work)" },
+      mail_home: { title: "Mail (Home)" },
+    });
+
+    // Every id word, in any order, routes above the bare id; one id word picks the folded row.
+    const work = await search({ query: "work mail search threads" });
+    expect(rows(work)[0]).toEqual(["mail_work.search_threads", ["mail.search_threads", "mail_home.search_threads"]]);
+    expect(rows(await search({ query: "home threads" }))[0]).toEqual([
+      "mail_home.search_threads",
+      ["mail.search_threads", "mail_work.search_threads"],
+    ]);
+
+    // A read-only connector's write stays hidden; pages count rows, so walking them returns each row once.
+    const archive = await search({ query: "archive thread" });
+    expect(rows(archive)).toEqual([["mail.archive_thread", ["mail_work.archive_thread", "mail_beta.archive_thread"]]]);
+    const walked: SearchResult["tools"] = [];
+    for (let offset: number | undefined = 0; offset !== undefined;) {
+      const page: SearchResult = await search({ query: "search threads", limit: 1, offset });
+      expect(page.total).toBe(2);
+      walked.push(...page.tools);
+      offset = page.nextOffset;
+    }
+    expect(walked).toEqual(threads.tools);
+
+    // Rows that differ by description stay apart; a browse lists every address.
+    expect(rows(await search({ query: "send message" })).map(([address]) => address)).toEqual([
+      "mail.send_message",
+      "mail_work.send_message",
+      "mail_beta.send_message",
+    ]);
+    expect((await search({ query: "" })).total).toBe(10);
+  });
+
   it("matches provider-declared synonyms lexically within that provider's catalog only", async () => {
     const other: Connector = connectorWith({
       id: "other",
@@ -844,10 +922,11 @@ describe("search_tools", () => {
     const cloned = textOf(
       await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query, limit: MAX_SEARCH_LIMIT }),
     ) as SearchResult;
-    expect(cloned.tools.slice(0, 2).map((tool) => tool.name)).toEqual(["github_api_search", "github_api_search"]);
-    const readRank = Math.min(
-      ...["github.github_api_read", "github-copy.github_api_read"].map((address) => rankOf(cloned, address)),
-    );
+    expect(cloned.tools[0]).toMatchObject({
+      address: "github.github_api_search",
+      alsoOn: ["github-copy.github_api_search"],
+    });
+    const readRank = rankOf(cloned, "github.github_api_read");
     expect(readRank).toBeGreaterThan(0);
     expect(readRank).toBeLessThanOrEqual(8);
     expect(cloned.tools.findIndex((tool) => tool.name.startsWith("get_record_"))).toBeGreaterThan(readRank - 1);

@@ -203,8 +203,15 @@ function connectorNames(connector: Connector): string[] {
   return [connector.id, ...(connector.title ? [connector.title] : [])];
 }
 
+function namedIdWords(query: string, connector: Connector): number {
+  const named = new Set(lexicalQueryTerms(query));
+  const words = lexicalQueryTerms(connector.id);
+  return words.length > 0 && words.every((word) => named.has(word)) ? words.length : 0;
+}
+
 function connectorMatchRank(query: string, connector: Connector): number {
-  if (connectorNames(connector).some((name) => containsPhrase(query, name))) return 2;
+  if (connectorNames(connector).some((name) => containsPhrase(query, name)) || namedIdWords(query, connector) > 0)
+    return 2;
   return SERVICE_NAMES.some(
     (service) =>
       containsPhrase(query, service) && connectorNames(connector).some((name) => containsPhrase(name, service)),
@@ -401,13 +408,18 @@ export interface CatalogDescribeArgs {
   fullDescriptions?: boolean;
 }
 
-interface CatalogSearchEntry {
+interface CatalogSearchConnectorFacts {
   connector: Connector;
   guide?: string;
   guideSummary?: string;
+}
+
+interface CatalogSearchEntry extends CatalogSearchConnectorFacts {
+  alsoOn?: CatalogSearchConnectorFacts[];
   tool: {
     name: string;
     address: string;
+    alsoOn?: string[];
     description?: string;
     descriptionTruncated?: true;
     inputSchema?: unknown;
@@ -430,6 +442,66 @@ interface CatalogSearchEntry {
 }
 
 type GuideRequiredReason = "connector_required" | "approval_required" | "schema_truncated";
+
+function connectorFacts(connector: Connector): CatalogSearchConnectorFacts {
+  const guideSummary = connectorGuideSummary(connector);
+  return {
+    connector,
+    ...(connectorGuide(connector)
+      ? { guide: connectorSkillName(connector.id), ...(guideSummary ? { guideSummary } : {}) }
+      : {}),
+  };
+}
+
+function collapseIdentical<Row extends { connector: Connector; tool: ToolDef }>(
+  rows: Row[],
+  query: string,
+): Map<Row, Row[]> {
+  const named = new Set(lexicalQueryTerms(query));
+  const namedWords = (connector: Connector) =>
+    [...new Set(connectorNames(connector).flatMap(lexicalQueryTerms))].filter((word) => named.has(word)).length;
+  const sameName = new Map<string, number>();
+  for (const { tool } of rows) sameName.set(tool.name, (sameName.get(tool.name) ?? 0) + 1);
+  const kept = new Map<string, { row: Row; index: number }>();
+  const groups = new Map<Row, Row[]>();
+  let length = 0;
+  for (const row of rows) {
+    if (sameName.get(row.tool.name)! > 1) {
+      const { name, classification, description, annotations, inputSchema } = row.tool;
+      const key = JSON.stringify([
+        name,
+        classification,
+        description ?? "",
+        annotations ?? null,
+        inputSchema ?? null,
+        guideRequiredReasons(row.connector, row.tool, false) ?? [],
+      ]);
+      const first = kept.get(key);
+      if (first) {
+        groups.get(first.row)!.push(row);
+        continue;
+      }
+      kept.set(key, { row, index: length });
+      groups.set(row, [row]);
+    }
+    rows[length++] = row;
+  }
+  rows.length = length;
+  const folded = new Map<Row, Row[]>();
+  for (const { row, index } of kept.values()) {
+    const group = groups.get(row)!;
+    if (group.length === 1) continue;
+    const representative = group.reduce((best, candidate) =>
+      namedWords(candidate.connector) > namedWords(best.connector) ? candidate : best,
+    );
+    rows[index] = representative;
+    folded.set(
+      representative,
+      group.filter((other) => other !== representative),
+    );
+  }
+  return folded;
+}
 
 /**
  * Reasons discovery can determine without reading arguments or guessing at a
@@ -696,6 +768,7 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
         properties: {
           name: { type: "string" },
           address: { type: "string" },
+          alsoOn: stringListSchema,
           description: { type: "string" },
           descriptionTruncated: { const: true },
           inputSchema: {},
@@ -1868,6 +1941,7 @@ export class CatalogService {
         exactName: boolean;
         exactLookup: boolean;
         connectorRank: number;
+        idWords: number;
         matchedTermCount: number;
         /** Every term met in the name, title or summary. */
         complete: boolean;
@@ -1913,6 +1987,7 @@ export class CatalogService {
           }
           if (Result.isSuccess(catalog)) {
             const connectorRank = args.connector ? 0 : connectorMatchRank(query, connector);
+            const idWords = args.connector ? 0 : namedIdWords(query, connector);
             const exactConnector = connectorRank > 0;
             const connectorTerms = new Set([
               ...connectorNames(connector).flatMap(lexicalQueryTerms),
@@ -1992,6 +2067,7 @@ export class CatalogService {
                   rawPhrase === lexicalQueryTerms(ranked.tool.name).join(" ") ||
                   rawPhrase === lexicalQueryTerms(`${connector.id}.${ranked.tool.name}`).join(" "),
                 connectorRank,
+                idWords,
                 matchedTermCount: vocabularyTools.has(ranked.tool) ? toolTermCount : ranked.matchedTermCount,
                 complete,
                 covered: isBrowse || vocabulary || ranked.matchedTermCount === toolTermCount,
@@ -2042,12 +2118,14 @@ export class CatalogService {
           Number(b.exactLookup) - Number(a.exactLookup) ||
           Number(b.exactName) - Number(a.exactName) ||
           b.connectorRank - a.connectorRank ||
+          b.idWords - a.idWords ||
           tier(b) - tier(a) ||
           readFirst(b) - readFirst(a) ||
           b.score - a.score ||
           a.order - b.order
         );
       });
+      const alsoOn = isBrowse ? new Map<(typeof matches)[number], typeof matches>() : collapseIdentical(matches, query);
       const fullWriteBytes = (tool: ToolDef) =>
         args.fullDescriptions !== true && tool.classification !== "read" && tool.description
           ? encoder.encode(tool.description).length
@@ -2095,18 +2173,14 @@ export class CatalogService {
           match.tool,
           renderedInput?.truncated === true || renderedOutput?.truncated === true,
         );
-        const guideSummary = connectorGuideSummary(match.connector);
+        const others = alsoOn.get(selected);
         return {
-          connector: match.connector,
-          ...(connectorGuide(match.connector)
-            ? {
-                guide: connectorSkillName(match.connector.id),
-                ...(guideSummary ? { guideSummary } : {}),
-              }
-            : {}),
+          ...connectorFacts(match.connector),
+          ...(others ? { alsoOn: others.map((other) => connectorFacts(other.connector)) } : {}),
           tool: {
             name: match.tool.name,
             address: `${match.connector.id}.${match.tool.name}`,
+            ...(others ? { alsoOn: others.map((other) => `${other.connector.id}.${other.tool.name}`) } : {}),
             ...(description !== undefined ? { description } : {}),
             ...(summary?.truncated ? { descriptionTruncated: true as const } : {}),
             ...(schemaFormat
@@ -2182,7 +2256,9 @@ export class CatalogService {
             })
           : [];
       const nextOffset = offset + entries.length < matches.length ? offset + entries.length : undefined;
-      const pageTools = new Set(pageMatches.map((match) => match.tool));
+      const pageTools = new Set(
+        pageMatches.flatMap((match) => [match.tool, ...(alsoOn.get(match) ?? []).map((other) => other.tool)]),
+      );
       const matchingTools = (term: string) =>
         new Set([
           ...(statistics.nameMatches.get(term) ?? []),
@@ -2387,7 +2463,10 @@ export class CatalogService {
       // catalogs and off-page matches, so paging cannot reveal a hidden
       // connector's contribution. Keep provenance host-only.
       for (const connector of connectors) onCatalogReference?.(connector.id);
-      for (const entry of entries) onCatalogReference?.(entry.connector.id, entry.tool.name);
+      for (const entry of entries) {
+        onCatalogReference?.(entry.connector.id, entry.tool.name);
+        for (const other of entry.alsoOn ?? []) onCatalogReference?.(other.connector.id, entry.tool.name);
+      }
       for (const { connector, call } of readyCalls)
         onCatalogReference?.(connector.id, call.address.slice(connector.id.length + 1));
       for (const pointer of apiSearchPointers) onCatalogReference?.(pointer.connector, pointer.tool);
@@ -2639,7 +2718,10 @@ function pageTail(page: CatalogSearchPage) {
 export function flatSearchResult(page: CatalogSearchPage): CatalogSearchResult {
   // fromEntries keeps an id such as "__proto__" an own key.
   const connectors = new Map<string, CatalogSearchConnector>();
-  for (const { connector, guide, guideSummary } of [...page.entries, ...(page.readyCalls ?? [])]) {
+  for (const { connector, guide, guideSummary } of [
+    ...page.entries.flatMap((entry) => [entry, ...(entry.alsoOn ?? [])]),
+    ...(page.readyCalls ?? []),
+  ]) {
     const title = connector.title && boundedEchoText(connector.title.replace(/\s+/g, " ").trim(), 117);
     if (title || guide)
       connectors.set(connector.id, {

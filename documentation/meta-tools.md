@@ -1243,13 +1243,13 @@ Tool rows carry the address, stored classification, and tool-specific
 connector appear once per page in `connectors`, keyed by the connector id that
 prefixes each row's address: the configured display `title` when present and
 `guide` and `guideSummary` when the connector has a guide. The map names only
-connectors with a row or ready call on this page and is omitted when none has
-such facts.
+connectors with a row, an `alsoOn` address or a ready call on this page and is
+omitted when none has such facts.
 Requested schemas have
 `schemaFormat: "json"` for JSON Schema values or `schemaFormat: "text"` for
 compact schema strings and TypeScript signatures. Compact schemas are text;
 `inputSchema.properties` is meaningful only in JSON mode. Pagination counts
-tools across connectors: `nextOffset` is present only when another page remains.
+rows across connectors: `nextOffset` is present only when another page remains.
 
 A row's `description` is a summary: the first complete sentence, joined to the
 following ones until it reaches 40 characters, within 160 UTF-16 code units. Text
@@ -1283,7 +1283,10 @@ Exact tool names and canonical addresses rank first, so `get_issue` beats
 `get_issue_status` even when a connector is named `issue`. A tool named only by
 an action word, such as `search`, is exact when it is the whole query, not when a
 longer query contains that word. Exact configured connector IDs, full display
-titles, and recognized service names rank next. Three tiers follow:
+titles, every word of a connector ID in any order, and recognized service names
+rank next. Among connectors the query names, the one with more ID words named
+ranks first, so `work mail threads` ranks `mail_work` above `mail`. Three tiers
+follow:
 
 1. Complete matches: every term is in the name, title or summary. A tool on the
    connector the query or scope names need not repeat that connector's name.
@@ -1298,6 +1301,17 @@ rare as the query's average. Otherwise it keeps any match. Within a tier, a quer
 whose first word outside connector names is `list`, `get`, `find`, `search`,
 `show`, `read`, `fetch`, or `count` ranks read rows before write rows; writes stay
 on the page. Score and catalog order break the remaining ties.
+
+A searched tool that several connectors offer identically (same name,
+classification, description, annotations, input schema and connector guide
+requirements) appears once, at its best rank. The row's `alsoOn` lists the other
+addresses in rank order; each is callable as its own address, and `connectors`
+carries its connector's title and guide. The row shown is the group member whose
+connector ID and title words the query names most, then the best-ranked, so
+`home threads` shows `mail_home.search_threads` with `mail.search_threads` in
+`alsoOn`. Only rows the caller can already see are grouped: a write hidden on a
+read-only connector is in no `alsoOn`. `total`, `offset` and `nextOffset` count
+rows after grouping. A browse lists every address and groups nothing.
 
 A maintained provider may declare `searchSynonyms`: groups of single lowercase
 words its users and its vendor use for the same record, such as `household`
