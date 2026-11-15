@@ -890,9 +890,7 @@ function memberRead(
       if (owner !== id && opts.registry.getConnector(owner)?.authScope === "personal" && allIds.includes(owner))
         ids.add(owner);
     }
-    const registry = opts.registry.scoped(
-      scopeFor(authz, opts.config.auth.length > 0, [...ids], pools.length === 1 ? pools[0]![0] : undefined),
-    );
+    const registry = opts.registry.scoped(scopeFor(authz, opts.config.auth.length > 0, [...ids], pools[0]![0]));
     const selected = context.url.searchParams.get("connector");
     const visible = registry
       .listConnectors()

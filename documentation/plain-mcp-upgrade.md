@@ -19,8 +19,11 @@ Before upgrading, inspect every people pool's `members`, including generated
 lists:
 
 1. **Remove maintainers from pools.** A maintainer already has the whole
-   catalog at plain `/mcp`. To restrict what a maintainer's own client sees,
-   use a connector's [`members`](./auth.md#connector-members) instead.
+   catalog at plain `/mcp`, with the deployment's `readOnly`. A maintainer can
+   no longer open a narrower or read-only view of a pool. A connector's
+   [`members`](./auth.md#connector-members) can hide whole connectors from
+   them; where a client needs a pool's narrower or read-only view, sign it in
+   as a separate non-maintainer identity listed in that pool.
 2. **Give each person exactly one pool.** For a person listed in several
    pools, either merge what they need into the one pool they share with their
    team, or give them a pool of their own whose `tools` spread the shared
@@ -58,6 +61,10 @@ is now where members connect: `/mcp` for a people pool and `/agent/<name>` for
 an agent pool. In operator contract v2, `OperatorPoolV2.humanPath` is `"/mcp"`
 for a people pool and `null` for an agent pool, and `agentPath` is
 `"/agent/<name>"` for an agent pool and `null` for a people pool.
+
+Saved operator UI links to an Endpoints row change too: `/endpoints#mcp`
+becomes `/endpoints#default`, and `/endpoints#mcp/<pool>` becomes
+`/endpoints#pool:<pool>`.
 
 Rebuild and restart the deployment, then sign in as a maintainer, a pool
 member and an agent and confirm each sees its intended tools. See

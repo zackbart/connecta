@@ -476,6 +476,11 @@ describe("connecta doctor --config", () => {
       await expect(run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "Bad/Name"], { env })).rejects.toThrow(
         "--pool must be a pool name",
       );
+      await expect(
+        run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "local"], {
+          env: { ...env, CONNECTA_TOKEN: "person-token" },
+        }),
+      ).rejects.toThrow("--pool is for agent tokens");
     },
   );
 

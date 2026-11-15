@@ -568,7 +568,6 @@ function emailDomain(email: string): string | null {
  * `organizationId`, `allowedDomains`, and `gate` decide who is admitted; each
  * configured check must pass.
  */
-/** `"/<pool>"` for a pool endpoint path, null for `/mcp` and anything else. */
 function assertPublicUrl(value: unknown): void {
   if (value === undefined) return;
   let url: URL | undefined;

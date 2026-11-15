@@ -45,7 +45,7 @@ downstream's text.
 | Path               | Page                                                         | Who        |
 | ------------------ | ------------------------------------------------------------ | ---------- |
 | `/`                | Overview (a member gets the member page)                     | Maintainer |
-| `/endpoints`       | Endpoints; `#mcp/<pool>` opens that row                      | Maintainer |
+| `/endpoints`       | Endpoints; `#default` or `#pool:<name>` opens that row       | Maintainer |
 | `/connectors`      | Connectors list; `?view=matrix` for the matrix               | Maintainer |
 | `/connectors/<id>` | Connector detail; `#tools`, `#connection`, `#activity`       | Maintainer |
 | `/activity`        | Activity                                                     | Maintainer |
@@ -75,7 +75,7 @@ parameters such as signed handoffs. A pool member sees the
 - **Needs attention.** One row per connector whose health is not ok, in
   configuration order, then one per agent in a pool whose token is missing or revoked. A
   row names the problem ("crm needs authorization"), the endpoints it
-  affects ("Affects /mcp") or the agent URL it can't connect at,
+  affects ("Affects Default and team") or the agent URL it can't connect at,
   and links to the existing fix: Connect, Replace key or Inspect on
   the connector's Connection tab, or Issue token on Tokens. A row with a
   problem code also has Copy fix prompt. A problem keeps its row and
@@ -105,7 +105,7 @@ unreachable.
   issued token. Plain `/mcp` admits no agents. A read-only endpoint carries a
   read-only chip.
 - Hovering or focusing a node dims everything off its paths and replaces the
-  legend with one sentence, such as "alice reaches 2 connectors through /mcp:
+  legend with one sentence, such as "alice reaches 2 connectors through Default:
   6 tools, 1 write." The sentence is also the node's accessible
   name. Hover wins while both are set.
 - The map is one tab stop. Arrow keys move within a column and to the nearest

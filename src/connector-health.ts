@@ -34,9 +34,8 @@ function describedConfig(connector: Connector): string {
   return config;
 }
 
-// The endpoint a request was admitted at (plain `/mcp`, a pool, an agent
-// path). The same person and pool can reach one connector through several,
-// and each keeps its own records. The operator page binds none.
+// The endpoint a request was admitted at (plain `/mcp` or an agent path).
+// Each keeps its own records. The operator page binds none.
 const endpoints = new WeakMap<object, string>();
 /** Bind the admitted endpoint to a request scope, before any discovery runs in it. */
 export function bindDiscoveryEndpoint(requestScope: object, endpoint: string): void {
