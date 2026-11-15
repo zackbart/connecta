@@ -21,6 +21,8 @@ import {
   text,
   invalid,
   describeErrors,
+  CLOUDFLARE_ID,
+  ZONE_LOOKUP,
 } from "./api.js";
 import { settings } from "./api.js";
 import type { CloudflareOptions } from "./index.js";
@@ -116,6 +118,17 @@ export function cloudflareTools({
               ...(typeof args["operationName"] === "string" ? { operationName: args["operationName"] } : {}),
             }),
           );
+          const malformed = [
+            ...(scoped.zoneTags.some((tag) => !CLOUDFLARE_ID.test(tag)) ? ["zoneTag"] : []),
+            ...(scoped.accountTags.some((tag) => !CLOUDFLARE_ID.test(tag)) ? ["accountTag"] : []),
+          ];
+          if (malformed.length > 0) {
+            yield* checked(() =>
+              invalid(
+                `${malformed.join(" and ")} takes ids of 32 hexadecimal characters, never a domain or account name. ${ZONE_LOOKUP} Account ids come from list_accounts.`,
+              ),
+            );
+          }
           if (pin) {
             yield* checked(() => {
               if (scoped.openTags.length > 0) {

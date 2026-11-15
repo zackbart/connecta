@@ -1205,7 +1205,7 @@ describe("cloudflare() over a key", () => {
   it("bounds zone-ownership reads per call (finding 8)", async () => {
     const connector = cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } });
     respond = (request) => envelope({ id: request.url.pathname.split("/").pop(), account: { id: ACCOUNT } });
-    const zones = ["z1", "z2", "z3", "z4"].map((zone) => `"${zone}"`).join(", ");
+    const zones = ["1", "2", "3", "4"].map((digit) => `"${digit.repeat(32)}"`).join(", ");
     const error = await refusal(
       connector.callTool(
         "graphql_query",
@@ -1572,5 +1572,42 @@ describe("cloudflare() over a key", () => {
     expect(
       (await refusal(connector.callTool("graphql_query", { query: "{ viewer { x } }" }, token()))).message,
     ).toContain("unknown field");
+  });
+
+  it("refuses a zone or account named where its 32-hex id belongs before any request, pinned or not", async () => {
+    const domain = "shop.example";
+    const daily = (filter: string) =>
+      `{ viewer { zones(filter: ${filter}) { httpRequests1dGroups(limit: 1) { sum { requests } } } } }`;
+    const attempts: Array<[string, Record<string, unknown>]> = [
+      ["graphql_query", { query: daily(`{ zoneTag: "${domain}" }`) }],
+      ["graphql_query", { query: daily(`{ zoneTag_in: ["${ZONE}", "${domain}"] }`) }],
+      [
+        "graphql_query",
+        { query: `query Q($z: String!) { viewer { zones(filter: { zoneTag: $z }) { x } } }`, variables: { z: domain } },
+      ],
+      ["graphql_query", { query: `{ viewer { accounts(filter: { accountTag: "alice-account" }) { x } } }` }],
+      ["cloudflare_api_read", { path: `/zones/${domain}/dns_records` }],
+      ["cloudflare_api_write", { method: "POST", path: `/zones/${domain}/purge_cache`, body: { files: [] } }],
+    ];
+    for (const connector of [cloudflare("cf", TOKEN), cloudflare("cf", { ...TOKEN, pin: { accountIds: [ACCOUNT] } })]) {
+      for (const [tool, args] of attempts) {
+        const ctx = token();
+        if (tool === "cloudflare_api_write") attachCallClassification(ctx, "write");
+        const error = await refusal(connector.callTool(tool, args, ctx));
+        expect(error.code, JSON.stringify(args)).toBe("invalid_args");
+        expect(error.message).toContain("32 hexadecimal characters");
+        expect(error.message).toContain("list_zones");
+        expect(error.message).not.toContain(domain);
+        expect(error.message).not.toContain("alice-account");
+      }
+    }
+    expect(sent).toEqual([]);
+    respond = () => Response.json({ data: { viewer: { zones: [] } } });
+    await cloudflare("cf", TOKEN).callTool(
+      "graphql_query",
+      { query: daily(`{ zoneTag: "${ZONE.toUpperCase()}" }`) },
+      token(),
+    );
+    expect(sent).toHaveLength(1);
   });
 });
