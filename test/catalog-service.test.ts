@@ -236,7 +236,7 @@ describe("request-scoped catalog cache", () => {
     const service = new CatalogService(view, BASE);
     const loaded = await service.loadConnector("owned");
     const mutate = (tool: ToolDef) => {
-      tool.annotations!.readOnlyHint = false;
+      if (tool.annotations) tool.annotations.readOnlyHint = false;
       (tool.inputSchema!.properties as Record<string, { type: string }>).id!.type = "number";
     };
     const expected = structuredClone(original);
@@ -251,7 +251,8 @@ describe("request-scoped catalog cache", () => {
     const page = await service.search({ includeSchemas: "json" });
     mutate(page.entries[0]!.tool as ToolDef);
     const later = await service.search({ query: "read", includeSchemas: "json" });
-    expect(later.entries[0]!.tool).toMatchObject(expected);
+    const { annotations: _, ...searchRow } = expected;
+    expect(later.entries[0]!.tool).toMatchObject(searchRow);
     const listed = await service.listCatalogs();
     if (!("tools" in listed[0]!)) throw new Error("expected a catalog listing");
     mutate(listed[0]!.tools[0]!);
@@ -326,7 +327,7 @@ describe("request-scoped catalog cache", () => {
       expect(rank.mock.calls.at(-1)![0]).toBe(firstIndex);
       expect(firstIndex.map((tool) => tool.name)).toEqual(["read_record"]);
       expect(second.entries[0]!.tool.inputSchema).not.toBe(first.entries[0]!.tool.inputSchema);
-      expect(second.entries[0]!.tool.annotations).not.toBe(first.entries[0]!.tool.annotations);
+      expect(second.entries[0]!.tool).not.toHaveProperty("annotations");
       expect(first.entries[0]!.tool.inputSchema).not.toBe(firstIndex[0]!.inputSchema);
 
       await service.search({ query: "record", safety: "approvalRequired" });

@@ -493,7 +493,7 @@ act on is the flag: any cap sets `inputSchemaTruncated` or
 describe, when the exact constraints matter.
 
 Repeated searches in one request reuse a private lexical index for the same
-visible catalog and safety filter. Returned schemas and annotations are independent
+visible catalog and safety filter. Returned schemas are independent
 copies: changing a result cannot change later discovery or tool classification.
 In-process registry invalidation (including refresh and OAuth connect/disconnect/restart)
 or built-in vault set/clear replaces the retained catalog and its index before the
@@ -505,7 +505,7 @@ The index never crosses request or caller/pool boundaries.
 ### TypeScript signatures
 
 `includeSchemas: "typescript"` replaces both schema fields with one
-`signature`: the downstream function whose result is `(await connecta.call(address, args)).data`, written
+`signature`, which no other format returns: the downstream function whose result is `(await connecta.call(address, args)).data`, written
 as a TypeScript type because agents write code against types more reliably
 than against JSON Schema ([executor](https://github.com/UsefulSoftwareCo/executor)'s
 discovery made the same bet).
@@ -580,8 +580,10 @@ is necessary:
 | `schema_truncated`   | a requested compact shape was capped | no — the describe that returns the exact shape clears it |
 
 Describe reports whatever reasons remain in the same two fields. The boolean is
-an instruction, not a server-side gate: nothing refuses the call, so the agent
-is merely told to fetch the guide first, for any reason listed. Otherwise the
+advisory, an instruction rather than a server-side gate: nothing refuses the
+call, so the agent is merely told to fetch the guide first, for any reason
+listed. Agent-facing text (the usage guide and tool descriptions) states it the
+same way. Otherwise the
 bounded summary decides — connector-specific sequencing, units, pagination,
 aliases, and generic API conventions still need the guide when they affect the
 task, while a complete and unambiguous one-read schema proceeds directly. Guide
@@ -1256,7 +1258,15 @@ runs out of its own deadline also starts one refresh in the runtime's tail
 deadline, at most 20 seconds, and that refresh warms the next search.
 
 Tool rows carry the address, stored classification, and tool-specific
-`guideRequired` and `guideRequiredReasons`. Facts shared by every row of one
+`guideRequired` and `guideRequiredReasons`. Rows carry no `annotations`:
+`classification` is the served verdict, and a downstream's raw hints can
+disagree with it where no override rewrote them. Describe returns a tool's
+annotations, and hosts read the meta-tools' own from `tools/list`. Optional row
+and page fields (`alsoOn`, `descriptionTruncated`, schemas, `signature`,
+`outputSchemaSource`, schema keys, `callable`, `guideRequired`, `connectors`,
+`nextOffset`, `matchMode`, `absence`, `queryAnalysis`, `readyCalls`) are
+omitted, never `null`, when they do not apply; only `catalogErrors`, `tools`,
+`total`, `offset`, `limit` and `hasMore` are always present. Facts shared by every row of one
 connector appear once per page in `connectors`, keyed by the connector id that
 prefixes each row's address: the configured display `title` when present and
 `guide` and `guideSummary` when the connector has a guide. The map names only

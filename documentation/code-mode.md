@@ -242,7 +242,8 @@ const page = await connecta.search({
 **S1.** Returns the same flat page as top-level `search_tools`:
 `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `nextOffset`
 when more remains and `matchMode: "partial"` when no tool matched every term.
-Read `catalogErrors` and any `absence` before selecting a tool. Catalog failures
+Read `catalogErrors` and any `absence` before selecting a tool; `absence` is
+present only when the query names a service no configured connector serves. Catalog failures
 carry recovery actions at the top of the page; an absent service returns no
 lookalikes. Both paths use only the caller's endpoint/pool and grants. Ranking is
 [lexical discovery](./meta-tools.md#lexical-discovery)'s, and rows expose
@@ -256,8 +257,11 @@ The first page may also carry `readyCalls`: complete operation reads to pass
 unchanged as `connecta.call(entry.address, entry.args)`
 ([fully determined operations](./meta-tools.md#discovery-context) only).
 
-Each entry carries `address`, `name`, and — when requested — `description`,
-the rendered schemas, and `annotations`. `description` is the one-sentence
+Each entry carries `address`, `name`, `classification`, and, when they apply,
+`description` and the requested schemas (`signature` only in the TypeScript
+format). Fields that do not apply are omitted, so test optional fields before
+reading them. Rows carry no `annotations`; `connecta.describe` returns them.
+`description` is the one-sentence
 [summary](./meta-tools.md#lexical-discovery), with `descriptionTruncated: true`
 when text was left out; a `write` row always shows its full text, ending the
 page early rather than cutting one, and `fullDescriptions: true` returns the
@@ -395,7 +399,7 @@ others. Authored emit blocks are the exact variants `M1` accepts;
 forwarded blocks are the native variants from `result.content`. It also
 states that search and describe return objects rather than arrays, that a row with
 `guideRequired` needs its connector guide first (only when a visible connector has
-a guide), that a call result over 1 MiB returns a paged handle to loop with
+a guide; advisory, since nothing blocks the call), that a call result over 1 MiB returns a paged handle to loop with
 `connecta.result`, and that every function except `emit` spends a host call and
 that passing the limit ends the program with nothing returned, even under
 `Promise.allSettled` (`M7`). `GuestApi`'s `emit` takes no paged handle, which the

@@ -458,7 +458,6 @@ interface CatalogSearchEntry extends CatalogSearchConnectorFacts {
     inputKeys?: string[];
     requiredInputKeys?: string[];
     outputKeys?: string[];
-    annotations?: ToolDef["annotations"];
     classification?: ToolDef["classification"];
     /** A read program's marker: this route refuses the tool. See `markUncallableWrites`. */
     callable?: false;
@@ -800,7 +799,6 @@ export const CATALOG_SEARCH_RESULT_SCHEMA: JsonSchema = {
           inputKeys: stringListSchema,
           requiredInputKeys: stringListSchema,
           outputKeys: stringListSchema,
-          annotations: { type: "object" },
           classification: { enum: ["read", "write"] },
           ...guideRequiredProperties,
         },
@@ -2255,7 +2253,6 @@ export class CatalogService {
                 }
               : {}),
             ...(schemaKeys?.outputKeys && !renderedOutput?.truncated ? { outputKeys: schemaKeys.outputKeys } : {}),
-            ...(match.tool.annotations ? { annotations: match.tool.annotations } : {}),
             classification: match.tool.classification,
             ...(this.markUncallableWrites && readProgramRefuses(match.tool) ? { callable: false as const } : {}),
             ...(requiredReasons
