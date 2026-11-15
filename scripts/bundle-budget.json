@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-15: Inline discovery ceiling (#1431, #1464) adds byte-fitted search pages. CI at 2f98ee8 merged with main before #1463 (run 43681810497, build (package)) measures the root at 455,259 B, 63 B past its cap; #1463 adds about 26 B. The root cap moves 455,196 to 455,640 B, about 350 B over the combined size.",
     "2026-11-15: Weak search zones and shared synonyms (#1431, #1449). CI at 4762ba01 stacked on reads-first ranking (run 43677438361, build (package)) measures the root at 454,846 B and examples/worker at 842,222 B. The root cap moves 454,571 to 455,196 B and the examples/worker cap 841,680 to 842,572 B, each about 350 B over CI.",
     "2026-11-15: Reads-first search ranking (#1431, #1460) adds write-verb detection with present-tense inflections. CI at 14135a87 merged with main (run 43677183405, build (package)) measures the root at 454,221 B, 33 B past its cap. The root cap moves 454,188 to 454,571 B, about 350 B over CI.",
     "2026-11-15: Search row collapse across accounts and account routing (#1431, #1441). CI at 6e656a53 merged with main (run 43675910779, build (package)) measures the root at 453,838 B and examples/worker at 841,330 B, 121 B and 421 B past their caps. The root cap moves 453,717 to 454,188 B and the examples/worker cap 840,909 to 841,680 B, each about 350 B over CI.",
@@ -118,7 +119,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 455196
+      "maxGzip": 455640
     },
     "./json-schema": {
       "baselineGzip": 5870,
