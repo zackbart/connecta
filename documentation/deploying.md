@@ -36,8 +36,8 @@ npm start
 
 The agent connects to its pool's agent endpoint,
 `http://localhost:8787/agent/local-machine`, with
-`Authorization: Bearer <returned-cta-token>`. People use `/mcp` and
-`/mcp/<pool>`, which refuse `cta_` tokens. Machine clients are the agents
+`Authorization: Bearer <returned-cta-token>`. People use plain `/mcp`, which
+refuses `cta_` tokens. Machine clients are the agents
 declared in `agents` in `src/connecta.config.ts`; the generated project declares
 `local-machine` and always installs `accessTokens(storage)`. An agent with no
 issued token admits no MCP caller even though `/health` works. Rotating with the
@@ -244,12 +244,14 @@ existing-record migration.
 One deployment serves one tenant and may admit several people. Node uses Clerk
 for human auth; Access is Workers-only. With inbound auth, `maintainers` is
 required: they receive the whole catalog at plain `/mcp` and the operator UI.
-Everyone else reaches a pool that lists them in `members`: people at
-`/mcp/<pool>`, agents at `/agent/<pool>`. A person in exactly one pool may also
-use plain `/mcp`, which serves them that pool, so one client URL can be handed
-to every person; a person in several pools must use `/mcp/<pool>`. Maintainers alone administer shared credentials, manage
+Maintainers belong to no pool. Every other person is listed in at most one
+pool's `members` and reaches it at plain `/mcp` too, so one client URL serves
+every person; a person in no pool gets the 404 there. Agents reach each pool
+that lists them at `/agent/<pool>`. A maintainer listed in a pool, or a person
+listed in two pools, throws `ConfigError` at construction; give a person who
+needs a different reach a pool of their own. Maintainers alone administer shared credentials, manage
 agent tokens, and read activity; members connect their own accounts on
-personal connectors in their pools.
+personal connectors in their pool.
 [Auth](./auth.md#principals-visibility-and-operators) owns maintainers and members;
 [Clerk setup](./auth.md#clerk-oauth-tokens-and-operator-sessions) owns resource-bound
 tokens and `aud_claim_enabled`. A person's operator session is not an MCP token.
@@ -288,7 +290,7 @@ guides may still name those tools. A pool serves exactly its `tools` to its
 ## Connect an MCP host
 
 Every host gets the pool's endpoint URL and one credential: an agent token at
-`/agent/<pool>`, or the host's own OAuth sign-in at `/mcp` or `/mcp/<pool>`.
+`/agent/<pool>`, or the host's own OAuth sign-in at plain `/mcp`.
 The rules below cover what differs between hosts. The examples name the
 host's server entry `crm`.
 
@@ -314,8 +316,10 @@ a Connecta program inside the host's program. Let only one layer run programs:
 
 The surface is set per pool in deployment code. Connecta ignores URL query
 parameters such as `?codemode=false`, which opencode adds to remote URLs, so
-neither a URL nor a host can choose the surface. Give a code-mode host its own
-pool if other hosts share the meta pool.
+neither a URL nor a host can choose the surface. A person reaches one pool at
+plain `/mcp`, so every host they use gets that pool's surface; give an agent's
+code-mode harness its own native agent pool if other harnesses share the meta
+pool.
 
 A paired Worker evaluation compared the three surfaces on the same 23 tasks
 with two models: Claude Sonnet 5.5 at five repeats and GPT-6-Luna at three
@@ -346,7 +350,7 @@ meta pool:
     "servers": {
       "crm": {
         "type": "remote",
-        "url": "https://connecta.example.com/mcp/tickets",
+        "url": "https://connecta.example.com/mcp",
         "codemode": false,
         "protocol": "auto"
       }
@@ -417,7 +421,7 @@ Rely on the pool's `readOnly` and `writes` for protection.
 - **Give a static agent token only at `/agent/<pool>`.** When OAuth discovery
   succeeds, Cursor starts OAuth and ignores a configured `Authorization`
   header. Agent endpoints publish no OAuth metadata, so the header is used.
-  At `/mcp` and `/mcp/<pool>`, use Cursor's OAuth sign-in instead.
+  At `/mcp`, use Cursor's OAuth sign-in instead.
 - **Keep the server name short.** Cursor staff have reported a limit of 60
   characters for the server name plus the tool name; current Cursor
   documentation does not state one. On a meta pool the longest tool is
@@ -478,7 +482,9 @@ CONNECTA_TOKEN='<stored-cta-token>' npx connecta doctor --url http://localhost:8
 ```
 
 Doctor checks health, the required executor, and the current meta-tool set, running a harmless program on each listed program route. A
-`cta_` token is checked at `/agent/<pool>` and needs `--pool`.
+`cta_` token is checked at `/agent/<pool>` and needs `--pool`. `--pool` is for
+agent tokens only: with a person's credential doctor always checks plain
+`/mcp` and refuses `--pool`.
 For a Worker protected by Access, `/health` still needs edge admission even
 though `/agent/*` bypasses Access. Use an Access service token admitted by the
 Worker-level policy for that check, alongside the agent token:
@@ -504,15 +510,15 @@ connector; resolve credentials using [authorization recovery](./meta-tools.md#au
 
 Use the failed check to choose the next step:
 
-| Symptom                             | Action                                                                                                                                                         |
-| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Connection refused or timeout       | Check the public URL, listening process/port, proxy, and Worker deployment.                                                                                    |
-| `/health` fails behind Access       | Check the Worker-level Access policy and the two service headers above. Do not broaden the agent bypass.                                                       |
-| Executor check fails                | Retain `quickJsExecutor()` and its peer on Node, or `workerExecutor({ loader })`, the codemode peer, and `LOADER` on Workers.                                  |
-| MCP 401                             | Check the saved token, declared agent, and slot state; rotated/revoked tokens refuse. Use `/agent/<pool>` with `--pool`.                                       |
-| MCP 404                             | Check the pool name and `members: ["agent:assistant"]`; an existing but inaccessible pool is deliberately indistinguishable from a missing one.                |
-| Doctor passes but a connector fails | Discover its tools in that pool, check credential status/account ownership, and perform a bounded read. Doctor does not prove downstream access.               |
-| `Native discovery degraded`         | The named connectors did not answer and are listed from an older catalog. Check them with a scoped search; tools stay listed but calls check the live catalog. |
+| Symptom                             | Action                                                                                                                                                                                                                                                     |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connection refused or timeout       | Check the public URL, listening process/port, proxy, and Worker deployment.                                                                                                                                                                                |
+| `/health` fails behind Access       | Check the Worker-level Access policy and the two service headers above. Do not broaden the agent bypass.                                                                                                                                                   |
+| Executor check fails                | Retain `quickJsExecutor()` and its peer on Node, or `workerExecutor({ loader })`, the codemode peer, and `LOADER` on Workers.                                                                                                                              |
+| MCP 401                             | Check the saved token, declared agent, and slot state; rotated/revoked tokens refuse. Use `/agent/<pool>` with `--pool`.                                                                                                                                   |
+| MCP 404                             | Check the pool name and `members: ["agent:assistant"]`; an existing but inaccessible pool is deliberately indistinguishable from a missing one. For a person at `/mcp`, check they are a maintainer or in one pool's `members`; `/mcp/<pool>` always 404s. |
+| Doctor passes but a connector fails | Discover its tools in that pool, check credential status/account ownership, and perform a bounded read. Doctor does not prove downstream access.                                                                                                           |
+| `Native discovery degraded`         | The named connectors did not answer and are listed from an older catalog. Check them with a scoped search; tools stay listed but calls check the live catalog.                                                                                             |
 
 After a fix, repeat doctor with the same client credentials and pool. Never
 paste a token or raw downstream failure body into a committed diagnostic log.
@@ -597,6 +603,7 @@ Vercel workload admission and the separate Eve helper are also opt-in; existing
 agent tokens keep working. See [Vercel workload credentials](./auth.md#vercel-workload-credentials)
 and [Eve agents](./meta-tools.md#eve-agents).
 
+- [Move people to plain `/mcp`](./plain-mcp-upgrade.md) before starting a deployment that lists a maintainer in a pool or a person in several pools; both now throw at construction, and `/mcp/<pool>` answers 404.
 - [Provider migration for 0.35](./provider-migration-0.35.md) collects provider upgrade actions for 0.35.0, including removal of Infisical, Notion, and Mixpanel factories.
 - [Migration to 0.34](./migration-0.34.md) covers the Overview landing page, Endpoints at `/endpoints`, default browser titles, and Workspace discovery in owner-less agent pools. No storage migration or token rotation is needed from 0.33.
 - [Split mixed pools](./pool-membership-upgrade.md) before starting a deployment that lists people and agents together; mixed membership now throws at construction.

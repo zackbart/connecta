@@ -44,10 +44,7 @@ function build(env: Env) {
     // The Access stand-in's user, the one maintainer plain /mcp admits and
     // the one who manages connector auth (#837).
     maintainers: ["eval-operator"],
-    pools: withInjectedPools(
-      { personal: { tools: ["billing"], members: ["eval-operator", "eval-member"], readOnly: true } },
-      env,
-    ),
+    pools: withInjectedPools({ personal: { tools: ["billing"], members: ["eval-member"], readOnly: true } }, env),
     vault,
     ui: operatorUi(),
     connectors: [

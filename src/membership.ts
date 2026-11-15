@@ -1,5 +1,6 @@
 // Who may open which endpoint (#837, decisions/0006): `maintainers` open plain
-// `/mcp`, and each pool's static `members` open `/mcp/<pool>`. References are
+// `/mcp` for the whole catalog, each person listed in a pool opens plain
+// `/mcp` for that pool, and each agent opens `/agent/<pool>`. References are
 // resolved once at construction; a request is matched against them and never
 // names its own scope (INV-4). Pure, so core reads it without any auth module.
 
@@ -240,27 +241,35 @@ export function isMember(member: Member, identity: Readonly<AuthenticatedIdentit
 }
 
 /**
- * Non-maintainer people listed in several pools, in declaration order. Plain
- * `/mcp` routes a person by their single pool, so it refuses each of these.
- * An open deployment admits no people, so it has none.
+ * People reach a pool only at plain `/mcp`, so each person is listed in at
+ * most one pool and a maintainer, who receives the whole catalog there, in
+ * none (INV-11).
  */
-export function peopleInSeveralPools(
+export function assertOnePoolPerPerson(
   pools: ReadonlyMap<string, ResolvedPool>,
   maintainers: readonly IdentityReference[],
-): Array<{ namespace: string; id: string; pools: string[] }> {
-  if (maintainers.length === 0) return [];
-  const people = new Map<string, { namespace: string; id: string; pools: string[] }>();
+): void {
+  const placed = new Map<string, string>();
   for (const [name, pool] of pools) {
-    for (const member of pool.members) {
-      if (member.kind !== "human") continue;
-      if (maintainers.some((m) => m.namespace === member.namespace && m.id === member.id)) continue;
-      const key = JSON.stringify([member.namespace, member.id]);
-      const person = people.get(key) ?? { namespace: member.namespace, id: member.id, pools: [] };
-      if (!person.pools.includes(name)) person.pools.push(name);
-      people.set(key, person);
-    }
+    pool.members.forEach((member, index) => {
+      if (member.kind !== "human") return;
+      const path = `ConnectaConfig.pools.${name}.members[${index}]`;
+      if (maintainers.some((m) => m.namespace === member.namespace && m.id === member.id)) {
+        throw new ConfigError(
+          `${path} is a maintainer. Maintainers receive the whole catalog at plain /mcp and belong to no pool; remove them from it.`,
+        );
+      }
+      const key = memberKey(member);
+      const earlier = placed.get(key);
+      if (earlier !== undefined) {
+        throw new ConfigError(
+          `${path} is already a member of pool "${earlier}". A person belongs to at most one pool, which plain /mcp serves them; ` +
+            "give them a pool of their own instead.",
+        );
+      }
+      placed.set(key, name);
+    });
   }
-  return [...people.values()].filter((person) => person.pools.length > 1);
 }
 
 /** Whether an admitted identity is a listed maintainer. */

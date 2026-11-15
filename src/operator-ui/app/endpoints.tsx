@@ -8,6 +8,7 @@ import {
   toolsPending,
   visibleChips,
   type AccessChip,
+  type EndpointAudience,
   type EndpointGroup,
   type EndpointRow,
 } from "../endpoints.js";
@@ -22,15 +23,14 @@ import { useConnectorHealth } from "./health.js";
 import { Icon } from "./icons.js";
 import { Monogram, SplitBar } from "./marks.js";
 
-/** What the client setup drawer needs: a path, its absolute URL, and the name a client files it under. */
+/** What the client setup drawer needs: an endpoint's label, its absolute URL, and the name a client files it under. */
 export interface SetupTarget {
   label: string;
-  path: string;
   url: string;
   name: string;
 }
 
-export function EndpointLine({ url, label, kind }: { url: string; label: string; kind?: "people" | "agents" }) {
+export function EndpointLine({ url, label, kind }: { url: string; label: string; kind?: EndpointAudience }) {
   return (
     <div className={kind === "agents" ? "endpoint endpoint-agent" : "endpoint"}>
       {kind ? <span className="endpoint-kind">{kind === "agents" ? "Agents" : "People"}</span> : null}
@@ -53,6 +53,11 @@ function breakable(url: string): ReactNode[] {
       {part}
     </Fragment>
   ));
+}
+
+/** A pool's name as an identifier; the maintainers' default as a plain word. */
+export function EndpointName({ pool, label }: { pool: string | null; label: string }) {
+  return pool === null ? <span className="endpoint-title">{label}</span> : <code>{label}</code>;
 }
 
 /** Absolute URL for an endpoint path, on the deployment's own origin. */
@@ -87,7 +92,7 @@ export function ClientSetupDialog({
         if (!open) onClose();
       }}
       title="Client setup"
-      description={target?.path ?? ""}
+      description={target?.label ?? ""}
     >
       {target && command ? (
         <section className="setup-list">
@@ -163,7 +168,7 @@ function WhoCanUse({ endpoint }: { endpoint: EndpointRow }) {
   const [expanded, setExpanded] = useState(false);
   const list = useRef<HTMLUListElement | null>(null);
   const { shown, hidden } = visibleChips(endpoint.access, expanded);
-  const label = `Who can use ${endpoint.path}`;
+  const label = `Who can use ${endpoint.label}`;
   if (!endpoint.access.length) {
     return (
       <div className="endpoint-access" aria-label={label} role="group">
@@ -182,7 +187,7 @@ function WhoCanUse({ endpoint }: { endpoint: EndpointRow }) {
         <button
           type="button"
           className="access-more"
-          aria-label={`Show ${hidden} more who can use ${endpoint.path}`}
+          aria-label={`Show ${hidden} more who can use ${endpoint.label}`}
           onClick={() => {
             setExpanded(true);
             // The revealed chips are plain text; the list takes focus so a
@@ -205,7 +210,7 @@ function ConnectorMarks({ endpoint, health }: { endpoint: EndpointRow; health: C
   const shown = endpoint.groups.slice(0, MONOGRAM_LIMIT);
   const rest = endpoint.groups.length - shown.length;
   return (
-    <ul className="endpoint-monograms" aria-label={`Connectors on ${endpoint.path}`}>
+    <ul className="endpoint-monograms" aria-label={`Connectors on ${endpoint.label}`}>
       {shown.map((group) => {
         const title = group.config.title ?? group.config.id;
         const problem = connectorProblem(group, health);
@@ -273,7 +278,7 @@ function EndpointTools({ endpoint, health }: { endpoint: EndpointRow; health: Co
   return (
     <>
       {endpoint.access.length ? (
-        <ul className="endpoint-members" aria-label={`Members of ${endpoint.path}`}>
+        <ul className="endpoint-members" aria-label={`Members of ${endpoint.label}`}>
           {endpoint.access.map((chip) => (
             <li key={chip.key} className={`member-chip ${chip.kind}`}>
               <MemberMark chip={chip} />
@@ -283,7 +288,7 @@ function EndpointTools({ endpoint, health }: { endpoint: EndpointRow; health: Co
         </ul>
       ) : null}
       {endpoint.groups.length ? (
-        <table className="endpoint-breakdown" aria-label={`Tools on ${endpoint.path}`}>
+        <table className="endpoint-breakdown" aria-label={`Tools on ${endpoint.label}`}>
           <thead>
             <tr>
               <th scope="col">Connector</th>
@@ -347,24 +352,23 @@ function EndpointTools({ endpoint, health }: { endpoint: EndpointRow; health: Co
 export function EndpointsPage({ state }: { state: OperatorState }) {
   const [setup, setSetup] = useState<SetupTarget | null>(null);
   useCloseOnRecovery(state, () => setSetup(null));
-  // The Overview map links to one endpoint as `#mcp/<pool>`: that row opens.
   const linked = endpointFromHash(useLocation().hash);
   const [open, setOpen] = useState<ReadonlySet<string>>(() => new Set(linked ? [linked] : []));
   const returnFocus = useRef<HTMLElement | null>(null);
   const health = useConnectorHealth(state);
   const contract = health.contract;
   const endpoints = contract ? endpointRows(contract) : [];
-  const linkedReady = Boolean(linked && endpoints.some((endpoint) => endpoint.path === linked));
+  const linkedReady = Boolean(linked && endpoints.some((endpoint) => endpoint.key === linked));
   useEffect(() => {
     if (!linkedReady) return;
     setOpen((current) => (current.has(linked!) ? current : new Set([...current, linked!])));
     document.querySelector(`[data-endpoint="${CSS.escape(linked!)}"]`)?.scrollIntoView({ block: "nearest" });
   }, [linked, linkedReady]);
   const serverName = contract?.config?.server.name;
-  const toggle = (path: string) =>
+  const toggle = (key: string) =>
     setOpen((current) => {
       const next = new Set(current);
-      if (!next.delete(path)) next.add(path);
+      if (!next.delete(key)) next.add(key);
       return next;
     });
   return (
@@ -380,7 +384,9 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
         </div>
       </div>
       <p className="meta">
-        Maintainers get the whole catalog at /mcp; anyone else in exactly one pool gets that pool there.
+        {
+          "Maintainers get the whole catalog at /mcp; everyone else gets their one pool there. Agents connect at /agent/<pool>."
+        }
       </p>
       {!contract ? (
         <ContractState state={state} />
@@ -393,15 +399,15 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
             <span className="endpoint-label-tools">Tools</span>
           </div>
           {endpoints.map((endpoint, index) => {
-            const expanded = open.has(endpoint.path);
+            const expanded = open.has(endpoint.key);
             const panel = `endpoint-tools-${index}`;
             const url = endpointUrl(endpoint.path);
             return (
               <section
                 className={expanded ? "endpoint-entry open" : "endpoint-entry"}
-                key={endpoint.path}
-                data-endpoint={endpoint.path}
-                aria-label={endpoint.path}
+                key={endpoint.key}
+                data-endpoint={endpoint.key}
+                aria-label={endpoint.label}
               >
                 <div className="endpoint-columns">
                   <div className="endpoint-name">
@@ -412,13 +418,12 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                       className="endpoint-toggle"
                       aria-expanded={expanded}
                       aria-controls={panel}
-                      onClick={() => toggle(endpoint.path)}
+                      onClick={() => toggle(endpoint.key)}
                     >
                       <span className="endpoint-chevron">
                         <Icon name="chevron" size={14} />
                       </span>
-                      <code>{endpoint.path}</code>
-                      {endpoint.pool === null ? <span className="meta">{endpoint.label}</span> : null}
+                      <EndpointName pool={endpoint.pool} label={endpoint.label} />
                     </button>
                     {endpoint.readOnly ? <Pill status="info">read-only</Pill> : null}
                     <span className="meta">
@@ -426,14 +431,7 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                     </span>
                   </div>
                   <div className="endpoint-urls">
-                    <EndpointLine
-                      url={url}
-                      label={endpoint.label}
-                      {...(endpoint.agentPath ? { kind: "people" } : {})}
-                    />
-                    {endpoint.agentPath ? (
-                      <EndpointLine url={endpointUrl(endpoint.agentPath)} label={endpoint.label} kind="agents" />
-                    ) : null}
+                    <EndpointLine url={url} label={endpoint.label} kind={endpoint.audience} />
                   </div>
                   <WhoCanUse endpoint={endpoint} />
                   <ConnectorMarks endpoint={endpoint} health={health} />
@@ -445,9 +443,11 @@ export function EndpointsPage({ state }: { state: OperatorState }) {
                       returnFocus.current = event.currentTarget;
                       setSetup({
                         label: endpoint.label,
-                        path: endpoint.path,
                         url,
-                        name: clientServerName(serverName, endpoint.pool ?? undefined),
+                        name: clientServerName(
+                          serverName,
+                          endpoint.audience === "agents" ? (endpoint.pool ?? undefined) : undefined,
+                        ),
                       });
                     }}
                     aria-label={`Client setup for ${endpoint.label}`}

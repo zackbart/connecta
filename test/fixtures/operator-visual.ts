@@ -48,7 +48,7 @@ const events: ToolCallActivityEvent[] = [
 
 const ALICE = { namespace: "https://clerk.example.test", id: "alice" };
 /** The fake Clerk directory: the labels a maintainer's view shows beside people. */
-const DIRECTORY: Record<string, string> = { alice: "Alice Moreau", user_lin: "Lin Chen" };
+const DIRECTORY: Record<string, string> = { alice: "Alice Moreau", user_lin: "Lin Chen", user_sam: "Sam Okafor" };
 
 /** The fake Clerk operator with a directory, so listed people carry labels. */
 function labelledMaintainer(): InboundAuth {
@@ -93,7 +93,7 @@ export async function createOperatorVisualFixture(): Promise<OperatorVisualFixtu
     storage, vault: encryptedCredentialVault(storage, "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="), logger: "silent",
     // Alice is the maintainer. People and agents use separate support and
     // automation pools with matching tools.
-    pools: { support: { tools: ["github.read"], readOnly: true, members: ["user_lin"] }, "support-agents": { tools: ["github.read"], readOnly: true, members: ["agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["alice"] }, "automation-agents": { tools: ["github"], readOnly: false, members: ["agent:claude-desktop"] } },
+    pools: { support: { tools: ["github.read"], readOnly: true, members: ["user_lin"] }, "support-agents": { tools: ["github.read"], readOnly: true, members: ["agent:triage"] }, automation: { tools: ["github"], readOnly: false, members: ["user_sam"] }, "automation-agents": { tools: ["github"], readOnly: false, members: ["agent:claude-desktop"] } },
     agents: AGENTS,
     activity: activityHistory({ store: { record() {}, list: async () => ({ events: events }), describe: () => ({ kind: "sqlite", retentionDays: 30, optionSources: { retentionDays: "config" } }) } }),
     accessTokens: accessTokens(storage),

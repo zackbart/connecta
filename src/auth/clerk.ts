@@ -46,7 +46,7 @@ export interface ClerkAuthOptions {
    * resource-bound tokens, both JWT and opaque. Enable Clerk's
    * `aud_claim_enabled` setting and request the endpoint URL as `resource`.
    * A present audience/resource must match
-   * the canonical `/mcp` or `/mcp/<pool>` URL even for an allowlisted client.
+   * the canonical `/mcp` URL even for an allowlisted client.
    * Never share these clients with another resource server. Pool grants still
    * narrow access; the fallback client list applies to every pool.
    */
@@ -569,11 +569,6 @@ function emailDomain(email: string): string | null {
  * configured check must pass.
  */
 /** `"/<pool>"` for a pool endpoint path, null for `/mcp` and anything else. */
-function mcpPoolSuffix(pathname: string): string | null {
-  const match = /^\/mcp(\/[a-z0-9_-]+)$/.exec(pathname);
-  return match ? match[1]! : null;
-}
-
 function assertPublicUrl(value: unknown): void {
   if (value === undefined) return;
   let url: URL | undefined;
@@ -720,11 +715,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   const challenge = (request: Request, baseUrl: string): string => {
     const tokenPresent = authorizationCredential(request).kind !== "absent";
     const error = tokenPresent ? `error="invalid_token", ` : "";
-    // A pool endpoint is its own protected resource: the challenge names the
-    // metadata document whose `resource` matches the URL the client used, or
-    // RFC 9728 tells it to reject the mismatch.
-    const pool = mcpPoolSuffix(new URL(request.url).pathname);
-    const meta = `${resolveBase(baseUrl)}/.well-known/oauth-protected-resource${pool ? `/mcp${pool}` : ""}`;
+    const meta = `${resolveBase(baseUrl)}/.well-known/oauth-protected-resource`;
     const quote = (value: string) => value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
     return `Bearer ${error}resource_metadata="${quote(meta)}", scope="${scopes.join(" ")}"`;
   };
@@ -950,8 +941,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         const { pathname } = new URL(request.url);
         const protectedResource =
           pathname === "/.well-known/oauth-protected-resource" ||
-          pathname === "/.well-known/oauth-protected-resource/mcp" ||
-          /^\/\.well-known\/oauth-protected-resource\/mcp\/[a-z0-9_-]+$/.test(pathname);
+          pathname === "/.well-known/oauth-protected-resource/mcp";
         if (!protectedResource) return null;
         if (request.method !== "GET" && request.method !== "HEAD" && request.method !== "OPTIONS") {
           return new Response(null, { status: 405, headers: { ...CORS_HEADERS, Allow: "GET, HEAD, OPTIONS" } });
@@ -959,26 +949,15 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         if (request.method === "OPTIONS") {
           return new Response(null, { status: 204, headers: CORS_HEADERS });
         }
-        const base = resolveBase(baseUrl);
-        const pool = pathname.startsWith("/.well-known/oauth-protected-resource/mcp/")
-          ? mcpPoolSuffix(pathname.slice("/.well-known/oauth-protected-resource".length))
-          : null;
-        if (
-          pathname === "/.well-known/oauth-protected-resource" ||
-          pathname === "/.well-known/oauth-protected-resource/mcp" ||
-          pool
-        ) {
-          return Response.json(
-            {
-              resource: `${base}/mcp${pool ?? ""}`,
-              authorization_servers: [frontendApiUrl],
-              bearer_methods_supported: ["header"],
-              scopes_supported: scopes,
-            },
-            { headers: CORS_HEADERS },
-          );
-        }
-        return null;
+        return Response.json(
+          {
+            resource: `${resolveBase(baseUrl)}/mcp`,
+            authorization_servers: [frontendApiUrl],
+            bearer_methods_supported: ["header"],
+            scopes_supported: scopes,
+          },
+          { headers: CORS_HEADERS },
+        );
       });
     }),
 
@@ -1008,7 +987,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
           let sessionCookies: string[] | undefined;
           try {
             const pathname = new URL(request.url).pathname;
-            const isMcp = pathname === "/mcp" || pathname.startsWith("/mcp/");
+            const isMcp = pathname === "/mcp";
             const state = (yield authInvoke(clerk, "authenticateRequest", [
               authorizationRequest(request),
               {
@@ -1042,7 +1021,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
               };
             }
             if (isMcp) {
-              const resource = `${resolveBase(baseUrl)}/mcp${mcpPoolSuffix(pathname) ?? ""}`;
+              const resource = `${resolveBase(baseUrl)}/mcp`;
               if (auth.tokenType !== "oauth_token") {
                 logDenial("token_type_mismatch");
                 return { ok: false, response: unauthorized(baseUrl, tokenPresent, request) };

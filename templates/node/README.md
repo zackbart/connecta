@@ -33,8 +33,7 @@ package-name approval.
 Point an agent's MCP client at `http://localhost:8787/agent/local-machine`, the agent
 endpoint of the pool that lists `agent:local-machine`, with
 `Authorization: Bearer <returned-cta-token>`. Agents use only `/agent/<pool>`:
-`/mcp` and `/mcp/<pool>` are for people and refuse `cta_` tokens, and plain
-`/mcp` serves only the `maintainers`. `CONNECTA_TOKEN` is a client and
+plain `/mcp` is for people and refuses `cta_` tokens. `CONNECTA_TOKEN` is a client and
 doctor variable only. Setting it never configures server authentication.
 
 `accessTokens(storage)` is always installed. With no issued agent token and
@@ -177,8 +176,8 @@ Organization's members sign in, and maintainers and pool members still come
 from `src/connecta.config.ts`. [Clerk Organizations](https://github.com/zackbart/connecta/blob/main/documentation/auth.md#one-clerk-instance-one-organization-per-deployment)
 lists the Clerk setup and the isolation tradeoff.
 
-Connecta's protected-resource metadata advertises the exact public `/mcp` or
-`/mcp/<pool>` URL as `resource` and Clerk as the authorization server. MCP
+Connecta's protected-resource metadata advertises the exact public `/mcp`
+URL as `resource` and Clerk as the authorization server. MCP
 hosts use that URL in their standard OAuth `resource` parameter. Enable the
 Clerk registration methods your hosts need, including DCR or CIMD. Reconnect
 after enabling audience issuance and confirm the new token's `aud` matches
@@ -197,14 +196,15 @@ configures on the database. A signed-in maintainer issues, rotates, and
 revokes them from the operator UI. Trusted local rotation above works without
 Clerk and never requires opening the server.
 
-Set who uses what in code: `maintainers` for plain `/mcp` and the operator UI,
-and each pool's `members` for `/mcp/<pool>` (people) and `/agent/<pool>`
-(agents), which serve exactly that pool's `tools`. Agent endpoints publish no
+Set who uses what in code: `maintainers` for the whole catalog at plain `/mcp`
+and the operator UI, and each pool's `members`, which serve exactly that
+pool's `tools` to its people at plain `/mcp` and its agents at `/agent/<pool>`.
+Maintainers belong to no pool, and a person belongs to at most one. Agent endpoints publish no
 protected-resource metadata and accept only `cta_` tokens. Maintainers alone
 administer shared credentials and OAuth grants, manage agent tokens, and read
 activity. Use `authScope: "personal"` for a connector where each person should
 connect their own downstream account: a member connects their own account on
-the personal connectors in their pools.
+the personal connectors in their pool.
 
 ### Credential vault
 

@@ -170,7 +170,7 @@ const test = base.extend<{ deployment: Deployment }>({
     const build = () =>
       createTestConnecta({
         calls: { maxResultBytes: 12_000 },
-        pools: { reader: { tools: ["vaulted"], members: ["flows-operator"], readOnly: true } },
+        readOnly: true,
         auth: fakeClerkAuth({
           token: TOKEN,
           userId: "flows-operator",
@@ -319,7 +319,7 @@ const test = base.extend<{ deployment: Deployment }>({
         consents,
         clerkLoads,
         async checkScope(connected) {
-          const client = await connectMcp(`${origin}/mcp/reader`, { Authorization: `Bearer ${TOKEN}` });
+          const client = await connectMcp(`${origin}/mcp`, { Authorization: `Bearer ${TOKEN}` });
           try {
             const read = await client.call("call_tool", { address: "vaulted.read", args: {} });
             expect(read.isError, read.text).toBe(!connected);

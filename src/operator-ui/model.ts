@@ -154,7 +154,7 @@ export interface UiData {
   /** True when this interactive human may manage any visible OAuth connector. */
   oauthManagement: boolean;
   /**
-   * Names of the `/mcp/<name>` pools this identity's grant admits. A pool
+   * Names of the pools this identity's grant admits. A pool
    * whose grant refuses or throws is absent, exactly as the endpoint answers
    * it with a 404, so the page never enumerates a pool its reader cannot open.
    */

@@ -109,7 +109,7 @@ export function evalConfig(
     ...(qb
       ? {
           auth: quickbooksAuth,
-          maintainers: ["alice", "bob"],
+          maintainers: ["alice"],
           pools: withEvery(quickbooksPools(quickbooksWrites === true))!,
           connectors: [
             ...quickbooksConnectors(quickbooksWrites === true, qb.quickbooks!.clientId),

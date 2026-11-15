@@ -14,7 +14,7 @@ import type { ConnectorHealth } from "../health.js";
 import type { OperatorState } from "../view.js";
 import { ConnectorStatus } from "./problems.js";
 import { useCloseOnRecovery } from "./contract-state.js";
-import { RunsAs } from "./endpoints.js";
+import { EndpointName, RunsAs } from "./endpoints.js";
 import { Monogram, SharePie } from "./marks.js";
 
 export interface MatrixRow {
@@ -122,7 +122,7 @@ function CellPopover({
       document.removeEventListener("pointerdown", outside);
     };
   }, [open]);
-  const label = `${open.title} on ${open.column.path}`;
+  const label = `${open.title} on ${open.column.label}`;
   return (
     <div
       ref={ref}
@@ -154,7 +154,7 @@ function CellPopover({
         <p className="matrix-popover-title">
           {open.title}
           <span className="visually-hidden"> on </span>
-          <code>{open.column.path}</code>
+          <EndpointName pool={open.column.pool} label={open.column.label} />
         </p>
         {open.column.readOnly || open.connectorReadOnly ? <span className="badge tag accent">read-only</span> : null}
       </div>
@@ -200,7 +200,7 @@ function Legend() {
 }
 
 /**
- * Connectors (rows) by endpoints (columns): `/mcp` first, then each pool.
+ * Connectors (rows) by endpoints (columns): the maintainers' default first, then each pool.
  * Every cell comes from the contract's matrix; a cell with tools opens the
  * exact list.
  */
@@ -235,8 +235,8 @@ export function ConnectorMatrix({
             <tr>
               <th scope="col">Connector</th>
               {columns.map((column) => (
-                <th scope="col" key={column.path} className={column.readOnly ? "matrix-head read-only" : "matrix-head"}>
-                  <code>{column.path}</code>
+                <th scope="col" key={column.key} className={column.readOnly ? "matrix-head read-only" : "matrix-head"}>
+                  <EndpointName pool={column.pool} label={column.label} />
                   {column.readOnly ? <span className="visually-hidden"> (read-only)</span> : null}
                 </th>
               ))}
@@ -262,10 +262,10 @@ export function ConnectorMatrix({
                     {columns.map((column) => {
                       const cell = matrixCell(contract, row.id, column);
                       const name = matrixCellLabel(row.title, column, cell);
-                      const key = `${row.id}\u0000${column.path}`;
+                      const key = `${row.id}\u0000${column.key}`;
                       const tone = column.readOnly ? " read-only" : "";
                       return (
-                        <td key={column.path} className={`matrix-cell${tone}`}>
+                        <td key={column.key} className={`matrix-cell${tone}`}>
                           {cell.kind === "none" ? (
                             <span className="matrix-none" title={name}>
                               <span aria-hidden="true">—</span>

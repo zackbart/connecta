@@ -264,10 +264,10 @@ describe("native tool surface", () => {
       }),
       logger: silentLogger,
     });
-    const send = async (path: string, method: string, params: object) =>
+    const send = async (method: string, params: object) =>
       readJsonRpc(
         await c.fetch(
-          new Request(`${BASE}${path}`, {
+          new Request(`${BASE}/mcp`, {
             method: "POST",
             headers: {
               Authorization: "Bearer bob",
@@ -278,14 +278,11 @@ describe("native tool surface", () => {
           }),
         ),
       );
-    const listed = await send("/mcp", "tools/list", {});
-    expect(listed).toEqual(await send("/mcp/team", "tools/list", {}));
+    const listed = await send("tools/list", {});
     expect(listed.result.tools.map((t: { name: string }) => t.name)).toContain("notes__read");
     expect(listed.result.tools.map((t: { name: string }) => t.name)).not.toContain("execute_code");
-    for (const path of ["/mcp", "/mcp/team"]) {
-      expect((await send(path, "tools/call", { name: "notes__read", arguments: {} })).result.isError).toBeFalsy();
-    }
-    expect(events.filter((e) => e.pool === "team")).toHaveLength(2);
+    expect((await send("tools/call", { name: "notes__read", arguments: {} })).result.isError).toBeFalsy();
+    expect(events.map((e) => e.pool)).toEqual(["team"]);
     await c.close();
   });
 

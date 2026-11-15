@@ -45,7 +45,7 @@ export async function consent(origin: string, owner: "alice" | "bob", wrong = fa
 }
 
 export async function readBob(deployment: Deployment) {
-  const session = await connectMcp(`${deployment.origin}/mcp/bob`, { Authorization: "Bearer eval-bob" });
+  const session = await connectMcp(`${deployment.origin}/mcp`, { Authorization: "Bearer eval-bob" });
   try {
     const reply = await session.call("execute_code", {
       code: `async () => {

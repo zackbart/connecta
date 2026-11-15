@@ -1,5 +1,5 @@
 import type { OperatorAgent, OperatorUiContractV2 } from "./contract.js";
-import { endpointRows, hueOf, initialsOf, toolsPending, type EndpointRow } from "./endpoints.js";
+import { endpointKey, endpointRows, hueOf, initialsOf, toolsPending, type EndpointRow } from "./endpoints.js";
 import { connectorVerdict, PENDING_VERDICT, type ConnectorSignals, type ConnectorVerdict } from "./view.js";
 
 /**
@@ -14,11 +14,11 @@ type MapHealth = ConnectorVerdict["tone"];
 type MapNodeKind = "person" | "agent" | "endpoint" | "connector";
 
 export interface MapNode {
-  /** Stable and unique: `person:<namespace>:<id>`, `agent:<name>`, `endpoint:<path>`, `connector:<id>`. */
+  /** Stable and unique: `person:<namespace>:<id>`, `agent:<name>`, `endpoint:<endpointKey>`, `connector:<id>`. */
   id: string;
   kind: MapNodeKind;
   column: 0 | 1 | 2;
-  /** The full name: a person's label or raw id, an agent's name, a path, a connector title. */
+  /** The full name: a person's label or raw id, an agent's name, an endpoint's label, a connector title. */
   name: string;
   /** `name`, shortened to fit the node. */
   label: string;
@@ -119,14 +119,14 @@ function truncate(text: string, limit: number): string {
 }
 
 /** Where an endpoint's row opens on the Endpoints page. */
-function endpointHref(path: string): string {
-  return `/endpoints#${path.replace(/^\//, "")}`;
+function endpointHref(row: EndpointRow): string {
+  return `/endpoints#${row.key}`;
 }
 
-/** The endpoint path an Endpoints page hash names, or null. */
+/** The endpoint key an Endpoints page hash names, or null. */
 export function endpointFromHash(hash: string): string | null {
   const value = hash.replace(/^#/, "");
-  return value.startsWith("mcp") ? `/${value}` : null;
+  return value === endpointKey(null) || value.startsWith("pool:") ? value : null;
 }
 
 function connectorHref(id: string, healthy: boolean): string {
@@ -214,10 +214,7 @@ function callerSummary(caller: Caller): string {
     return caller.kind === "agent" ? `${name} is in no endpoint, so it reaches nothing.` : `${name} reaches nothing.`;
   }
   const served = servedTools(caller.endpoints);
-  // An agent connects only at a pool's agent URL, never the people's one.
-  const through = joinList(
-    caller.endpoints.map((row) => (caller.kind === "agent" ? (row.agentPath ?? row.path) : row.path)),
-  );
+  const through = joinList(caller.endpoints.map((row) => row.label));
   const reach = served.connectors.size
     ? `${name} reaches ${plural(served.connectors.size, "connector")} through ${through}: ${served.phrase}.`
     : `${name} uses ${through}, which serves no connectors.`;
@@ -227,7 +224,7 @@ function callerSummary(caller: Caller): string {
 }
 
 function callerDetail(caller: Caller, maintainers: ReadonlySet<string>): string {
-  if (caller.kind === "person") return maintainers.has(caller.id) ? "maintainer" : "member · /mcp if one pool";
+  if (caller.kind === "person") return maintainers.has(caller.id) ? "maintainer" : "member";
   if (caller.agent?.credentialTypes.includes("vercel_oidc")) return "agent · Vercel OIDC";
   const state = caller.agent?.token?.state;
   return state === "issued"
@@ -244,7 +241,8 @@ function endpointSummary(row: EndpointRow, callers: Caller[]): string {
   const who = row.pool === null ? plural(people, "maintainer") : plural(people, "person", "people");
   const users = agents ? `${who} and ${plural(agents, "agent")}` : who;
   const served = servedTools([row]);
-  const mode = row.readOnly ? `${row.path} is read-only and serves ${users}` : `${row.path} serves ${users}`;
+  const where = `${row.label} at ${row.path}`;
+  const mode = row.readOnly ? `${where} is read-only and serves ${users}` : `${where} serves ${users}`;
   if (!served.connectors.size) return `${mode}. It has no connectors.`;
   return `${mode} with ${plural(served.connectors.size, "connector")}: ${served.phrase}.`;
 }
@@ -273,7 +271,7 @@ function connectorSummary(
     ? `${plural(people, "person", "people")} and ${plural(agents, "agent")}`
     : plural(people, "person", "people");
   const verb = reaching.length === 1 ? "reaches" : "reach";
-  return `${who} ${verb} ${title} through ${joinList(on.map((row) => row.path))}.${status}`;
+  return `${who} ${verb} ${title} through ${joinList(on.map((row) => row.label))}.${status}`;
 }
 
 function edgePath(from: MapNode, to: MapNode): string {
@@ -378,7 +376,7 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
                 ? "/tokens"
                 : null
               : caller.endpoints[0]
-                ? endpointHref(caller.endpoints[0].path)
+                ? endpointHref(caller.endpoints[0])
                 : null,
           tone: works ? "neutral" : "warn",
           readOnly: false,
@@ -397,12 +395,12 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
     nodes.push(
       node(
         {
-          id: `endpoint:${row.path}`,
+          id: `endpoint:${row.key}`,
           kind: "endpoint",
           column: 1,
-          name: row.path,
+          name: row.label,
           detail: `${row.pool === null ? "maintainers" : plural(listed, "caller")} · ${plural(row.groups.length, "connector")}`,
-          href: endpointHref(row.path),
+          href: endpointHref(row),
           tone: "neutral",
           readOnly: row.readOnly,
           tools: null,
@@ -448,7 +446,7 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
   for (const caller of callers) {
     for (const row of caller.endpoints) {
       const from = byId.get(caller.id)!;
-      const to = byId.get(`endpoint:${row.path}`)!;
+      const to = byId.get(`endpoint:${row.key}`)!;
       edges.push({
         id: `${from.id}>${to.id}`,
         from: from.id,
@@ -464,7 +462,7 @@ export function connectionMap(contract: OperatorUiContractV2, options: Connectio
   }
   for (const row of rows) {
     for (const group of row.groups) {
-      const from = byId.get(`endpoint:${row.path}`)!;
+      const from = byId.get(`endpoint:${row.key}`)!;
       const to = byId.get(`connector:${group.config.id}`);
       if (!to) continue;
       edges.push({

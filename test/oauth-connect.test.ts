@@ -134,10 +134,7 @@ function setup(
             name: "authorize_connector",
             arguments: { connector: "service", force },
           },
-          {
-            ...(options.interactive === false ? { token: "machine" } : provider === "clerk" ? { token: user } : {}),
-            ...(options.bobMember && user === "bob" ? { pool: "team" } : {}),
-          },
+          options.interactive === false ? { token: "machine" } : provider === "clerk" ? { token: user } : {},
         ),
         undefined,
         runtime(user),
@@ -565,14 +562,6 @@ describe("clerk OAuth connection", () => {
 
   it("INV-4: clerk starts a pool member's personal link directly, while a maintainer's hops through the UI", async () => {
     const flow = setup("clerk", "personal", { bobMember: true });
-    // A single-pool member can start the same personal flow at plain /mcp.
-    const plain = await flow.app.fetch(
-      mcpRpc("tools/call", { name: "authorize_connector", arguments: { connector: "service" } }, { token: "bob" }),
-      undefined,
-      flow.runtime("bob"),
-    );
-    expect(plain.status).toBe(200);
-    await plain.arrayBuffer();
     const member = await flow.authorize("bob");
     // The operator UI serves maintainers only until the member view (#837 P6b),
     // so the member's link starts the flow without the /connectors hop.

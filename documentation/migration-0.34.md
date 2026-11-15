@@ -12,7 +12,9 @@ Maintainers now land on Overview at `/`. Endpoints is at `/endpoints`, and
 `/access` redirects to `/endpoints`. Update saved links and browser automation
 that expected Endpoints at `/`, including row links: `/#mcp/support` becomes
 `/endpoints#mcp/support`. Members still get their member page on every operator
-page path. MCP client URLs (`/mcp`, `/mcp/<pool>` and `/agent/<pool>`) do not change.
+page path. MCP client URLs (`/mcp`, `/mcp/<pool>` and `/agent/<pool>`) do not change
+in 0.34. Current versions serve people only at plain `/mcp`; see
+[Move people to plain `/mcp`](./plain-mcp-upgrade.md).
 
 The default `branding.pageTitle` joins `productName` and `ownerName` with a
 middle dot, for example `Assistant · Example team`. A title set explicitly in

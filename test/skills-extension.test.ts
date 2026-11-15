@@ -109,28 +109,25 @@ it("INV-4 INV-5: isolates skill disclosure across principals, pools and tool-onl
         return id ? { ok: true, userId: id } : { ok: false, response: new Response(null, { status: 401 }) };
       },
     },
-    maintainers: [person("alice")],
+    maintainers: [person("root")],
     pools: {
       remote: { tools: ["remote"], members: [person("alice")] },
-      narrow: { tools: ["remote.read"], members: [person("alice")] },
+      narrow: { tools: ["remote.read"], members: [person("nina")] },
       others: { tools: ["other"], members: [person("bob")] },
     },
   });
-  const alice = await rpc(c, "skills/list", {}, "/mcp/remote", "alice");
+  const alice = await rpc(c, "skills/list", {}, "/mcp", "alice");
   expect(JSON.stringify(alice.result)).toContain('"owner":"alice"');
   expect(JSON.stringify(alice.result)).not.toContain("connectors/other");
-  const bob = await rpc(c, "skills/list", {}, "/mcp/others", "bob");
+  // Bob is neither a maintainer nor a member of the remote pool.
+  const bob = await rpc(c, "skills/list", {}, "/mcp", "bob");
   expect(JSON.stringify(bob.result)).toContain("connectors/other");
   expect(JSON.stringify(bob.result)).not.toContain("downstream/remote");
   expect(JSON.stringify(bob.result)).not.toContain("connectors/remote");
-  // Bob is neither a maintainer nor a member of the remote pool.
-  expect((await rpc(c, "skills/list", {}, "/mcp", "bob")).result).toEqual(bob.result);
-  for (const path of ["/mcp/remote"]) {
-    const refused = await rpc(c, "skills/list", {}, path, "bob");
-    expect(refused).toMatchObject({ error: { code: -33004 } });
-    expect(JSON.stringify(refused)).not.toContain("remote");
-  }
-  const narrow = await rpc(c, "skills/list", {}, "/mcp/narrow", "alice");
+  const refused = await rpc(c, "skills/list", {}, "/mcp/remote", "bob");
+  expect(refused).toMatchObject({ error: { code: -33004 } });
+  expect(JSON.stringify(refused)).not.toContain("remote");
+  const narrow = await rpc(c, "skills/list", {}, "/mcp", "nina");
   expect(JSON.stringify(narrow.result)).toContain("connectors/remote");
   expect(JSON.stringify(narrow.result)).not.toContain("downstream/remote");
   expect(touched).toEqual(["alice:remote"]);

@@ -18,7 +18,7 @@ import { CONFIG_DEFAULTS } from "./config-defaults.js";
 import type { ConnectaConfig, ResolvedConfig } from "./config.js";
 import { describedEndpoint, describedHref, describedOrigin, describedTools, describedUrl } from "./described.js";
 import { connectorGuideRequired, connectorGuideSummary } from "./skills.js";
-import { peopleInSeveralPools, type Member, type ResolvedPool } from "./membership.js";
+import type { Member, ResolvedPool } from "./membership.js";
 import type {
   Connector,
   ConnectorAuthDescription,
@@ -109,11 +109,9 @@ export interface ConnectaConfigDescription {
   /**
    * The people plain `/mcp` serves the whole catalog, resolved, in declaration
    * order. Empty on an open deployment. Every other person reaches plain
-   * `/mcp` only through exactly one pool's `members`, which it then serves.
+   * `/mcp` only through the one pool whose `members` list them, which it then serves.
    */
   maintainers: Array<{ namespace: string; id: string }>;
-  /** Non-maintainer people listed in several pools, whom plain `/mcp` refuses. */
-  peopleInSeveralPools: Array<{ namespace: string; id: string; pools: string[] }>;
   classification: Record<string, Record<string, ClassificationOverride>>;
   /** Inbound auth providers in the order they are tried. */
   auth: Array<{ kind: string; interactive: boolean; ui?: string }>;
@@ -121,7 +119,8 @@ export interface ConnectaConfigDescription {
   agents: string[];
   /**
    * `readOnly` is resolved: the pool's own value, else the deployment's.
-   * `members` are resolved references in declaration order. `owner` is the
+   * `path` is where its members connect: plain `/mcp` for people,
+   * `/agent/<name>` for agents. `members` are resolved references in declaration order. `owner` is the
    * Workspace address agents act as, or null. `description` is the trimmed
    * text the pool's endpoints add to their MCP instructions, or null.
    * `writes` are a read-only pool's exact write grants and `unlisted` the
@@ -459,7 +458,6 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
     },
     readOnly: config.readOnly,
     maintainers: input.maintainers.map(({ namespace, id }) => ({ namespace: String(namespace), id: String(id) })),
-    peopleInSeveralPools: peopleInSeveralPools(input.pools, input.maintainers),
     classification: structuredClone(config.classification ?? {}),
     auth: config.auth.map((provider) => ({
       kind: String(provider.kind),
@@ -472,7 +470,7 @@ export function describeConfig(input: DescribeConfigInput): ConnectaConfigDescri
       surface: pool.surface ?? "meta",
       executeCode: pool.executeCode !== false,
       name,
-      path: `/mcp/${name}`,
+      path: input.pools.get(name)?.members[0]?.kind === "agent" ? `/agent/${name}` : "/mcp",
       tools: pool.tools.map(String),
       writes: (pool.writes ?? []).map(String),
       unlisted: (pool.unlisted ?? []).map(String),

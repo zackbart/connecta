@@ -236,7 +236,7 @@ export function MemberPage({ state, account }: { state: OperatorState; account?:
             {page.endpoints.map((endpoint) => {
               const url = endpointUrl(endpoint.path);
               return (
-                <li className="member-endpoint" key={endpoint.pool} aria-label={endpoint.path}>
+                <li className="member-endpoint" key={endpoint.pool} aria-label={endpoint.pool}>
                   <span className="member-endpoint-mark" aria-hidden="true">
                     <Icon name="plug" size={16} />
                   </span>
@@ -251,9 +251,8 @@ export function MemberPage({ state, account }: { state: OperatorState; account?:
                       returnFocus.current = event.currentTarget;
                       setSetup({
                         label: endpoint.pool,
-                        path: endpoint.path,
                         url,
-                        name: clientServerName(productName, endpoint.pool),
+                        name: clientServerName(productName),
                       });
                     }}
                     aria-label={`Client setup for ${endpoint.pool}`}

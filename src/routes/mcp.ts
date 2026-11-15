@@ -55,8 +55,7 @@ import {
   authorize,
   authorizeAgent,
   mayManageConnector,
-  memberPool,
-  personPools,
+  personPool,
   type RouteContext,
   type RuntimeExecutionContext,
   type ServerOptions,
@@ -705,15 +704,11 @@ function serveMcp(
 }
 
 /**
- * What an MCP path names. Plain `/mcp` and `/mcp/<pool>` are human
- * endpoints; `/agent/<pool>` is an agent endpoint, and every other path in
- * the agent namespace is refused before auth.
+ * What an MCP path names. Plain `/mcp` is the one human endpoint;
+ * `/agent/<pool>` is an agent endpoint, and every other path under either
+ * namespace is refused before auth.
  */
-type McpEndpoint =
-  | { kind: "default" }
-  | { kind: "pool"; pool: string }
-  | { kind: "agent"; pool: string }
-  | { kind: "refused" };
+type McpEndpoint = { kind: "default" } | { kind: "agent"; pool: string } | { kind: "refused" };
 
 function mcpEndpoint(path: string): McpEndpoint | null {
   if (isAgentPath(path)) {
@@ -721,7 +716,7 @@ function mcpEndpoint(path: string): McpEndpoint | null {
     return pool === undefined ? { kind: "refused" } : { kind: "agent", pool };
   }
   if (path === "/mcp") return { kind: "default" };
-  if (path.startsWith("/mcp/")) return { kind: "pool", pool: path.slice("/mcp/".length) };
+  if (path.startsWith("/mcp/")) return { kind: "refused" };
   return null;
 }
 
@@ -801,9 +796,7 @@ export function createMcpRoute(opts: ServerOptions): {
     // inbound Request or its headers.
     const requestScope = {};
     const sentSecrets = sentSecretsForRequest(requestScope, sentSecretsForRequest(request));
-    const poolName = endpoint.kind === "pool" || endpoint.kind === "agent" ? endpoint.pool : undefined;
-    // Discovery health is kept per admitted endpoint: the same person and
-    // pool at `/mcp` and `/mcp/<pool>` keep separate records.
+    const poolName = endpoint.kind === "agent" ? endpoint.pool : undefined;
     bindDiscoveryEndpoint(requestScope, JSON.stringify([endpoint.kind, poolName ?? null]));
     const agentEndpoint = endpoint.kind === "agent";
     // Access attaches `ctx.access` even to a path it bypasses; an agent
@@ -821,7 +814,7 @@ export function createMcpRoute(opts: ServerOptions): {
     // local header check also guards OPTIONS before any provider metadata.
     const refusal = rejectOrigin(request);
     if (refusal) return Effect.succeed(refusal);
-    // Every other spelling in the agent namespace is the pool 404, before any
+    // Every other spelling in either namespace is the endpoint 404, before any
     // admission or auth: no decoding, case folding, or slash collapsing.
     if (endpoint.kind === "refused") return Effect.succeed(notFound());
     if (request.method === "OPTIONS") {
@@ -936,32 +929,22 @@ export function createMcpRoute(opts: ServerOptions): {
                 opts.config.logger,
               ]),
         );
-        // Plain /mcp serves maintainers the whole catalog and other people their unique pool; a pool
-        // admits its members, people at /mcp/<pool> and agents at
-        // /agent/<pool>, and serves exactly its tools (INV-4).
+        // Plain /mcp serves maintainers the whole catalog and every other person
+        // their one pool; /agent/<pool> admits that pool's agents. A pool serves
+        // exactly its tools (INV-4).
         const scopeFor = (
           admitted: Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>,
         ): Readonly<{ pool?: string; access: ConnectorAccess; readOnly: boolean; poolOwner?: string }> | undefined => {
-          if (poolName === undefined) {
-            if (admitsMaintainer(opts, admitted))
-              return { access: { connectorIds: "all" }, readOnly: opts.config.readOnly };
-            // Exactly one membership routes; none or several fail closed.
-            const [match, ...more] = personPools(opts, admitted.identity);
-            return match && !more.length
-              ? { pool: match[0], access: match[1].access, readOnly: presentsReadOnly(match[1]) }
-              : undefined;
-          }
-          const pool = agentEndpoint
-            ? agentPool(opts, poolName, admitted.identity)
-            : memberPool(opts, poolName, admitted.identity);
-          // The owner travels with the scope, so both pool endpoints set the
-          // same caller facts (#837 P5: agents act as the pool owner).
-          return pool
+          if (poolName === undefined && admitsMaintainer(opts, admitted))
+            return { access: { connectorIds: "all" }, readOnly: opts.config.readOnly };
+          const match =
+            poolName === undefined ? personPool(opts, admitted.identity) : agentPool(opts, poolName, admitted.identity);
+          return match
             ? {
-                pool: poolName,
-                access: pool.access,
-                readOnly: presentsReadOnly(pool),
-                ...(pool.owner !== undefined ? { poolOwner: pool.owner } : {}),
+                pool: match.name,
+                access: match.pool.access,
+                readOnly: presentsReadOnly(match.pool),
+                ...(match.pool.owner !== undefined ? { poolOwner: match.pool.owner } : {}),
               }
             : undefined;
         };
@@ -1020,17 +1003,11 @@ export function createMcpRoute(opts: ServerOptions): {
           if (!scope) {
             logFailure(
               opts.config.logger,
-              poolName === undefined
-                ? "MCP default endpoint request denied"
-                : agentEndpoint
-                  ? "MCP agent endpoint request denied"
-                  : "MCP pool request denied",
+              poolName === undefined ? "MCP default endpoint request denied" : "MCP agent endpoint request denied",
               failureRecord({
                 reason:
                   poolName === undefined
-                    ? personPools(opts, authz.identity).length > 1
-                      ? "ambiguous_pool"
-                      : "not_maintainer"
+                    ? "not_maintainer"
                     : opts.pools.has(poolName)
                       ? "not_pool_member"
                       : "pool_not_declared",

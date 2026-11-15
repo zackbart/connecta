@@ -59,15 +59,15 @@ flowchart LR
 People sign in. Agents use an identity configured by the operator.
 The model cannot change that identity or add itself to a pool.
 
-Each request uses one pool. Belonging to two pools does not merge them.
-An AI app can switch between pools it is allowed to use; its software must
-choose the right one for the conversation. The model does not choose its
-own access level.
+Each request uses one pool. A person belongs to at most one pool, so
+someone who needs a different set of tools gets a pool of their own. An
+agent can belong to several pools; its software must choose the right one
+for the conversation. The model does not choose its own access level.
 
-Maintainers run the deployment and can reach its whole tool list through
-the main human endpoint, `/mcp`. Other people use their assigned pools. A
-person in exactly one pool can use that same `/mcp` address: their sign-in
-selects the pool, and they get only its tools.
+Every person connects at the same address, `/mcp`. Maintainers run the
+deployment, belong to no pool, and reach its whole tool list there. For
+everyone else, their sign-in selects their pool, and they get only its
+tools.
 Agents use shared accounts selected by the operator. They do not inherit
 the account of the person chatting with them.
 

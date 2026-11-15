@@ -92,10 +92,10 @@ test("the overview is the maintainer's landing page, with health, attention and 
   await expect(page.getByRole("link", { name: "Overview", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(page.locator(".overview-title .badge")).toHaveText("2 need attention");
   await expect(page.locator(".stat-label")).toHaveText(["Connectors", "Endpoints", "People · Agents"]);
-  await expect(page.locator(".stat-number")).toHaveText(["5/6", "4", "3 · 2"]);
+  await expect(page.locator(".stat-number")).toHaveText(["5/6", "4", "5 · 2"]);
   await expect(page.getByRole("link", { name: "View endpoints", exact: true })).toHaveAttribute("href", "/endpoints");
-  await expect(page.locator(".map-column")).toHaveText(["Callers5", "Endpoints4", "Connectors6", "Tools9"]);
-  await expect(page.locator(".map-node")).toHaveCount(15);
+  await expect(page.locator(".map-column")).toHaveText(["Callers7", "Endpoints4", "Connectors6", "Tools9"]);
+  await expect(page.locator(".map-node")).toHaveCount(17);
   // Read-only grants are dashed, and a tokenless agent's access is dotted.
   await expect(page.locator("svg.map-svg .map-edge.read-only")).toHaveCount(2);
   await expect(page.locator("svg.map-svg .map-edge.no-token")).toHaveCount(1);

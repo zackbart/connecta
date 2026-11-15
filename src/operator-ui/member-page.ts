@@ -1,4 +1,5 @@
 import type { OperatorMemberConnector, OperatorMemberManage, OperatorUiContractV2 } from "./contract.js";
+import { poolEndpoint } from "./endpoints.js";
 import { connectorStatusLabel, connectorStatusTone, type Tone } from "./view.js";
 
 /**
@@ -11,7 +12,7 @@ import { connectorStatusLabel, connectorStatusTone, type Tone } from "./view.js"
 
 interface MemberEndpoint {
   pool: string;
-  /** The pool's humanPath. */
+  /** Where the member connects: `/mcp`. */
   path: string;
 }
 
@@ -112,7 +113,7 @@ const toolCount = (connector: OperatorMemberConnector) => connector.tools.length
 export function memberPage(contract: OperatorUiContractV2 | null): MemberPageModel {
   if (contract?.role !== "member") return { endpoints: [], accounts: [], shared: [] };
   return {
-    endpoints: contract.pools.map((pool) => ({ pool: pool.name, path: pool.humanPath })),
+    endpoints: contract.pools.map((pool) => ({ pool: pool.name, path: poolEndpoint(pool).path })),
     accounts: contract.connectors
       .filter((connector) => connector.authScope === "personal" && connector.grantOwner === undefined)
       .map((connector) => {

@@ -227,7 +227,7 @@ function makeHttpDownstream(
 }
 
 describe("remoteMcp() connector", () => {
-  it("partitions routed human catalogs by resolved pool while sharing the explicit alias", async () => {
+  it("partitions a person's catalog by their pool and reuses it within that pool", async () => {
     const first = await connectServer();
     const second = await connectServer();
     closer = async () => {
@@ -254,23 +254,23 @@ describe("remoteMcp() connector", () => {
         pools: { [pool]: { tools: ["down"], members: ["bob"] } },
         logger: silentLogger,
       });
-    const search = async (app: ReturnType<typeof build>, path: string) => {
+    const search = async (app: ReturnType<typeof build>) => {
       const req = mcpRpc("tools/call", { name: "search_tools", arguments: { query: "echo" } });
       req.headers.set("Authorization", "Bearer bob");
-      return readJsonRpc(await app.fetch(new Request(`${BASE}${path}`, req)));
+      return readJsonRpc(await app.fetch(req));
     };
     const team = build("team");
     try {
-      const routed = await search(team, "/mcp");
+      const routed = await search(team);
       expect(routed.result.isError).toBeFalsy();
-      expect((await search(team, "/mcp/team")).result).toEqual(routed.result);
+      expect((await search(team)).result).toEqual(routed.result);
       expect(builds).toBe(1);
     } finally {
       await team.close();
     }
     const moved = build("other");
     try {
-      expect((await search(moved, "/mcp")).result.isError).toBeFalsy();
+      expect((await search(moved)).result.isError).toBeFalsy();
       expect(builds).toBe(2);
     } finally {
       await moved.close();

@@ -144,8 +144,6 @@ async function doctor() {
     }
   }
   const requestedUrl = option("--url", "http://localhost:8787");
-  // An agent token reaches only /agent/<pool> for the pools that list the
-  // agent; /mcp and /mcp/<pool> admit people alone.
   const pool = option("--pool", undefined);
   if (pool !== undefined && !/^[a-z0-9_-]+$/.test(pool)) {
     throw new Error("Doctor --pool must be a pool name: lowercase letters, digits, _ and -.");
@@ -176,6 +174,9 @@ async function doctor() {
   const agent = Boolean(token?.startsWith("cta_"));
   if (agent && pool === undefined && !args.includes("--config")) {
     throw new Error("An agent token reaches only /agent/<pool>: pass --pool with a pool that lists the agent.");
+  }
+  if (!agent && pool !== undefined) {
+    throw new Error("--pool is for agent tokens. People reach their pool at plain /mcp: omit --pool.");
   }
   const authHeaders = {
     ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -237,7 +238,7 @@ async function doctor() {
     { versionNegotiation: { mode: "auto", probe: { timeoutMs: DOCTOR_TIMEOUT_MS } } },
   );
   // Agent endpoints bypass Access at the edge and read only the cta_ token.
-  const endpoint = agent ? `/agent/${pool}` : `/mcp${pool ? `/${pool}` : ""}`;
+  const endpoint = agent ? `/agent/${pool}` : "/mcp";
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}${endpoint}`), {
     requestInit: { headers: agent ? { Authorization: `Bearer ${token}` } : authHeaders },
     fetch: doctorFetch,

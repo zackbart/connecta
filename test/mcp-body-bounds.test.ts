@@ -110,7 +110,7 @@ describe("MCP request bodies before auth", () => {
     ["/agent/unknown", 401],
     ["/agent/team-agents/", 404],
     ["/mcp", 401],
-    ["/mcp/team", 401],
+    ["/mcp/team", 404],
   ] as const)(
     "INV-7: refuses an unauthenticated large listen POST to %s without reading its body or taking a permit",
     WORKERS,
@@ -132,10 +132,10 @@ describe("MCP request bodies before auth", () => {
 
   it.each([
     ["/agent/team-agents", "bot"],
-    ["/mcp/team", "bob"],
+    ["/mcp", "bob"],
     ["/mcp", "alice"],
   ] as const)(
-    "INV-7: answers an authenticated oversized listen POST to %s with 413, reading no further than the cap",
+    "INV-7: answers an authenticated oversized listen POST to %s as %s with 413, reading no further than the cap",
     WORKERS,
     async (path, who) => {
       const { c, bot } = await deployment();
@@ -252,10 +252,10 @@ describe("authenticated MCP body limits", () => {
     );
     it.each([
       ["/mcp", "alice"],
-      ["/mcp/team", "bob"],
+      ["/mcp", "bob"],
       ["/agent/team-agents", "bot"],
     ] as const)(
-      `INV-7 INV-9: refuses oversized ${modern ? "modern" : "fresh legacy"} writes at %s before dispatch`,
+      `INV-7 INV-9: refuses oversized ${modern ? "modern" : "fresh legacy"} writes at %s as %s before dispatch`,
       WORKERS,
       async (path, who) => {
         let writes = 0;
@@ -293,10 +293,10 @@ describe("authenticated MCP body limits", () => {
     );
     it.each([
       ["/mcp", "alice"],
-      ["/mcp/team", "bob"],
+      ["/mcp", "bob"],
       ["/agent/team-agents", "bot"],
     ] as const)(
-      `INV-7 INV-11: bounds ${modern ? "modern" : "fresh legacy"} bodies at %s and releases admission`,
+      `INV-7 INV-11: bounds ${modern ? "modern" : "fresh legacy"} bodies at %s as %s and releases admission`,
       WORKERS,
       async (path, who) => {
         const { c, bot } = await deployment(cap);
@@ -352,10 +352,10 @@ describe("authenticated MCP body limits", () => {
 
   it.each([
     ["/mcp", "alice"],
-    ["/mcp/team", "bob"],
+    ["/mcp", "bob"],
     ["/agent/team-agents", "bot"],
   ] as const)(
-    "INV-7: keeps a lower deployment cap on listen candidates at %s before their fixed classification ceiling",
+    "INV-7: keeps a lower deployment cap on listen candidates at %s as %s before their fixed classification ceiling",
     WORKERS,
     async (path, who) => {
       const limit = 8 * 1024;

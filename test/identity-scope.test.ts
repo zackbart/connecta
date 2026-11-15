@@ -18,7 +18,7 @@ const BASE = "https://connecta.test";
 const NAMESPACE = "https://identity.test";
 const ENCRYPTION_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
 
-type User = "alice" | "bob" | "carol";
+type User = "alice" | "bob" | "carol" | "dave" | "erin";
 
 function users(): InboundAuth {
   return {
@@ -27,7 +27,7 @@ function users(): InboundAuth {
     uiAuth: { kind: "clerk", frontendApiUrl: NAMESPACE, publishableKey: "pk_test_fake" },
     activityActorNamespace: NAMESPACE,
     authorize(request) {
-      const user = /^Bearer (alice|bob|carol)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
+      const user = /^Bearer (alice|bob|carol|dave|erin)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
       return user
         ? { ok: true, userId: user, subjectId: user }
         : {
@@ -110,8 +110,7 @@ function deployment(options: Partial<Parameters<typeof createTestConnecta>[0]> =
 }
 
 describe("maintainers and plain /mcp", () => {
-  it("routes a person's single pool at /mcp, preserving maintainer precedence and private refusals", async () => {
-    const warnings: unknown[][] = [];
+  it("serves a single-pool person exactly that pool at /mcp, preserving maintainer precedence and private refusals", async () => {
     const events: ToolCallActivityEvent[] = [];
     let deletes = 0;
     const c = deployment({
@@ -126,59 +125,52 @@ describe("maintainers and plain /mcp", () => {
       pools: {
         team: {
           tools: ["notes.search", "notes.delete"],
-          members: [{ namespace: NAMESPACE, id: "bob" }, "alice"],
+          members: [{ namespace: NAMESPACE, id: "bob" }],
           readOnly: true,
           description: "Team tools",
         },
-        other: { tools: ["wiki"], members: ["alice"] },
-      },
-      logger: {
-        ...silentLogger,
-        warn: (...args) => {
-          warnings.push(args);
-        },
       },
     });
-    const send = async (path: string, user: string, method: string) =>
-      readJsonRpc(
-        await c.fetch(
-          request(path, user, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
-            body: JSON.stringify({
-              jsonrpc: "2.0",
-              id: 1,
-              method,
-              params:
-                method === "initialize"
-                  ? { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } }
-                  : {},
-            }),
+    const initialized = (await readJsonRpc(
+      await c.fetch(
+        request("/mcp", "bob", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "test", version: "1" } },
           }),
-        ),
-      );
-    for (const method of ["tools/list", "initialize"])
-      expect(await send("/mcp", "bob", method)).toEqual(await send("/mcp/team", "bob", method));
+        }),
+      ),
+    )) as any;
+    expect(initialized.result.instructions).toContain("Team tools");
+    expect(initialized.result.capabilities.extensions["dev.connecta/endpoint"]).toMatchObject({
+      readOnly: true,
+      connectors: [{ id: "notes" }],
+    });
+    const found = (await rpc(c, "/mcp", "bob", "search_tools", { connector: "notes", query: "", limit: 20 })).result
+      .structuredContent.tools;
+    expect(found.map((tool: { address: string; callable?: false }) => [tool.address, tool.callable])).toEqual([
+      ["notes.search", undefined],
+      ["notes.delete", false],
+    ]);
     // The pool grants the write; its readOnly refuses it before dispatch.
     const refused = (await rpc(c, "/mcp", "bob", "call_destructive_tool", { address: "notes.delete", args: {} }))
       .result;
     expect(refused.isError).toBe(true);
     expect(JSON.stringify(refused)).toContain("read_only_endpoint");
     expect(deletes).toBe(0);
-    // Activity records the routed pool exactly as the explicit path does.
+    expect((await rpc(c, "/mcp", "bob", "call_tool", { address: "wiki.read", args: {} })).result.isError).toBe(true);
     events.length = 0;
-    for (const path of ["/mcp", "/mcp/team"])
-      expect(
-        (await rpc(c, path, "bob", "call_tool", { address: "notes.search", args: {} })).result.isError,
-      ).toBeFalsy();
-    expect(events.map((event) => event.pool)).toEqual(["team", "team"]);
+    expect(
+      (await rpc(c, "/mcp", "bob", "call_tool", { address: "notes.search", args: {} })).result.isError,
+    ).toBeFalsy();
+    expect(events.map((event) => event.pool)).toEqual(["team"]);
     expect(
       (await rpc(c, "/mcp", "alice", "call_tool", { address: "billing.invoices", args: {} })).result.isError,
     ).toBeFalsy();
-    expect(await wire(await c.fetch(request("/mcp", "carol")))).toEqual(
-      await wire(await c.fetch(request("/mcp/missing", "carol"))),
-    );
-    expect(warnings.filter((args) => String(args[0]).includes("several pools"))).toEqual([]);
     const config = (await (await c.fetch(request("/ui/api/config", "bob"))).json()) as any;
     expect(config.pools[0]).toMatchObject({ name: "team", humanPath: "/mcp" });
     await c.close();
@@ -201,8 +193,8 @@ describe("maintainers and plain /mcp", () => {
         store: { record: async (event) => void events.push(event) },
       }),
       pools: {
-        team: { tools: ["notes.search", "crm"], members: [{ namespace: NAMESPACE, id: "bob" }, "alice"] },
-        other: { tools: ["billing"], members: ["alice"], surface: "native", executeCode: false, readOnly: true },
+        team: { tools: ["notes.search", "crm"], members: [{ namespace: NAMESPACE, id: "bob" }] },
+        other: { tools: ["billing"], members: ["dave"], surface: "native", executeCode: false, readOnly: true },
         solo: { tools: ["wiki"], members: [{ namespace: NAMESPACE, id: "carol" }], surface: "native" },
       },
     });
@@ -249,10 +241,8 @@ describe("maintainers and plain /mcp", () => {
     for (const method of ["server/discover", "initialize"] as const) {
       // A person's plain /mcp is their one pool, never the deployment's roster.
       expect(await facts("/mcp", "bob", method)).toEqual(team);
-      expect(await facts("/mcp/team", "bob", method)).toEqual(team);
-      // Non-members learn nothing: the same refusal as a missing pool.
-      expect(await facts("/mcp/other", "bob", method)).toBe(404);
-      expect(await facts("/mcp/team", "carol", method)).toBe(404);
+      // A pool path is no endpoint, even for that pool's member.
+      expect(await facts("/mcp/team", "bob", method)).toBe(404);
       // A person's plain /mcp serves their pool's surface, and the facts say so.
       expect(await facts("/mcp", "carol", method)).toEqual({
         surface: "native",
@@ -266,7 +256,7 @@ describe("maintainers and plain /mcp", () => {
         ...team,
         connectors: [{ id: "notes" }, { id: "wiki" }, { id: "billing" }, crm],
       });
-      expect(await facts("/mcp/other", "alice", method)).toEqual({
+      expect(await facts("/mcp", "dave", method)).toEqual({
         surface: "native",
         executeCode: false,
         executeReadCode: false,
@@ -299,15 +289,6 @@ describe("maintainers and plain /mcp", () => {
       pools: {
         team: { tools: ["notes.search", "wiki"], members: ["bob", "carol"] },
         finance: { tools: ["billing"], members: ["dave"] },
-      },
-      auth: {
-        ...users(),
-        authorize(request) {
-          const user = /^Bearer (alice|bob|carol|dave)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
-          return user
-            ? { ok: true, userId: user, subjectId: user }
-            : { ok: false, response: Response.json({ error: "unauthorized" }, { status: 401 }) };
-        },
       },
     });
     const send = async (path: string, user: string, method = "initialize", headers: HeadersInit = {}) => {
@@ -348,10 +329,9 @@ describe("maintainers and plain /mcp", () => {
     expect(roster(bob)).toBe("notes, wiki");
     expect(bob).not.toContain("billing");
     expect(roster(await send("/mcp", "dave"))).toBe("billing");
-    // Same roster for every member, on either route, whatever the request carries.
+    // Same roster for every member, on either handshake, whatever the request carries.
     expect(await send("/mcp", "carol")).toBe(bob);
-    expect(await send("/mcp/team", "bob")).toBe(bob);
-    expect(await send("/mcp/team", "bob", "server/discover")).toBe(bob);
+    expect(await send("/mcp", "bob", "server/discover")).toBe(bob);
     expect(await send("/mcp", "bob", "initialize", { "X-Connector": "billing", "Mcp-Name": "billing" })).toBe(bob);
     // Instructions disclose nothing the execute_code inventory does not.
     const app = deployment({
@@ -400,17 +380,13 @@ describe("maintainers and plain /mcp", () => {
     expect(
       (await rpc(c, "/mcp", "west", "call_tool", { address: "billing.invoices", args: {} })).result.isError,
     ).toBeFalsy();
-    expect((await c.fetch(request("/mcp/east", "west"))).status).toBe(404);
     await c.close();
   });
 
-  it("warns for ambiguous resolved people and refuses them identically to missing pools", async () => {
+  it("refuses a non-maintainer in no pool with the endpoint's own 404, logging only not_maintainer", async () => {
     const warnings: unknown[][] = [];
     const c = deployment({
-      pools: {
-        one: { tools: ["wiki"], members: ["bob"] },
-        two: { tools: ["wiki"], members: [{ namespace: NAMESPACE, id: "bob" }] },
-      },
+      pools: { team: { tools: ["wiki"], members: ["bob"] } },
       logger: {
         ...silentLogger,
         warn: (...args) => {
@@ -418,25 +394,18 @@ describe("maintainers and plain /mcp", () => {
         },
       },
     });
-    expect(warnings).toContainEqual([expect.any(String), { namespace: NAMESPACE, id: "bob", pools: ["one", "two"] }]);
-    expect(c.describeConfig().peopleInSeveralPools).toEqual([
-      { namespace: NAMESPACE, id: "bob", pools: ["one", "two"] },
-    ]);
-    expect(await wire(await c.fetch(request("/mcp", "bob")))).toEqual(
-      await wire(await c.fetch(request("/mcp/missing", "bob"))),
-    );
-    // The same 404 a non-member gets; only the operator log tells them apart.
-    expect(await wire(await c.fetch(request("/mcp", "carol")))).toEqual(
-      await wire(await c.fetch(request("/mcp", "bob"))),
-    );
+    const refused = await wire(await c.fetch(request("/mcp", "carol")));
+    expect(refused.status).toBe(404);
+    expect(refused.body).toContain("MCP endpoint not found.");
+    expect(await wire(await c.fetch(request("/mcp/missing", "carol")))).toEqual(refused);
     const reasons = warnings
       .flat()
       .flatMap((entry) => ((entry as { reason?: string })?.reason ? [(entry as { reason: string }).reason] : []));
-    expect(reasons).toEqual(expect.arrayContaining(["ambiguous_pool", "not_maintainer"]));
+    expect(reasons).toEqual(["not_maintainer"]);
     await c.close();
   });
 
-  it("binds routed result handles to both pathname and pool across deployments", async () => {
+  it("binds a person's result handles to their pool across deployments", async () => {
     const storage = memoryStorage();
     let resultId = "";
     const build = (pool: string) =>
@@ -459,15 +428,6 @@ describe("maintainers and plain /mcp", () => {
     expect(
       (await rpc(c, "/mcp", "bob", "execute_code", { code: "return await connecta.result(id)" })).result.isError,
     ).toBeFalsy();
-    expect(
-      (await rpc(c, "/mcp/team", "bob", "execute_code", { code: "return await connecta.result(id)" })).result.isError,
-    ).toBe(true);
-    const named = (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "docs.read", args: {} })).result;
-    resultId = JSON.parse(named.content[0].text.split("\n")[0]).resultId;
-    expect(
-      (await rpc(c, "/mcp", "bob", "execute_code", { code: "return await connecta.result(id)" })).result.isError,
-    ).toBe(true);
-    resultId = id;
     await c.close();
     const moved = build("other");
     expect(
@@ -476,7 +436,7 @@ describe("maintainers and plain /mcp", () => {
     await moved.close();
   });
 
-  it("INV-4: an open deployment keeps anonymous /mcp and answers every pool with the 404", async () => {
+  it("INV-4: an open deployment keeps anonymous /mcp and answers every pool path with the 404", async () => {
     const c = createTestConnecta({
       connectors: teamConnectors(),
       pools: { team: { tools: ["wiki"], members: [{ namespace: NAMESPACE, id: "alice" }] } },
@@ -582,7 +542,7 @@ describe("maintainers and plain /mcp", () => {
       ...users(),
       authorize(request) {
         const user = /^Bearer (alice|bob)$/u.exec(request.headers.get("authorization") ?? "")?.[1];
-        return user && (signedIn || user === "bob")
+        return user && signedIn
           ? { ok: true, userId: user, subjectId: user }
           : { ok: false, response: Response.json({ error: "unauthorized" }, { status: 401 }) };
       },
@@ -602,7 +562,7 @@ describe("maintainers and plain /mcp", () => {
       ],
       auth,
       maintainers: ["alice"],
-      pools: { team: { tools: ["docs"], members: ["alice"] } },
+      pools: { team: { tools: ["docs"], members: ["bob"] } },
       storage: memoryStorage(),
       calls: { maxResultBytes: 100 },
       logger: silentLogger,
@@ -611,14 +571,14 @@ describe("maintainers and plain /mcp", () => {
         return fns.result!(resultId, { maxBytes: 100 });
       }),
     });
-    for (const path of ["/mcp", "/mcp/team"]) {
+    for (const user of ["alice", "bob"]) {
       signedIn = true;
       revokeInProgram = false;
-      const first = (await rpc(c, path, "alice", "call_tool", { address: "docs.read" })).result;
+      const first = (await rpc(c, "/mcp", user, "call_tool", { address: "docs.read" })).result;
       resultId = JSON.parse(first.content[0].text.split("\n")[0]).resultId;
       revokeInProgram = true;
-      const paged = (await rpc(c, path, "alice", "execute_code", { code: "return await connecta.result(id)" })).result;
-      expect(paged.isError, path).toBe(true);
+      const paged = (await rpc(c, "/mcp", user, "execute_code", { code: "return await connecta.result(id)" })).result;
+      expect(paged.isError, user).toBe(true);
     }
     await c.close();
   });
@@ -702,11 +662,11 @@ describe("shared auth is maintainers' alone", () => {
     // Issuance: an explicit authorize_connector, forced or not, and the
     // handoff a failed call carries both withhold a link from the member.
     for (const force of [false, true]) {
-      const issued = await rpc(c, "/mcp/team", "bob", "authorize_connector", { connector: "shared", force });
+      const issued = await rpc(c, "/mcp", "bob", "authorize_connector", { connector: "shared", force });
       expect(text(issued)).not.toContain("/connect/");
       expect(JSON.parse(issued.result.content[0].text)).toMatchObject({ recovery: "unavailable" });
     }
-    const failed = await rpc(c, "/mcp/team", "bob", "call_tool", { address: "shared.read", args: {} });
+    const failed = await rpc(c, "/mcp", "bob", "call_tool", { address: "shared.read", args: {} });
     expect(failed.result.isError).toBe(true);
     expect(text(failed)).not.toContain("/connect/");
 
@@ -730,7 +690,7 @@ describe("shared auth is maintainers' alone", () => {
     expect((await c.fetch(request(`/oauth/callback/shared?code=code&state=${state}`, "alice"))).status).toBe(200);
     expect(await grant()).toBe("ok");
     const own = JSON.parse(
-      (await rpc(c, "/mcp/team", "bob", "authorize_connector", { connector: "oauth" })).result.content[0].text,
+      (await rpc(c, "/mcp", "bob", "authorize_connector", { connector: "oauth" })).result.content[0].text,
     );
     expect(own.authorizationUrl).toMatch(new RegExp(`^${BASE}/connect/oauth\\?h=`));
     const personal = await c.fetch(new Request(own.authorizationUrl, { headers: { Authorization: "Bearer bob" } }));
@@ -756,13 +716,13 @@ describe("pool members connect their own personal connectors", () => {
       publicUrl: BASE,
       logger: silentLogger,
     });
-    const handoff = async (user: User, pool: string, connector: string) =>
-      JSON.parse((await rpc(c, `/mcp/${pool}`, user, "authorize_connector", { connector })).result.content[0].text);
-    const link = await handoff("bob", "mine", "oauth");
+    const handoff = async (user: User, connector: string) =>
+      JSON.parse((await rpc(c, "/mcp", user, "authorize_connector", { connector })).result.content[0].text);
+    const link = await handoff("bob", "oauth");
     expect(link.authorizationUrl).toMatch(new RegExp(`^${BASE}/connect/oauth\\?h=`));
     // A connector outside the member's pools reads like one that never existed.
-    const hidden = await rpc(c, "/mcp/mine", "bob", "authorize_connector", { connector: "elsewhere" });
-    const absent = await rpc(c, "/mcp/mine", "bob", "authorize_connector", { connector: "absent" });
+    const hidden = await rpc(c, "/mcp", "bob", "authorize_connector", { connector: "elsewhere" });
+    const absent = await rpc(c, "/mcp", "bob", "authorize_connector", { connector: "absent" });
     expect(hidden.result.isError).toBe(true);
     expect(hidden.result.content[0].text).toBe(absent.result.content[0].text.replace("absent", "elsewhere"));
     // Another person cannot use bob's link.
@@ -800,7 +760,7 @@ describe("connector members narrow visibility (#1377)", () => {
     let target = "journal";
     const journal = api("journal", {
       description: "Personal journal",
-      members: ["bob"],
+      members: ["bob", "dave"],
       callAdmission: { rules: [{ maxConcurrency: 4 }] },
       usageGuide: { content: "Journal guide.", summary: "Load before reading the journal." },
       tools: [
@@ -842,7 +802,7 @@ describe("connector members narrow visibility (#1377)", () => {
       }),
       pools: {
         team: { tools: ["notes.search", "journal", "mailbox"], members: ["bob", "carol"] },
-        nat: { tools: ["journal", "wiki"], members: ["bob", "carol"], surface: "native" },
+        nat: { tools: ["journal", "wiki"], members: ["dave", "erin"], surface: "native" },
       },
     });
     return { c, events, reads: () => reads, setTarget: (id: string) => (target = id) };
@@ -857,14 +817,11 @@ describe("connector members narrow visibility (#1377)", () => {
 
   it("INV-4: a non-member meets an unknown connector on every MCP surface, maintainers at plain /mcp included", async () => {
     const { c, reads, setTarget } = await membersDeployment();
-    for (const [path, user] of [
-      ["/mcp/team", "carol"],
-      ["/mcp", "alice"],
-    ] as const) {
+    for (const user of ["carol", "alice"]) {
       // Endpoint facts, instructions, discovery and search name nothing of it.
       const initialized = await readJsonRpc(
         await c.fetch(
-          request(path, user, {
+          request("/mcp", user, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
             body: JSON.stringify({
@@ -878,62 +835,60 @@ describe("connector members narrow visibility (#1377)", () => {
       );
       expect(JSON.stringify(initialized)).toContain("notes");
       expect(JSON.stringify(initialized)).not.toMatch(/journal|mailbox/);
-      const search = await rpc(c, path, user, "search_tools", { query: "read entries", limit: 20 });
-      expect(JSON.stringify(search), `${path} ${user}`).not.toContain("journal");
+      const search = await rpc(c, "/mcp", user, "search_tools", { query: "read entries", limit: 20 });
+      expect(JSON.stringify(search), user).not.toContain("journal");
       asUnknown(
-        await rpc(c, path, user, "search_tools", { connector: "journal", query: "", limit: 20 }),
-        await rpc(c, path, user, "search_tools", { connector: "ghost", query: "", limit: 20 }),
+        await rpc(c, "/mcp", user, "search_tools", { connector: "journal", query: "", limit: 20 }),
+        await rpc(c, "/mcp", user, "search_tools", { connector: "ghost", query: "", limit: 20 }),
         "journal",
       );
-      expect(JSON.stringify(await rpc(c, path, user, "skills", {}))).not.toContain("journal");
+      expect(JSON.stringify(await rpc(c, "/mcp", user, "skills", {}))).not.toContain("journal");
       // Direct calls, both tools, and authorization.
       for (const tool of ["call_tool", "call_destructive_tool"])
         asUnknown(
-          await rpc(c, path, user, tool, { address: "journal.read", args: {} }),
-          await rpc(c, path, user, tool, { address: "ghost.read", args: {} }),
+          await rpc(c, "/mcp", user, tool, { address: "journal.read", args: {} }),
+          await rpc(c, "/mcp", user, tool, { address: "ghost.read", args: {} }),
           "journal",
         );
       for (const hidden of ["journal", "mailbox"])
         asUnknown(
-          await rpc(c, path, user, "authorize_connector", { connector: hidden }),
-          await rpc(c, path, user, "authorize_connector", { connector: "ghost" }),
+          await rpc(c, "/mcp", user, "authorize_connector", { connector: hidden }),
+          await rpc(c, "/mcp", user, "authorize_connector", { connector: "ghost" }),
           hidden,
         );
       // Programs, including a guessed address, through both program tools.
       for (const tool of ["execute_code", "execute_read_code"]) {
         setTarget("journal");
-        const hidden = await rpc(c, path, user, tool, { code: "return 1" });
+        const hidden = await rpc(c, "/mcp", user, tool, { code: "return 1" });
         setTarget("ghost");
-        asUnknown(hidden, await rpc(c, path, user, tool, { code: "return 1" }), "journal");
+        asUnknown(hidden, await rpc(c, "/mcp", user, tool, { code: "return 1" }), "journal");
       }
     }
     // A native pool lists none of its tools for a non-member.
     const native = async (user: string) =>
       readJsonRpc(
         await c.fetch(
-          request("/mcp/nat", user, {
+          request("/mcp", user, {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
             body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
           }),
         ),
       ) as Promise<any>;
-    const carolNative = JSON.stringify(await native("carol"));
-    expect(carolNative).toContain("wiki");
-    expect(carolNative).not.toContain("journal");
-    expect(JSON.stringify(await native("bob"))).toContain("journal");
+    const outsider = JSON.stringify(await native("erin"));
+    expect(outsider).toContain("wiki");
+    expect(outsider).not.toContain("journal");
+    expect(JSON.stringify(await native("dave"))).toContain("journal");
     expect(reads()).toBe(0);
     // The listed member reaches it on the same endpoints.
+    expect(JSON.stringify(await rpc(c, "/mcp", "bob", "search_tools", { query: "read entries", limit: 20 }))).toContain(
+      "journal.read",
+    );
     expect(
-      JSON.stringify(await rpc(c, "/mcp/team", "bob", "search_tools", { query: "read entries", limit: 20 })),
-    ).toContain("journal.read");
-    expect(
-      (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "journal.read", args: {} })).result.isError,
+      (await rpc(c, "/mcp", "bob", "call_tool", { address: "journal.read", args: {} })).result.isError,
     ).toBeFalsy();
     setTarget("journal");
-    expect(JSON.stringify(await rpc(c, "/mcp/team", "bob", "execute_read_code", { code: "return 1" }))).toContain(
-      "entries",
-    );
+    expect(JSON.stringify(await rpc(c, "/mcp", "bob", "execute_read_code", { code: "return 1" }))).toContain("entries");
     expect(reads()).toBe(2);
     await c.close();
   });
@@ -965,7 +920,7 @@ describe("connector members narrow visibility (#1377)", () => {
     expect(permissions("notes")).toMatchObject({ use: true });
     // The member's own connect link starts; nobody else can open a flow for it.
     const link = JSON.parse(
-      (await rpc(c, "/mcp/team", "bob", "authorize_connector", { connector: "mailbox" })).result.content[0].text,
+      (await rpc(c, "/mcp", "bob", "authorize_connector", { connector: "mailbox" })).result.content[0].text,
     ).authorizationUrl as string;
     expect((await c.fetch(new Request(link, { headers: { Authorization: "Bearer bob" } }))).status).toBe(302);
     // Public health neither counts the restricted connectors nor moves when a member uses one.
@@ -974,10 +929,10 @@ describe("connector members narrow visibility (#1377)", () => {
     expect(before.connectors).toBe(3);
     // Activity is use: a maintainer the members omit reads none of it.
     expect(
-      (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "journal.read", args: {} })).result.isError,
+      (await rpc(c, "/mcp", "bob", "call_tool", { address: "journal.read", args: {} })).result.isError,
     ).toBeFalsy();
     expect(
-      (await rpc(c, "/mcp/team", "bob", "call_tool", { address: "notes.search", args: {} })).result.isError,
+      (await rpc(c, "/mcp", "bob", "call_tool", { address: "notes.search", args: {} })).result.isError,
     ).toBeFalsy();
     expect((await health()).admission.downstreamCalls).toEqual(before.admission.downstreamCalls);
     const activity = (await (await get("/ui/activity", "alice")).json()) as any;
@@ -992,6 +947,7 @@ describe("connector members narrow visibility (#1377)", () => {
     const described = c.describeConfig().connectors;
     expect(described.find((connector) => connector.id === "journal")?.members).toEqual([
       { kind: "human", namespace: NAMESPACE, id: "bob" },
+      { kind: "human", namespace: NAMESPACE, id: "dave" },
     ]);
     expect(described.find((connector) => connector.id === "notes")).not.toHaveProperty("members");
     await c.close();
@@ -1015,7 +971,7 @@ describe("pools serve exactly their tools", () => {
       },
     };
     const c = deployment({ connectors: [notes], pools: { team: { tools: ["notes.read"], members: ["bob"] } } });
-    const call = (name: string, address: string) => rpc(c, "/mcp/team", "bob", name, { address, args: {} });
+    const call = (name: string, address: string) => rpc(c, "/mcp", "bob", name, { address, args: {} });
     expect((await call("call_tool", "notes.read")).result.isError).toBeFalsy();
     tools = [
       { name: "read", annotations: { readOnlyHint: false, destructiveHint: true } },
@@ -1023,7 +979,7 @@ describe("pools serve exactly their tools", () => {
     ];
     await c.registry.invalidateStored("notes");
     const discovered = JSON.stringify(
-      await rpc(c, "/mcp/team", "bob", "search_tools", { connector: "notes", query: "", limit: 20 }),
+      await rpc(c, "/mcp", "bob", "search_tools", { connector: "notes", query: "", limit: 20 }),
     );
     expect(discovered).toContain("notes.read");
     expect(discovered).not.toContain("notes.new_read");
@@ -1061,21 +1017,25 @@ describe("pools serve exactly their tools", () => {
         native: { tools: ["crm"], readOnly: true, writes: ["crm.save"], surface: "native", members: ["carol"] },
       },
     });
-    const call = (path: string, user: User, name: string, address: string) =>
-      rpc(c, path, user, name, { address, args: {}, ...(name === "call_destructive_tool" ? { reason: "test" } : {}) });
+    const call = (user: User, name: string, address: string) =>
+      rpc(c, "/mcp", user, name, {
+        address,
+        args: {},
+        ...(name === "call_destructive_tool" ? { reason: "test" } : {}),
+      });
     const code = (outcome: any) => JSON.stringify(outcome).match(/"code":"([a-z_]+)"/u)?.[1];
-    const search = async (path: string, user: User) =>
+    const search = async (user: User) =>
       (
-        (await rpc(c, path, user, "search_tools", { connector: "crm", query: "", limit: 20 })) as any
+        (await rpc(c, "/mcp", user, "search_tools", { connector: "crm", query: "", limit: 20 })) as any
       ).result.structuredContent.tools.map((tool: { address: string; callable?: false }) => [
         tool.address,
         tool.callable,
       ]);
-    const list = async (path: string, user: User) =>
+    const list = async (user: User) =>
       (
         (await readJsonRpc(
           await c.fetch(
-            request(path, user, {
+            request("/mcp", user, {
               method: "POST",
               headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
               body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
@@ -1084,20 +1044,18 @@ describe("pools serve exactly their tools", () => {
         )) as any
       ).result.tools as Array<{ name: string; annotations?: { destructiveHint?: boolean } }>;
 
-    const meta = await list("/mcp/team", "bob");
+    const meta = await list("bob");
     expect(meta.map((tool) => tool.name)).toContain("call_destructive_tool");
     expect(meta.find((tool) => tool.name === "execute_code")?.annotations?.destructiveHint).toBe(true);
-    for (const path of ["/mcp/team", "/mcp"]) {
-      expect(await search(path, "bob")).toEqual([
-        ["crm.find", undefined],
-        ["crm.save", undefined],
-        ["crm.drop", false],
-      ]);
-      expect((await call(path, "bob", "call_destructive_tool", "crm.save")).result.isError).toBeFalsy();
-      expect(code(await call(path, "bob", "call_destructive_tool", "crm.drop"))).toBe("read_only_endpoint");
-      expect(code(await call(path, "bob", "call_tool", "crm.save"))).toBe("destructive_tool_requires_approval");
-    }
-    expect(calls).toEqual(["save", "save"]);
+    expect(await search("bob")).toEqual([
+      ["crm.find", undefined],
+      ["crm.save", undefined],
+      ["crm.drop", false],
+    ]);
+    expect((await call("bob", "call_destructive_tool", "crm.save")).result.isError).toBeFalsy();
+    expect(code(await call("bob", "call_destructive_tool", "crm.drop"))).toBe("read_only_endpoint");
+    expect(code(await call("bob", "call_tool", "crm.save"))).toBe("destructive_tool_requires_approval");
+    expect(calls).toEqual(["save"]);
 
     const described = (address: string, fns: Record<string, (...args: unknown[]) => Promise<unknown>>) =>
       fns.describe!({ address }).then((value: any) =>
@@ -1111,38 +1069,38 @@ describe("pools serve exactly their tools", () => {
       saved: await fns.call!("crm.save", {}).then(() => "sent", refusal),
       dropped: await fns.call!("crm.drop", {}).then(() => "sent", refusal),
     });
-    const ran = (await rpc(c, "/mcp/team", "bob", "execute_code", { code: "async () => null" })).result;
+    const ran = (await rpc(c, "/mcp", "bob", "execute_code", { code: "async () => null" })).result;
     expect(ran.structuredContent.result).toEqual({
       described: "shown",
       refused: "not callable",
       saved: "sent",
       dropped: "refused",
     });
-    expect(calls).toEqual(["save", "save", "save"]);
+    expect(calls).toEqual(["save", "save"]);
 
-    const nativeNames = (await list("/mcp/native", "carol")).map((tool) => tool.name);
+    const nativeNames = (await list("carol")).map((tool) => tool.name);
     const nativeSave = nativeNames.find((name) => name.startsWith("crm__") && name.endsWith("save"));
     expect(nativeSave).toBeDefined();
     expect(nativeNames.some((name) => name.endsWith("drop"))).toBe(false);
-    expect((await rpc(c, "/mcp/native", "carol", nativeSave!, {})).result.isError).toBeFalsy();
-    expect(calls).toEqual(["save", "save", "save", "save"]);
+    expect((await rpc(c, "/mcp", "carol", nativeSave!, {})).result.isError).toBeFalsy();
+    expect(calls).toEqual(["save", "save", "save"]);
     program = async (fns) =>
       ((await fns.search!({ query: "" })) as any).tools.map(
         (tool: { address: string; callable?: false }) => `${tool.address}${tool.callable === false ? " refused" : ""}`,
       );
-    const nativeSearch = (await rpc(c, "/mcp/native", "carol", "execute_code", { code: "async () => null" })).result;
+    const nativeSearch = (await rpc(c, "/mcp", "carol", "execute_code", { code: "async () => null" })).result;
     expect(nativeSearch.structuredContent.result).toEqual(["crm.find", "crm.save", "crm.drop refused"]);
 
     tools = [...tools, { name: "purge", annotations: { readOnlyHint: false, destructiveHint: true } }];
     await c.registry.invalidateStored("crm");
-    expect(await search("/mcp/team", "bob")).toContainEqual(["crm.purge", false]);
-    expect(code(await call("/mcp/team", "bob", "call_destructive_tool", "crm.purge"))).toBe("read_only_endpoint");
-    expect((await list("/mcp/native", "carol")).some((tool) => tool.name.endsWith("purge"))).toBe(false);
-    expect(calls).toEqual(["save", "save", "save", "save"]);
+    expect(await search("bob")).toContainEqual(["crm.purge", false]);
+    expect(code(await call("bob", "call_destructive_tool", "crm.purge"))).toBe("read_only_endpoint");
+    expect((await list("carol")).some((tool) => tool.name.endsWith("purge"))).toBe(false);
+    expect(calls).toEqual(["save", "save", "save"]);
 
     const facts = (await readJsonRpc(
       await c.fetch(
-        request("/mcp/team", "bob", {
+        request("/mcp", "bob", {
           method: "POST",
           headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream" },
           body: JSON.stringify({
@@ -1161,7 +1119,7 @@ describe("pools serve exactly their tools", () => {
       readOnly: false,
       connectors: [{ id: "wiki", unlisted: true }, { id: "crm" }],
     });
-    expect((await call("/mcp/team", "bob", "call_tool", "wiki.read")).result.isError).toBeFalsy();
+    expect((await call("bob", "call_tool", "wiki.read")).result.isError).toBeFalsy();
     expect(c.describeConfig().pools.find((pool) => pool.name === "team")).toMatchObject({
       readOnly: true,
       writes: ["crm.save"],
@@ -1245,6 +1203,36 @@ describe("member references at construction", () => {
       },
     })();
     await c.close();
+  });
+
+  it("INV-11: refuses a maintainer listed in any pool, by bare id or namespaced reference", () => {
+    for (const members of [
+      ["bob", "alice"],
+      ["bob", { namespace: NAMESPACE, id: "alice" }],
+    ]) {
+      const attempt = build({
+        auth: users(),
+        maintainers: ["alice"],
+        pools: { team: { tools: ["wiki"], members: ["carol"] }, other: { tools: ["wiki"], members } },
+      });
+      expect(attempt).toThrow(ConfigError);
+      expect(attempt).toThrow(
+        "ConnectaConfig.pools.other.members[1] is a maintainer. Maintainers receive the whole catalog at plain /mcp and belong to no pool",
+      );
+    }
+  });
+
+  it("INV-11: refuses a person listed in two pools, naming the second listing and the first pool", () => {
+    const attempt = build({
+      auth: users(),
+      maintainers: ["alice"],
+      pools: {
+        one: { tools: ["wiki"], members: ["bob"] },
+        two: { tools: ["wiki"], members: ["carol", { namespace: NAMESPACE, id: "bob" }] },
+      },
+    });
+    expect(attempt).toThrow(ConfigError);
+    expect(attempt).toThrow('ConnectaConfig.pools.two.members[1] is already a member of pool "one".');
   });
 
   it.each([

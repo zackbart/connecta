@@ -84,14 +84,14 @@ describe("operator config contract", () => {
     expect(data.pools).toMatchObject([
       {
         name: "support",
-        humanPath: "/mcp/support",
-        agentPath: "/agent/support",
+        humanPath: "/mcp",
+        agentPath: null,
         readOnly: false,
         tools: [{ connectorId: "static_api", tools: "all" }],
       },
       {
         name: "support-agents",
-        humanPath: "/mcp/support-agents",
+        humanPath: null,
         agentPath: "/agent/support-agents",
         readOnly: false,
         tools: [{ connectorId: "static_api", tools: "all" }],
@@ -101,12 +101,12 @@ describe("operator config contract", () => {
 
   it("INV-5: serves pool owner addresses only to an authenticated maintainer, never to an open deployment's anonymous caller", async () => {
     const pools = {
-      mine: { tools: ["shared"], owner: "alice@example.com", members: [{ namespace: "directory", id: "alice" }] },
+      mine: { tools: ["shared"], owner: "alice@example.com", members: [{ namespace: "directory", id: "bob" }] },
       group: {
         surface: "native" as const,
         executeCode: false as const,
         tools: ["shared"],
-        members: [{ namespace: "directory", id: "bob" }],
+        members: [{ namespace: "directory", id: "carol" }],
       },
     };
     const open = deployment({
@@ -236,7 +236,7 @@ describe("operator config contract", () => {
       maintainers,
       ui: operatorUi(),
       logger: "silent",
-      pools: { reader: { tools: ["svc.read"], members: ["alice"] } },
+      pools: { reader: { tools: ["svc.read"], members: ["bob"] } },
       activity: activityHistory({
         store: {
           record() {},
@@ -566,7 +566,7 @@ it("INV-4 INV-6: operation history requires its owner and every full connector g
     maintainers: ["alice", "bob"],
     ui: operatorUi(),
     logger: "silent",
-    pools: { partial: { tools: ["crm"], members: ["alice"] }, address: { tools: ["crm.read"], members: ["alice"] } },
+    pools: { partial: { tools: ["crm"], members: ["carol"] }, address: { tools: ["crm.read"], members: ["dave"] } },
     activity: activityHistory({ operations: true, store: { record() {}, list: async () => ({ events: rows }) } }),
   });
   for (const user of ["alice", "bob"]) {

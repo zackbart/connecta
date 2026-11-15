@@ -97,7 +97,8 @@ export default defineConfig((env: Env) => {
           .filter(Boolean)
       : [],
     // Each pool serves exactly its tools to its members: Clerk user ids at
-    // /mcp/<name>, and "agent:<name>" for a declared agent at /agent/<name>.
+    // plain /mcp (one pool per person, never a maintainer), and "agent:<name>"
+    // for a declared agent at /agent/<name>.
     // A member connects their own account on the pool's personal connectors.
     // `npm run doctor` checks /agent/local-machine with its token. The starter
     // pool is the agent's base pool, its lowest tier (shared connectors, no

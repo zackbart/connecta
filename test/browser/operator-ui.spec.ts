@@ -545,12 +545,12 @@ test("an unread connector holds its place and height, counts in All only, and ne
   await expect(view.getByText("0 tools")).toHaveCount(0);
   await expect(view.locator('[data-node="connector:svc1"]')).toHaveAttribute(
     "aria-label",
-    /reach Service svc1 through \/mcp/,
+    /reach Service svc1 through Default\./,
   );
   await expect(view.locator('[aria-label*="nobody reaches"]')).toHaveCount(0);
 
   await page.getByRole("link", { name: "Endpoints", exact: true }).click();
-  const root = page.locator('[data-endpoint="/mcp"]');
+  const root = page.locator('[data-endpoint="default"]');
   await root.locator(".endpoint-toggle").click();
   const breakdown = root.locator(".endpoint-breakdown");
   await expect(breakdown.locator("tr", { hasText: "Service svc1" })).toContainText("Checking…");
@@ -561,7 +561,7 @@ test("an unread connector holds its place and height, counts in All only, and ne
   const matrix = page.getByRole("table", { name: "Connectors by endpoint" });
   await expect(matrix.locator("tbody th")).toHaveText([/Service svc0/, /Service svc1Checking…/, /Service svc2/]);
   await page.getByRole("link", { name: "Overview", exact: true }).click();
-  await expect(view.locator('[data-node="endpoint:/mcp"]')).toHaveAttribute("aria-label", /tools not known yet/);
+  await expect(view.locator('[data-node="endpoint:default"]')).toHaveAttribute("aria-label", /tools not known yet/);
 
   releaseStored();
   await expect(view.getByText("All clear")).toBeVisible();

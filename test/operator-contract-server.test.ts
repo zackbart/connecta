@@ -239,8 +239,8 @@ function describedPools(app: ReturnType<typeof createTestConnecta>): OperatorPoo
     reference.kind === "agent" ? reference : { ...reference, label: null };
   return app.describeConfig().pools.map((pool) => ({
     name: pool.name,
-    humanPath: pool.path,
-    agentPath: `/agent/${pool.name}`,
+    humanPath: pool.path === "/mcp" ? pool.path : null,
+    agentPath: pool.path === "/mcp" ? null : pool.path,
     readOnly: pool.readOnly,
     surface: pool.surface,
     executeCode: pool.executeCode,
@@ -450,8 +450,8 @@ describe("operator contract v2 server", () => {
     const peoplePools = [
       {
         name: "team",
-        humanPath: "/mcp/team",
-        agentPath: "/agent/team",
+        humanPath: "/mcp",
+        agentPath: null,
         readOnly: false,
         surface: "meta",
         executeCode: true,
@@ -472,8 +472,8 @@ describe("operator contract v2 server", () => {
       },
       {
         name: "ops",
-        humanPath: "/mcp/ops",
-        agentPath: "/agent/ops",
+        humanPath: "/mcp",
+        agentPath: null,
         readOnly: false,
         surface: "meta",
         executeCode: true,
@@ -490,8 +490,8 @@ describe("operator contract v2 server", () => {
     const agentPool = (index: number, name: string) => ({
       ...peoplePools[index],
       name: peoplePools[index]!.name + "-agents",
-      humanPath: peoplePools[index]!.humanPath + "-agents",
-      agentPath: peoplePools[index]!.agentPath + "-agents",
+      humanPath: null,
+      agentPath: `/agent/${peoplePools[index]!.name}-agents`,
       members: [{ kind: "agent", name }],
     });
     expect(alice.pools).toEqual([peoplePools[0], agentPool(0, "bot"), peoplePools[1], agentPool(1, "gone")]);
@@ -554,7 +554,7 @@ describe("operator contract v2 server", () => {
       maintainers: ["alice"],
       pools: {
         owned: { tools: ["gmail", "notes"], owner: "owner@example.com", members: ["bob", "lin"] },
-        group: { tools: ["gmail", "drive.search_files"], members: ["bob"] },
+        group: { tools: ["gmail", "drive.search_files"], members: ["carol"] },
       },
       storage,
       vault,

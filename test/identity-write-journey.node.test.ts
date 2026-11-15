@@ -10,7 +10,7 @@ import { attributeServed, serveFetch } from "../eval/support/serve.js";
 import { echoForms, leakedRun, SECRET } from "./helpers/secret-echoes.js";
 
 const aliceKey = `alice_${SECRET}`;
-const bobKey = `bob_${SECRET.split("").reverse().join("")}`;
+const carolKey = `carol_${SECRET.split("").reverse().join("")}`;
 const privateValue = "qL8!mP2#vX6$kN4?rS9@tW3+eZ7=F5/u";
 const auth: InboundAuth = {
   kind: "journey-directory",
@@ -18,7 +18,7 @@ const auth: InboundAuth = {
   activityActorNamespace: "https://directory.example.test",
   uiAuth: { kind: "clerk", publishableKey: "pk_test_fake", frontendApiUrl: "https://directory.example.test" },
   authorize(request) {
-    const user = /^Bearer (alice|bob|carol)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+    const user = /^Bearer (alice|bob|carol|dave|erin|frank)$/.exec(request.headers.get("authorization") ?? "")?.[1];
     return user ? { ok: true, userId: user } : { ok: false, response: new Response(null, { status: 401 }) };
   },
 };
@@ -69,8 +69,8 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
   const accounts = await serveFetch(async (request) => {
     const key = request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "";
     accountReads.push(key);
-    if (key !== aliceKey && key !== bobKey) return new Response(null, { status: 401 });
-    return Response.json({ owner: key === aliceKey ? "Alice" : "Bob", echo: echoForms(key).map(([, form]) => form) });
+    if (key !== aliceKey && key !== carolKey) return new Response(null, { status: 401 });
+    return Response.json({ owner: key === aliceKey ? "Alice" : "Carol", echo: echoForms(key).map(([, form]) => form) });
   });
   let deployment: Awaited<ReturnType<typeof startNodeDeployment>> | undefined;
   const traffic: ReturnType<typeof attributeServed>[] = [];
@@ -92,11 +92,11 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
       }),
       pools: {
         eval: { tools: ["notes"], members: ["agent:eval-machine"] },
-        team: { tools: ["notes"], members: ["alice", "bob"] },
+        team: { tools: ["notes"], members: ["bob"] },
         "team-agents": { tools: ["notes"], members: ["agent:eval-machine"] },
-        locked: { tools: ["notes"], members: ["bob"], readOnly: true },
-        readers: { tools: ["notes.read"], members: ["alice", "bob"] },
-        account: { tools: ["account"], members: ["alice", "bob"] },
+        locked: { tools: ["notes"], members: ["erin"], readOnly: true },
+        readers: { tools: ["notes.read"], members: ["frank"] },
+        account: { tools: ["account"], members: ["carol"] },
       },
       classification: { notes: { hidden: "hidden" } },
       execute: { maxWrites: 1 },
@@ -125,8 +125,8 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
       sessions.push(client);
       return client;
     };
-    const bob = await session("/mcp/team", "bob");
-    const locked = await session("/mcp/locked", "bob");
+    const bob = await session("/mcp", "bob");
+    const locked = await session("/mcp", "erin");
     const machine = await session("/agent/team-agents", deployment.token);
     const search = await bob.call("search_tools", { query: "", limit: 50 });
     expect(search.isError).toBe(false);
@@ -137,15 +137,18 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
     expect(ledger.calls).toEqual([]);
     expect(accountReads).toEqual([]);
     const refusals = new Set<string>();
-    for (const path of ["/mcp", "/mcp/missing", "/mcp/other"]) {
-      const response = await fetch(`${origin}${path}`, { headers: { Authorization: "Bearer bob" } });
+    for (const [path, token] of [
+      ["/mcp", "dave"],
+      ["/mcp/missing", "dave"],
+      ["/mcp/team", "bob"],
+    ]) {
+      const response = await fetch(`${origin}${path}`, { headers: { Authorization: `Bearer ${token}` } });
       expect(response.status).toBe(404);
       refusals.add(await response.text());
     }
     expect(refusals.size).toBe(1);
     for (const [path, token, status] of [
-      ["/mcp/team", "carol", 404],
-      ["/mcp/team", deployment.token, 401],
+      ["/mcp", deployment.token, 401],
       ["/agent/team-agents", "bob", 401],
     ] as const) {
       const response = await fetch(`${origin}${path}`, { headers: { Authorization: `Bearer ${token}` } });
@@ -190,8 +193,8 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
     expect((await locked.call("skills", { name: "connector:notes" })).text).toContain("notes.save");
     expect(ledger.calls).toEqual([]);
 
-    // A maintainer's broader /mcp access cannot widen an exact pool grant.
-    const reader = await session("/mcp/readers", "alice");
+    // Arguments naming a broader pool cannot widen an exact pool grant.
+    const reader = await session("/mcp", "frank");
     const exact = await reader.call("search_tools", { query: "", limit: 50, pool: "team" });
     expect(JSON.parse(exact.text).tools.map((tool: { address: string }) => tool.address)).toEqual(["notes.read"]);
     const ungranted = await reader.call("execute_code", {
@@ -245,7 +248,7 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
     // Personal credentials share a connector, never an owner.
     for (const [user, value] of [
       ["alice", aliceKey],
-      ["bob", bobKey],
+      ["carol", carolKey],
     ]) {
       const response = await fetch(`${origin}/ui/credentials/account`, {
         method: "PUT",
@@ -256,22 +259,22 @@ it("INV-1 INV-2 INV-3 INV-4 INV-5 INV-6 INV-9 INV-10: identities discover only t
     }
     for (const [user, value] of [
       ["alice", aliceKey],
-      ["bob", bobKey],
+      ["carol", carolKey],
     ]) {
-      const client = await session("/mcp/account", user!);
+      const client = await session("/mcp", user!);
       const result = await client.call("execute_code", {
         code: 'async () => (await connecta.call("account.read", { owner: "alice" })).data',
       });
       expect(result.isError, result.text).toBe(false);
-      expect(result.text).toContain(user === "alice" ? "Alice" : "Bob");
+      expect(result.text).toContain(user === "alice" ? "Alice" : "Carol");
       expect(leakedRun(JSON.stringify(result), value!)).toBeUndefined();
     }
-    expect(accountReads).toEqual([aliceKey, bobKey]);
+    expect(accountReads).toEqual([aliceKey, carolKey]);
     expect(records.length).toBeGreaterThan(0);
     expect(JSON.stringify(records)).not.toMatch(/claimed success|over-budget|delivered-note|reply lost|"intent"/);
     expect(leakedRun(JSON.stringify(records), privateValue)).toBeUndefined();
     expect(leakedRun(JSON.stringify(records), aliceKey)).toBeUndefined();
-    expect(leakedRun(JSON.stringify(records), bobKey)).toBeUndefined();
+    expect(leakedRun(JSON.stringify(records), carolKey)).toBeUndefined();
   } finally {
     await Promise.all(sessions.map((client) => client.close()));
     await deployment?.close();

@@ -59,7 +59,7 @@ export default {
       agents: ["eval-machine"],
       accessTokens: accessTokens(storage),
       auth: quickbooksAuth,
-      maintainers: ["alice", "bob"],
+      maintainers: ["alice"],
       pools: withInjectedPools(quickbooksPools(env.QUICKBOOKS_WRITES === "true"), env),
       executor: workerExecutor({ loader: env.LOADER }),
       ui: operatorUi(),

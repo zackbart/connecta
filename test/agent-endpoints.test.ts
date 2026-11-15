@@ -93,7 +93,6 @@ function deployment(options: Partial<Parameters<typeof createTestConnecta>[0]> =
     maintainers: ["alice"],
     agents: ["bot", "other"],
     pools: {
-      "team-people": { tools: ["wiki"], members: ["bob"] },
       team: { tools: ["wiki"], members: ["agent:bot"] },
       x: { tools: ["wiki"], members: ["agent:bot"] },
       "assistant-alice": { tools: ["wiki"], members: ["agent:bot"] },
@@ -235,7 +234,7 @@ describe("agent endpoint admission", () => {
     // The listed person still reaches "wiki" through their own pool.
     const person = await readJsonRpc(
       await c.fetch(
-        post("/mcp/humans", "bob", {
+        post("/mcp", "bob", {
           jsonrpc: "2.0",
           id: 1,
           method: "tools/call",
@@ -289,9 +288,9 @@ describe("agent endpoint admission", () => {
     expect(
       await wire(await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/agent/missing`))),
     ).toEqual(metadata);
-    // Human pools keep Clerk's discovery.
-    const human = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/mcp/team-people`));
-    expect(await human.json()).toMatchObject({ resource: `${BASE}/mcp/team-people` });
+    // People keep Clerk's discovery at /mcp.
+    const human = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource/mcp`));
+    expect(await human.json()).toMatchObject({ resource: `${BASE}/mcp` });
     await c.close();
   });
 
@@ -327,8 +326,8 @@ describe("agent endpoint admission", () => {
     // A member agent's cookie or Clerk parameter changes nothing about its admission.
     expect((await listTools(c, "/agent/team?__clerk_db_jwt=dvb_x", bot, { Cookie: "__session=x" })).status).toBe(200);
     expect(authorize).not.toHaveBeenCalled();
-    // The same Clerk token at a human pool is Clerk's to judge.
-    expect((await listTools(c, "/mcp/team-people", "eyJhbGciOiJSUzI1NiJ9.e30.sig")).status).toBe(401);
+    // The same Clerk token at /mcp is Clerk's to judge.
+    expect((await listTools(c, "/mcp", "eyJhbGciOiJSUzI1NiJ9.e30.sig")).status).toBe(401);
     expect(authorize).toHaveBeenCalled();
     await c.close();
   });
@@ -340,15 +339,15 @@ describe("agent endpoint admission", () => {
     const c = deployment({
       storage,
       auth: cloudflareAccessAuth(),
-      maintainers: [{ namespace: "cloudflare-access", id: "human" }],
+      maintainers: [{ namespace: "cloudflare-access", id: "operator" }],
       pools: {
         "team-people": { tools: ["wiki"], members: [{ namespace: "cloudflare-access", id: "human" }] },
         team: { tools: ["wiki"], members: ["agent:bot"] },
       },
     });
     const bot = await issueAgentToken(storage, "bot");
-    // The same context admits the person at the human pool.
-    expect((await listTools(c, "/mcp/team-people", undefined, {}, ctx)).status).toBe(200);
+    // The same context admits the person at /mcp.
+    expect((await listTools(c, "/mcp", undefined, {}, ctx)).status).toBe(200);
     getIdentity.mockClear();
     for (const headers of [
       {},
@@ -417,7 +416,7 @@ describe("agent endpoint admission", () => {
     await c.close();
   });
 
-  it("INV-4: binds result handles to /agent/<pool>, never portable to another pool or to /mcp/<pool>", async () => {
+  it("INV-4: binds result handles to /agent/<pool>, never portable to another pool or to a member's /mcp", async () => {
     let resultId = "";
     const storage = memoryStorage();
     const c = deployment({
@@ -441,16 +440,16 @@ describe("agent endpoint admission", () => {
     await mint("/agent/team", bot);
     expect((await page("/agent/team", bot)).isError).toBeFalsy();
     expect((await page("/agent/second", bot)).isError).toBe(true);
-    expect((await page("/mcp/team-people", "bob")).isError).toBe(true);
-    await mint("/mcp/team-people", "bob");
-    expect((await page("/mcp/team-people", "bob")).isError).toBeFalsy();
+    expect((await page("/mcp", "bob")).isError).toBe(true);
+    await mint("/mcp", "bob");
+    expect((await page("/mcp", "bob")).isError).toBeFalsy();
     expect((await page("/agent/team", bot)).isError).toBe(true);
     await c.close();
   });
 });
 
 describe("execute_read_code across endpoints", () => {
-  it("is listed at /mcp/<pool> and a writable /agent/<pool>, never a read-only or native agent pool", async () => {
+  it("is listed at a pool member's /mcp and a writable /agent/<pool>, never a read-only or native agent pool", async () => {
     const storage = memoryStorage();
     const pools = {
       "team-people": { tools: ["docs"], members: ["bob"] },
@@ -476,7 +475,7 @@ describe("execute_read_code across endpoints", () => {
     const names = async (path: string, token: string, app: Deployment = c) =>
       (await tools(path, token, app)).map((tool) => tool.name);
 
-    expect(await names("/mcp/team-people", "bob")).toContain("execute_read_code");
+    expect(await names("/mcp", "bob")).toContain("execute_read_code");
     const agent = await tools("/agent/team", bot);
     expect(agent).toHaveLength(7);
     expect(agent.find((tool) => tool.name === "execute_read_code")?.annotations).toMatchObject({
@@ -645,31 +644,28 @@ describe("execute_read_code across endpoints", () => {
       executor: scriptedExecutor(async (fns) =>
         oversized ? "x".repeat(30_000) : fns.result!(resultId, { maxBytes: 100 }),
       ),
-      pools: {
-        "team-people": { tools: ["docs"], members: ["bob"] },
-        second: { tools: ["docs"], members: ["bob"] },
-      },
+      pools: { "team-people": { tools: ["docs"], members: ["bob"] } },
     });
-    const page = async (path: string) =>
-      (await rpc(c, path, "bob", "execute_read_code", { code: "return await connecta.result(id)" })).result;
-    const first = (await rpc(c, "/mcp/team-people", "bob", "call_tool", { address: "docs.read" })).result;
+    const page = async (token: string) =>
+      (await rpc(c, "/mcp", token, "execute_read_code", { code: "return await connecta.result(id)" })).result;
+    const first = (await rpc(c, "/mcp", "bob", "call_tool", { address: "docs.read" })).result;
     resultId = JSON.parse(first.content[0].text.split("\n")[0]).resultId;
-    expect((await page("/mcp/team-people")).isError).toBeFalsy();
-    expect((await page("/mcp/second")).isError).toBe(true);
+    expect((await page("bob")).isError).toBeFalsy();
+    expect((await page("alice")).isError).toBe(true);
 
     oversized = true;
-    const program = (await rpc(c, "/mcp/team-people", "bob", "execute_read_code", { code: "return big" })).result;
+    const program = (await rpc(c, "/mcp", "bob", "execute_read_code", { code: "return big" })).result;
     expect(program.structuredContent.result.nextAction.tool).toBe("execute_read_code");
     resultId = program.structuredContent.result.resultId;
     oversized = false;
-    expect((await page("/mcp/team-people")).isError).toBeFalsy();
-    expect((await page("/mcp/second")).isError).toBe(true);
+    expect((await page("bob")).isError).toBeFalsy();
+    expect((await page("alice")).isError).toBe(true);
     await c.close();
   });
 });
 
 describe("read programs revalidate expired catalogs", () => {
-  it.each(["/mcp/team-people", "/agent/team"])(
+  it.each(["/mcp", "/agent/team"])(
     "INV-1 INV-9: %s refuses a remote MCP tool reclassified mid-program once its TTL lapses, without a notification",
     async (path) => {
       const run = async (catalogTtlMs: number, waitMs: number) => {
@@ -726,17 +722,15 @@ describe("read programs revalidate expired catalogs", () => {
 });
 
 describe("human endpoints refuse agent tokens", () => {
-  it("INV-4: refuses cta_ at /mcp, /mcp/<pool>, and operator routes without reading token storage", async () => {
+  it("INV-4: refuses cta_ at /mcp and operator routes without reading token storage", async () => {
     const storage = countingStorage();
     const human = people();
     const c = deployment({ storage, auth: human });
     const bot = await issueAgentToken(storage, "bot");
     const before = storage.tokenReads();
-    for (const path of ["/mcp", "/mcp/team-people", "/mcp/x", "/mcp/missing"]) {
-      const response = await listTools(c, path, bot);
-      expect(response.status, path).toBe(401);
-      expect(await response.text()).not.toContain('"result"');
-    }
+    const response = await listTools(c, "/mcp", bot);
+    expect(response.status).toBe(401);
+    expect(await response.text()).not.toContain('"result"');
     expect(
       (await c.fetch(new Request(`${BASE}/ui/api/config`, { headers: { Authorization: `Bearer ${bot}` } }))).status,
     ).toBe(401);

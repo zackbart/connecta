@@ -28,7 +28,7 @@ Install the vault for declared credential slots and activity history for
 persisted call records. Neither module grants permission to manage or read
 it: [auth](./auth.md#management-permissions) does. Interactive maintainers
 administer shared credentials and agent tokens, maintainers read activity, and
-pool members connect their own accounts on personal connectors in their pools.
+pool members connect their own accounts on personal connectors in their pool.
 Token management issues, rotates, and revokes the tokens of agents declared in
 code; it never creates, renames, or binds an agent. Agent tokens never grant
 interactive credential or token management authority.
@@ -75,7 +75,7 @@ parameters such as signed handoffs. A pool member sees the
 - **Needs attention.** One row per connector whose health is not ok, in
   configuration order, then one per agent in a pool whose token is missing or revoked. A
   row names the problem ("crm needs authorization"), the endpoints it
-  affects ("Affects /mcp and /mcp/team") or the agent URL it can't connect at,
+  affects ("Affects /mcp") or the agent URL it can't connect at,
   and links to the existing fix: Connect, Replace key or Inspect on
   the connector's Connection tab, or Issue token on Tokens. A row with a
   problem code also has Copy fix prompt. A problem keeps its row and
@@ -105,8 +105,8 @@ unreachable.
   issued token. Plain `/mcp` admits no agents. A read-only endpoint carries a
   read-only chip.
 - Hovering or focusing a node dims everything off its paths and replaces the
-  legend with one sentence, such as "alice reaches 2 connectors through /mcp
-  and /mcp/team: 6 tools, 1 write." The sentence is also the node's accessible
+  legend with one sentence, such as "alice reaches 2 connectors through /mcp:
+  6 tools, 1 write." The sentence is also the node's accessible
   name. Hover wins while both are set.
 - The map is one tab stop. Arrow keys move within a column and to the nearest
   node in the next one; Home and End go to the first and last node.
@@ -126,13 +126,11 @@ code is on. These are read-only facts from deployment configuration; change
 `surface` and `executeCode` in deployment code.
 
 Plain `/mcp` is routed by sign-in: the `/mcp` row and matrix column show the
-whole catalog maintainers receive, and a pool row shows what its people
-receive at both `/mcp/<pool>` and, when they belong to no other pool, plain
-`/mcp`. A note above the rows says so. A connector with
+whole catalog maintainers receive, and a people pool's row shows what its
+people receive at plain `/mcp`. A note above the rows says so. A connector with
 [`members`](./auth.md#connector-members) still appears in every row that
 serves it; a personal cell counts only the people those members admit, and
-`permissions.use` is `false` for a maintainer they omit. People in several pools appear in
-`config.peopleInSeveralPools`; plain `/mcp` refuses them.
+`permissions.use` is `false` for a maintainer they omit.
 
 One row each for `/mcp` and every pool: the path, a read-only pill on a
 read-only endpoint, a copyable URL, who can use it, its connectors as colored
@@ -142,9 +140,9 @@ Setup button.
 - Who can use it is `root.maintainers` on `/mcp` and the pool's `members`
   elsewhere, as an avatar stack named on hover and to screen readers (label,
   raw id when the label is null, or agent name). Four show, then a "+N"
-  button. A pool lists only people or only agents. An agent pool's row
-  still shows two URLs labeled People and Agents; the People URL
-  (`/mcp/<pool>`) admits no one, because the pool has no people.
+  button. A pool lists only people or only agents. A people pool's row
+  shows the `/mcp` URL its members use; an agent pool's row shows its
+  `/agent/<pool>` URL.
 - Expanding a row lists everyone by name, then each connector with what it
   runs as and its tools, write tools amber with a pencil, or "Checking…"
   while its details or live tools have not loaded. Runs-as comes from
@@ -212,7 +210,7 @@ none; read-only columns are hatched. Only granted names still in the live
 catalog count. An unknown catalog shows a dashed empty ring and "?". A
 connector whose details are pending keeps its row in config order, marked
 "Checking…" in place of its status dot, with unknown cells. A cell
-with grants is a button named like "GitHub on /mcp/support: 1 of 2 live
+with grants is a button named like "GitHub on support: 1 of 2 live
 tools, read-only"; it opens a popover of that cell's tools, each with a read
 or write pill (a write struck through on a read-only endpoint), and its
 runs-as. Escape or Tab returns focus to the cell. CSS anchor positioning
@@ -386,12 +384,11 @@ sign-in exposes one (Clerk's primary email), and its top bar shows branding and
 an **Account** button with Sign out or Change token. It lists:
 
 - **Your endpoints**: one card per address with a copy button and **Client
-  setup**. A member of exactly one pool sees one card for plain `/mcp`, named
-  after the pool it serves; a member of several pools sees one
-  `/mcp/<pool>` card per pool. For example, Bob, only in pool `team`, copies
+  setup**. A member sees one card for plain `/mcp`, named after the pool it
+  serves them. For example, Bob, in pool `team`, copies
   `https://connecta.example.com/mcp` into an MCP client and authenticates as
   Bob.
-- **Your accounts**: the personal connectors in their pools, each with a
+- **Your accounts**: the personal connectors in their pool, each with a
   monogram, tool count, the connected account's address when the connector
   checks accounts, one status badge in an aligned column, and only the
   controls its `manage.actions` lists. A saved credential that no longer fits
@@ -417,7 +414,7 @@ no maintainer role or human pool membership. A `cta_` agent token gets 401
 and cannot sign in to this page. Use the agent's `/agent/<pool>` endpoint
 for machine access instead.
 
-Personal OAuth can also start from the person's `/mcp/<pool>` connection with
+Personal OAuth can also start from the person's plain `/mcp` connection with
 `authorize_connector`, finishing its signed browser link. Trusted clients that manage personal credentials use only the actions listed
 in the connector's `manage` field; the API contract below describes their
 routes and preconditions. Shared credentials always require a maintainer.
@@ -463,8 +460,8 @@ without this capability contribute an unconfirmed count of zero. For example,
 The maintainer view carries:
 
 - `config`, the construction-time `describeConfig()` snapshot, including
-  `maintainers`, each pool's `members`, `peopleInSeveralPools` (non-maintainer
-  people plain `/mcp` refuses because they are in several pools), and `configSources`, which labels
+  `maintainers`, each pool's `members` and `path` (`/mcp` for a people pool,
+  `/agent/<name>` for an agent pool), and `configSources`, which labels
   each serialized leaf as `default` or `config` from option presence rather
   than equality with the default. Factory descriptions carry relative
   `optionSources` paths so resolved module and transport defaults retain their
@@ -472,8 +469,9 @@ The maintainer view carries:
   disclosure; hidden values leave no provenance keys. Neither contains source
   code or credential material.
 - `root`: plain `/mcp`, its `readOnly`, and its `maintainers`, people only.
-- `pools`: every declared pool with `humanPath` (`/mcp/<name>`), `agentPath`
-  (`/agent/<name>`), `readOnly`, effective `surface` (`meta` or `native`),
+- `pools`: every declared pool with `humanPath` (`/mcp` for a people pool,
+  `null` for an agent pool), `agentPath` (`/agent/<name>` for an agent pool,
+  `null` for a people pool), `readOnly`, effective `surface` (`meta` or `native`),
   `executeCode` (whether code is enabled), `owner` (the Workspace address its agents act
   as), its declared `tools` (never intersected, with its `writes` merged in; no
   `requireReadOnly` is ever true), `writes` (a read-only pool's exact write
@@ -546,11 +544,10 @@ The maintainer view carries:
 The member view is exactly that member's projection: `config`,
 `configSources` and `root` are `null`, `live.connectors`, `agents` and
 `matrix` are empty, and `live.activity` is `"forbidden"`. `pools` lists only
-their pools, each with `owner: null`, `unlisted: []` and `members: []`. With exactly one pool,
-its `humanPath` is `/mcp`, the address that serves them that pool, and the
-member's catalog reads carry that pool as plain `/mcp` would. `connectors` lists
-each connector in those pools with its title, the member's pools that serve
-it, its auth scope, the tools those pools grant with their classification,
+their one pool, with `humanPath: "/mcp"`, `agentPath: null`, `owner: null`,
+`unlisted: []` and `members: []`, and the member's catalog reads carry that
+pool as plain `/mcp` does. `connectors` lists each connector in that pool with
+its title, the member's pool that serves it, its auth scope, the tools that pool grants with their classification,
 `connection` (their own partition's state and problem code for a personal
 connector, `null` for a shared one, plus `account` when the state is `ok` and
 the connector [checks accounts](./auth.md#allowed-accounts-on-api-oauth): the
@@ -585,7 +582,7 @@ the token slots.
 `/ui/data`, `/ui/connectors/:id`, activity reads and access-token routes
 require a maintainer and give anyone else the same private 404. The connector
 auth routes, `/ui/oauth/<id>` and `/ui/credentials/<id>`, also admit a pool
-member for a personal connector in one of their pools, in their own
+member for a personal connector in their pool, in their own
 partition. `/ui/oauth/<id>` gates each verb on its own hooks: a connect needs
 `startAuth`, `finishAuth` and `verifyState`, a disconnect only
 `disconnectAuth`. `/ui/credentials/<id>` refuses to clear an empty partition,

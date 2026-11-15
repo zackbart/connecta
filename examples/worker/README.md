@@ -387,8 +387,9 @@ the Clerk path in the Node template.
 
 Then list the maintainers' Access user ids (`user_uuid`, else email) in the
 `CONNECTA_MAINTAINERS` var in `alchemy.run.ts`, deploy, and point a maintainer's MCP client at
-`<PUBLIC_URL>/mcp`. Other people use `<PUBLIC_URL>/mcp/<pool>`, and agents
-`<PUBLIC_URL>/agent/<pool>`, for a pool that lists them in `members`. The example explicitly enables
+`<PUBLIC_URL>/mcp`. Every other person uses the same `<PUBLIC_URL>/mcp`,
+which serves the one pool that lists them in `members`, and agents use
+`<PUBLIC_URL>/agent/<pool>` for a pool that lists them. The example explicitly enables
 `ui: operatorUi()`; open `<PUBLIC_URL>/` for endpoints, and each connector's Connection tab
 (`/connectors/<id>`) for its authentication controls. The page labels tool safety, offers fixed repair
 prompts for classified failures, and shows client setup commands for endpoints
@@ -399,10 +400,10 @@ declared agent, is available to signed-in maintainers.
 ## Select optional modules
 
 `cloudflareAccessAuth()` reads trusted identity after Access admits the Worker
-request. Maintainers use plain `/mcp` and the operator pages; people in a
-people pool use `/mcp/<pool>` (or plain `/mcp` when it is their only pool), and
-agents in an agent pool use `/agent/<pool>`; each serves exactly that pool's
-tools. Agents authenticate with `accessTokens(storage)` over the same D1
+request. Maintainers use plain `/mcp` and the operator pages and belong to
+no pool; a person in a people pool also uses plain `/mcp`, and belongs to at
+most one; agents in an agent pool use `/agent/<pool>`. A pool serves exactly
+its tools. Agents authenticate with `accessTokens(storage)` over the same D1
 database; human endpoints refuse their tokens, and Access service headers alone
 never grant MCP access or interactive authority.
 Keep users, groups, and admission in Access. Connector visibility and management
@@ -440,7 +441,7 @@ Authorization: Bearer <stored-cta-token>
 
 [The agent bypass](#let-agents-through-access) lets the request past the edge;
 connecta verifies the bearer against D1 and ignores any Access context or
-headers there. `/mcp` and `/mcp/<pool>` refuse the token. Doctor also reads
+headers there. `/mcp` refuses the token. Doctor also reads
 `/health`, which stays behind Access, so it needs Access service credentials
 too; see [Client authentication and activity](#client-authentication-and-activity).
 
@@ -504,7 +505,7 @@ agent's `cta_` bearer to `/agent/<pool>`, issued as described in
 enabled, and every signed-in maintainer manages agent tokens.
 Keep maintainers, pools, and their members in deployment code. An agent reaches
 only `/agent/<pool>` for a pool that lists it (the example's `ci` pool lists
-`agent:ci`); `/mcp` and `/mcp/<pool>` refuse its token.
+`agent:ci`); `/mcp` refuses its token.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.CONNECTA_DB) })`,
 with `activityHistory` from `@zackbart/connecta/activity` and `d1ActivityStore`

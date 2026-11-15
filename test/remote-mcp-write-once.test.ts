@@ -556,9 +556,7 @@ async function authRecoveryRow(surface: "program" | "call_tool") {
     request.headers.set("Mcp-Name", name);
     request.headers.set("Authorization", "Bearer alice");
     if (surface === "call_tool") request.headers.set("Mcp-Param-Address", "svc.create_item");
-    return (
-      await readJsonRpc(await app.fetch(surface === "program" ? new Request(`${BASE}/mcp/trusted`, request) : request))
-    ).result;
+    return (await readJsonRpc(await app.fetch(request))).result;
   };
   try {
     const first = await rpc();

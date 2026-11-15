@@ -629,7 +629,7 @@ async function worker(kind: "worker-example" | "worker-fakes"): Promise<SmokeTar
           const browser = await chromium.launch();
           const otherSecret = "another-owner-invalid-token";
           const read = async (member = false) => {
-            const session = await connectMcp(`${origin}/mcp/personal`, member ? { "X-Eval-User": "eval-member" } : {});
+            const session = await connectMcp(`${origin}/mcp`, member ? { "X-Eval-User": "eval-member" } : {});
             try {
               return await session.call("call_tool", {
                 address: "billing.find_customer",

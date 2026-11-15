@@ -172,7 +172,7 @@ export const QUICKBOOKS_WRITE_TASK: ActiveTask = {
         await consent(deployment.origin, "alice", false, "qb_budget_1");
         await consent(deployment.origin, "alice", false, "qb_budget_4");
         // The writable connector is still restricted by its read-only pool.
-        const session = await connectMcp(`${deployment.origin}/mcp/readonly`, { Authorization: "Bearer eval-alice" });
+        const session = await connectMcp(`${deployment.origin}/mcp`, { Authorization: "Bearer eval-carol" });
         try {
           const before = world.ledger.calls.length;
           const available = new Set((await session.listTools()).map((tool) => tool.name));

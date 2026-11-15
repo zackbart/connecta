@@ -184,13 +184,13 @@ describe("metadata-owned challenges", () => {
       logger: "silent",
     });
     try {
-      const metadata = await app.fetch(request("/.well-known/oauth-protected-resource/mcp/support"));
-      expect(await metadata.json()).toMatchObject({ resource: `${BASE}/mcp/support` });
-      const result = await authorize(request("/mcp/support"), BASE, providers);
+      const metadata = await app.fetch(request("/.well-known/oauth-protected-resource/mcp"));
+      expect(await metadata.json()).toMatchObject({ resource: `${BASE}/mcp` });
+      const result = await authorize(request("/mcp"), BASE, providers);
       expect(result.ok).toBe(false);
       if (!result.ok)
         expect(result.response.headers.get("WWW-Authenticate")).toBe(
-          `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp/support", scope="openid profile email"`,
+          `Bearer resource_metadata="${BASE}/.well-known/oauth-protected-resource", scope="openid profile email"`,
         );
     } finally {
       await app.close();

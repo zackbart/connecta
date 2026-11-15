@@ -49,8 +49,15 @@ import {
   type Answer,
   type Authorized,
 } from "./operator.js";
-import { isMaintainer, isMember, type ResolvedPool } from "../membership.js";
-import { admitsMaintainer, mayManageConnector, privateJson, readsActivity, type RouteContext } from "./shared.js";
+import { isMaintainer, type ResolvedPool } from "../membership.js";
+import {
+  admitsMaintainer,
+  mayManageConnector,
+  personPool,
+  privateJson,
+  readsActivity,
+  type RouteContext,
+} from "./shared.js";
 
 const cachedMaintainers = new WeakSet<RouteContext>();
 const cachedMode = (context: RouteContext) => context.url.searchParams.get("live") === "cached";
@@ -646,8 +653,8 @@ function maintainerRead(context: RouteContext, authz: Authorized): Effect.Effect
     });
     const pools: OperatorPoolV2[] = [...opts.pools].map(([name, pool]) => ({
       name,
-      humanPath: `/mcp/${name}`,
-      agentPath: `/agent/${name}`,
+      humanPath: pool.members[0]?.kind === "human" ? "/mcp" : null,
+      agentPath: pool.members[0]?.kind === "agent" ? `/agent/${name}` : null,
       readOnly: pool.readOnly,
       surface: pool.native ? "native" : "meta",
       executeCode: pool.native?.executeCode !== false,
@@ -858,11 +865,10 @@ function memberConnector(
   });
 }
 
-/** The human pool memberships of this identity. An agent is never a member here. */
+/** This person's one pool, or none. An agent is never a member here. */
 function memberPools(context: RouteContext, authz: Authorized): Array<[string, ResolvedPool]> {
-  return [...context.opts.pools].filter(([, pool]) =>
-    pool.members.some((member) => member.kind === "human" && isMember(member, authz.identity)),
-  );
+  const match = personPool(context.opts, authz.identity);
+  return match ? [[match.name, match.pool]] : [];
 }
 
 function memberRead(
@@ -907,8 +913,8 @@ function memberRead(
       root: null,
       pools: pools.map(([name, pool]) => ({
         name,
-        humanPath: pools.length === 1 ? "/mcp" : `/mcp/${name}`,
-        agentPath: `/agent/${name}`,
+        humanPath: "/mcp",
+        agentPath: null,
         readOnly: pool.readOnly,
         surface: pool.native ? "native" : "meta",
         executeCode: pool.native?.executeCode !== false,

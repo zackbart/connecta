@@ -292,8 +292,8 @@ describe("ConnectaConfig accessors and keyed maps", () => {
     const members = [{ namespace: "people", id: "alice" }];
     const pools = {
       ["__proto__"]: { tools: ["notes"], members },
-      constructor: { tools: ["notes"], members },
-      prototype: { tools: ["notes"], members },
+      constructor: { tools: ["notes"], members: [{ namespace: "people", id: "bob" }] },
+      prototype: { tools: ["notes"], members: [{ namespace: "people", id: "carol" }] },
     };
     expect(Object.keys(pools)).toEqual(["__proto__", "constructor", "prototype"]);
     const notes: Connector = { id: "notes", listTools: async () => [], callTool: async () => null };

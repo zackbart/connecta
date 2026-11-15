@@ -15,6 +15,7 @@ import { createTestConnecta, required } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const SHORT_LINK = /^https:\/\/connecta\.test\/connect\/service\?h=[a-z2-7]{26}$/;
+const MEMBER = "carol";
 const apps: ReturnType<typeof createTestConnecta>[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -24,8 +25,9 @@ afterEach(async () => {
 function setup(
   options: {
     native?: boolean;
-    routed?: boolean;
+    member?: boolean;
     poolName?: string;
+    members?: string[];
     storage?: KVStorage;
     catalogAuth?: boolean;
     credential?: boolean;
@@ -37,6 +39,8 @@ function setup(
   } = {},
 ) {
   const storage = options.storage ?? memoryStorage();
+  const member = options.member || options.native;
+  const caller = member ? MEMBER : "alice";
   const vault = encryptedCredentialVault(storage, CREDENTIAL_KEY);
   let connected = false;
   const call = vi.fn(async (name: string) => {
@@ -46,7 +50,7 @@ function setup(
   const connector: Connector = {
     id: "service",
     kind: "api",
-    ...(options.routed ? { authScope: "personal" as const } : {}),
+    ...(member ? { authScope: "personal" as const } : {}),
     listTools: async () => {
       if (options.catalogAuth && !connected) throw new ConnectorCallError("auth_required", "PRIVATE_CATALOG_AUTH");
       return [
@@ -79,12 +83,11 @@ function setup(
     ...(options.uiPath ? { ui: { ...operatorUi(), credentialHandoffUrl: () => options.uiPath! } } : {}),
     ...(options.noUi ? { ui: undefined } : {}),
     ...(options.authElicitation === undefined ? {} : { authElicitation: options.authElicitation }),
-    auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
-    ...(options.routed ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
+    auth: ["alice", "bob", MEMBER].map((user) => fakeClerkAuth({ token: user, userId: user })),
     pools: {
       [options.poolName ?? "trusted"]: {
         tools: ["service"],
-        members: [{ namespace: "https://clerk.example.test", id: "alice" }],
+        members: (options.members ?? [MEMBER]).map((id) => ({ namespace: "https://clerk.example.test", id })),
         readOnly: false,
         ...(options.native ? { surface: "native" as const } : {}),
         ...(options.poolAuthElicitation === undefined ? {} : { authElicitation: options.poolAuthElicitation }),
@@ -110,7 +113,6 @@ function setup(
       state?: string;
       action?: string;
       user?: string;
-      pool?: string | undefined;
       elicitation?: Record<string, unknown>;
       headers?: Record<string, string>;
     } = {},
@@ -136,20 +138,18 @@ function setup(
     request.headers.set("MCP-Protocol-Version", "2026-07-28");
     request.headers.set("Mcp-Method", "tools/call");
     request.headers.set("Mcp-Name", name);
-    request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
+    request.headers.set("Authorization", `Bearer ${opts.user ?? caller}`);
     if (typeof args.address === "string") request.headers.set("Mcp-Param-Address", args.address);
     for (const [header, value] of Object.entries(opts.headers ?? {})) request.headers.set(header, value);
-    const pool = opts.pool ?? (options.native ? "trusted" : undefined);
-    const target = pool ? new Request(`${BASE}/mcp/${pool}`, request) : request;
-    return readJsonRpc(await app.fetch(target));
+    return readJsonRpc(await app.fetch(request));
   };
   const browser = async (url: string) => {
-    const response = await app.fetch(new Request(url, { headers: { Cookie: "__session=alice" } }));
+    const response = await app.fetch(new Request(url, { headers: { Cookie: `__session=${caller}` } }));
     const location = response.headers.get("Location");
     if (location && new URL(location).pathname === "/connectors/service") {
       const start = new URL(url);
       start.searchParams.set("start", "1");
-      return app.fetch(new Request(start, { headers: { Cookie: "__session=alice" } }));
+      return app.fetch(new Request(start, { headers: { Cookie: `__session=${caller}` } }));
     }
     return response;
   };
@@ -267,16 +267,16 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
   });
 
   it("INV-4 INV-5: authElicitation: false hands a URL-capable host the ordinary handoff at once", async () => {
-    for (const [flow, pool] of [
-      [setup({ authElicitation: false }), undefined],
-      [setup({ authElicitation: false }), "trusted"],
-      [setup({ poolAuthElicitation: false }), "trusted"],
-      [setup({ native: true, poolAuthElicitation: false }), "trusted"],
-    ] as const) {
-      const expected = (await flow.rpc(undefined, undefined, { pool, elicitation: { form: {} } })).result
-        .structuredContent.error;
+    for (const flow of [
+      setup({ authElicitation: false }),
+      setup({ authElicitation: false, member: true }),
+      setup({ poolAuthElicitation: false, member: true }),
+      setup({ native: true, poolAuthElicitation: false }),
+    ]) {
+      const expected = (await flow.rpc(undefined, undefined, { elicitation: { form: {} } })).result.structuredContent
+        .error;
       flow.call.mockClear();
-      const result = (await flow.rpc(undefined, undefined, { pool })).result;
+      const result = (await flow.rpc()).result;
       expect(result.resultType).not.toBe("input_required");
       expect(result.requestState).toBeUndefined();
       expect(result.isError).toBe(true);
@@ -288,7 +288,7 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
         authorizationUrl: expect.stringMatching(SHORT_LINK),
         nextAction: { url: error.authorizationUrl },
       });
-      expect(error.authorizationUrl).not.toMatch(/alice|[a-f0-9]{64}/);
+      expect(error.authorizationUrl).not.toMatch(new RegExp(`alice|${MEMBER}|[a-f0-9]{64}`));
       expect({ ...error, authorizationUrl: undefined, nextAction: undefined }).toEqual({
         ...expected,
         authorizationUrl: undefined,
@@ -298,7 +298,7 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
       expect(flow.call).toHaveBeenCalledOnce();
       expect(flow.connector.startAuth).not.toHaveBeenCalled();
 
-      const explicit = (await flow.rpc("authorize_connector", { connector: "service" }, { pool })).result;
+      const explicit = (await flow.rpc("authorize_connector", { connector: "service" })).result;
       expect(explicit.resultType).not.toBe("input_required");
       expect(explicit.structuredContent).toMatchObject({
         recovery: "oauth",
@@ -311,9 +311,9 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
       expect((await flow.browser(error.authorizationUrl)).status).toBeLessThan(400);
       expect(flow.connector.startAuth).toHaveBeenCalledOnce();
     }
-    const reenabled = setup({ authElicitation: false, poolAuthElicitation: true });
-    expect((await reenabled.rpc(undefined, undefined, { pool: "trusted" })).result.resultType).toBe("input_required");
-    expect((await reenabled.rpc()).result.resultType).not.toBe("input_required");
+    const reenabled = setup({ authElicitation: false, poolAuthElicitation: true, member: true });
+    expect((await reenabled.rpc()).result.resultType).toBe("input_required");
+    expect((await reenabled.rpc(undefined, undefined, { user: "alice" })).result.resultType).not.toBe("input_required");
     const poolOnly = setup({ poolAuthElicitation: false });
     expect((await poolOnly.rpc()).result.resultType).toBe("input_required");
     expect(() => createTestConnecta({ connectors: [], authElicitation: "off" as never })).toThrow(
@@ -335,10 +335,10 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
 
   it("invalidates routed auth continuations when membership selects a different pool", async () => {
     const storage = memoryStorage();
-    const first = setup({ routed: true, storage, poolName: "team" });
+    const first = setup({ member: true, storage, poolName: "team" });
     const state = (await first.rpc()).result.requestState;
     expect(state).toBeTypeOf("string");
-    const moved = setup({ routed: true, storage, poolName: "other" });
+    const moved = setup({ member: true, storage, poolName: "other" });
     const sign = vi.spyOn(moved.vault, "signOAuthHandoff");
     expect((await moved.rpc(undefined, undefined, { state, action: "decline" })).error).toMatchObject({
       code: -32602,
@@ -908,12 +908,19 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
   });
 
   it("INV-4 INV-5: rejects tampered, expired, cross-principal, and cross-pool state before dispatch", async () => {
-    const flow = setup();
+    const storage = memoryStorage();
+    const flow = setup({ storage });
     const state: string = (await flow.rpc()).result.requestState;
-    for (const opts of [{ state: `${state}x` }, { state, user: "bob" }, { state, pool: "trusted" }]) {
+    for (const opts of [{ state: `${state}x` }, { state, user: "bob" }]) {
       const retry = await flow.rpc(undefined, undefined, { ...opts, action: "accept" });
       expect(retry.error).toMatchObject({ code: -32602, data: { reason: "invalid_request_state" } });
     }
+    const pooled = setup({ storage, members: ["alice"] });
+    expect((await pooled.rpc(undefined, undefined, { state, action: "accept" })).error).toMatchObject({
+      code: -32602,
+      data: { reason: "invalid_request_state" },
+    });
+    expect(pooled.call).not.toHaveBeenCalled();
     vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
     expect((await flow.rpc(undefined, undefined, { state, action: "accept" })).error).toMatchObject({
       code: -32602,

@@ -149,7 +149,7 @@ export async function checkNativeSnapshots(executor: Executor): Promise<void> {
 /**
  * Every executor pages through the admitted route and rechecks live authority.
  * Pool access is static (#837), so what can change between a stash and its
- * page is the endpoint, the caller, and what the auth provider answers now.
+ * page is the caller, its origin, and what the auth provider answers now.
  */
 export async function checkStashAuthority(executor: Executor, programReturn = false): Promise<void> {
   // What `control.revoke` does to authentication mid-program: refuse it, or
@@ -197,7 +197,7 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
         authorize(request) {
           if (live === "refused") return { ok: false, response: new Response(null, { status: 401 }) };
           const token = request.headers.get("Authorization")?.slice(7) ?? "alice";
-          const id = live === "swapped" || token === "bob" ? "bob" : token === "carol" ? "carol" : "alice";
+          const id = live === "swapped" ? "bob" : ["bob", "carol", "nina", "root"].includes(token) ? token : "alice";
           return {
             ok: true,
             subjectId: token === "other" ? "other" : "shared",
@@ -205,11 +205,10 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
           };
         },
       },
-      maintainers: [alice],
+      maintainers: [{ namespace: "owners", id: "root" }],
       pools: {
         admin: { tools: ["docs", "control"], readOnly, members: [alice, bob] },
-        narrow: { tools: ["docs.read", "control"], readOnly: false, members: [alice] },
-        empty: { tools: ["control"], readOnly: false, members: [alice] },
+        narrow: { tools: ["docs.read", "control"], readOnly: false, members: [{ namespace: "owners", id: "nina" }] },
       },
     });
   const app = build(false);
@@ -217,10 +216,10 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
   const rpc = async (
     name: string,
     args: unknown,
-    options: { app?: typeof app; path?: string; token?: string; origin?: string } = {},
+    options: { app?: typeof app; token?: string; origin?: string } = {},
   ) => {
     const response = await (options.app ?? app).fetch(
-      new Request(`${CONTRACT_BASE}${options.path ?? "/mcp/admin"}`, {
+      new Request(`${CONTRACT_BASE}/mcp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -280,17 +279,17 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
       expect(result.structuredContent).toMatchObject({ error: { code: "not_found" } });
       expect(JSON.stringify(result)).not.toContain("stash-disclosure-sentinel");
     };
-    // Another pool the caller belongs to, narrower or without docs at all.
-    await deny({ path: "/mcp/empty" });
-    await deny({ path: "/mcp/narrow" });
+    // A maintainer's whole catalog, and another pool's member who reaches docs.read.
+    await deny({ token: "root" });
+    await deny({ token: "nina" });
     // Another member of the same pool, and the same principal under another subject.
     await deny({ token: "bob" });
     await deny({ token: "other" });
     await deny({ origin: "https://second.test" });
     await deny({ app: readonly });
-    // A non-member never reaches the stash: the pool is the endpoint-not-found 404.
+    // A person in no pool never reaches the stash: plain /mcp is the endpoint-not-found 404.
     const outsider = await app.fetch(
-      new Request(`${CONTRACT_BASE}/mcp/admin`, {
+      new Request(`${CONTRACT_BASE}/mcp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -328,7 +327,7 @@ export async function checkStashAuthority(executor: Executor, programReturn = fa
 
 /**
  * Skill and catalog returns keep their bindings through a second return stash.
- * Pool access is static (#837): a narrower pool is another endpoint, and the
+ * Pool access is static (#837): a narrower pool is another person's, and the
  * live part is re-admitting the caller when a page is read.
  */
 export async function checkProgramReadDependencies(executor: Executor): Promise<void> {
@@ -373,7 +372,8 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
       return true;
     },
   };
-  const alice = { namespace: "read-dependencies", id: "alice" };
+  const memberOf = { reader: "alice", narrow: "nina", bare: "bea" } as const;
+  const person = (id: string) => ({ namespace: "read-dependencies", id });
   const app = createConnecta({
     readOnly: false,
     connectors: [remote, control],
@@ -384,27 +384,29 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
     auth: {
       kind: "read-dependencies",
       activityActorNamespace: "read-dependencies",
-      authorize: () =>
-        refused
+      authorize: (request) => {
+        const id = request.headers.get("Authorization")!.slice(7);
+        return refused
           ? { ok: false, response: new Response(null, { status: 401 }) }
-          : { ok: true, subjectId: "alice", principal: alice },
+          : { ok: true, subjectId: id, principal: person(id) };
+      },
     },
-    maintainers: [alice],
+    maintainers: [person("root")],
     // Writable, so discovery still lists remote.write; no program here writes.
     pools: {
-      reader: { tools: ["remote", "control"], readOnly: false, members: [alice] },
-      narrow: { tools: ["remote.read", "control"], readOnly: false, members: [alice] },
-      bare: { tools: ["control"], readOnly: false, members: [alice] },
+      reader: { tools: ["remote", "control"], readOnly: false, members: [person(memberOf.reader)] },
+      narrow: { tools: ["remote.read", "control"], readOnly: false, members: [person(memberOf.narrow)] },
+      bare: { tools: ["control"], readOnly: false, members: [person(memberOf.bare)] },
     },
   });
-  const run = async (code: string, pool = "reader") => {
+  const run = async (code: string, pool: keyof typeof memberOf = "reader") => {
     const response = await app.fetch(
-      new Request(`${CONTRACT_BASE}/mcp/${pool}`, {
+      new Request(`${CONTRACT_BASE}/mcp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json, text/event-stream",
-          Authorization: "Bearer alice",
+          Authorization: `Bearer ${memberOf[pool]}`,
           Origin: "https://caller.test",
         },
         body: JSON.stringify({
@@ -448,8 +450,8 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
         const visible = await run(`async () => { ${pageCode} }`);
         expect(visible.isError).toBeFalsy();
         expect(JSON.stringify(visible)).toContain(sentinel);
-        // A narrower pool, or one without remote, is another endpoint.
-        for (const pool of ["narrow", "bare"]) {
+        // Another person's narrower pool, or one without remote, never pages it.
+        for (const pool of ["narrow", "bare"] as const) {
           const elsewhere = await run(`async () => { ${pageCode} }`, pool);
           expect(elsewhere.structuredContent).toMatchObject({ error: { code: "not_found" } });
           expect(JSON.stringify(elsewhere)).not.toContain(sentinel);
@@ -469,7 +471,7 @@ export async function checkProgramReadDependencies(executor: Executor): Promise<
 /**
  * Pre-resolution failures and local guides keep visibility through inherited
  * stashes. Pool access is static (#837): a pool without remote is another
- * endpoint, and the live part is re-admitting the caller when a page is read.
+ * person's, and the live part is re-admitting the caller when a page is read.
  */
 export async function checkProgramVisibilityDependencies(executor: Executor): Promise<void> {
   let refused = false;
@@ -498,7 +500,8 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
       return true;
     },
   };
-  const alice = { namespace: "visibility-dependencies", id: "alice" };
+  const memberOf = { reader: "alice", narrow: "nina", bare: "bea" } as const;
+  const person = (id: string) => ({ namespace: "visibility-dependencies", id });
   const app = createConnecta({
     readOnly: false,
     connectors: [remote, control],
@@ -508,26 +511,28 @@ export async function checkProgramVisibilityDependencies(executor: Executor): Pr
     auth: {
       kind: "visibility-dependencies",
       activityActorNamespace: "visibility-dependencies",
-      authorize: () =>
-        refused
+      authorize: (request) => {
+        const id = request.headers.get("Authorization")!.slice(7);
+        return refused
           ? { ok: false, response: new Response(null, { status: 401 }) }
-          : { ok: true, subjectId: "alice", principal: alice },
+          : { ok: true, subjectId: id, principal: person(id) };
+      },
     },
-    maintainers: [alice],
+    maintainers: [person("root")],
     pools: {
-      reader: { tools: ["remote", "control"], readOnly: true, members: [alice] },
-      narrow: { tools: ["remote.read", "control"], readOnly: true, members: [alice] },
-      bare: { tools: ["control"], readOnly: true, members: [alice] },
+      reader: { tools: ["remote", "control"], readOnly: true, members: [person(memberOf.reader)] },
+      narrow: { tools: ["remote.read", "control"], readOnly: true, members: [person(memberOf.narrow)] },
+      bare: { tools: ["control"], readOnly: true, members: [person(memberOf.bare)] },
     },
   });
-  const run = async (code: string, pool: string) => {
+  const run = async (code: string, pool: keyof typeof memberOf) => {
     const response = await app.fetch(
-      new Request(`${CONTRACT_BASE}/mcp/${pool}`, {
+      new Request(`${CONTRACT_BASE}/mcp`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Accept: "application/json, text/event-stream",
-          Authorization: "Bearer alice",
+          Authorization: `Bearer ${memberOf[pool]}`,
         },
         body: JSON.stringify({
           jsonrpc: "2.0",
