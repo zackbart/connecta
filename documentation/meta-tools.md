@@ -1292,10 +1292,11 @@ arbitrary mid-word substrings. Document frequency weights rare domain terms abov
 ubiquitous action terms. A term weighs most in the name, then the summary, then
 the title (`title` or `annotations.title`), and least in the rest of the
 description, which stays searchable but is weak evidence. Two weaker zones count
-toward coverage and document frequency but never make a match complete: the
-owning connector's configured title and description, which match every tool of
-that connector (so `money` reaches a connector titled "Money tracker"), and a
-tool's top-level input property names and their descriptions. Input property
+toward coverage but never make a match complete: the owning connector's
+configured title and description, which match every tool of that connector (so
+`money` reaches a connector titled "Money tracker") without making the word
+commoner, and a tool's top-level input property names and their descriptions,
+which count toward document frequency like any tool text. Input property
 text is indexed up to 512 UTF-16 code units per tool and 131,072 per catalog, in
 catalog and property order; text past either budget is not searchable. A tool's
 score is then

@@ -572,7 +572,6 @@ export function lexicalCorpusStatistics(
       new Set([
         ...(nameMatches.get(term) ?? []),
         ...(descriptionMatches.get(term) ?? []),
-        ...(connectorMatches.get(term) ?? []),
         ...(inputMatches.get(term) ?? []),
       ]).size,
     ]),
