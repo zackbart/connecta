@@ -4,6 +4,9 @@ import { cloudflareAccessAuth } from "../src/auth/cloudflare-access.js";
 import { machineAuth } from "./helpers/machine-auth.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { identityStorageKey } from "../src/identity.js";
+import { tagGrantOwner } from "../src/oauth-grant-owner.js";
+import { sha256Hex } from "../src/bytes.js";
+import { oauthConnectKeys } from "../src/storage/keys.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
@@ -21,6 +24,12 @@ afterEach(async () => {
   await Promise.all(deployments.splice(0).map((app) => app.close()));
 });
 
+async function storedLink(flow: ReturnType<typeof setup>, token: string) {
+  return flow.app.registry
+    .contextFor("service", BASE)
+    .storage.get(oauthConnectKeys.link(await sha256Hex(JSON.stringify(["service", token]))));
+}
+
 function setup(
   provider: "clerk" | "access",
   authScope: "personal" | "shared",
@@ -31,6 +40,7 @@ function setup(
     bobMember?: boolean;
     hostedSignIn?: boolean;
     ui?: boolean;
+    sibling?: boolean;
   } = {},
 ) {
   const storage = memoryStorage();
@@ -54,6 +64,13 @@ function setup(
     verifyState: async (candidate, ctx) => candidate !== null && candidate === (await ctx.storage.get("state")),
     disconnectAuth: async () => {},
   };
+  const grant = {};
+  const connectors = options.sibling
+    ? [
+        tagGrantOwner(connector, "service", grant),
+        tagGrantOwner({ ...connector, id: "service_drive" }, "service", grant),
+      ]
+    : [connector];
   const auth =
     options.interactive === false
       ? machineAuth("machine")
@@ -75,7 +92,7 @@ function setup(
   const build = (maintainerIds: string[]) => {
     const deployment = createTestConnecta({
       ...(options.ui === false ? { ui: undefined } : {}),
-      connectors: [connector],
+      connectors,
       auth,
       ...(options.interactive === false ? {} : { maintainers: maintainerIds.map((id) => ({ namespace, id })) }),
       ...(options.bobMember ? { pools: { team: { tools: ["service"], members: [{ namespace, id: "bob" }] } } } : {}),
@@ -322,10 +339,14 @@ describe.each([
     expect(JSON.stringify(handoff)).not.toContain(AS);
     expect(handoff.authorizationUrl).not.toContain("%");
     const token = new URL(handoff.authorizationUrl).searchParams.get("h")!;
-    expect(token).toMatch(/^v4\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
-    expect(token).not.toContain("=");
-    const compact = atob(token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"));
+    expect(token).toMatch(/^[a-z2-7]{26}$/);
+    expect(handoff.authorizationUrl).toBe(`${BASE}/connect/service?h=${token}`);
+    const stored = await storedLink(flow, token);
+    expect(stored).toMatch(/^v4\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    const compact = atob(stored!.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/"));
     expect(() => JSON.parse(compact)).toThrow();
+    expect(compact).not.toContain("alice");
+    expect((await flow.storage.list("")).join("\n")).not.toContain(token);
     expect(flow.startAuth).not.toHaveBeenCalled();
     expect((await flow.browser(handoff.authorizationUrl, "bob")).status).toBe(403);
     expect(flow.startAuth).not.toHaveBeenCalled();
@@ -339,6 +360,112 @@ describe.each([
     expect((await flow.callback("alice")).status).toBe(200);
     expect(flow.finishAuth).toHaveBeenCalledOnce();
     expect((await flow.callback("alice")).status).toBe(400);
+  });
+
+  it("INV-4: refuses unknown, altered, misrouted, expired and spent short links alike", async () => {
+    const flow = setup(provider, scope);
+    const { authorizationUrl } = await flow.authorize();
+    const token = new URL(authorizationUrl).searchParams.get("h")!;
+    const altered = `${token.slice(0, 25)}${token.endsWith("a") ? "b" : "a"}`;
+    const refusals = [
+      `${BASE}/connect/service?h=${"a".repeat(26)}`,
+      `${BASE}/connect/service?h=${altered}`,
+      `${BASE}/connect/service?h=${token.toUpperCase()}`,
+      `${BASE}/connect/other?h=${token}`,
+    ];
+    const refused = await Promise.all(refusals.map((url) => flow.browser(url, "alice")));
+    expect(flow.startAuth).not.toHaveBeenCalled();
+    expect((await flow.browser(authorizationUrl, "alice")).status).toBe(302);
+    refused.push(await flow.browser(authorizationUrl, "alice"));
+    const later = (await flow.authorize()).authorizationUrl;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
+    refused.push(await flow.browser(later, "alice"));
+    clock.mockRestore();
+    for (const response of refused) {
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        error: "Invalid or expired connection link. Request a new link from connecta.",
+      });
+    }
+    expect(flow.startAuth).toHaveBeenCalledOnce();
+  });
+
+  it("INV-4: every refused short link costs the same storage work, configured connector or not", async () => {
+    const flow = setup(provider, scope);
+    const { authorizationUrl } = await flow.authorize();
+    const token = new URL(authorizationUrl).searchParams.get("h")!;
+    const altered = `${token.slice(0, 25)}${token.endsWith("a") ? "b" : "a"}`;
+    const operations: string[] = [];
+    for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
+      const original = flow.storage[method].bind(flow.storage) as (...args: unknown[]) => unknown;
+      vi.spyOn(flow.storage, method).mockImplementation(((...args: unknown[]) => {
+        operations.push(method);
+        return original(...args);
+      }) as never);
+    }
+    const cost = async (url: string) => {
+      operations.length = 0;
+      const response = await flow.browser(url, "alice");
+      expect(response.status).toBe(400);
+      return [...operations];
+    };
+    const unknownId = await cost(`${BASE}/connect/service?h=${"a".repeat(26)}`);
+    expect(unknownId).toEqual(["get", "get"]);
+    expect(await cost(`${BASE}/connect/unconfigured?h=${"a".repeat(26)}`)).toEqual(unknownId);
+    expect(await cost(`${BASE}/connect/unconfigured?h=${token}`)).toEqual(unknownId);
+    expect(await cost(`${BASE}/connect/service?h=${altered}`)).toEqual(unknownId);
+    const later = (await flow.authorize()).authorizationUrl;
+    expect((await flow.browser(authorizationUrl, "alice")).status).toBe(302);
+    expect(await cost(authorizationUrl)).toEqual(unknownId);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 16 * 60_000);
+    expect(await cost(later)).toEqual(unknownId);
+    clock.mockRestore();
+  });
+
+  it("INV-4: a sibling sharing the grant resolves no other account's short link, at the same storage cost", async () => {
+    const flow = setup(provider, scope, { sibling: true });
+    const { authorizationUrl } = await flow.authorize();
+    const token = new URL(authorizationUrl).searchParams.get("h")!;
+    expect(authorizationUrl).toBe(`${BASE}/connect/service?h=${token}`);
+    const operations: string[] = [];
+    for (const method of ["get", "set", "delete", "list", "compareAndSet"] as const) {
+      const original = flow.storage[method].bind(flow.storage) as (...args: unknown[]) => unknown;
+      vi.spyOn(flow.storage, method).mockImplementation(((...args: unknown[]) => {
+        operations.push(method);
+        return original(...args);
+      }) as never);
+    }
+    const verify = vi.spyOn(flow.vault, "verifyOAuthHandoff");
+    const open = vi.spyOn(flow.vault, "open");
+    const cost = async (url: string) => {
+      operations.length = 0;
+      const response = await flow.browser(url, "alice");
+      expect(response.status).toBe(400);
+      return [...operations];
+    };
+    const unconfigured = await cost(`${BASE}/connect/unconfigured?h=${token}`);
+    expect(unconfigured).toEqual(["get", "get"]);
+    expect(await cost(`${BASE}/connect/service_drive?h=${token}`)).toEqual(unconfigured);
+    expect(await cost(`${BASE}/connect/service_drive?h=${"a".repeat(26)}`)).toEqual(unconfigured);
+    expect(verify).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect((await flow.browser(authorizationUrl, "alice")).status).toBe(302);
+    expect(verify).toHaveBeenCalled();
+  });
+
+  it("INV-4: falls back to the sealed link when storage refuses the short one, and still accepts it", async () => {
+    const flow = setup(provider, scope);
+    const compareAndSet = flow.storage.compareAndSet.bind(flow.storage);
+    vi.spyOn(flow.storage, "compareAndSet").mockImplementation(async (key, ...rest) => {
+      if (key.includes("oauth:connect-link:")) throw new Error("storage unavailable");
+      return compareAndSet(key, ...rest);
+    });
+    const { authorizationUrl } = await flow.authorize();
+    expect(new URL(authorizationUrl).searchParams.get("h")).toMatch(/^v4\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
+    expect((await flow.browser(authorizationUrl, "bob")).status).toBe(403);
+    expect((await flow.browser(authorizationUrl, "alice")).status).toBe(302);
+    expect((await flow.browser(authorizationUrl, "alice")).status).toBe(400);
+    expect(flow.startAuth).toHaveBeenCalledOnce();
   });
 });
 

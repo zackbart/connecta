@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sha256Hex } from "../src/bytes.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { identityStorageKey } from "../src/identity.js";
@@ -13,6 +14,7 @@ import { CREDENTIAL_KEY } from "./fixtures/ui.js";
 import { createTestConnecta, required } from "./helpers.js";
 
 const BASE = "https://connecta.test";
+const SHORT_LINK = /^https:\/\/connecta\.test\/connect\/service\?h=[a-z2-7]{26}$/;
 const apps: ReturnType<typeof createTestConnecta>[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -251,11 +253,13 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(result.requestState).toEqual(expect.any(String));
     const url = new URL(result.inputRequests.connecta_auth.params.url);
     expect(url.origin + url.pathname).toBe(`${BASE}/connect/service`);
-    const [version, encrypted] = url.searchParams.get("h")!.split(".");
+    expect(url.href).toMatch(SHORT_LINK);
+    const stored = await flow.app.registry
+      .contextFor("service", BASE)
+      .storage.get(oauthConnectKeys.link(await sha256Hex(JSON.stringify(["service", url.searchParams.get("h")!]))));
+    const [version, encrypted] = required(stored ?? undefined).split(".");
     expect(version).toBe("v4");
     expect(atob(encrypted!.replace(/-/g, "+").replace(/_/g, "/"))).not.toContain("alice");
-    expect(url.href).not.toContain("%");
-    expect(url.searchParams.get("h")).not.toContain("=");
     expect(JSON.stringify(result)).not.toContain("DOWNSTREAM_PRIVATE_TEXT");
     expect(JSON.stringify(result)).not.toContain("downstream.test");
     expect(flow.connector.startAuth).not.toHaveBeenCalled();
@@ -281,11 +285,10 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
         code: "downstream_oauth_required",
         connector: "service",
         recovery: "oauth",
-        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=v4.`),
+        authorizationUrl: expect.stringMatching(SHORT_LINK),
         nextAction: { url: error.authorizationUrl },
       });
-      const [, sealed] = new URL(error.authorizationUrl).searchParams.get("h")!.split(".");
-      expect(atob(sealed!.replace(/-/g, "+").replace(/_/g, "/"))).not.toMatch(/alice|[a-f0-9]{64}/);
+      expect(error.authorizationUrl).not.toMatch(/alice|[a-f0-9]{64}/);
       expect({ ...error, authorizationUrl: undefined, nextAction: undefined }).toEqual({
         ...expected,
         authorizationUrl: undefined,
@@ -299,7 +302,7 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
       expect(explicit.resultType).not.toBe("input_required");
       expect(explicit.structuredContent).toMatchObject({
         recovery: "oauth",
-        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=v4.`),
+        authorizationUrl: expect.stringMatching(SHORT_LINK),
       });
 
       const bob = await flow.app.fetch(new Request(error.authorizationUrl, { headers: { Cookie: "__session=bob" } }));
@@ -324,7 +327,7 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     expect(hidden.resultType).not.toBe("input_required");
     expect(hidden.structuredContent.error).toMatchObject({
       code: "downstream_oauth_required",
-      authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=v4.`),
+      authorizationUrl: expect.stringMatching(SHORT_LINK),
     });
     const shown = (await flow.rpc(undefined, undefined, { headers: { "X-Anthropic-Client": "ClaudeAI" } })).result;
     expect(shown.resultType).toBe("input_required");
@@ -373,7 +376,7 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
         retryable: false,
         connector: "service",
         recovery: "oauth",
-        authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=v4.`),
+        authorizationUrl: expect.stringMatching(SHORT_LINK),
         nextAction: { url: error.authorizationUrl, purpose: expect.stringMatching(/once.*stop/s) },
       });
       // Neither claims a person refused nor invites another prompt.
@@ -412,8 +415,8 @@ describe("auth URL elicitation", { tags: ["node"] }, () => {
     for (const field of ["connector", "recovery", "status", "instructions"])
       expect(refused[field]).toEqual(ordinary[field]);
     expect(new URL(refused.authorizationUrl).pathname).toBe(new URL(ordinary.authorizationUrl).pathname);
-    expect(new URL(refused.authorizationUrl).searchParams.get("h")).toMatch(/^v4\./);
-    expect(new URL(ordinary.authorizationUrl).searchParams.get("h")).toMatch(/^v4\./);
+    expect(refused.authorizationUrl).toMatch(SHORT_LINK);
+    expect(ordinary.authorizationUrl).toMatch(SHORT_LINK);
   });
 
   it("INV-4: a refused prompt on a native pool names no route and keeps the handoff", async () => {

@@ -1486,8 +1486,9 @@ model until then. Two settings return the handoff instead:
 
 Either way, the handoff links keep the identity binding described above and,
 like every `/connect` link an MCP endpoint issues from a sealing vault, are
-sealed so the agent sees no principal in them. Pending prompt state from an
-earlier request still verifies and resolves as usual.
+short links whose stored handoff is sealed, so the agent sees no principal in
+them (see [connect links](./auth.md#short-connect-links)). Pending prompt state
+from an earlier request still verifies and resolves as usual.
 
 For an operator-managed credential, an explicit `authorize_connector` returns
 `recovery: "ready"` when the declared credential fields are configured. This

@@ -1576,7 +1576,8 @@ authorization handoff. A declined or cancelled URL elicitation returns it too. T
 Each call or program run shares at most one handoff per connector; errors never
 request a forced restart. Signed links retain their fifteen-minute expiry,
 initiating-user and owner binding, origin check, and single-use browser nonce.
-Minting a link stores no nonce and starts no consent. When an auth error includes
+Minting a link stores no nonce and starts no consent; an MCP link stores only
+its sealed handoff ([short connect links](#short-connect-links)). When an auth error includes
 a handoff, give it to the user or operator. Status reads never call `startAuth` and never expose the
 provider's consent URL. A UI start answers `{ state: "auth_required",
 authorizationUrl }`, where the URL belongs to connecta. Continue hands back the
@@ -3011,7 +3012,8 @@ still serve configured credentials. Both routes accept only GET, otherwise retur
 The fifteen-minute signed handoff carries connector ownership, initiating principal, deployment origin, nonce,
 restart mode, and, for a forced flow's later links, the flow they share a reset with. New links use versioned, length-prefixed fields instead of
 JSON, with unpadded base64url payload and signature segments. Operator UI links, and MCP links from a vault
-without sealing, use an opaque wire encoding, not encryption; other MCP links also seal those fields as described above. Copy the complete URL unchanged.
+without sealing, use an opaque wire encoding, not encryption; other MCP links also seal those fields and are
+issued as [short connect links](#short-connect-links). Copy the complete URL unchanged.
 The signature authenticates the exact version and payload text. Tampered or re-encoded links return
 `Invalid or expired connection link. Request a new link from connecta.` Pre-upgrade signed JSON and sealed
 v2 links still verify against their original text and expire after their original fifteen minutes. A link from
@@ -3062,6 +3064,40 @@ supporting direct programmatic completion.
 `compareAndSet` atomically claims link nonces, callback handoffs, and consents, with one concurrent winner,
 so each completes once.
 [Meta-tools](./meta-tools.md#authorization-recovery) describes recovery.
+
+### Short connect links
+
+Agents relay connect links to people, and models corrupt long opaque URLs when
+they copy them. Each sealed link an MCP endpoint issues is therefore short:
+`https://connecta.example.com/connect/notes_alice?h=<id>`, where `<id>` is 26
+lowercase base32 characters (`a`–`z`, `2`–`7`) encoding 128 random bits.
+
+- Connecta stores the sealed, signed handoff in the owning connector's storage
+  under the SHA-256 of the connector id the link names together with the id,
+  never the id itself, expiring with the link at fifteen minutes. An id
+  therefore resolves only at its own `/connect/<connector>` path: a connector
+  that shares another's grant (see
+  [one grant for several connectors](#one-grant-for-several-connectors))
+  finds no record for that account's link. A record holds under 1 KB. Issuance follows handoff issuance:
+  at most one per connector per call or program run, for an admitted caller,
+  and SQL writes reclaim expired rows.
+- A visit resolves the id to that stored handoff and then verifies it exactly as
+  a sealed link: signature, seal, connector, origin, expiry, initiating
+  principal, management permission and single-use nonce. Another person signed
+  in gets 403. Unknown, altered, expired, spent and misrouted ids get the same
+  `400 Invalid or expired connection link` refusal as any invalid link, after
+  the same storage work: one read of the link record and one of a used-nonce
+  marker, whether or not the path names a configured connector or one sharing
+  another's grant, and no signature check or decryption, so neither the
+  response nor its storage round trips reveal which connectors exist. This
+  removes the I/O-versus-none gap, not every timing difference: a hit and a miss
+  are not identical in a key-value store.
+- When storage cannot record the handoff, the link carries the sealed handoff
+  itself (`h=v4.<sealed>.<signature>`, about 560 characters), which verifies the
+  same way. Sealed links issued before short links also verify until they
+  expire.
+- Operator UI links keep the signed `v3` form, since the UI hands them to the
+  browser directly; so do MCP links from a custom vault without sealing.
 
 ## Downstream OAuth client registration
 
