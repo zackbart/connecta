@@ -244,18 +244,35 @@ function toolTitle(tool: ToolDef): string {
   return typeof title === "string" ? title : "";
 }
 
-function inputText(tool: ToolDef): string {
-  const properties = tool.inputSchema?.properties;
-  if (properties === null || typeof properties !== "object" || Array.isArray(properties)) return "";
-  return Object.entries(properties)
-    .map(([name, property]) => {
-      const description = (property as { description?: unknown } | null)?.description;
-      return typeof description === "string" ? `${name} ${description}` : name;
-    })
-    .join(" ");
+export const MAX_INPUT_TEXT_PER_TOOL = 512;
+export const MAX_INPUT_TEXT_PER_CATALOG = 128 * 1024;
+
+function inputTexts(tools: ToolDef[]): string[] {
+  let catalogLeft = MAX_INPUT_TEXT_PER_CATALOG;
+  return tools.map((tool) => {
+    const properties: unknown = tool.inputSchema?.properties;
+    if (properties === null || typeof properties !== "object" || Array.isArray(properties)) return "";
+    let left = Math.min(MAX_INPUT_TEXT_PER_TOOL, catalogLeft);
+    const parts: string[] = [];
+    for (const name in properties) {
+      if (left <= 0) break;
+      if (!Object.hasOwn(properties, name)) continue;
+      const description = ((properties as Record<string, unknown>)[name] as { description?: unknown } | null)
+        ?.description;
+      for (const text of typeof description === "string" ? [name, description] : [name]) {
+        if (left <= 0) break;
+        const part = text.length > left ? text.slice(0, left) : text;
+        parts.push(part);
+        left -= part.length + 1;
+      }
+    }
+    const text = parts.join(" ");
+    catalogLeft -= text.length;
+    return text;
+  });
 }
 
-function buildIndex(tools: ToolDef[]): SearchIndex {
+function buildIndex(tools: ToolDef[], inputs = inputTexts(tools)): SearchIndex {
   const postings = ZONES.map(() => new Map<string, number[]>());
   const documents = tools.map((tool, position) => {
     const description = tool.description ?? "";
@@ -267,7 +284,7 @@ function buildIndex(tools: ToolDef[]): SearchIndex {
       titleTokens: [...new Set(lexicalTokens(toolTitle(tool)))],
       summaryTokens: [...summary],
       tailTokens: [...new Set(lexicalTokens(description))].filter((token) => !summary.has(token)),
-      inputTokens: [...new Set(lexicalTokens(inputText(tool)))],
+      inputTokens: [...new Set(lexicalTokens(inputs[position]!))],
     };
     ZONES.forEach((zone, index) => {
       Object.freeze(doc[zone]);
@@ -293,16 +310,17 @@ function bindIndex(tools: ToolDef[], index: SearchIndex): SearchView {
 /** Only call after complete catalog acceptance, redaction and classification. */
 export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void {
   if (searchIndexes.has(tools)) return;
+  const inputs = inputTexts(tools);
   const key = JSON.stringify([
     partition,
-    tools.map((tool) => [tool.name, tool.description ?? "", toolTitle(tool), inputText(tool)]),
+    tools.map((tool, position) => [tool.name, tool.description ?? "", toolTitle(tool), inputs[position]!]),
   ]);
   const retained = retainedIndexes.get(key);
   if (retained) {
     bindIndex(tools, retained.index);
     return;
   }
-  const index = buildIndex(tools);
+  const index = buildIndex(tools, inputs);
   bindIndex(tools, index);
   let bytes = key.length * 2 + 128;
   for (const doc of index.documents) {
@@ -441,15 +459,14 @@ export const SEARCH_SYNONYMS: readonly (readonly string[])[] = [
   ["meeting", "event"],
   ["money", "finance", "financial", "payment"],
   ["spend", "spending", "expense", "transaction"],
-  ["bill", "recurring", "invoice"],
+  ["bill", "invoice"],
   ["file", "document"],
   ["changed", "modified", "updated"],
   ["task", "todo"],
-  ["workout", "activity", "exercise"],
+  ["workout", "exercise"],
   ["revenue", "mrr", "income", "sales"],
   ["subscriber", "subscription"],
   ["deploy", "deployment"],
-  ["tweet", "post"],
   ["contact", "person", "people"],
   ["feed", "timeline"],
 ];
@@ -461,14 +478,21 @@ for (const group of SEARCH_SYNONYMS)
       ...new Set([...(searchSynonymGroups.get(word) ?? []), ...group.filter((other) => other !== word)]),
     ]);
 
-/** Whole-token candidates for one term, widened by shared and catalog synonyms. */
-function synonymCandidates(term: string, synonyms: ((word: string) => readonly string[]) | undefined): Set<string> {
+/** Whole-token candidates for one term: its own and its catalog's synonyms, then the shared ones. */
+function synonymCandidates(
+  term: string,
+  synonyms: ((word: string) => readonly string[]) | undefined,
+): { literal: Set<string>; shared: Set<string> } {
   const own = matchingTokenCandidates(term);
-  const candidates = new Set(own);
+  const literal = new Set(own);
   for (const candidate of own)
-    for (const synonym of [...(searchSynonymGroups.get(candidate) ?? []), ...(synonyms?.(candidate) ?? [])])
-      for (const variant of matchingTokenCandidates(synonym)) candidates.add(variant);
-  return candidates;
+    for (const synonym of synonyms?.(candidate) ?? [])
+      for (const variant of matchingTokenCandidates(synonym)) literal.add(variant);
+  const shared = new Set<string>();
+  for (const candidate of own)
+    for (const synonym of searchSynonymGroups.get(candidate) ?? [])
+      for (const variant of matchingTokenCandidates(synonym)) if (!literal.has(variant)) shared.add(variant);
+  return { literal, shared };
 }
 
 /**
@@ -507,33 +531,38 @@ export function lexicalCorpusStatistics(
     const termNameMatches = new Set<ToolDef>();
     const termDescriptionMatches = new Set<ToolDef>();
     const termHeadMatches = new Set<ToolDef>();
+    const termSharedHeadMatches = new Set<ToolDef>();
     const termConnectorMatches = new Set<ToolDef>();
     const termInputMatches = new Set<ToolDef>();
     for (const tools of toolSets) {
       const index = indexFor(tools);
-      const candidates = synonymCandidates(term, synonymsFor?.(tools));
+      const { literal, shared } = synonymCandidates(term, synonymsFor?.(tools));
       const identity = connectorTokens.get(tools)!;
-      if ([...candidates].some((candidate) => identity.has(candidate)))
+      if ([...literal, ...shared].some((candidate) => identity.has(candidate)))
         for (const tool of index.tools.values()) termConnectorMatches.add(tool);
-      for (const candidate of candidates) {
-        // Name and title, summary and tail: only the tail is outside the head.
-        [
-          [termNameMatches, termHeadMatches],
-          [termDescriptionMatches, termHeadMatches],
-          [termDescriptionMatches, termHeadMatches],
-          [termDescriptionMatches],
-          [termInputMatches],
-        ].forEach((targets, zone) => {
-          for (const position of index.index.postings[zone]!.get(candidate) ?? []) {
-            const tool = index.tools.get(position);
-            if (tool) for (const target of targets) target.add(tool);
-          }
-        });
-      }
+      for (const [candidates, head] of [
+        [literal, termHeadMatches],
+        [shared, termSharedHeadMatches],
+      ] as const)
+        for (const candidate of candidates) {
+          // Name and title, summary and tail: only the tail is outside the head.
+          [
+            [termNameMatches, head],
+            [termDescriptionMatches, head],
+            [termDescriptionMatches, head],
+            [termDescriptionMatches],
+            [termInputMatches],
+          ].forEach((targets, zone) => {
+            for (const position of index.index.postings[zone]!.get(candidate) ?? []) {
+              const tool = index.tools.get(position);
+              if (tool) for (const target of targets) target.add(tool);
+            }
+          });
+        }
     }
     nameMatches.set(term, termNameMatches);
     descriptionMatches.set(term, termDescriptionMatches);
-    headMatches.set(term, termHeadMatches);
+    headMatches.set(term, termHeadMatches.size > 0 ? termHeadMatches : termSharedHeadMatches);
     connectorMatches.set(term, termConnectorMatches);
     inputMatches.set(term, termInputMatches);
   }

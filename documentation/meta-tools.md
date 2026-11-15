@@ -1295,7 +1295,10 @@ description, which stays searchable but is weak evidence. Two weaker zones count
 toward coverage and document frequency but never make a match complete: the
 owning connector's configured title and description, which match every tool of
 that connector (so `money` reaches a connector titled "Money tracker"), and a
-tool's top-level input property names and their descriptions. A tool's score is then
+tool's top-level input property names and their descriptions. Input property
+text is indexed up to 512 UTF-16 code units per tool and 131,072 per catalog, in
+catalog and property order; text past either budget is not searchable. A tool's
+score is then
 multiplied by the square of the share of the query's total rarity it covers in
 any zone, so rare words in a description's tail outrank a common verb in a name,
 and a tool covering every term is unaffected.
@@ -1349,12 +1352,14 @@ A short shared synonym map widens a query word on every connector, as an
 ordinary whole-token match ranked below the word itself: `email`/`mail`/`gmail`,
 `schedule`/`calendar`/`agenda`, `meeting`/`event`,
 `money`/`finance`/`financial`/`payment`,
-`spend`/`spending`/`expense`/`transaction`, `bill`/`recurring`/`invoice`,
+`spend`/`spending`/`expense`/`transaction`, `bill`/`invoice`,
 `file`/`document`, `changed`/`modified`/`updated`, `task`/`todo`,
-`workout`/`activity`/`exercise`, `revenue`/`mrr`/`income`/`sales`,
-`subscriber`/`subscription`, `deploy`/`deployment`, `tweet`/`post`,
-`contact`/`person`/`people` and `feed`/`timeline`. Words with a common second
-sense, such as `run`, `chat` or `message`, stay out of it.
+`workout`/`exercise`, `revenue`/`mrr`/`income`/`sales`,
+`subscriber`/`subscription`, `deploy`/`deployment`,
+`contact`/`person`/`people` and `feed`/`timeline`. A shared synonym makes a
+match complete only when no searched tool states the word itself in its name,
+title or summary. Words with a second sense that ties unrelated records, such as
+`run`, `chat`, `message`, `activity`, `recurring` or `post`, stay out of it.
 
 A maintained provider may declare `searchSynonyms`: groups of single lowercase
 words its users and its vendor use for the same record, such as `household`

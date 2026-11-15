@@ -5,6 +5,8 @@ import {
   compactSchema,
   discoverySummary,
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+  MAX_INPUT_TEXT_PER_CATALOG,
+  MAX_INPUT_TEXT_PER_TOOL,
   SEARCH_SYNONYMS,
 } from "../src/catalog.js";
 import { api } from "../src/connectors/api.js";
@@ -1013,8 +1015,113 @@ describe("search_tools", () => {
       expect(new Set(group).size).toBe(group.length);
       for (const word of group) expect(word).toMatch(/^[a-z]+$/);
     }
-    for (const word of ["run", "chat", "message", "conference", "build", "list", "get", "create"])
+    for (const word of [
+      "run",
+      "chat",
+      "message",
+      "conference",
+      "build",
+      "activity",
+      "recurring",
+      "post",
+      "list",
+      "get",
+      "create",
+    ])
       expect(words, word).not.toContain(word);
+  });
+
+  it("ranks a literal match above a shared synonym and keeps unrelated records apart", async () => {
+    const read = { annotations: { readOnlyHint: true } };
+    const mt = createMetaTools(
+      makeRegistry([
+        connectorWith({
+          id: "accounts",
+          kind: "api",
+          tools: [
+            { name: "list_activity", description: "List account activity log entries.", ...read },
+            { name: "list_invoices", description: "List invoices, newest first.", ...read },
+            { name: "list_documents", description: "List shared documents.", ...read },
+          ],
+        }),
+        connectorWith({
+          id: "fitness",
+          kind: "api",
+          tools: [{ name: "list_workouts", description: "List recorded workouts.", ...read }],
+        }),
+        connectorWith({
+          id: "plans",
+          kind: "api",
+          tools: [{ name: "list_recurring_payments", description: "List recurring payment plans.", ...read }],
+        }),
+        connectorWith({
+          id: "social",
+          kind: "api",
+          tools: [
+            { name: "list_tweets", description: "List recent tweets.", ...read },
+            { name: "list_posts", description: "List message board posts.", ...read },
+          ],
+        }),
+        connectorWith({
+          id: "storage",
+          kind: "api",
+          tools: [{ name: "list_files", description: "List stored files.", ...read }],
+        }),
+      ]),
+      BASE,
+    );
+    const addresses = async (query: string) =>
+      ((textOf(await mt.searchTools({ query })) as SearchResult).tools ?? []).map((tool) => tool.address);
+    expect((await addresses("list workouts"))[0]).toBe("fitness.list_workouts");
+    expect((await addresses("recurring"))[0]).toBe("plans.list_recurring_payments");
+    expect((await addresses("list tweets"))[0]).toBe("social.list_tweets");
+    // `document` is a shared synonym of `file`: the literal tool leads and the synonym follows.
+    expect((await addresses("list files")).slice(0, 2)).toEqual(["storage.list_files", "accounts.list_documents"]);
+  });
+
+  it("indexes input property text within per-tool and per-catalog budgets", async () => {
+    const words = (prefix: string, count: number) =>
+      Array.from({ length: count }, (_, index) => `${prefix}${index.toString(36)}`).join(" ");
+    const hostile = connectorWith({
+      id: "hostile",
+      kind: "api",
+      tools: [
+        {
+          name: "find_entries",
+          description: "Find entries.",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            properties: {
+              filter: { type: "string", description: `alphaword ${words("w", 400_000)} omegaword` },
+            },
+          },
+        },
+        ...Array.from({ length: 400 }, (_, index) => ({
+          name: `get_item_${index}`,
+          description: "Get one item.",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            properties: {
+              key: {
+                type: "string",
+                description: `${index === 0 ? "firstword " : index === 399 ? "lastword " : ""}${"x".repeat(MAX_INPUT_TEXT_PER_TOOL)}`,
+              },
+            },
+          },
+        })),
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([hostile]), BASE);
+    const addresses = async (query: string) =>
+      ((textOf(await mt.searchTools({ query })) as SearchResult).tools ?? []).map((tool) => tool.address);
+    expect(await addresses("alphaword")).toEqual(["hostile.find_entries"]);
+    // Past one tool's budget, and past the catalog's, input text is not indexed.
+    expect(await addresses("omegaword")).toEqual([]);
+    expect(401 * MAX_INPUT_TEXT_PER_TOOL).toBeGreaterThan(MAX_INPUT_TEXT_PER_CATALOG);
+    expect(await addresses("firstword")).toEqual(["hostile.get_item_0"]);
+    expect(await addresses("lastword")).toEqual([]);
   });
 
   it("matches a small abbreviation map as whole tokens in both directions", async () => {
