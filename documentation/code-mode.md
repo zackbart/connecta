@@ -246,8 +246,9 @@ Read `catalogErrors` and any `absence` before selecting a tool. Catalog failures
 carry recovery actions at the top of the page; an absent service returns no
 lookalikes. Both paths use only the caller's endpoint/pool and grants. Ranking is
 [lexical discovery](./meta-tools.md#lexical-discovery)'s, and rows expose
-neither lexical scores nor per-result coverage. An empty or whitespace-only
-query browses; non-empty input with no ASCII lexical terms returns no tools plus
+neither lexical scores nor per-result coverage. A tool several connectors offer
+identically is one row whose `alsoOn` lists the other callable addresses. An
+empty or whitespace-only query browses; non-empty input with no ASCII lexical terms returns no tools plus
 bounded no-match analysis in `queryAnalysis`; mixed input searches with its
 ASCII terms.
 

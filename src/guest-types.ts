@@ -181,6 +181,8 @@ interface CatalogDescription {
 type CatalogSearchTool = {
   name: string;
   address: string;
+  /** Other addresses of this same tool on connectors the caller can see, ranked below `address`. */
+  alsoOn?: string[];
   description?: string;
   descriptionTruncated?: true;
   inputSchema?: unknown;

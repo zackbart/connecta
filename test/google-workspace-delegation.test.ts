@@ -1128,16 +1128,11 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expect(asGhost(program.call)).toBe(JSON.stringify(program.callGhost));
 
         // People in the same pool, and the agent in an owned pool, still see it.
-        expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "labels" }))).toEqual([
-          "mail.list_labels",
-          "shared_mail.list_labels",
-          "mail.update_message_labels",
-          "mail.update_thread_labels",
-          "mail.batch_update_message_labels",
-          "shared_mail.update_message_labels",
-          "shared_mail.update_thread_labels",
-          "shared_mail.batch_update_message_labels",
-        ]);
+        const both = await rpc("alice", { pool: "group" }, "search_tools", { query: "labels" });
+        expect(both.structuredContent.tools.map((tool: { address: string; alsoOn?: string[] }) => tool.alsoOn)).toEqual(
+          LABEL_HITS.map((tool) => [`shared_mail.${tool}`]),
+        );
+        expect(addresses(both)).toEqual(labelHits("mail"));
         expect(
           addresses(await rpc(assistant, { agentPool: "assistant-alice" }, "search_tools", { query: "labels" })),
         ).toEqual(labelHits("mail"));
@@ -1174,8 +1169,8 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       {
         name: "off-page aggregate counts",
         args: { query: "labels", offset: 10_000 },
-        // Ten label tools and the operation index per Gmail connector.
-        expected: { tools: [], total: 20, hasMore: false },
+        // Ten label tools and the operation index, offered identically by both Gmail connectors.
+        expected: { tools: [], total: 10, hasMore: false },
       },
       {
         name: "fixed-subject guide control",
