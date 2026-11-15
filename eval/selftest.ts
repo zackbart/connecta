@@ -755,7 +755,7 @@ if (only) process.exit();
           {
             name: "execute_code",
             description:
-              "Every operation uses execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused.",
+              "Run a JavaScript program for every operation: search, call and combine the connected services' tools.\nRead-only endpoint: search and describe omit write tools, and every write call is refused.",
           },
         ],
       },
@@ -796,7 +796,7 @@ if (only) process.exit();
       if (
         fixture.method === "tools/list" &&
         result.tools[0].description !==
-          "Every operation uses execute_code. Read-only endpoint: search and describe omit write tools, and every write call is refused."
+          "Run a JavaScript program for every operation: search, call and combine the connected services' tools.\nRead-only endpoint: search and describe omit write tools, and every write call is refused."
       )
         throw new Error("The code adapter changed Connecta's tool guidance");
       if (
@@ -825,7 +825,9 @@ if (only) process.exit();
     const tools = await session.listTools();
     if (
       tools.some((t) => hidden.test(t.description ?? "")) ||
-      !tools.find((t) => t.name === "execute_code")?.description?.includes("Every operation uses execute_code.")
+      !tools
+        .find((t) => t.name === "execute_code")
+        ?.description?.startsWith("Run a JavaScript program for every operation: ")
     )
       throw new Error("Code tool descriptions differ from the registered guidance");
     for (const name of ["usage", "skill://connecta/usage", "skill://connecta/usage/SKILL.md"]) {

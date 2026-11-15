@@ -179,6 +179,62 @@ function envelope(result: { content: Array<{ text: string }> }) {
 }
 
 describe("native tool surface", () => {
+  it("opens Connecta's own native-pool descriptions with a routing line of at most 120 characters, byte-stable", async () => {
+    const { connecta, token } = await admitted();
+    const twin = await admitted();
+    const own = async (c: Fetcher, bearer: string, pool: string) =>
+      (
+        (await rpc(c, bearer, pool, "tools/list", {})).result.tools as Array<{ name: string; description: string }>
+      ).filter((tool) => !tool.name.includes("__"));
+    for (const pool of ["native", "nocode", "reads"]) {
+      const tools = await own(connecta, token, pool);
+      expect(tools.map((tool) => tool.name).sort(), pool).toEqual(
+        ["authorize_connector", "skills", pool === "nocode" ? "read_result" : "execute_code"].sort(),
+      );
+      expect(await own(connecta, token, pool)).toStrictEqual(tools);
+      expect(await own(twin.connecta, twin.token, pool)).toStrictEqual(tools);
+      for (const tool of tools) {
+        const lead = tool.description.split("\n")[0]!;
+        expect(lead.length, `${pool} ${tool.name}`).toBeLessThanOrEqual(120);
+        expect(lead, `${pool} ${tool.name}`).toMatch(/^[A-Z].*\.$/);
+        expect(tool.description.length, `${pool} ${tool.name}`).toBeLessThanOrEqual(4_096);
+      }
+    }
+    await connecta.close();
+    await twin.connecta.close();
+  });
+
+  it("bounds the granted roster on authorize_connector with an exact omission count", async () => {
+    const storage = memoryStorage();
+    const ids = Array.from(
+      { length: 70 },
+      (_, index) => `connector_${String(index).padStart(2, "0")}_${"x".repeat(47)}`,
+    );
+    const connecta = createTestConnecta({
+      connectors: ids.map((id) => api(id, { tools: [] })),
+      agents: ["assistant"],
+      pools: { native: { tools: ids, members: ["agent:assistant"], surface: "native" } },
+      publicUrl: BASE,
+      logger: silentLogger,
+      storage,
+      accessTokens: accessTokens(storage),
+    });
+    const token = await issueAgentToken(storage, "assistant");
+    const tools = (await rpc(connecta, token, "native", "tools/list", {})).result.tools as Array<{
+      name: string;
+      description: string;
+    }>;
+    const description = tools.find((tool) => tool.name === "authorize_connector")!.description;
+    const granted = description.slice(description.indexOf("Granted: ") + "Granted: ".length, -1);
+    const shown = granted.split("; ")[0]!.split(", ").slice(0, -1);
+    expect(ids[0]!.length).toBe(60);
+    expect(description.length).toBeLessThanOrEqual(4_096);
+    expect(new TextEncoder().encode(granted).length).toBeLessThanOrEqual(1_024);
+    expect(shown).toEqual(ids.slice(0, shown.length));
+    expect(granted).toBe([...shown, `+${ids.length - shown.length} more`].join(", "));
+    await connecta.close();
+  });
+
   it("routes people to native pools without execute_code and records the admitted pool", async () => {
     const events: ToolCallActivityEvent[] = [];
     const c = createTestConnecta({
@@ -1865,7 +1921,7 @@ describe("route names per surface", () => {
       readJsonRpc(await c.fetch(mcpRpc(method, params)));
     const listed = await send(coded, "tools/list", {});
     expect(listed.result.tools.find((t: { name: string }) => t.name === "execute_code").description).toMatch(
-      /^Every operation uses execute_code\. /,
+      /^Run a JavaScript program for every operation: /,
     );
     const refusal = async (c: Fetcher) =>
       envelope(

@@ -341,10 +341,12 @@ one connector inventory before any catalog search — registry order and each ca
 with no second name minted for programs. An entry adds the configured title
 only when it says more than the id: a title whose words the id already spells,
 such as `Google Calendar` for `google_calendar`, is dropped. It then adds the
-connector's configured description as a one-line purpose, unless that too only
-respells the id and title. Titles and purposes normalize whitespace; titles cap
-at 48 UTF-8 bytes and purposes at 60, clipping on a whole token; text with no token
-that fits is omitted. A connector whose guide is required
+connector's configured description as a one-line purpose, without leading words
+that repeat the start of the title (or of the id when untitled), unless what
+remains only respells the id and title. Titles and purposes normalize
+whitespace; titles cap at 48 UTF-8 bytes and purposes at 60, clipping on a whole
+token, before any parenthesis the cut would leave open, and without trailing
+punctuation or joining words; text with nothing that fits is omitted. A connector whose guide is required
 carries a `*`, and one legend follows when an entry shown has the mark. Optional
 guides are not named here; search and describe name them. For example:
 `Connectors: crm* (Customer CRM; Current accounts and contracts), tickets. *Read connecta.skill("connector:<id>") before its first call.`
@@ -610,21 +612,36 @@ route selection, the fail-closed boundary, and the minimum guest syntax, so a
 client that never fetches a skill can still write a valid first program.
 
 The server instructions state the complete routing rule once. Some clients
-drop server instructions, so each tool description stays sufficient for its own
-correct use without restating that rule: `call_tool` names its scope (one
-known-address read) and points other read work to `execute_code`;
-`search_tools` names its scope (catalog inspection, or finding a write) and
-points read work into a program; `execute_code` opens with the terse
-three-route lead (`One known read: call_tool. One known write:
-call_destructive_tool. Everything else: execute_code.`, or the read-only
-two-route form). The `usage` skill points to those two sources instead of
-repeating them.
+drop server instructions, and some show a tool only by its description's first
+line, cut at 120 characters. So every description Connecta writes, on the meta
+and native surfaces, opens with a first line of at most 120 characters: one
+sentence saying what the tool is for and when to use it instead of its
+siblings. Deeper rules follow on later lines. For example, `call_tool` opens with
+`Call one read-only tool whose connector.tool address you already know; other read work: execute_read_code.`
+and `search_tools` names catalog lookup, mainly finding a write, and points read
+work into a program. On a writable meta endpoint, `execute_code`'s second line
+gives the route lead (`One known read: call_tool. One known write:
+call_destructive_tool. Everything else: execute_code.`). Where
+`execute_read_code` is listed, that lead splits programs instead:
+`Read programs: execute_read_code. Programs that write: execute_code.` On a
+read-only endpoint `execute_code`'s first line names `call_tool` for one known
+read. Each description
+stays within 4,096 characters, where some hosts cut descriptions and stop
+matching search terms, even at the largest inventory the cap admits. The `usage` skill points to those two sources instead
+of repeating them.
 
 Tool descriptions and output schemas carry deployment configuration only: the
 connector inventory, budgets, the endpoint's read-only setting, and whether any
 visible connector has a guide. No catalog outcome, call, authorization state,
-or other live status reaches `tools/list` or the instructions, so the
-always-loaded surface stays byte-stable for a client's prompt cache.
+timestamp, version or other live status reaches `tools/list` or the
+instructions, and the inventory follows registry order, so one configuration
+serves identical bytes on every request and in every process or isolate. That
+keeps the always-loaded surface stable for a client's prompt cache and for hosts
+that key a remembered "always allow" approval on description text. Changing
+the configured roster (adding, removing, reordering or retitling a connector,
+or editing its description) or a budget changes the `execute_code` and
+`execute_read_code` descriptions, so such hosts may ask again for approval of
+those tools.
 Instructions reflect the surface and endpoint write policy, subject to connector
 restrictions. When all admitted connectors are read-only, instructions state that
 writes are unavailable. On the meta surface they open by saying what the endpoint
@@ -2254,7 +2271,7 @@ see its output; follow `nextAction` on errors and truncated results. A pool
 `description` is placed first, as on meta endpoints.
 
 **Recovery.** `authorize_connector` remains listed even when a catalog fails.
-Its description lists all granted connector ids independently of catalog health.
+Its description lists the granted connector ids in registry order, independently of catalog health; past 1,024 bytes, ids give way to an exact `+N more` count.
 Use it for a missing connector, then refresh the host tool list after repair.
 Endpoint instructions carry the same recovery rule for hosts that fetch them
 separately. A cached list retains the recovery tool; a refreshed list restores

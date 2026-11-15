@@ -55,7 +55,7 @@ import {
   type RegistryView,
   type ResultIdentity,
 } from "./registry.js";
-import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
+import { connectorList, hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, dispatchFloorMs, normalizeTimeoutMs } from "./timeout.js";
 import { isWriteLike } from "./tool-safety.js";
 import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, withinOutputSchema } from "./meta-output.js";
@@ -1780,22 +1780,26 @@ function metaToolsForRequest(
   };
 }
 
-// Each description states only its own tool's scope; the full routing rule
-// lives once in the server instructions. A client that drops instructions
-// still routes correctly from these scopes plus execute_code's terse lead.
-// Only the meta surface lists these tools, so they use its names.
+// opencode's code mode shows only a description's first line, cut at 120
+// characters (https://github.com/anomalyco/opencode/issues/63603).
 const SEARCH_DESC = (readOnly: boolean, program: string) =>
-  `${readOnly ? "Inspect the catalog; this read-only endpoint omits write tools." : `Inspect the catalog, or find a write before ${META_ROUTES.write}.`} For read work, search inside one ${program} program that also calls and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; set connector when known; an empty query browses. safety filters by classification and grants nothing. Read catalogErrors and absence before choosing a tool.`;
+  `${readOnly ? `Find a tool's address and schema in this read-only catalog; for read work, search inside one ${program} program.` : `Find a tool's address and schema in the catalog, mainly a write for ${META_ROUTES.write}; read work: ${program}.`}
+${readOnly ? "" : "A program searches, calls and returns the answer in one step. "}Use 2–4 action/object terms and includeSchemas="compact"; set connector when known; an empty query browses. safety filters by classification and grants nothing. Read catalogErrors and absence before choosing a tool.`;
 const CALL_DESC = (readOnly: boolean, program: string) =>
-  `Call one known-address read: a tool explicitly annotated readOnlyHint: true. Other read work: ${program}. ${readOnly ? "This endpoint is read-only and refuses every write." : `Unannotated or write-capable tools fail closed to ${META_ROUTES.write}.`} A truncated result carries nextAction.`;
-const CALL_DESTRUCTIVE_DESC =
-  "Call one tool not explicitly annotated readOnlyHint: true. Check its schema and consequences, then include a short reason for the human reviewer; it grants nothing and is not sent downstream. Sent once: never resend it to see output.";
+  `Call one read-only tool whose connector.tool address you already know; other read work: ${program}.
+${readOnly ? "It must be annotated readOnlyHint: true; this endpoint refuses every write." : `Tools not annotated readOnlyHint: true fail closed to ${META_ROUTES.write}.`} A truncated result carries nextAction.`;
+const CALL_DESTRUCTIVE_DESC = `Run one write (any tool not annotated readOnlyHint: true) at a known connector.tool address, exactly once.
+Check the tool's schema and consequences, then include a short reason for the human reviewer; it grants nothing and is not sent downstream. Never resend a write to see its output.`;
 /** A read-only endpoint keeps the six-tool surface, so this tool says why it never writes here. */
-const CALL_DESTRUCTIVE_READ_ONLY_DESC = `This endpoint is read-only: search and describe omit write tools, and every write call here is refused. Reads still run; prefer ${META_ROUTES.read} or ${META_ROUTES.program} for them.`;
-const AUTHORIZE_DESC =
-  "Use after auth_required when the error has no authorizationUrl or operatorUrl, or for a fresh link; otherwise pass that on. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed on authentication or configuration, give the retained handoff to the operator; otherwise proceed with the call. force=true restarts OAuth when the verified user opens the /connect URL. Never accepts credentials.";
-const SKILLS_DESC =
-  "List or fetch guidance by exact name. Fetch usage only when guidance is missing or a program needs repair.";
+const CALL_DESTRUCTIVE_READ_ONLY_DESC = `This read-only endpoint refuses every write sent here; run reads with ${META_ROUTES.read} or ${META_ROUTES.program} instead.
+Search and describe omit write tools; a read sent here still runs.`;
+const AUTHORIZE_DESC = `Request a connector's sign-in or credential handoff after auth_required, when the error carries no link to pass on.
+Also for a fresh link; an error's authorizationUrl or operatorUrl needs no call. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed on authentication or configuration, give the retained handoff to the operator; otherwise proceed with the call. force=true restarts OAuth when the verified user opens the /connect URL. Never accepts credentials.`;
+const NATIVE_GRANTED_MAX_BYTES = 1_024;
+const SKILLS_DESC = (connectorGuides: boolean) =>
+  connectorGuides
+    ? "List or read guidance by name, including connector guides; fetch usage only when guidance is missing or a program fails."
+    : "List or read guidance by name; fetch usage only when guidance is missing or a program needs repair.";
 
 /**
  * Sentences appended to a meta-tool description only when this connection
@@ -1806,7 +1810,6 @@ const SKILLS_DESC =
  * Registration is per connection and reads the configured connector set.
  */
 const GUIDE_NOTES = {
-  skills: " Includes connector guides.",
   search: " guideRequired: true means fetch its named guide before the call.",
   destructive: " Fetch any connector guide discovery names first.",
 } as const;
@@ -1986,7 +1989,7 @@ export function registerMetaTools(
   server.registerTool(
     "skills",
     {
-      description: describedFor(registry, SKILLS_DESC, "skills"),
+      description: SKILLS_DESC(hasConnectorGuides(registry.listConnectors())),
       ...(ctx.native ? { _meta: { "dev.connecta/surface": { surface: "native", ...ctx.native } } } : {}),
       inputSchema: SKILLS_INPUT,
       annotations: READ_ONLY_LOCAL,
@@ -2003,13 +2006,10 @@ export function registerMetaTools(
     "authorize_connector",
     {
       description: ctx.native
-        ? AUTHORIZE_DESC +
-          " Use when a connector’s tools are missing. Granted: " +
-          registry
-            .listConnectors()
-            .map((connector) => connector.id)
-            .join(", ") +
-          "."
+        ? `${AUTHORIZE_DESC} Use when a connector’s tools are missing. Granted: ${connectorList(
+            registry.listConnectors().map((connector) => connector.id),
+            NATIVE_GRANTED_MAX_BYTES,
+          )}.`
         : AUTHORIZE_DESC,
       inputSchema: AUTHORIZE_INPUT,
       outputSchema: AUTHORIZE_OUTPUT,

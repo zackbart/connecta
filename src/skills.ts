@@ -43,13 +43,13 @@ const policy = (readOnly: boolean) => (readOnly ? READ_ONLY_POLICY : WRITE_POLIC
 const INSTRUCTION_CONNECTORS_MAX_BYTES = 120;
 
 /** Ids in roster order, then an exact count once they pass the byte cap. Ids are ASCII. */
-function connectorList(ids: readonly string[]): string {
+export function connectorList(ids: readonly string[], maxBytes = INSTRUCTION_CONNECTORS_MAX_BYTES): string {
   if (ids.length === 0) return "none";
   const all = ids.join(", ");
-  if (all.length <= INSTRUCTION_CONNECTORS_MAX_BYTES) return all;
+  if (all.length <= maxBytes) return all;
   for (let shown = ids.length - 1; shown > 0; shown--) {
     const line = [...ids.slice(0, shown), `+${ids.length - shown} more`].join(", ");
-    if (line.length <= INSTRUCTION_CONNECTORS_MAX_BYTES) return line;
+    if (line.length <= maxBytes) return line;
   }
   return `+${ids.length} more`;
 }
@@ -94,22 +94,74 @@ const inventoryWords = (text: string) =>
     .filter(Boolean);
 
 /** Text that only respells what its entry already shows ("Google Calendar" for google_calendar) adds nothing. */
-export function addsInformation(shown: string, text: string): boolean {
+function addsInformation(shown: string, text: string): boolean {
   const words = inventoryWords(text);
   const shownWords = inventoryWords(shown);
   return words.join("") !== shownWords.join("") && words.some((word) => !shownWords.includes(word));
 }
 
-/** Clips on a whole token, so text with no token that fits leaves nothing to show. */
-export const inventoryNote = (text: string, maxBytes: number) => {
+const DANGLING_TAIL = /(?:[\s,;:.\-–—(/&+]+|\s(?:and|or|with|for|to|of|over|via|in|on|by|the|a|an))$/iu;
+
+/** Cut before the outermost parenthesis a clip left open, then drop trailing separators and joining words. */
+function wholeClauses(text: string): string {
+  const open: number[] = [];
+  for (let index = 0; index < text.length; index++) {
+    if (text[index] === "(") open.push(index);
+    else if (text[index] === ")") open.pop();
+  }
+  let body = open.length > 0 ? text.slice(0, open[0]) : text;
+  for (let trimmed = body.replace(DANGLING_TAIL, ""); trimmed !== body; trimmed = body.replace(DANGLING_TAIL, ""))
+    body = trimmed;
+  return body;
+}
+
+/** Clips on a whole token and a whole clause, so text with nothing that fits leaves nothing to show. */
+const inventoryNote = (text: string, maxBytes: number) => {
   const clipped = boundedEchoText(text, maxBytes);
-  return clipped === "…" ? undefined : clipped;
+  if (clipped === text) return text;
+  const body = wholeClauses(clipped.slice(0, -1));
+  return body ? `${body}…` : undefined;
 };
+
+const normalizedLine = (text: string | undefined) => text?.replace(/\s+/g, " ").trim();
 
 /** A connector's bounded title for inventories, or undefined when it adds nothing to the id or cannot fit. */
 export function connectorInventoryTitle(connector: Connector): string | undefined {
-  const title = connector.title?.replace(/\s+/g, " ").trim();
+  const title = normalizedLine(connector.title);
   return title && addsInformation(connector.id, title) ? inventoryNote(title, 45) : undefined;
+}
+
+/** Leading words that repeat the start of `lead`, as "Billing v4 API" repeats the title "Billing", are dropped when they close every parenthesis they open. */
+function withoutRepeatedLead(text: string, lead: string): string {
+  const leadWords = inventoryWords(lead);
+  const tokens = text.split(" ");
+  let matched = 0;
+  let repeated = 0;
+  for (const token of tokens) {
+    const words = inventoryWords(token);
+    if (words.length === 0 || !words.every((word, index) => leadWords[matched + index] === word)) break;
+    matched += words.length;
+    repeated++;
+  }
+  const stripped = tokens.slice(0, repeated).join(" ");
+  const balanced = stripped.split("(").length === stripped.split(")").length;
+  return repeated === 0 || !balanced
+    ? text
+    : tokens
+        .slice(repeated)
+        .join(" ")
+        .replace(/^[\s,;:.\-–—]+/u, "");
+}
+
+/** A connector's bounded one-line purpose for inventories, or undefined when it only respells the id and title. */
+export function connectorInventoryPurpose(connector: Connector, maxBytes: number): string | undefined {
+  const purpose = normalizedLine(connector.description)?.replace(/\.$/, "");
+  if (!purpose) return undefined;
+  const title = normalizedLine(connector.title);
+  const unrepeated = withoutRepeatedLead(purpose, title || connector.id);
+  return unrepeated && addsInformation(`${connector.id} ${title ?? ""}`, unrepeated)
+    ? inventoryNote(unrepeated, maxBytes)
+    : undefined;
 }
 
 /**
