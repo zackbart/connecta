@@ -79,9 +79,8 @@ count toward Node's header and request timeouts, which bound only the arrival
 of a request, never a streamed or SSE response.
 Calling `close()` on the server `listen()` returns, directly or through the
 shutdown below, ends keep-alive at once: idle connections and accepted sockets
-without a first HTTP request close, a response that starts afterwards carries
-`Connection: close` when it is its connection's last admitted response, and a
-connection closes as soon as its admitted responses finish. The `close()`
+without a first HTTP request close, and a connection closes as soon as all its
+admitted responses finish, including requests pipelined on it after `close()`. The `close()`
 callback therefore waits only for active responses, never for the keep-alive
 timeout.
 `listen()` answers `400` with `Connection: close`, before reading any body, when

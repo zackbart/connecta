@@ -117,10 +117,9 @@ async function toRequest(
   } as RequestInit);
 }
 
-async function writeResponse(res: ServerResponse, response: Response, lastOnConnection: boolean): Promise<void> {
+async function writeResponse(res: ServerResponse, response: Response): Promise<void> {
   res.statusCode = response.status;
   response.headers.forEach((value, key) => res.setHeader(key, value));
-  if (lastOnConnection) res.setHeader("Connection", "close");
   if (!response.body) {
     res.end();
     return;
@@ -271,7 +270,7 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
           return;
         }
         const response = await connecta.fetch(request, undefined, { ...ctx, requestArrivedAt });
-        await writeResponse(res, response, closing && activeResponses.get(socket) === 1);
+        await writeResponse(res, response);
       } catch (error) {
         if (error instanceof InvalidRequestUrl) {
           res.statusCode = 400;
