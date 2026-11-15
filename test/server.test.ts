@@ -405,9 +405,10 @@ describe("server /mcp end-to-end", () => {
         },
         { id: "warehouse", description: "Analytics exports (CSV, JSON, Parquet and Avro files, refreshed nightly)" },
         { id: "shop", description: "Orders, invoices and refunds for the retail storefront and the wholesale portal" },
+        { id: "ledger", title: "Ledger (EU account)", description: "Ledger (EU invoices) and refunds" },
       ]),
     ).toBe(
-      "Connectors: billing (Billing (Global API Key); v4 API over REST (Global API Key, pinned) — invoices…), warehouse (Analytics exports…), shop (Orders, invoices and refunds for the retail storefront…).",
+      "Connectors: billing (Billing (Global API Key); v4 API over REST (Global API Key, pinned) — invoices…), warehouse (Analytics exports…), shop (Orders, invoices and refunds for the retail storefront…), ledger (Ledger (EU account); Ledger (EU invoices) and refunds).",
     );
     // Past the cap purposes go first, from the end of registry order, before any title or name.
     const described = Array.from({ length: 16 }, (_, index) => ({

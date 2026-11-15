@@ -281,7 +281,7 @@ const BUDGETS = {
     // Grew to say when no call is needed: an auth error that already carries its link.
     authorize_connector: 580,
     // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial.
-    execute_code: 2_990,
+    execute_code: 3_030,
     // Carries the same inventory: a host may load only this tool for read work.
     execute_read_code: 790,
   },
@@ -652,6 +652,11 @@ describe("meta-tool descriptions", () => {
           expect(lead.length, tool.name).toBeLessThanOrEqual(120);
           expect(lead, tool.name).toMatch(/^[A-Z].*\.$/);
           expect(tool.description.length, tool.name).toBeLessThanOrEqual(4_096);
+        }
+        const execute = surface.tools.find((tool) => tool.name === "execute_code")!.description as string;
+        if (surface.tools.some((tool) => tool.name === "execute_read_code")) {
+          expect(execute).toContain("Read programs: execute_read_code. Programs that write: execute_code.");
+          expect(execute).not.toContain("Everything else");
         }
         if (name.startsWith("at the largest")) {
           const inventory = surface.tools

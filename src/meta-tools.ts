@@ -55,7 +55,7 @@ import {
   type RegistryView,
   type ResultIdentity,
 } from "./registry.js";
-import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
+import { connectorList, hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, dispatchFloorMs, normalizeTimeoutMs } from "./timeout.js";
 import { isWriteLike } from "./tool-safety.js";
 import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, withinOutputSchema } from "./meta-output.js";
@@ -1795,6 +1795,7 @@ const CALL_DESTRUCTIVE_READ_ONLY_DESC = `This read-only endpoint refuses every w
 Search and describe omit write tools; a read sent here still runs.`;
 const AUTHORIZE_DESC = `Request a connector's sign-in or credential handoff after auth_required, when the error carries no link to pass on.
 Also for a fresh link; an error's authorizationUrl or operatorUrl needs no call. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed on authentication or configuration, give the retained handoff to the operator; otherwise proceed with the call. force=true restarts OAuth when the verified user opens the /connect URL. Never accepts credentials.`;
+const NATIVE_GRANTED_MAX_BYTES = 1_024;
 const SKILLS_DESC = (connectorGuides: boolean) =>
   connectorGuides
     ? "List or read guidance by name, including connector guides; fetch usage only when guidance is missing or a program fails."
@@ -2005,13 +2006,10 @@ export function registerMetaTools(
     "authorize_connector",
     {
       description: ctx.native
-        ? AUTHORIZE_DESC +
-          " Use when a connector’s tools are missing. Granted: " +
-          registry
-            .listConnectors()
-            .map((connector) => connector.id)
-            .join(", ") +
-          "."
+        ? `${AUTHORIZE_DESC} Use when a connector’s tools are missing. Granted: ${connectorList(
+            registry.listConnectors().map((connector) => connector.id),
+            NATIVE_GRANTED_MAX_BYTES,
+          )}.`
         : AUTHORIZE_DESC,
       inputSchema: AUTHORIZE_INPUT,
       outputSchema: AUTHORIZE_OUTPUT,

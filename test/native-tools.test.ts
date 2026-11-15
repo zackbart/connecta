@@ -204,6 +204,37 @@ describe("native tool surface", () => {
     await twin.connecta.close();
   });
 
+  it("bounds the granted roster on authorize_connector with an exact omission count", async () => {
+    const storage = memoryStorage();
+    const ids = Array.from(
+      { length: 70 },
+      (_, index) => `connector_${String(index).padStart(2, "0")}_${"x".repeat(47)}`,
+    );
+    const connecta = createTestConnecta({
+      connectors: ids.map((id) => api(id, { tools: [] })),
+      agents: ["assistant"],
+      pools: { native: { tools: ids, members: ["agent:assistant"], surface: "native" } },
+      publicUrl: BASE,
+      logger: silentLogger,
+      storage,
+      accessTokens: accessTokens(storage),
+    });
+    const token = await issueAgentToken(storage, "assistant");
+    const tools = (await rpc(connecta, token, "native", "tools/list", {})).result.tools as Array<{
+      name: string;
+      description: string;
+    }>;
+    const description = tools.find((tool) => tool.name === "authorize_connector")!.description;
+    const granted = description.slice(description.indexOf("Granted: ") + "Granted: ".length, -1);
+    const shown = granted.split("; ")[0]!.split(", ").slice(0, -1);
+    expect(ids[0]!.length).toBe(60);
+    expect(description.length).toBeLessThanOrEqual(4_096);
+    expect(new TextEncoder().encode(granted).length).toBeLessThanOrEqual(1_024);
+    expect(shown).toEqual(ids.slice(0, shown.length));
+    expect(granted).toBe([...shown, `+${ids.length - shown.length} more`].join(", "));
+    await connecta.close();
+  });
+
   it("routes people to native pools without execute_code and records the admitted pool", async () => {
     const events: ToolCallActivityEvent[] = [];
     const c = createTestConnecta({

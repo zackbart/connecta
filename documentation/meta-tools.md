@@ -620,9 +620,12 @@ siblings. Deeper rules follow on later lines. For example, `call_tool` opens wit
 `Call one read-only tool whose connector.tool address you already know; other read work: execute_read_code.`
 and `search_tools` names catalog lookup, mainly finding a write, and points read
 work into a program. On a writable meta endpoint, `execute_code`'s second line
-gives the three-route lead (`One known read: call_tool. One known write:
-call_destructive_tool. Everything else: execute_code.`); on a read-only
-endpoint its first line names `call_tool` for one known read. Each description
+gives the route lead (`One known read: call_tool. One known write:
+call_destructive_tool. Everything else: execute_code.`). Where
+`execute_read_code` is listed, that lead splits programs instead:
+`Read programs: execute_read_code. Programs that write: execute_code.` On a
+read-only endpoint `execute_code`'s first line names `call_tool` for one known
+read. Each description
 stays within 4,096 characters, where some hosts cut descriptions and stop
 matching search terms, even at the largest inventory the cap admits. The `usage` skill points to those two sources instead
 of repeating them.
@@ -2268,7 +2271,7 @@ see its output; follow `nextAction` on errors and truncated results. A pool
 `description` is placed first, as on meta endpoints.
 
 **Recovery.** `authorize_connector` remains listed even when a catalog fails.
-Its description lists all granted connector ids independently of catalog health.
+Its description lists the granted connector ids in registry order, independently of catalog health; past 1,024 bytes, ids give way to an exact `+N more` count.
 Use it for a missing connector, then refresh the host tool list after repair.
 Endpoint instructions carry the same recovery rule for hosts that fetch them
 separately. A cached list retains the recovery tool; a refreshed list restores

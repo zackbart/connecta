@@ -43,13 +43,13 @@ const policy = (readOnly: boolean) => (readOnly ? READ_ONLY_POLICY : WRITE_POLIC
 const INSTRUCTION_CONNECTORS_MAX_BYTES = 120;
 
 /** Ids in roster order, then an exact count once they pass the byte cap. Ids are ASCII. */
-function connectorList(ids: readonly string[]): string {
+export function connectorList(ids: readonly string[], maxBytes = INSTRUCTION_CONNECTORS_MAX_BYTES): string {
   if (ids.length === 0) return "none";
   const all = ids.join(", ");
-  if (all.length <= INSTRUCTION_CONNECTORS_MAX_BYTES) return all;
+  if (all.length <= maxBytes) return all;
   for (let shown = ids.length - 1; shown > 0; shown--) {
     const line = [...ids.slice(0, shown), `+${ids.length - shown} more`].join(", ");
-    if (line.length <= INSTRUCTION_CONNECTORS_MAX_BYTES) return line;
+    if (line.length <= maxBytes) return line;
   }
   return `+${ids.length} more`;
 }
@@ -131,7 +131,7 @@ export function connectorInventoryTitle(connector: Connector): string | undefine
   return title && addsInformation(connector.id, title) ? inventoryNote(title, 45) : undefined;
 }
 
-/** Leading words that repeat the start of `lead`, as "Billing v4 API" repeats the title "Billing", are dropped. */
+/** Leading words that repeat the start of `lead`, as "Billing v4 API" repeats the title "Billing", are dropped when they close every parenthesis they open. */
 function withoutRepeatedLead(text: string, lead: string): string {
   const leadWords = inventoryWords(lead);
   const tokens = text.split(" ");
@@ -143,12 +143,14 @@ function withoutRepeatedLead(text: string, lead: string): string {
     matched += words.length;
     repeated++;
   }
-  return repeated === 0
+  const stripped = tokens.slice(0, repeated).join(" ");
+  const balanced = stripped.split("(").length === stripped.split(")").length;
+  return repeated === 0 || !balanced
     ? text
     : tokens
         .slice(repeated)
         .join(" ")
-        .replace(/^[\s,;:.\-–—)]+/u, "");
+        .replace(/^[\s,;:.\-–—]+/u, "");
 }
 
 /** A connector's bounded one-line purpose for inventories, or undefined when it only respells the id and title. */
