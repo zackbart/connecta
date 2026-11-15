@@ -130,6 +130,7 @@ export const GITHUB_VERDICTS: HatchDeclaration["verdicts"] = {
 const GITHUB_NAMED = {
   [MERGE]: "merge_pull_request",
   "GET /installation/repositories": "list_scopes",
+  "GET /repos/{owner}/{repo}/pulls": "list_pull_requests",
   "GET /search/repositories": "search_scoped",
   "GET /search/issues": "search_scoped",
   "GET /search/code": "search_scoped",

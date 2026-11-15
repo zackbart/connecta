@@ -219,11 +219,11 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>GitHub (7 tools)</summary>
+<summary>GitHub (8 tools)</summary>
 
 [Setup](#github). **API source:** [Upstream OpenAPI](https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.json).
 
-- **Named reads:** `list_scopes`, `search_scoped`.
+- **Named reads:** `list_pull_requests`, `list_scopes`, `search_scoped`.
 - **Named writes:** `merge_pull_request`.
 - **API reads:** `github_api_details`, `github_api_read`, `github_api_search`.
 - **API writes:** `github_api_write`.
@@ -1015,8 +1015,11 @@ the App's own installation list is `auth_required`.
 The four github_api tools cover a pinned operation index with a bounded reviewed
 repository read and release-write allowlist. All other operations are refused.
 Use search_scoped for account data search and merge_pull_request for merges; the
-corresponding raw routes are refused. Native tools present these same operations
-and enforcement. Each named list defaults to 30 items, maximum 100. Search
+corresponding raw routes are refused. list_pull_requests lists one configured
+repository's pull requests by state (open, closed or all) with the repository's
+Pull requests read permission; search terms stay literal words, so a state filter
+belongs there rather than in an is:open qualifier. Native tools present these same
+operations and enforcement. Each named list defaults to 30 items, maximum 100. Search
 continuation visits one partition page per call, at most twenty partitions and
 ten vendor pages per partition; incomplete_results preserves capped/incomplete
 searches. Cursors bind the configured grants, arguments, limit and deployment storage.
