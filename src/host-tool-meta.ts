@@ -5,12 +5,12 @@ import { resolveMaxResultBytes, type RegistryView } from "./registry.js";
 const HOST_INLINE_RESULT_CHARS = 50_000;
 const HOST_RESULT_CEILING_CHARS = 500_000;
 
-/** Room past a capped value for the truncation notice, program logs and run counts. */
+/** Room past a tool's capped text for a truncation notice or page header, error facts, notes and counts. */
 const RESULT_ENVELOPE_CHARS = 8_192;
 
 export const ALWAYS_LOAD_META = { "anthropic/alwaysLoad": true } as const;
 
-/** The result-size threshold a tool whose results stop at `cap` needs, when a host's default would spill it. */
+/** The result-size threshold a tool whose capped text stops at `cap` needs, when a host's default would spill it. */
 export function resultSizeMeta(cap: number): { "anthropic/maxResultSizeChars"?: number } {
   const chars = cap + RESULT_ENVELOPE_CHARS;
   return chars > HOST_INLINE_RESULT_CHARS

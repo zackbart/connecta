@@ -320,7 +320,7 @@ describe("native tool surface", () => {
       id,
       ...(maxResultBytes === undefined ? {} : { maxResultBytes }),
       listTools: async () => [{ name: "read", description: "Read", annotations: { readOnlyHint: true } }],
-      callTool: async () => ({}),
+      callTool: async () => ({ content: [{ type: "text", text: `${'"\n\u0001'.repeat(40_000)}` }] }),
     });
     const app = createTestConnecta({
       storage,
@@ -331,8 +331,11 @@ describe("native tool surface", () => {
       connectors: [connector("crm"), connector("logs", 900_000), connector("notes", 4_000)],
       pools: {
         native: { tools: ["crm", "logs", "notes"], members: ["agent:assistant"], surface: "native" },
+        nocode: { tools: ["crm", "notes"], members: ["agent:assistant"], surface: "native", executeCode: false },
       },
     });
+    const textChars = (result: { content: Array<{ type: string; text?: string }> }) =>
+      result.content.filter((block) => block.type === "text").reduce((total, block) => total + block.text!.length, 0);
     try {
       const token = await issueAgentToken(storage, "assistant");
       const listed = await rpc(app, token, "native", "tools/list", {});
@@ -346,6 +349,26 @@ describe("native tool surface", () => {
       });
       expect(meta.notes__read).toEqual({ "dev.connecta/address": "notes.read" });
       expect(meta.execute_code).toBeUndefined();
+
+      const nocode = (await rpc(app, token, "nocode", "tools/list", {})).result.tools as Array<Record<string, any>>;
+      const pageLimit = nocode.find((tool) => tool.name === "read_result")!._meta["anthropic/maxResultSizeChars"];
+      expect(pageLimit).toBe(68_192);
+      const first = (await rpc(app, token, "nocode", "tools/call", { name: "crm__read", arguments: {} })).result;
+      expect(textChars(first)).toBeLessThanOrEqual(68_192);
+      const notice = JSON.parse(first.content[0].text.split("\n")[0]);
+      expect(notice).toMatchObject({ truncated: true, nextAction: { tool: "read_result" } });
+      let next: Record<string, unknown> | undefined = notice.nextAction.arguments;
+      let pages = 0;
+      while (next) {
+        const page = (await rpc(app, token, "nocode", "tools/call", { name: "read_result", arguments: next })).result;
+        expect(page.isError).toBeFalsy();
+        expect(textChars(page)).toBeLessThanOrEqual(pageLimit);
+        pages++;
+        next = page.structuredContent.hasMore
+          ? { id: page.structuredContent.resultId, offset: page.structuredContent.nextOffset }
+          : undefined;
+      }
+      expect(pages).toBeGreaterThan(1);
     } finally {
       await app.close();
     }

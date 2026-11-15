@@ -128,14 +128,18 @@ Keys inside `args` belong to the downstream tool and are never dropped.
 
 Two `tools/list` entry `_meta` keys are host-specific hints, not MCP
 semantics. Claude Code reads them; other hosts may ignore them, and claude.ai
-ignores `anthropic/alwaysLoad`. Both come from configuration alone, so they
-stay the same for a given deployment, pool and endpoint, and never vary with catalogs, calls or
-auth state.
+ignores `anthropic/alwaysLoad`. Both come from configuration and the caller's
+admitted connectors alone, never from catalogs, calls or auth state. A
+caller's listing keeps the same hints as long as its admitted connector scope
+holds: `call_tool`, `call_destructive_tool` and `read_result` take the largest
+cap among the connectors the request admits, so two people on plain `/mcp`
+admitted to different connectors may see different values.
 
-| Key                            | Where                                                                                                                                            | Value                                                                                        |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------- |
-| `anthropic/alwaysLoad`         | Exactly one tool on a meta endpoint: `execute_read_code` where it is listed, else `execute_code`. Never on a [native pool](#native-tool-surface) | `true`                                                                                       |
-| `anthropic/maxResultSizeChars` | `call_tool`, `call_destructive_tool` (writable endpoints), `execute_code`, `execute_read_code`, and each native downstream tool                  | The tool's result cap plus 8,192, at most 500,000; present only when that sum exceeds 50,000 |
+| Key                            | Where                                                                                                                                            | Value                                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `anthropic/alwaysLoad`         | Exactly one tool on a meta endpoint: `execute_read_code` where it is listed, else `execute_code`. Never on a [native pool](#native-tool-surface) | `true`                                                                                           |
+| `anthropic/maxResultSizeChars` | `call_tool`, `call_destructive_tool` (writable endpoints), native downstream tools and `read_result`                                             | The direct-call cap plus 8,192, at most 500,000; present only when that sum exceeds 50,000       |
+| `anthropic/maxResultSizeChars` | `execute_code`, `execute_read_code`                                                                                                              | `execute.maxResultChars` plus 12,192, at most 500,000; present only when that sum exceeds 50,000 |
 
 A host that defers MCP tools behind its own tool search loads the
 `anthropic/alwaysLoad` tool upfront. The entry tool is the program route the
@@ -150,15 +154,25 @@ description, which is what the host's tool search indexes, so no tool there
 loads upfront. The person configuring the server can still override the hint.
 
 `anthropic/maxResultSizeChars` raises the host's inline result threshold, which
-otherwise moves any text result over 50,000 characters to a file. The cap is the
-direct-call cap for direct calls and native tools (the connector's
-`maxResultBytes`, else `calls.maxResultBytes`; `call_tool` and
-`call_destructive_tool` use the largest among the connectors the request
-admits), and `execute.maxResultChars` for program tools. The 8,192 extra
-characters cover the truncation notice, program logs and run counts around a
-capped value. The defaults (24,000) stay under the host's line without the key
-([why](#truncated-direct-call-results)), so a default deployment sends neither
-cap hint. `search_tools`, `skills` and `authorize_connector` return results no
+otherwise moves any text result over 50,000 characters to a file. Each value is
+an upper bound on the tool's result text, so a capped result always arrives
+inline:
+
+- A direct call's text is at most its cap (the connector's `maxResultBytes`,
+  else `calls.maxResultBytes`), since a character is at least one UTF-8 byte,
+  plus a truncation notice of under 1,000 characters. A `read_result` page is
+  at most the cap of the call that stashed it plus a one-line header. `call_tool`,
+  `call_destructive_tool` and `read_result` use the largest cap among the
+  connectors the request admits; a native downstream tool uses its own
+  connector's.
+- A program's text is at most `execute.maxResultChars` (the return and emitted
+  text share it), 4,000 for logs (measured as serialized JSON), and the error
+  facts, notes and counts around them. An error's `message` is at most 4,096
+  serialized characters ([code mode](./code-mode.md)).
+
+The 8,192 extra characters cover those notices, headers, facts and counts. The defaults (24,000) stay under the host's line without the key
+([why](#truncated-direct-call-results)), so a default deployment sends no
+size hint. `search_tools`, `skills` and `authorize_connector` return results no
 configured cap bounds and carry no size hint; a read-only endpoint's
 `call_destructive_tool` only refuses, so it carries none either.
 

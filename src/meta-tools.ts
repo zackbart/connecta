@@ -2046,7 +2046,12 @@ export function registerMetaTools(
     if (!ctx.native.executeCode) {
       server.registerTool(
         "read_result",
-        { description: READ_RESULT_DESC, inputSchema: READ_RESULT_INPUT, annotations: READ_ONLY_LOCAL },
+        {
+          description: READ_RESULT_DESC,
+          inputSchema: READ_RESULT_INPUT,
+          ...directResultMeta,
+          annotations: READ_ONLY_LOCAL,
+        },
         authMethod(
           (
             args: { id: string; offset?: number | undefined; page?: number | undefined; maxBytes?: number | undefined },

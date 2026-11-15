@@ -495,7 +495,7 @@ describe("always-loaded agent surface budgets", () => {
       }
     };
     expect(
-      await surfaceMeta({ readOnly: false, calls: { maxResultBytes: 41_000 }, execute: { maxResultChars: 41_000 } }),
+      await surfaceMeta({ readOnly: false, calls: { maxResultBytes: 41_000 }, execute: { maxResultChars: 37_000 } }),
     ).toEqual(Object.fromEntries(Object.keys(GOLDEN).map((name) => [name, undefined])));
     expect(
       await surfaceMeta({ readOnly: false, calls: { maxResultBytes: 45_000 }, execute: { maxResultChars: 600_000 } }),
@@ -520,9 +520,51 @@ describe("always-loaded agent surface budgets", () => {
       authorize_connector: undefined,
       call_tool: 128_192,
       call_destructive_tool: undefined,
-      execute_code: 68_192,
+      execute_code: 72_192,
     });
   });
+
+  it.each([
+    ["at-cap control-character return", { result: "\u0001".repeat(70_000), logs: ['\u0000"\\\n'.repeat(5_000)] }],
+    [
+      "many quote-heavy log entries",
+      { result: { rows: '"'.repeat(59_000) }, logs: Array.from({ length: 5_000 }, () => '"\u001f') },
+    ],
+    [
+      "oversized thrown message",
+      { result: undefined, error: "\u0001".repeat(300_000), logs: ["\u0000".repeat(5_000)] },
+    ],
+    [
+      "oversized TypeError message",
+      { result: undefined, error: `TypeError: ${'"'.repeat(300_000)}`, logs: ["\u0002".repeat(5_000)] },
+    ],
+  ] satisfies Array<[string, ExecuteResult]>)(
+    "keeps a program response within its advertised result threshold: %s",
+    async (_case, outcome) => {
+      const app = makeDeployment({
+        executor: { execute: async () => outcome },
+        readOnly: false,
+        execute: { maxResultChars: 60_000 },
+      });
+      try {
+        const { tools } = await fixedSurface(app);
+        for (const name of ["execute_code", "execute_read_code"]) {
+          const limit = tools.find((tool) => tool.name === name)!._meta["anthropic/maxResultSizeChars"];
+          expect(limit, name).toBe(72_192);
+          const result = await callTool(app, name, { code: "async () => 1", diagnostics: true });
+          const text = (result.content as Array<{ type: string; text?: string }>)
+            .filter((block) => block.type === "text")
+            .reduce((total, block) => total + block.text!.length, 0);
+          expect(text, name).toBeLessThanOrEqual(limit);
+          expect(JSON.stringify(result.structuredContent.logs ?? "").length, name).toBeLessThanOrEqual(4_000);
+          if (result.structuredContent.error)
+            expect(JSON.stringify(result.structuredContent.error.message).length, name).toBeLessThanOrEqual(4_096);
+        }
+      } finally {
+        await app.close();
+      }
+    },
+  );
 
   it("keeps live catalog, call and auth state out of the fixed surface", async () => {
     let failing = true;

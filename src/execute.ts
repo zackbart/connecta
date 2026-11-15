@@ -48,7 +48,14 @@ import {
 } from "./program-result.js";
 import { MAX_EXECUTE_LOG_CHARS, MAX_EXECUTE_RESULT_CHARS, truncateExecuteText } from "./executor-result.js";
 import { ExecutorAdmissionError, ExecutorExecutionError, isAdmittingExecutor } from "./executor-admission.js";
-import { boundedEchoText, clipSerialized, ConnectorCallError, msg, type CallErrorDetails } from "./errors.js";
+import {
+  boundedEchoText,
+  clipSerialized,
+  ConnectorCallError,
+  MAX_TOOL_ERROR_BYTES,
+  msg,
+  type CallErrorDetails,
+} from "./errors.js";
 import { DEFAULT_MAX_WRITES, ProgramWrites, writeStateOf } from "./program-writes.js";
 import { InvocationFailure, InvocationService, timed, type WriteDecision } from "./invocation.js";
 import { guestPrelude, programError, wrapGuestProgram } from "./guest-runtime.js";
@@ -2264,8 +2271,9 @@ function failureResponse(
   },
 ): ToolResult {
   const { logs, emitted, diagnostics, code } = options;
+  const error = typeof code === "string" ? { code, message, retryable: false } : code;
   const result = jsonResult({
-    error: typeof code === "string" ? { code, message, retryable: false } : code,
+    error: { ...error, message: clipSerialized(error.message, MAX_TOOL_ERROR_BYTES) },
     ...(logs ? { logs } : {}),
     ...(emitted ? discardedEmits(emitted) : {}),
     ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
@@ -2500,7 +2508,9 @@ export function registerExecuteTool(
         : authCall(run, []);
       return withinOutputSchema(EXECUTE_OUTPUT, ctx.native ? (nativeRecovery(result) as typeof result) : result);
     });
-  const programResultMeta = resultSizeMeta(resolveBudget(ctx.maxResultChars, MAX_EXECUTE_RESULT_CHARS));
+  const programResultMeta = resultSizeMeta(
+    resolveBudget(ctx.maxResultChars, MAX_EXECUTE_RESULT_CHARS) + MAX_EXECUTE_LOG_CHARS,
+  );
   const newRunner = (config: RunnerConfig) =>
     createExecuteTool(registry, ctx.baseUrl, ctx.executor, ctx.logger, ctx.activity, config);
   server.registerTool(
