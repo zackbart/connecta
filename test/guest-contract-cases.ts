@@ -1767,6 +1767,30 @@ const RETURNED_NOTHING_AFTER_WRITE =
 
 export const CONTRACT_CASES: ContractCase[] = [
   {
+    clauses: "R9",
+    name: "a program that throws after a completed read keeps that read pageable in its call log",
+    code: `async () => {
+      const [read] = await Promise.allSettled([
+        connecta.call("reader.read", { value: "kept-read-value" }),
+        connecta.call("reader.flaky"),
+      ]);
+      return read.value.data.missing.field;
+    }`,
+    follows: (outcome) =>
+      `async () => (await connecta.result(${JSON.stringify((outcome.value.calls as { resultId?: string }[] | undefined)?.[0]?.resultId ?? "")}, { all: true })).data`,
+    check(outcome, state, follow) {
+      expect(outcome.isError, outcome.text).toBe(true);
+      expect(outcome.value.calls).toEqual([
+        { address: "reader.read", outcome: "success", durationMs: expect.any(Number), resultId: expect.any(String) },
+        { address: "reader.flaky", outcome: "failure", durationMs: expect.any(Number) },
+      ]);
+      expect(JSON.stringify(outcome.value.calls)).not.toContain("kept-read-value");
+      expect(outcome.value.note).toContain("calls[].resultId");
+      expect(required(follow).result).toEqual({ echo: "kept-read-value" });
+      expect(state.calls["reader.read"]).toBe(1);
+    },
+  },
+  {
     clauses: "R1, V5",
     name: "INV-9: a program that wrote and returned nothing says so and sends the write once",
     code: `async () => { await connecta.call("reader.wipe"); }`,

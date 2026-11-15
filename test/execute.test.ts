@@ -1409,3 +1409,107 @@ it.each([
   await new Promise((resolve) => setTimeout(resolve, 5));
   expect(reads).toHaveLength(1);
 });
+
+describe("program call log", () => {
+  const ledger: Connector = connectorWith({
+    id: "ledger",
+    kind: "api",
+    tools: [
+      { name: "get", annotations: { readOnlyHint: true } },
+      { name: "deny", annotations: { readOnlyHint: true } },
+      { name: "record", annotations: { readOnlyHint: false } },
+    ],
+    call: async (name, args) => {
+      if (name === "deny") throw new ConnectorCallError("provider_permission_denied", "Forbidden");
+      return { tool: name, echo: (args as { id?: string }).id };
+    },
+  });
+  type Logged = { address: string; outcome: string; durationMs: number; resultId?: string };
+  const body = (out: Awaited<ReturnType<ReturnType<typeof createExecuteTool>>>) =>
+    required(out.structuredContent) as { calls?: Logged[]; note?: string; error?: { code: string } };
+
+  it("keeps a completed read pageable when one call of a Promise.all rejects", async () => {
+    const registry = makeRegistry([ledger]);
+    const out = await createExecuteTool(
+      registry,
+      BASE,
+      scriptedExecutor(async (fns) => {
+        const call = required(fns.call);
+        return await Promise.all([call("ledger.get", { id: "secret-arg-7" }), call("ledger.deny", {})]);
+      }),
+      silentLogger,
+    )({ code: "" });
+    expect(out.isError).toBe(true);
+    const { calls, note } = body(out);
+    expect(calls).toEqual([
+      { address: "ledger.get", outcome: "success", durationMs: expect.any(Number), resultId: expect.any(String) },
+      { address: "ledger.deny", outcome: "failure", durationMs: expect.any(Number) },
+    ]);
+    expect(note).toContain("calls[].resultId");
+    expect(JSON.stringify(calls)).not.toContain("secret-arg-7");
+    const resultId = required(required(calls)[0]).resultId;
+    const paged = await createExecuteTool(
+      registry,
+      BASE,
+      scriptedExecutor((fns) => required(fns.result)(resultId, { all: true })),
+      silentLogger,
+    )({ code: "" });
+    expect(paged.isError).toBeFalsy();
+    const page = required(paged.structuredContent).result as { text: string; hasMore: boolean };
+    expect(page.hasMore).toBe(false);
+    expect(JSON.parse(page.text)).toEqual({ tool: "get", echo: "secret-arg-7" });
+  });
+
+  it("logs a completed write with its outcome only when the program throws", async () => {
+    const out = await createExecuteTool(
+      makeRegistry([ledger]),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        await required(fns.call)("ledger.record", { id: "w" });
+        throw new TypeError("x is undefined");
+      }),
+      silentLogger,
+    )({ code: "" });
+    expect(out.isError).toBe(true);
+    expect(body(out).calls).toEqual([{ address: "ledger.record", outcome: "success", durationMs: expect.any(Number) }]);
+    expect(body(out).note ?? "").not.toContain("calls[].resultId");
+  });
+
+  it("returns the log without result ids from a successful program, and omits it without calls", async () => {
+    const execute = (run: (fns: ExecutorProvider["fns"]) => Promise<unknown>) =>
+      createExecuteTool(makeRegistry([ledger]), BASE, scriptedExecutor(run), silentLogger)({ code: "" });
+    const succeeded = await execute(async (fns) => {
+      await required(fns.call)("ledger.get", {}).catch(() => {});
+      await required(fns.call)("ledger.missing", {}).catch(() => {});
+      return "done";
+    });
+    expect(succeeded.isError).toBeFalsy();
+    expect(body(succeeded).calls).toEqual([
+      { address: "ledger.get", outcome: "success", durationMs: expect.any(Number) },
+      { address: "ledger.missing", outcome: "refused", durationMs: expect.any(Number) },
+    ]);
+    const silent = await execute(async () => "none");
+    expect(silent.structuredContent).not.toHaveProperty("calls");
+  });
+
+  it("keeps budget_exceeded terminal with the log and no retained result", async () => {
+    const out = await createExecuteTool(
+      makeRegistry([ledger]),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        for (let i = 0; i < 3; i++) await required(fns.call)("ledger.get", {});
+        return "unreachable";
+      }),
+      silentLogger,
+      undefined,
+      { maxHostCalls: 2 },
+    )({ code: "" });
+    expect(out.isError).toBe(true);
+    expect(body(out).error?.code).toBe("budget_exceeded");
+    expect(out.structuredContent).not.toHaveProperty("result");
+    expect(body(out).calls).toEqual([
+      { address: "ledger.get", outcome: "success", durationMs: expect.any(Number) },
+      { address: "ledger.get", outcome: "success", durationMs: expect.any(Number) },
+    ]);
+  });
+});

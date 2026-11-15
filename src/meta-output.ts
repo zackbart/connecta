@@ -53,6 +53,17 @@ export const EXECUTE_OUTPUT = declaredOutput(
         emitted: z.number().int().nonnegative().optional(),
         emittedDiscarded: z.number().int().nonnegative().optional(),
         diagnostics: z.record(z.string(), z.unknown()).optional(),
+        calls: z
+          .array(
+            z.object({
+              address: z.string(),
+              outcome: z.enum(["success", "failure", "unknown", "refused"]),
+              durationMs: z.number().int().nonnegative(),
+              resultId: z.string().optional(),
+            }),
+          )
+          .optional(),
+        callsOmitted: z.number().int().positive().optional(),
       })
       .passthrough(),
   ),
