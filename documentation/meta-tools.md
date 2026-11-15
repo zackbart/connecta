@@ -2040,7 +2040,8 @@ at the downstream boundary, even when the agent may see the error's message.
 
 A pool set to `surface: "native"` lists each downstream tool as its own MCP
 tool instead of the six meta-tools, for clients that already defer tools behind
-their own search (Eve, Claude Code with tool search). The meta surface stays
+their own search (Eve, Claude Code with tool search) or run their own code mode
+([host settings](./deploying.md#hosts-that-run-their-own-code-mode)). The meta surface stays
 the default everywhere. Plain `/mcp` is always meta for a maintainer; a person
 routed there by their one pool membership gets that pool's surface.
 

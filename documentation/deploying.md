@@ -272,6 +272,167 @@ write tools from search and describe and refuses every write call; provider
 guides may still name those tools. A pool serves exactly its `tools` to its
 `members`. See [pools](./auth.md#pools) before changing `readOnly`.
 
+## Connect an MCP host
+
+Every host gets the pool's endpoint URL and one credential: an agent token at
+`/agent/<pool>`, or the host's own OAuth sign-in at `/mcp` or `/mcp/<pool>`.
+The rules below cover what differs between hosts. The examples name the
+host's server entry `crm`.
+
+Host behavior below was observed in November 2026. Hosts change it without
+notice, so check the host's current documentation before you rely on a limit
+or a version.
+
+### Hosts that run their own code mode
+
+Some hosts put every MCP tool inside their own JavaScript runner: opencode's
+code mode (on by default in v2), Codex models whose tool mode is
+`code_mode_only`, Goose's code mode, and the OpenAI Responses API's
+programmatic tool calling. On the default meta surface the model then writes
+a Connecta program inside the host's program. Let only one layer run programs:
+
+- **Serve the host a native pool.** Set `surface: "native"` on the pool in
+  deployment code, as shown in [Native tool surface](./meta-tools.md#native-tool-surface).
+  The host's own runner then calls each downstream tool directly. Add
+  `executeCode: false` to leave Connecta's `execute_code` out of the list.
+- **Or take the server out of the host's code mode.** opencode: set
+  `"codemode": false` on the server. Codex: list the server's namespace
+  under `direct_only_tool_namespaces`.
+
+The surface is set per pool in deployment code. Connecta ignores URL query
+parameters such as `?codemode=false`, which opencode adds to remote URLs, so
+neither a URL nor a host can choose the surface. Give a code-mode host its own
+pool if other hosts share the meta pool.
+
+One small evaluation found the native surface passed as many tasks as the
+default meta surface, or more, with about half the input tokens. That run used
+one model and two repeats, so treat it as early evidence. A full comparison is
+still pending.
+
+**opencode (v2).** Every tool runs unprompted by default, because the default
+permission rule allows everything. Add `ask` rules for the tools that can
+write. A tool's action is `<server>_<tool>`, and the last matching rule wins.
+Set `"protocol": "auto"` so opencode uses MCP 2026-07-28. On its default
+legacy protocol, opencode never receives Connecta's sign-in prompts. For a
+meta pool:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "crm": {
+        "type": "remote",
+        "url": "https://connecta.example.com/mcp/tickets",
+        "codemode": false,
+        "protocol": "auto"
+      }
+    }
+  },
+  "permissions": [
+    { "action": "crm_call_destructive_tool", "resource": "*", "effect": "ask" },
+    { "action": "crm_execute_code", "resource": "*", "effect": "ask" }
+  ]
+}
+```
+
+On a native pool, native write tools contain `__WRITE__`, so ask for
+`crm_*__WRITE__*` and, unless the pool sets `executeCode: false`,
+`crm_execute_code`. These rules also apply to calls made inside opencode's
+code mode. Choosing "Always allow" saves an allow rule for that tool at
+project scope.
+
+**Codex.** The namespace is `mcp__` plus the server's name in the Codex
+configuration:
+
+```toml
+[features.code_mode]
+direct_only_tool_namespaces = ["mcp__crm"]
+```
+
+**Goose code mode.** Calls made inside a Goose program can skip Goose's
+per-call approval (this comes from reading Goose's source, not from a test).
+Rely on the pool's `readOnly` and `writes` for protection.
+
+### claude.ai and Claude Code
+
+- **Choose a descriptive connector display name.** claude.ai chat never shows
+  the model server instructions. It always defers tools and lists them as
+  `mcp__<DisplayName>__<tool>`, so the display name is the main clue the
+  model has before it searches. Name the work, such as `Customer records and
+  tickets` rather than `crm`. Never put an apostrophe or a dot in the name:
+  either one has stopped the connector's tools from appearing.
+- **Expect approvals to reset when the roster changes.** `execute_code`'s
+  description lists the connector roster, and a native pool's
+  `authorize_connector` description lists granted connector ids. Adding,
+  removing or retitling a connector changes that text. claude.ai keys "Always
+  allow" grants to a tool's description, so users may need to approve again.
+- **Expect stale tool lists after a deploy.** claude.ai caches a connector's
+  tool list for up to about a day and ignores change notifications.
+  "Refresh tools list" fetches the list again, but conversations that are
+  already open keep the old one.
+- **Cowork** gets connector sign-in as a link in the result, not a prompt it
+  would never show. This needs no configuration; see
+  [authorization recovery](./meta-tools.md#authorization-recovery).
+- **Claude Code** shows only tool names and server instructions before tool
+  search, and cuts instructions at 4,096 characters. Connecta puts a pool's
+  `description` first, so keep it short and specific.
+
+### Cursor
+
+- **OAuth uses dynamic client registration only.** Cursor registers a
+  `cursor://` custom-scheme redirect, plus `http://localhost:8787/callback`
+  for the desktop app and `https://www.cursor.com/agents/mcp/oauth/callback`
+  for web and cloud agents. Allow all three in your authorization server's
+  registration settings, for example
+  [Managed OAuth's allowed redirect URIs](./auth.md#cloudflare-access-on-workers).
+  No current Cursor source confirms the exact `cursor://` string, so read it
+  from a failed registration if one is refused.
+- **Give a static agent token only at `/agent/<pool>`.** When OAuth discovery
+  succeeds, Cursor starts OAuth and ignores a configured `Authorization`
+  header. Agent endpoints publish no OAuth metadata, so the header is used.
+  At `/mcp` and `/mcp/<pool>`, use Cursor's OAuth sign-in instead.
+- **Keep the server name short.** Cursor requires the server name plus the
+  tool name to stay under 60 characters. On a meta pool the longest tool is
+  `call_destructive_tool` (21 characters), so use a server name of at most 38.
+  On a native pool tool names reach 48 characters, so use at most 11.
+- Cursor's CLI ends a tool call at 60 seconds, like ChatGPT.
+
+### VS Code and GitHub Copilot
+
+- **Use Copilot CLI 1.0.110 or later.** VS Code's default agent runs on the
+  same Copilot runtime. Earlier versions failed every result with a top-level
+  `skills`, `tools` or `messages` key, which includes Connecta's `skills` and
+  `search_tools` results.
+- The default agent does not show server instructions unless the server is
+  on its allowlist. The Copilot CLI flag
+  `--allow-all-mcp-server-instructions` includes them; VS Code has no such
+  setting. Tool descriptions carry Connecta's routing either way.
+
+### Gemini CLI
+
+- The `wait_for_previous` argument Gemini CLI adds to every call is dropped
+  before validation, as described under [host-injected keys](./meta-tools.md#the-meta-tools).
+- Gemini CLI adds server instructions to the model's context only in trusted
+  folders. Trust the project folder for Connecta's routing text to reach the
+  model.
+- OAuth uses dynamic client registration only, and Gemini CLI registers again
+  on each `/mcp auth`. Configure the exact endpoint URL: the advertised
+  `resource` must match it, so watch for trailing slashes.
+- Gemini CLI runs tool calls in parallel by default, so two writes can run at
+  the same time.
+
+### ChatGPT
+
+- **Keep each call under 60 seconds.** ChatGPT ends every tool call at 60
+  seconds and may send it again. Connecta's default response ceiling of 55
+  seconds (`execute.watchdogMs`) fits, so do not raise it on an endpoint
+  ChatGPT uses. Keep program work short, and never resend a write after a
+  timeout ([response ceiling](./code-mode.md#cancellation-and-limits)).
+- ChatGPT treats any tool without `readOnlyHint: true` as a write and asks
+  for confirmation. Connecta's read tools carry the hint, so only
+  `call_destructive_tool`, native write tools and a writable endpoint's
+  `execute_code` ask.
+
 ## Verify and diagnose
 
 With the deployment running, replace the placeholder with its saved agent
