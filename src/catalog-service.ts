@@ -183,13 +183,36 @@ const SERVICE_NAMES = [
 ];
 
 /**
- * Leading verbs that ask to read. A query led by one, or with no word of
- * `WRITE_INTENT`, ranks read rows above write rows within each relevance
+ * Leading verbs that ask to read. A query led by one, or with no word that
+ * `statesWrite`, ranks read rows above write rows within each relevance
  * tier; writes stay on the page.
  */
 const READ_INTENT = /^(?:list|get|find|search|show|read|fetch|count)$/;
-const WRITE_INTENT =
-  /^(?:create|send|post|delete|remove|update|add|archive|cancel|log|share|reply|draft|write|mark|publish|set|move|upload|edit|rename|trash|complete|schedule|forward|like|follow|retweet|invite|merge|deploy|pause|restore|apply|tag|categorize|save|submit|transfer|convert|refund|approve|book|put|insert|append|assign|copy|duplicate|revoke|disable|enable|close|reopen|import|replace|accept|decline|respond|rsvp|unarchive)$/;
+const WRITE_VERBS = new Set(
+  "create send post delete remove update add archive cancel log share reply draft write mark publish set move upload edit rename trash complete schedule forward like follow retweet invite merge deploy pause restore apply tag categorize save submit transfer convert refund approve book put insert append assign copy duplicate revoke disable enable close reopen import replace accept decline respond rsvp unarchive".split(
+    " ",
+  ),
+);
+
+/**
+ * A write verb or its present-tense inflection: updates, copies, updating, logging.
+ * Past participles describe records ("files uploaded today"), so they never count.
+ */
+function statesWrite(term: string): boolean {
+  if (WRITE_VERBS.has(term)) return true;
+  const bases: string[] = [];
+  for (const [suffix, ending] of [
+    ["ies", "y"],
+    ["es", ""],
+    ["s", ""],
+    ["ing", ""],
+    ["ing", "e"],
+  ] as const)
+    if (term.length > suffix.length + 2 && term.endsWith(suffix)) bases.push(term.slice(0, -suffix.length) + ending);
+  return bases.some(
+    (base) => WRITE_VERBS.has(base) || (/([b-df-hj-np-tv-z])\1$/.test(base) && WRITE_VERBS.has(base.slice(0, -1))),
+  );
+}
 /** Name words that state an action, never a resource. */
 const ACTION_WORD = /^(?:list|get|find|search|show|read|fetch|count|create|update|delete)$/;
 
@@ -2101,7 +2124,7 @@ export class CatalogService {
       const readIntent =
         this.markUncallableWrites ||
         READ_INTENT.test(terms.find((term) => !identityTerms.has(term)) ?? "") ||
-        !terms.some((term) => WRITE_INTENT.test(term));
+        !terms.some(statesWrite);
       const readFirst = (match: (typeof matches)[number]) =>
         Number(
           readIntent &&

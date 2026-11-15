@@ -480,6 +480,7 @@ describe("search_tools", () => {
       "list project settings",
       "hosting show project settings",
       "project settings changed this week",
+      "project settings updated last week",
     ]) {
       expect(await ranked(query), query).toEqual([
         "get_project:read",
@@ -488,7 +489,13 @@ describe("search_tools", () => {
       ]);
     }
     // A write verb anywhere leaves lexical order alone, unless a read verb leads.
-    for (const query of ["update project settings", "project settings delete"])
+    for (const query of [
+      "update project settings",
+      "project settings delete",
+      "updating project settings",
+      "updates to project settings",
+      "deleting project settings",
+    ])
       expect((await ranked(query))[0], query).toMatch(/:write$/);
     expect((await ranked("list project settings to update"))[0]).toBe("get_project:read");
     expect((await ranked("edit project settings"))[0]).toBe("update_project_settings:write");
