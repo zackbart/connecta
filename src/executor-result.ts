@@ -12,8 +12,7 @@ export function serializeResultText(value: unknown): string {
   return serialized === undefined ? String(value) : serialized;
 }
 
-// Only program returns carry it, and every surface running programs lists execute_code.
-const TRUNCATION_HINT = `filter/map/slice data inside ${META_ROUTES.program} and return only what you need`;
+const truncationHint = (program: string) => `filter/map/slice data inside ${program} and return only what you need`;
 
 /**
  * Shape the over-cap notice so the **serialized envelope** fits the same cap
@@ -30,7 +29,7 @@ function truncationEnvelope(
   text: string,
   maxChars: number,
   totalChars = text.length,
-  hint = TRUNCATION_HINT,
+  hint = truncationHint(META_ROUTES.program),
 ): {
   truncated: true;
   preview: string;
@@ -59,8 +58,10 @@ export function guardExecuteResultValue(
   value: unknown,
   maxChars = MAX_EXECUTE_RESULT_CHARS,
   hintPrefix?: string,
+  program: string = META_ROUTES.program,
 ): unknown {
-  const hint = hintPrefix ? `${hintPrefix} ${TRUNCATION_HINT}` : TRUNCATION_HINT;
+  const ownHint = truncationHint(program);
+  const hint = hintPrefix ? `${hintPrefix} ${ownHint}` : ownHint;
   const text = serializeResultText(value);
   if (text.length <= maxChars) return value;
   // A custom executor may already have guarded this value at a larger cap.
@@ -69,7 +70,7 @@ export function guardExecuteResultValue(
     const prior = value as { truncated?: unknown; preview?: unknown; totalChars?: unknown; hint?: unknown };
     if (
       prior.truncated === true &&
-      prior.hint === TRUNCATION_HINT &&
+      prior.hint === ownHint &&
       typeof prior.preview === "string" &&
       typeof prior.totalChars === "number" &&
       Number.isSafeInteger(prior.totalChars) &&
