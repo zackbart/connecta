@@ -3880,7 +3880,8 @@ The Node listener counts active ServerResponses per socket. Once shutdown starts
 each finish/close removes its response; the last completion calls `destroySoon`
 to flush queued bytes and close the connection. This also covers SSE whose
 headers were sent before shutdown and pipelined responses waiting behind an
-inflight response. Normal keepalive remains Node-owned until shutdown. Idle and
+inflight response. Until shutdown, idle sockets close after `keepAliveTimeoutMs`
+(default 100 s). Idle and
 never-admitted sockets retain their separate close paths, and the configured
 shutdown deadline still forces exit 1 for work that never completes.
 

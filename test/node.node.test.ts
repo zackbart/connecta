@@ -275,6 +275,75 @@ describe("Node listen adapter", () => {
     });
   });
 
+  describe("idle keep-alive connections", () => {
+    const serve = async (keepAliveTimeoutMs?: number) => {
+      const core = createTestConnecta({ connectors: [] });
+      const server = listen(core, {
+        port: 0,
+        host: "127.0.0.1",
+        gracefulShutdown: false,
+        ...(keepAliveTimeoutMs === undefined ? {} : { keepAliveTimeoutMs }),
+      });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      const stop = async () => {
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await core.close();
+      };
+      return { server, port: address.port, stop };
+    };
+    const health = async (socket: Socket) => {
+      let head = "";
+      const onData = (chunk: Buffer) => (head += chunk.toString("latin1"));
+      socket.on("data", onData);
+      socket.write("GET /health HTTP/1.1\r\nHost: connecta.example\r\n\r\n");
+      await vi.waitFor(() => expect(head).toMatch(/\r\n\r\n[\s\S]*\S/));
+      socket.removeListener("data", onData);
+      return head;
+    };
+
+    it("outlasts the 90 s idle pools of common clients, so they close first", async () => {
+      const { server, port, stop } = await serve();
+      try {
+        expect(server.keepAliveTimeout).toBe(100_000);
+        expect(server.headersTimeout).toBeLessThanOrEqual(server.requestTimeout);
+        const socket = connect(port, "127.0.0.1");
+        await once(socket, "connect");
+        expect(await health(socket)).toMatch(/^Keep-Alive: timeout=100\r$/m);
+        socket.destroy();
+      } finally {
+        await stop();
+      }
+    });
+
+    it("reuses a socket within keepAliveTimeoutMs and closes it once idle past that", async () => {
+      const { server, port, stop } = await serve(200);
+      try {
+        expect(server.keepAliveTimeout).toBe(200);
+        const socket = connect(port, "127.0.0.1");
+        await once(socket, "connect");
+        const closed = once(socket, "close");
+        expect(await health(socket)).toMatch(/^HTTP\/1\.1 200 /);
+        expect(await health(socket)).toMatch(/^HTTP\/1\.1 200 /);
+        await closed;
+      } finally {
+        await stop();
+      }
+    });
+
+    it.each([0, -1, 1.5, Number.NaN, 24 * 60 * 60 * 1000 + 1])(
+      "refuses keepAliveTimeoutMs %s",
+      (keepAliveTimeoutMs) => {
+        const core = createTestConnecta({ connectors: [] });
+        expect(() => listen(core, { port: 0, gracefulShutdown: false, keepAliveTimeoutMs })).toThrow(
+          /keepAliveTimeoutMs/,
+        );
+      },
+    );
+  });
+
   describe("request URL validation", () => {
     const send = async (
       port: number,

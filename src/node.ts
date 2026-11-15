@@ -14,6 +14,9 @@ import { ConfigError } from "./config-schema.js";
 const DEFAULT_MAX_BODY_BYTES = CONFIG_DEFAULTS.admission.requests.maxBodyBytes;
 /** Sixteen full default bodies; well above ordinary MCP traffic, whose bodies are small. */
 const DEFAULT_MAX_IN_FLIGHT_BODY_BYTES = 64 * 1024 * 1024;
+/** Outlasts the 90 s idle pools of hyper, Go and cloudflared, so the client closes an idle socket first. */
+const DEFAULT_KEEP_ALIVE_TIMEOUT_MS = 100_000;
+const MAX_KEEP_ALIVE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
 
 export interface ListenOptions {
   port: number;
@@ -30,6 +33,13 @@ export interface ListenOptions {
    * `maxBodyBytes` when larger. May not be below `maxBodyBytes`.
    */
   maxInFlightBodyBytes?: number;
+  /**
+   * How long an idle keep-alive connection stays open for its next request.
+   * Default 100s, longer than common client and proxy idle pools, so a pooled
+   * socket is not reused just as the server closes it. Node's own 5s default
+   * loses such a request as a reset. At most one day.
+   */
+  keepAliveTimeoutMs?: number;
   /**
    * Stop accepting connections on SIGTERM/SIGINT, let in-flight requests
    * finish, drain deferred work, then exit. Default true — Docker sends
@@ -136,6 +146,14 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
   if (!Number.isSafeInteger(maxInFlightBodyBytes) || maxInFlightBodyBytes < 1 || maxInFlightBodyBytes < maxBodyBytes) {
     throw new ConfigError("listen: maxInFlightBodyBytes must be a whole number of bytes, at least maxBodyBytes.");
   }
+  const keepAliveTimeoutMs = opts.keepAliveTimeoutMs ?? DEFAULT_KEEP_ALIVE_TIMEOUT_MS;
+  if (
+    !Number.isSafeInteger(keepAliveTimeoutMs) ||
+    keepAliveTimeoutMs < 1 ||
+    keepAliveTimeoutMs > MAX_KEEP_ALIVE_TIMEOUT_MS
+  ) {
+    throw new ConfigError("listen: keepAliveTimeoutMs must be a whole number of milliseconds from 1 to one day.");
+  }
   let inFlightBodyBytes = 0;
 
   // Node has no ExecutionContext, so deferred work (activity sinks) would
@@ -168,7 +186,7 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
         // finish means the response was handed to the socket; destroySoon
         // flushes its queued bytes before closing, including an SSE trailer.
         // Count pipelined responses so an earlier finish cannot cut a later
-        // admitted response off. Before shutdown Node's keepalive is unchanged.
+        // admitted response off.
         if (shuttingDown) socket.destroySoon();
       }
     };
@@ -269,6 +287,7 @@ export function listen(connecta: Connecta, portOrOptions: number | ListenOptions
       }
     })();
   });
+  server.keepAliveTimeout = keepAliveTimeoutMs;
 
   if (opts.gracefulShutdown !== false) {
     const timeoutMs = opts.shutdownTimeoutMs ?? 10_000;
