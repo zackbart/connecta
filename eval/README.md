@@ -210,15 +210,15 @@ structural features that drive ranking are reproduced on purpose:
   a microblog.
 - `studio`: a single 300-tool project connector with templated descriptions,
   an internal handbook whose answers are in its description only, single-account
-  Google providers, Vercel and Cloudflare (raw-API hatches with no named tool for
-  projects, deployments or DNS).
+  Google providers, Vercel (a named project list; raw-API hatch only for
+  deployments) and Cloudflare (raw-API hatch only for DNS and Workers).
 - `product`: four accounts of one subscriptions catalog (one a subset, so not
   every catalog is identical), Hyphen-Case analytics, two issue trackers, two
   warehouses, two app databases, a raw-API-only messaging connector, three Stripe
   accounts, GitHub, Granola, Intercom, Cloudflare and Vercel.
 
-**Queries** (`retrieval/queries.ts`): 143 main queries (intent 54, precise 42,
-write 16, hatch 15, vague 8, multi-account 8) and 32 held-out queries. An answer
+**Queries** (`retrieval/queries.ts`): 143 main queries (intent 54, precise 45,
+write 16, hatch 12, vague 8, multi-account 8) and 32 held-out queries. An answer
 `conn*.tool` accepts `conn` and every `conn_<account>`; a query that names an
 account accepts only that account's tools, never the default account's. Every
 accepted answer must answer the query on its own, judged from the fixture's
