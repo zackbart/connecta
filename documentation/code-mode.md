@@ -242,8 +242,10 @@ const page = await connecta.search({
 **S1.** Returns the same flat page as top-level `search_tools`:
 `{ catalogErrors, tools, total, offset, limit, hasMore }`, plus `nextOffset`
 when more remains and `matchMode: "partial"` when no tool matched every term.
-Read `catalogErrors` and any `absence` before selecting a tool; `absence` is
-present only when the query names a service no configured connector serves. Catalog failures
+Read `catalogErrors` and any `absence` before selecting a tool. `absence` is
+present only for an explicit `connector` scope that names no configured
+connector, or an unscoped query that names a recognized service no configured
+connector serves. Catalog failures
 carry recovery actions at the top of the page; an absent service returns no
 lookalikes. Both paths use only the caller's endpoint/pool and grants. Ranking is
 [lexical discovery](./meta-tools.md#lexical-discovery)'s, and rows expose

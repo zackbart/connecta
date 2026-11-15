@@ -288,8 +288,8 @@ const BUDGETS = {
   },
   // Open summaries: the full contracts stay on the server, in meta-output.ts.
   outputSchema: { search_tools: 400, authorize_connector: 110, execute_code: 170, execute_read_code: 170 },
-  // Grew 161 characters to name connecta.budget() beside the host-call rule.
-  usage: 5_690,
+  // Measured 5,738: connecta.budget() beside the host-call rule, then guideRequired called advisory with conditional search fields.
+  usage: 5_760,
   // Rows carry only tool facts; connector title and guide sit once in the page's connectors map.
   searchRow: { default: 240, compact: 520 },
   searchPage: { default: 470, compact: 730 },
