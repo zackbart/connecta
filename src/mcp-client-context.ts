@@ -48,7 +48,7 @@ export function bindMcpClient(
   }
 }
 
-const USER_AGENT_PRODUCT = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+)(?:\/([!#$%&'*+.^_`|~0-9A-Za-z-]+))?/;
+const USER_AGENT_PRODUCT = /^[ \t]*([!#$%&'*+.^_`|~0-9A-Za-z-]+)(?:\/([!#$%&'*+.^_`|~0-9A-Za-z-]+))?(?:[ \t]|$)/;
 
 /**
  * The leading `product/version` of a User-Agent header. A legacy (2025-era)
@@ -57,7 +57,7 @@ const USER_AGENT_PRODUCT = /^([!#$%&'*+.^_`|~0-9A-Za-z-]+)(?:\/([!#$%&'*+.^_`|~0
  * self-declared client identity on its later calls.
  */
 export function userAgentClient(header: string | null): { name: string; version?: string } | undefined {
-  const product = header === null ? null : USER_AGENT_PRODUCT.exec(header.trim());
+  const product = header === null ? null : USER_AGENT_PRODUCT.exec(header);
   if (!product) return undefined;
   return { name: product[1]!, ...(product[2] !== undefined ? { version: product[2] } : {}) };
 }

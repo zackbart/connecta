@@ -207,17 +207,21 @@ it.each([false, true])(
             name: "save",
             description: "Save a note",
             annotations: { readOnlyHint: false },
-            handler: () => ({ saved: true }),
+            handler: () => {
+              if (saveFails) throw new Error("planted-write-failure");
+              return { saved: true };
+            },
           },
         ],
       }),
     ]);
+    let saveFails = false;
     const program = (calls: number, readProgram = false) =>
       createExecuteTool(
         registry,
         "https://connecta.test",
         scriptedExecutor(async (fns) => {
-          if (!readProgram) await fns.call!("notes.save", { text: "planted-argument" });
+          if (!readProgram) await fns.call!("notes.save", { text: "planted-argument" }).catch(() => undefined);
           for (let n = readProgram ? 0 : 1; n < calls; n++) await fns.call!("notes.read", {});
           return "planted-return";
         }),
@@ -245,6 +249,15 @@ it.each([false, true])(
     expect(rows.filter((row) => row.kind === undefined).map((row) => row.address)).toEqual([
       "notes.save",
       "notes.read",
+    ]);
+
+    rows.splice(0);
+    saveFails = true;
+    const unknown = await program(3);
+    saveFails = false;
+    expect(unknown.structuredContent).toMatchObject({ error: { code: "write_outcome_unknown" } });
+    expect(rows.filter((row) => row.kind === "operation")).toMatchObject([
+      { errorCode: "budget_exceeded", operation: { writes: { succeeded: 0, failed: 0, unknown: 1 } } },
     ]);
 
     rows.splice(0);

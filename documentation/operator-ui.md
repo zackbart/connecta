@@ -864,8 +864,10 @@ enters the row.
 
 A program that a host-call, notice or emission-attempt budget ended always adds
 its one `program` row with `errorCode: "budget_exceeded"`, even with
-`operations` off. Its `hostCalls.attempted` exceeds `admitted` when the
-host-call budget stopped it. Write-budget refusals are per-call refusals, not
+`operations` off. The row keeps that code even when the tool result reports
+`write_outcome_unknown` for a write the run sent; `writes.unknown` counts those
+writes. Its `hostCalls.attempted` exceeds `admitted` when the host-call budget
+stopped it. Write-budget refusals are per-call refusals, not
 terminal stops, and stay ordinary call rows. Custom history readers must exclude
 operation rows from call/friction counts. The public kind union adds
 `"operation"`; exhaustive consumers may need a new case even when their

@@ -1378,7 +1378,8 @@ payload-free _by construction_ means the event has nowhere to put a payload.
 **V4.** By default the execution and its utility operations emit no events,
 except a terminal budget stop: a run that a host-call, notice or
 emission-attempt budget ended adds one `program` row with
-`errorCode: "budget_exceeded"` whether or not operation history is on.
+`errorCode: "budget_exceeded"` whether or not operation history is on, even
+when the result reports an unknown write instead (counted in `writes.unknown`).
 With `activityHistory({ operations: true })`, each executed search, describe,
 result page and skill read adds a `kind: "operation"` row, and every whole
 program adds one `program` row with its route as `source` (`execute_code` or

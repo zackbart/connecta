@@ -2,7 +2,7 @@ import { specTypeSchemas, type ServerContext } from "@modelcontextprotocol/serve
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
-import { bindMcpClient, type McpClientContext } from "../src/mcp-client-context.js";
+import { bindMcpClient, userAgentClient, type McpClientContext } from "../src/mcp-client-context.js";
 import { META_TOOL_NAMES } from "../src/meta-tool-names.js";
 import { READ_PROGRAM_SOURCE } from "../src/tool-safety.js";
 import { checkClientActivity, modernRequest as modern } from "./fixtures/client-identity.js";
@@ -32,6 +32,38 @@ describe("2026-07-28 core", () => {
     });
     bindMcpClient({ mcpReq: {} } as ServerContext, client);
     expect(client).toEqual({});
+  });
+
+  it("INV-6: reads only a complete leading User-Agent product followed by a token boundary", () => {
+    expect(
+      ["assistant/1.2", " assistant/1.2 (os)", "assistant/1.2\tnext/2", "Assistant-User", "assistant-host"].map(
+        userAgentClient,
+      ),
+    ).toEqual([
+      { name: "assistant", version: "1.2" },
+      { name: "assistant", version: "1.2" },
+      { name: "assistant", version: "1.2" },
+      { name: "Assistant-User" },
+      { name: "assistant-host" },
+    ]);
+    for (const header of [
+      "assistant/1.2é",
+      "assistanté/1.2",
+      "assistant/1.2\u0000",
+      "assistant\u0001/1.2",
+      "assistant/1.2\r\nforged",
+      "assistant/1.2\u00a0os",
+      "assistant//1.2",
+      "assistant/",
+      "/1.2",
+      "assistant/1.2/3",
+      "assistant(os)",
+      "assistant;1.2",
+      "",
+      "💻/1",
+      null,
+    ])
+      expect(userAgentClient(header), JSON.stringify(header)).toBeUndefined();
   });
 
   it("INV-6: withholds invalid modern client facts across direct/program activity and UI", async () => {

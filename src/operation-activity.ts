@@ -49,24 +49,27 @@ export function operationActivity<A, E, R>(
     return work.pipe(
       Effect.onExit((exit) =>
         Effect.sync(() => {
-          if (!context.recordOperation && !budgetStopped?.()) return;
+          const stopped = budgetStopped?.() === true;
+          if (!context.recordOperation && !stopped) return;
           const result = Exit.isSuccess(exit)
             ? (exit.value as { isError?: boolean; structuredContent?: { error?: { code?: unknown } } })
             : undefined;
-          const failed = Exit.isFailure(exit) || result?.isError === true;
+          const failed = stopped || Exit.isFailure(exit) || result?.isError === true;
           const interrupted = Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isInterruptReason);
           const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
-          const errorCode = interrupted
-            ? "cancelled"
-            : classificationCode(
-                Exit.isFailure(exit)
-                  ? failure instanceof InvocationFailure ||
-                    failure instanceof ExecutorAdmissionError ||
-                    failure instanceof DiscoveryPolicyError
-                    ? failure.code
-                    : classifyCallError(failure).code
-                  : result?.structuredContent?.error?.code,
-              );
+          const errorCode = stopped
+            ? "budget_exceeded"
+            : interrupted
+              ? "cancelled"
+              : classificationCode(
+                  Exit.isFailure(exit)
+                    ? failure instanceof InvocationFailure ||
+                      failure instanceof ExecutorAdmissionError ||
+                      failure instanceof DiscoveryPolicyError
+                      ? failure.code
+                      : classifyCallError(failure).code
+                    : result?.structuredContent?.error?.code,
+                );
           try {
             // Result pages already measure their payload. Other operations have no
             // reusable measurement: never serialize discovery or media for telemetry.
