@@ -333,6 +333,68 @@ describe("Node listen adapter", () => {
       }
     });
 
+    it("closes keep-alive connections whose responses finish after close() instead of idling them", async () => {
+      const core = createTestConnecta({ connectors: [] });
+      let releaseHeld!: () => void;
+      const held = new Promise<void>((resolve) => (releaseHeld = resolve));
+      let endStream!: () => void;
+      const arrived = new Set<string>();
+      const app = {
+        ...core,
+        fetch: async (request: Request) => {
+          const path = new URL(request.url).pathname;
+          arrived.add(path);
+          if (path === "/held") {
+            await held;
+            return new Response("held");
+          }
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("first"));
+                endStream = () => controller.close();
+              },
+            }),
+          );
+        },
+      };
+      const server = listen(app, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+      await once(server, "listening");
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("Expected TCP address");
+      const open = async (path: string) => {
+        const socket = connect(address.port, "127.0.0.1");
+        await once(socket, "connect");
+        let received = "";
+        socket.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
+        const closed = once(socket, "close");
+        socket.write(`GET ${path} HTTP/1.1\r\nHost: connecta.example\r\n\r\n`);
+        return { socket, closed, received: () => received };
+      };
+      try {
+        const held = await open("/held");
+        const streaming = await open("/streaming");
+        await vi.waitFor(() => expect(arrived).toEqual(new Set(["/held", "/streaming"])));
+        await vi.waitFor(() => expect(streaming.received()).toMatch(/first/));
+        expect(streaming.received()).toMatch(/^Connection: keep-alive\r$/m);
+
+        const closeStarted = Date.now();
+        const serverClosed = new Promise<void>((resolve) => server.close(() => resolve()));
+        releaseHeld();
+        endStream();
+        await Promise.all([held.closed, streaming.closed, serverClosed]);
+
+        expect(Date.now() - closeStarted).toBeLessThan(5_000);
+        expect(held.received()).toMatch(/^HTTP\/1\.1 200 /);
+        expect(held.received()).toMatch(/^Connection: close\r$/m);
+        expect(held.received()).toMatch(/\r\nheld\r\n0\r\n\r\n$/);
+        expect(streaming.received()).toMatch(/\r\nfirst\r\n0\r\n\r\n$/);
+      } finally {
+        server.closeAllConnections();
+        await core.close();
+      }
+    });
+
     it.each([0, -1, 1.5, Number.NaN, 24 * 60 * 60 * 1000 + 1])(
       "refuses keepAliveTimeoutMs %s",
       (keepAliveTimeoutMs) => {
