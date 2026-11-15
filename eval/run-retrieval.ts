@@ -25,6 +25,7 @@ import { flags, ROOT, stamp } from "./support/meta.js";
 const args = flags(process.argv.slice(2));
 const BASELINE = join(ROOT, "eval", "baselines", "retrieval.json");
 const BASE_URL = "https://connecta.test";
+const MAX_PAGES = 64;
 
 interface Baseline {
   summary: Summary;
@@ -69,7 +70,9 @@ async function walk(search: Search, base: SearchArgs, max = Infinity): Promise<S
   const pages: SearchPage[] = [];
   let offset = 0;
   for (let rows = 0; rows < max;) {
+    if (pages.length === MAX_PAGES) throw new Error(`${JSON.stringify(base)}: still hasMore after ${MAX_PAGES} pages`);
     const page = await search({ ...base, offset });
+    assert.equal(page.offset, offset, `${JSON.stringify(base)}: the page starts at the requested offset`);
     pages.push(page);
     rows += page.tools.length;
     if (!page.hasMore) break;
@@ -78,6 +81,7 @@ async function walk(search: Search, base: SearchArgs, max = Infinity): Promise<S
       page.offset + page.tools.length,
       `${JSON.stringify(base)}: nextOffset continues the page`,
     );
+    assert.ok(page.nextOffset! > offset, `${JSON.stringify(base)}: nextOffset advances past ${offset}`);
     offset = page.nextOffset!;
   }
   return pages;

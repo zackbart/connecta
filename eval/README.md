@@ -217,10 +217,14 @@ structural features that drive ranking are reproduced on purpose:
 
 **Queries** (`retrieval/queries.ts`): 143 main queries (intent 54, precise 42,
 write 16, hatch 15, vague 8, multi-account 8) and 32 held-out queries. An answer
-`conn*.tool` accepts `conn` and every `conn_<account>`; an answer naming one
-account accepts only that account. A collapsed row's `alsoOn` addresses count
+`conn*.tool` accepts `conn` and every `conn_<account>`; a query that names an
+account accepts only that account's tools, never the default account's. Every
+accepted answer must answer the query on its own, judged from the fixture's
+description: a tool that returns related data (project-wide definitions for a
+customer's grants, steps for sleep) is not an answer. A collapsed row's `alsoOn` addresses count
 only for `conn*` answers, so multi-account queries stay strict. Queries marked
-`uncertain` have another defensible reading; they are scored, and the
+`uncertain` have another defensible reading, and each accepted answer serves one
+of those readings; they count in the gate like every other query, and the
 `certain labels` line excludes them. The held-out set was written after the main
 set and its fixtures were frozen. Ranking changes may be inspected per query on
 the main set only; read the held-out set's aggregate and never tune on it. Every

@@ -3,32 +3,32 @@
     "main": {
       "all": {
         "n": 143,
-        "r1": 0.5664,
-        "r5": 0.7552,
+        "r1": 0.5594,
+        "r5": 0.7413,
         "r8": 0.7902,
-        "mrr": 0.6475
+        "mrr": 0.6371
       },
       "readOnly": {
         "n": 127,
-        "r1": 0.6063,
-        "r5": 0.7953,
+        "r1": 0.5906,
+        "r5": 0.7874,
         "r8": 0.811,
-        "mrr": 0.6852
+        "mrr": 0.6677
       },
       "types": {
         "intent": {
           "n": 54,
           "r1": 0.3704,
-          "r5": 0.6296,
+          "r5": 0.6111,
           "r8": 0.6852,
-          "mrr": 0.484
+          "mrr": 0.4746
         },
         "precise": {
           "n": 42,
           "r1": 0.8571,
           "r5": 0.9286,
           "r8": 0.9524,
-          "mrr": 0.8867
+          "mrr": 0.8836
         },
         "write": {
           "n": 16,
@@ -53,18 +53,18 @@
         },
         "multi": {
           "n": 8,
-          "r1": 0.25,
-          "r5": 0.375,
+          "r1": 0.125,
+          "r5": 0.25,
           "r8": 0.5,
-          "mrr": 0.3073
+          "mrr": 0.2001
         }
       },
       "certain": {
-        "n": 128,
-        "r1": 0.5938,
-        "r5": 0.7813,
-        "r8": 0.8203,
-        "mrr": 0.6737
+        "n": 135,
+        "r1": 0.5704,
+        "r5": 0.7481,
+        "r8": 0.8,
+        "mrr": 0.6474
       }
     },
     "holdout": {
@@ -204,13 +204,13 @@
     "main:studio:environment variables": "1/1",
     "main:studio:my todos": "2/2",
     "main:studio:overdue tasks": "1/1",
-    "main:studio:project hub messages": "3/2",
-    "main:studio:what's on the schedule this week": "3/1",
+    "main:studio:project hub messages": "5/4",
+    "main:studio:what's on the schedule this week": "6/5",
     "main:studio:how much do we charge for a website": "0/0",
     "main:studio:services we offer": "0/0",
     "main:studio:unread email": "0/0",
     "main:studio:write an email": "0/-",
-    "main:studio:team chat messages": "2/2",
+    "main:studio:team chat messages": "4/4",
     "main:studio:who is on the project": "8/12",
     "main:studio:hours logged this month": "1/1",
     "main:studio:search project hub": "1/1",
@@ -233,7 +233,7 @@
     "main:product:analytics events": "1/1",
     "main:product:run an analytics query": "1/1",
     "main:product:onboarding funnel conversion": "1/1",
-    "main:product:daily active users": "11/11",
+    "main:product:daily active users": "0/0",
     "main:product:revenue this month": "1/1",
     "main:product:stripe balance": "1/1",
     "main:product:support conversations": "11/2",
@@ -269,7 +269,7 @@
     "main:product:app store benchmarks": "1/1",
     "main:product:mrr trend chart": "1/1",
     "main:product:reader android subscribers": "0/0",
-    "main:product:reader stripe balance": "1/1",
+    "main:product:reader stripe balance": "7/6",
     "main:product:reader android app database tables": "3/2",
     "main:product:bob warehouse tables": "8/8",
     "holdout:personal:emails from my landlord": "0/0",
