@@ -10,7 +10,9 @@ import {
   type ToolCallActivityEvent,
 } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
+import { createExecuteTool } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
+import { scriptedExecutor } from "./fixtures/misc.js";
 import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 const EVENT: ToolCallActivityEvent = {
@@ -161,9 +163,120 @@ it("operation metadata never carries planted query, code, identifiers or errors 
     operation: { name: "search", connectors: ["notes"], personal: false },
   });
   expect(JSON.stringify(rows)).not.toContain("planted-");
+  for (const writes of [{ succeeded: 1, failed: -1, unknown: 0 }, { succeeded: 1, failed: 0 }, "planted-writes"]) {
+    module.recordOperation!(context, {
+      operation: { name: "program", connectors: ["notes"], personal: false, writes } as never,
+      durationMs: 1,
+      outcome: "success",
+    });
+  }
+  expect(rows).toHaveLength(1);
+  module.recordOperation!(context, {
+    operation: {
+      name: "program",
+      connectors: ["notes"],
+      personal: false,
+      writes: { succeeded: 2, failed: 1, unknown: 0, address: "planted-address" },
+    } as never,
+    durationMs: 1,
+    outcome: "success",
+  });
+  expect(rows[1]?.operation?.writes).toEqual({ succeeded: 2, failed: 1, unknown: 0 });
+  expect(JSON.stringify(rows)).not.toContain("planted-");
 });
 
-it("records top-level search, skill and result operations once, including a refused page", async () => {
+it.each([false, true])(
+  "records a terminal budget stop as one program row with route and write counts (operations %s)",
+  async (operations) => {
+    const rows: ToolCallActivityEvent[] = [];
+    const module = activityHistory({ operations, store: { record: (event) => void rows.push(event) } });
+    const context: ActivityRequestContext = {
+      sink: module.store,
+      recordTool: module.recordTool,
+      recordOperation: module.recordOperation,
+      actor: { kind: "access_token", id: "assistant" },
+      requestId: "request",
+      serverInfo: { name: "connecta", version: "0.1.0" },
+      logger: silentLogger,
+    };
+    const registry = makeRegistry([
+      api("notes", {
+        tools: [
+          { name: "read", description: "Read a note", annotations: { readOnlyHint: true }, handler: () => ({ ok: 1 }) },
+          {
+            name: "save",
+            description: "Save a note",
+            annotations: { readOnlyHint: false },
+            handler: () => {
+              if (saveFails) throw new Error("planted-write-failure");
+              return { saved: true };
+            },
+          },
+        ],
+      }),
+    ]);
+    let saveFails = false;
+    const program = (calls: number, readProgram = false) =>
+      createExecuteTool(
+        registry,
+        "https://connecta.test",
+        scriptedExecutor(async (fns) => {
+          if (!readProgram) await fns.call!("notes.save", { text: "planted-argument" }).catch(() => undefined);
+          for (let n = readProgram ? 0 : 1; n < calls; n++) await fns.call!("notes.read", {});
+          return "planted-return";
+        }),
+        silentLogger,
+        context,
+        { maxHostCalls: 2, readProgram },
+      )({ code: "async () => 'planted-code'" });
+
+    const stopped = await program(3);
+    expect(stopped.structuredContent).toMatchObject({ error: { code: "budget_exceeded" } });
+    const programRows = rows.filter((row) => row.kind === "operation");
+    expect(programRows).toHaveLength(1);
+    expect(programRows[0]).toMatchObject({
+      toolName: "program",
+      source: "execute_code",
+      outcome: "error",
+      errorCode: "budget_exceeded",
+      operation: {
+        name: "program",
+        connectors: ["notes"],
+        hostCalls: { attempted: 3, admitted: 2, succeeded: 2, failed: 1 },
+        writes: { succeeded: 1, failed: 0, unknown: 0 },
+      },
+    });
+    expect(rows.filter((row) => row.kind === undefined).map((row) => row.address)).toEqual([
+      "notes.save",
+      "notes.read",
+    ]);
+
+    rows.splice(0);
+    saveFails = true;
+    const unknown = await program(3);
+    saveFails = false;
+    expect(unknown.structuredContent).toMatchObject({ error: { code: "write_outcome_unknown" } });
+    expect(rows.filter((row) => row.kind === "operation")).toMatchObject([
+      { errorCode: "budget_exceeded", operation: { writes: { succeeded: 0, failed: 0, unknown: 1 } } },
+    ]);
+
+    rows.splice(0);
+    expect((await program(2)).isError).not.toBe(true);
+    expect((await program(2, true)).isError).not.toBe(true);
+    const finished = rows.filter((row) => row.kind === "operation");
+    if (!operations) expect(finished).toHaveLength(0);
+    else {
+      expect(finished.map((row) => [row.source, row.outcome, row.operation?.writes])).toEqual([
+        ["execute_code", "success", { succeeded: 1, failed: 0, unknown: 0 }],
+        ["execute_read_code", "success", { succeeded: 0, failed: 0, unknown: 0 }],
+      ]);
+      expect(finished.every((row) => row.errorCode === undefined && row.durationMs >= 0)).toBe(true);
+    }
+    expect(JSON.stringify(rows)).not.toContain("planted-");
+  },
+);
+
+it("records top-level search, skill, result and authorize operations once, including refusals", async () => {
   const rows: ToolCallActivityEvent[] = [];
   const module = activityHistory({
     operations: true,
@@ -197,8 +310,10 @@ it("records top-level search, skill and result operations once, including a refu
   await tools.searchTools({ query: "planted-query" });
   await tools.skills({ name: "usage" });
   expect((await tools.readResult({ id: "planted-result-id" })).isError).toBe(true);
-  expect(rows.map((row) => row.operation?.name)).toEqual(["search", "skill", "result"]);
-  expect(rows.map((row) => row.outcome)).toEqual(["success", "success", "error"]);
+  expect((await tools.authorizeConnector({ connector: "planted-connector" })).isError).toBe(true);
+  expect(rows.map((row) => row.operation?.name)).toEqual(["search", "skill", "result", "authorize"]);
+  expect(rows.map((row) => row.outcome)).toEqual(["success", "success", "error", "error"]);
+  expect(rows[3]).toMatchObject({ connectorId: "notes", toolName: "authorize", address: "notes.authorize" });
   expect(rows.every((row) => row.friction === undefined)).toBe(true);
   expect(JSON.stringify(rows)).not.toContain("planted-");
 });

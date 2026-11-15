@@ -5,18 +5,31 @@ import { ExecutorAdmissionError } from "./executor-admission.js";
 import { DiscoveryPolicyError } from "./catalog-service.js";
 import { classificationCode, classifyCallError } from "./errors.js";
 import { usesCallerIdentity } from "./connector-caller.js";
-import type { ActivityOperation, ActivityRequestContext } from "./activity.js";
+import type {
+  ActivityEventInput,
+  ActivityOperation,
+  ActivityRequestContext,
+  OperationRecordInput,
+} from "./activity.js";
 import type { RegistryView } from "./registry.js";
+
+export interface OperationActivityOptions {
+  counts?: () => NonNullable<ActivityOperation["hostCalls"]>;
+  writes?: () => NonNullable<ActivityOperation["writes"]>;
+  source?: "execute_read_code" | undefined;
+  /** A terminal budget stop is recorded even when operation history is off. */
+  budgetStopped?: () => boolean;
+}
 
 export function operationActivity<A, E, R>(
   context: ActivityRequestContext | undefined,
   registry: RegistryView,
   name: ActivityOperation["name"],
   work: Effect.Effect<A, E, R>,
-  counts?: () => NonNullable<ActivityOperation["hostCalls"]>,
-  source?: "execute_read_code",
+  options: OperationActivityOptions = {},
 ): Effect.Effect<A, E, R> {
-  if (!context?.recordOperation) return work;
+  const { counts, writes, source, budgetStopped } = options;
+  if (!context?.recordOperation && !(budgetStopped && context?.recordTool)) return work;
   return Effect.suspend(() => {
     const started = performance.now();
     const connectors = registry.listConnectors();
@@ -36,23 +49,27 @@ export function operationActivity<A, E, R>(
     return work.pipe(
       Effect.onExit((exit) =>
         Effect.sync(() => {
+          const stopped = budgetStopped?.() === true;
+          if (!context.recordOperation && !stopped) return;
           const result = Exit.isSuccess(exit)
             ? (exit.value as { isError?: boolean; structuredContent?: { error?: { code?: unknown } } })
             : undefined;
-          const failed = Exit.isFailure(exit) || result?.isError === true;
+          const failed = stopped || Exit.isFailure(exit) || result?.isError === true;
           const interrupted = Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isInterruptReason);
           const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
-          const errorCode = interrupted
-            ? "cancelled"
-            : classificationCode(
-                Exit.isFailure(exit)
-                  ? failure instanceof InvocationFailure ||
-                    failure instanceof ExecutorAdmissionError ||
-                    failure instanceof DiscoveryPolicyError
-                    ? failure.code
-                    : classifyCallError(failure).code
-                  : result?.structuredContent?.error?.code,
-              );
+          const errorCode = stopped
+            ? "budget_exceeded"
+            : interrupted
+              ? "cancelled"
+              : classificationCode(
+                  Exit.isFailure(exit)
+                    ? failure instanceof InvocationFailure ||
+                      failure instanceof ExecutorAdmissionError ||
+                      failure instanceof DiscoveryPolicyError
+                      ? failure.code
+                      : classifyCallError(failure).code
+                    : result?.structuredContent?.error?.code,
+                );
           try {
             // Result pages already measure their payload. Other operations have no
             // reusable measurement: never serialize discovery or media for telemetry.
@@ -63,12 +80,13 @@ export function operationActivity<A, E, R>(
             const bytes = page?.structuredContent?.bytes ?? page?.bytes;
             const resultBytes =
               typeof bytes === "number" && Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : undefined;
-            context.recordOperation!(context, {
+            const input: OperationRecordInput = {
               operation: {
                 name,
                 connectors: connectors.map((connector) => connector.id),
                 personal,
                 ...(counts ? { hostCalls: counts() } : {}),
+                ...(writes ? { writes: writes() } : {}),
               },
               ...(source ? { source } : {}),
               durationMs: performance.now() - started,
@@ -81,7 +99,12 @@ export function operationActivity<A, E, R>(
                     ? "cancelled"
                     : "error",
               errorCode,
-            });
+            };
+            if (context.recordOperation) context.recordOperation(context, input);
+            else {
+              const event = operationEvent(input);
+              if (event) context.recordTool!(context, event);
+            }
           } catch {
             /* Optional recording cannot replace the operation's result. */
           }
@@ -91,7 +114,37 @@ export function operationActivity<A, E, R>(
   });
 }
 
-const OPERATION_NAMES = new Set(["search", "describe", "result", "skill", "program"]);
+/** The payload-free row for one operation; undefined when its metadata fails the check. */
+export function operationEvent(input: OperationRecordInput): ActivityEventInput | undefined {
+  const operation = checkedActivityOperation(input.operation);
+  if (!operation) return undefined;
+  const connectorId = operation.connectors.length === 1 ? operation.connectors[0]! : "$operation";
+  return {
+    kind: "operation",
+    operation,
+    connectorId,
+    toolName: operation.name,
+    address: `${connectorId}.${operation.name}`,
+    source: input.source ?? "execute_code",
+    outcome: input.outcome,
+    durationMs: input.durationMs,
+    ...(input.resultBytes !== undefined ? { resultBytes: input.resultBytes } : {}),
+    attempts: 1,
+    ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+    ...(operation.personal ? { privateCatalog: true } : {}),
+  };
+}
+
+const countsValid = (counts: object | undefined, keys: readonly string[]) =>
+  !counts ||
+  keys.every((key) => {
+    const n = (counts as Record<string, unknown>)[key];
+    return typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+  });
+const HOST_CALL_KEYS = ["attempted", "admitted", "succeeded", "failed"] as const;
+const WRITE_KEYS = ["succeeded", "failed", "unknown"] as const;
+
+const OPERATION_NAMES = new Set(["search", "describe", "result", "skill", "program", "authorize"]);
 export function checkedActivityOperation(value: unknown): ActivityOperation | undefined {
   if (!value || typeof value !== "object") return undefined;
   const input = value as ActivityOperation;
@@ -103,13 +156,8 @@ export function checkedActivityOperation(value: unknown): ActivityOperation | un
   )
     return undefined;
   const counts = input.hostCalls;
-  if (
-    counts &&
-    [counts.attempted, counts.admitted, counts.succeeded, counts.failed].some(
-      (n) => typeof n !== "number" || !Number.isSafeInteger(n) || n < 0,
-    )
-  )
-    return undefined;
+  const writes = input.writes;
+  if (!countsValid(counts, HOST_CALL_KEYS) || !countsValid(writes, WRITE_KEYS)) return undefined;
   return {
     name: input.name,
     connectors: [...new Set(input.connectors)],
@@ -124,5 +172,6 @@ export function checkedActivityOperation(value: unknown): ActivityOperation | un
           },
         }
       : {}),
+    ...(writes ? { writes: { succeeded: writes.succeeded, failed: writes.failed, unknown: writes.unknown } } : {}),
   };
 }

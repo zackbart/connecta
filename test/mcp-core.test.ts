@@ -2,7 +2,7 @@ import { specTypeSchemas, type ServerContext } from "@modelcontextprotocol/serve
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
-import { bindMcpClient, type McpClientContext } from "../src/mcp-client-context.js";
+import { bindMcpClient, userAgentClient, type McpClientContext } from "../src/mcp-client-context.js";
 import { META_TOOL_NAMES } from "../src/meta-tool-names.js";
 import { READ_PROGRAM_SOURCE } from "../src/tool-safety.js";
 import { checkClientActivity, modernRequest as modern } from "./fixtures/client-identity.js";
@@ -34,12 +34,44 @@ describe("2026-07-28 core", () => {
     expect(client).toEqual({});
   });
 
+  it("INV-6: reads only a complete leading User-Agent product followed by a token boundary", () => {
+    expect(
+      ["assistant/1.2", " assistant/1.2 (os)", "assistant/1.2\tnext/2", "Assistant-User", "assistant-host"].map(
+        userAgentClient,
+      ),
+    ).toEqual([
+      { name: "assistant", version: "1.2" },
+      { name: "assistant", version: "1.2" },
+      { name: "assistant", version: "1.2" },
+      { name: "Assistant-User" },
+      { name: "assistant-host" },
+    ]);
+    for (const header of [
+      "assistant/1.2é",
+      "assistanté/1.2",
+      "assistant/1.2\u0000",
+      "assistant\u0001/1.2",
+      "assistant/1.2\r\nforged",
+      "assistant/1.2\u00a0os",
+      "assistant//1.2",
+      "assistant/",
+      "/1.2",
+      "assistant/1.2/3",
+      "assistant(os)",
+      "assistant;1.2",
+      "",
+      "💻/1",
+      null,
+    ])
+      expect(userAgentClient(header), JSON.stringify(header)).toBeUndefined();
+  });
+
   it("INV-6: withholds invalid modern client facts across direct/program activity and UI", async () => {
     const events: ToolCallActivityEvent[] = [];
     await checkClientActivity({ record: (event) => void events.push(event), list: async () => ({ events }) });
   });
 
-  it("INV-6 INV-7: threads per-request client identity into direct and program activity without retaining capabilities", async () => {
+  it("INV-6 INV-7: threads per-request client identity, or the User-Agent product without one, into activity without retaining capabilities", async () => {
     const events: ToolCallActivityEvent[] = [];
     const c = createTestConnecta({
       connectors: [calcApi()],
@@ -75,12 +107,36 @@ describe("2026-07-28 core", () => {
       await readJsonRpc(
         await mcpRpc(c, "tools/call", { name: "call_tool", arguments: { address: "calc.add", args: { a: 1, b: 2 } } }),
       );
-      expect(events.map((event) => event.clientName)).toEqual([
-        "call_tool",
-        "call_destructive_tool",
-        "execute_code",
-        undefined,
-        undefined,
+      const call = { name: "call_tool", arguments: { address: "calc.add", args: { a: 1, b: 2 } } };
+      const withAgent = (request: Request, agent: string) => {
+        request.headers.set("User-Agent", agent);
+        return request;
+      };
+      for (const agent of [
+        "assistant-host/3.1.0 (darwin; payload)",
+        "Assistant-User",
+        "<payload>/1",
+        "a/" + "1".repeat(33),
+      ])
+        await readJsonRpc(await c.fetch(withAgent(mcpRpc("tools/call", call), agent)));
+      await readJsonRpc(
+        await c.fetch(
+          withAgent(modern("tools/call", call, { name: "declared", version: "2" }), "assistant-host/3.1.0"),
+        ),
+      );
+      await readJsonRpc(await c.fetch(withAgent(modern("tools/call", call), "assistant-host/3.1.0")));
+      expect(events.map((event) => [event.clientName, event.clientVersion])).toEqual([
+        ["call_tool", "1"],
+        ["call_destructive_tool", "1"],
+        ["execute_code", "1"],
+        [undefined, undefined],
+        [undefined, undefined],
+        ["assistant-host", "3.1.0"],
+        ["Assistant-User", undefined],
+        [undefined, undefined],
+        ["a", undefined],
+        ["declared", "2"],
+        ["assistant-host", "3.1.0"],
       ]);
       expect(JSON.stringify(events)).not.toContain("elicitation");
       expect(JSON.stringify(events)).not.toContain("payload");

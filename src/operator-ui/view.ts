@@ -972,8 +972,15 @@ export function activityReason(event: UiActivityEvent): string {
 /** The one-line detail under an address: where it ran, retries, and why it stalled. */
 export function activityDetail(event: UiActivityEvent): string {
   if (event.kind === "catalog_drift") return "Catalog changed";
-  if (event.kind === "operation")
-    return "Operation" + (event.operation?.hostCalls ? ` · ${event.operation.hostCalls.attempted} host calls` : "");
+  if (event.kind === "operation") {
+    const writes = event.operation?.writes;
+    const sent = writes ? writes.succeeded + writes.failed + writes.unknown : 0;
+    return (
+      "Operation" +
+      (event.operation?.hostCalls ? ` · ${event.operation.hostCalls.attempted} host calls` : "") +
+      (sent > 0 ? ` · ${sent} write${sent === 1 ? "" : "s"}` : "")
+    );
+  }
   const parts = [SOURCE_LABELS[event.source] ?? event.source];
   if (event.approval === "tool") parts.push("approved for the rest of the run");
   if (event.approval === "call") parts.push("approved for this call");

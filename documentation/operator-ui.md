@@ -333,7 +333,8 @@ red when the calls span more than a minute.
   duration and size, caller, stable caller id, request id, client, and
   connecta version. Unrecorded fields are left out. Catalog changes are rows
   with added, removed and changed counts. Opt-in operation rows use fixed names
-  (Search, Describe, Result page, Skill read, Program) and an Operation detail;
+  (Search, Describe, Result page, Skill read, Program, Authorize) and an
+  Operation detail with a program's host-call and write counts;
   they do not count as calls, failed calls, friction, tools or last calls.
 - **Empty.** "No calls yet" with Refresh, or "No matches" with Clear filters.
 
@@ -843,16 +844,31 @@ report `credential_required` before running a connector status or catalog probe.
 Set `operations: true` on the existing activity module, for example
 `activity: activityHistory({ store, operations: true })`, where `store` is the
 configured platform activity store. The default is off: existing deployments
-emit no operation rows. Each admitted search, describe, result page, skill read
-and whole program adds one event through the existing detached sink. Workers
+emit no operation rows, except one `program` row for each run a budget stopped
+(see below). Each admitted search, describe, result page, skill read,
+`authorize_connector` call and whole program adds one event through the
+existing detached sink. Workers
 attach its promise to `waitUntil`; Node does not await it in the response path.
 This adds storage writes and retention cleanup work for every operation.
 
-Rows use `kind: "operation"`, `source: "execute_code"`, and a fixed operation
-name. They contain duration, outcome, a checked error code, returned page
-byte count when already measured, and host-call counts for a program. No query, tool
-address supplied by a caller, skill name, result ID, code, arguments, result
-contents or raw error text enters the row. Custom history readers must exclude
+Rows use `kind: "operation"` and a fixed operation name (`search`,
+`describe`, `result`, `skill`, `program`, `authorize`). `source` is
+`execute_read_code` for a read program and the operations inside it, and
+`execute_code` otherwise. They contain duration, outcome, a checked error code,
+returned page byte count when already measured, and for a program its host-call
+counts (`attempted`, `admitted`, `succeeded`, `failed`) and write counts
+(`succeeded`, `failed`, `unknown`). No query, tool address supplied by a
+caller, connector named by an `authorize_connector` argument, authorization
+link, skill name, result ID, code, arguments, result contents or raw error text
+enters the row.
+
+A program that a host-call, notice or emission-attempt budget ended always adds
+its one `program` row with `errorCode: "budget_exceeded"`, even with
+`operations` off. The row keeps that code even when the tool result reports
+`write_outcome_unknown` for a write the run sent; `writes.unknown` counts those
+writes. Its `hostCalls.attempted` exceeds `admitted` when the host-call budget
+stopped it. Write-budget refusals are per-call refusals, not
+terminal stops, and stay ordinary call rows. Custom history readers must exclude
 operation rows from call/friction counts. The public kind union adds
 `"operation"`; exhaustive consumers may need a new case even when their
 runtime configuration leaves recording off.
