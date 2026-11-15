@@ -2126,7 +2126,7 @@ export class CatalogService {
             tool.description ?? "",
             tool.annotations ?? null,
             tool.inputSchema ?? null,
-            this.outputSchema(connector.id, tool),
+            tool.outputSchema ?? null,
             connectorGuide(connector) !== undefined,
             connectorGuideRequired(connector),
             readProgramRefuses(tool),
@@ -2147,7 +2147,14 @@ export class CatalogService {
       const withSchemas = args.includeSchemas;
       const entries = pageMatches.map((selected) => {
         const match = { ...selected, tool: cloneTool(selected.tool) };
-        const output = withSchemas ? this.outputSchema(match.connector.id, match.tool) : {};
+        const others = alsoOn.get(selected);
+        const output = !withSchemas
+          ? {}
+          : others
+            ? match.tool.outputSchema
+              ? { schema: match.tool.outputSchema }
+              : {}
+            : this.outputSchema(match.connector.id, match.tool);
         const input = match.tool.inputSchema ?? { type: "object" };
         const signature =
           withSchemas === "typescript"
@@ -2178,7 +2185,6 @@ export class CatalogService {
           match.tool,
           renderedInput?.truncated === true || renderedOutput?.truncated === true,
         );
-        const others = alsoOn.get(selected);
         return {
           ...connectorFacts(match.connector),
           ...(others ? { alsoOn: others.map((other) => connectorFacts(other.connector)) } : {}),
