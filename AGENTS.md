@@ -81,6 +81,9 @@ Run `eval:outcomes` and `eval:smoke` for changes to `src/`, `eval/`, `templates/
 inspect actual data, independent vendor state, physical mutations, identity,
 secrecy, recovery and request lifetimes. Their controls reject missing work,
 fabricated answers, duplicate writes and interrupted trials.
+Run `eval:retrieval` for changes to search ranking or discovery text; a change
+that moves its scores updates `eval/baselines/retrieval.json` with
+`--update-baseline` in the same PR.
 
 CI runs `build`, `node`, `workers`, `behavior`, `browser`, `audit` and `eve` on
 every PR, main push, nightly and manual run:
@@ -96,7 +99,7 @@ every PR, main push, nightly and manual run:
   does not filter membership in Vitest 5.0.4.
   `workers` runs the binding-backed `WORKERS_SUITES` in `vitest.config.ts`
   with four Vitest workers on the four-core CI runner.
-- `behavior` runs `eval:outcomes`, `eval:smoke` and
+- `behavior` runs `eval:retrieval`, `eval:outcomes`, `eval:smoke` and
   `eval:selftest --native-only`, retaining `eval/results/` on failure.
 - `browser` runs Playwright. Visual comparisons never retry; behavior tests
   keep two CI retries. Any failed attempt retains the HTML report, diffs and

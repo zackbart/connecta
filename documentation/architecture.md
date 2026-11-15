@@ -1903,6 +1903,10 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   wrong targets, duplicate writes, missing completion and interrupted trials.
   Every reference also rejects a fabricated correct answer without the work.
   Promoted read journeys reject erased MCP data even with the vendor ledger intact.
+- `pnpm run eval:retrieval` ranks labelled queries through `search_tools` over
+  neutral fixture catalogs and fails when Recall@5 or MRR falls below the
+  checked-in baseline; its paging cases require every answer past the first page
+  to be reachable through `hasMore` and `nextOffset`.
 - `pnpm run eval:smoke` boots the Node template, Node eval deployments and native
   Workers deployments, including the actual QuickBooks and Granola providers, then exercises
   MCP and the operator page.
