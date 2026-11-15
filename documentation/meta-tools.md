@@ -285,7 +285,7 @@ discovery. Both take the same arguments.
 | `safety`           | `"readOnly"` selects stored `read` verdicts; `"approvalRequired"` selects stored `write` verdicts; omitted or `"all"` selects both. Each row carries `classification: "read" \| "write"`. These legacy filter names do not describe client approval policy; a read-only endpoint has no write rows. |
 | `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small                                                                                                                                                                                                        |
 | `includeSchemas`   | `"compact"` for the rendered routing view, `"json"` for the exact schema, `"typescript"` for a function signature ([below](#typescript-signatures))                                                                                                                                                 |
-| `fullDescriptions` | unabridged tool purposes instead of the one-sentence summary, at the obvious cost                                                                                                                                                                                                                   |
+| `fullDescriptions` | unabridged tool purposes instead of the one-sentence summary, at the obvious cost; writes are already full within a page budget                                                                                                                                                                     |
 
 Neither `connector` nor `safety` grants authority or changes invocation
 admission; they select what discovery shows and nothing else.
@@ -1165,7 +1165,13 @@ A row's `description` is a summary: the first complete sentence, joined to the
 following ones until it reaches 40 characters, within 160 UTF-16 code units. Text
 with no sentence end in that range is cut at a word and marked `…`. The row
 carries `descriptionTruncated: true` whenever text was left out;
-`fullDescriptions: true` returns the original text and no flag.
+`fullDescriptions: true` returns the original text and no flag. A `write` row
+whose summary would leave text out shows its full description instead, so a
+precondition stated late in a write's description is on the page that finds it.
+Full write descriptions share one budget of 32 KiB UTF-8 per page in rank order;
+a write that does not fit gets the summary and the flag, a later, shorter write
+may still fit, and `read` rows always get the summary. The page stays
+deterministic for an unchanged catalog.
 
 Search tokenizes tool names, titles and full descriptions at punctuation and
 camel-case boundaries. Whole-token matches, a small set of inflectional variants

@@ -113,6 +113,11 @@ describe("description summaries", () => {
       expect(full.tools.every((tool) => tool.descriptionTruncated === undefined)).toBe(true);
       summaries.tools.forEach((tool, index) => {
         const description = tool.description ?? "";
+        if (tool.classification === "write") {
+          expect(tool.descriptionTruncated, tool.address).toBeUndefined();
+          expect(description, tool.address).toBe(full.tools[index]!.description ?? "");
+          return;
+        }
         expect(description.length, tool.address).toBeLessThanOrEqual(160);
         expect(description.length, tool.address).toBeGreaterThan(0);
         if (!tool.descriptionTruncated) return;
@@ -141,6 +146,48 @@ describe("description summaries", () => {
       description: "List tickets in one queue, newest ticket first.",
       descriptionTruncated: true,
     });
+  });
+
+  it("shows a write's full purpose on search pages, within one budget per page", async () => {
+    const precondition = "Before deactivating a person, first call transfer_resources to move what they own.";
+    const deactivate = `Deactivate a directory account so the person can no longer sign in. ${"Audit records are kept. ".repeat(20)}${precondition}`;
+    const big = `Purge one archive with everything in it. ${"x".repeat(MAX_DESCRIBE_DESCRIPTION_BYTES)}`;
+    const conn = connectorWith({
+      id: "directory",
+      kind: "api",
+      tools: [
+        { name: "deactivate_user", description: deactivate, annotations: { destructiveHint: true } },
+        { name: "deactivate_archive", description: big, annotations: { destructiveHint: true } },
+        { name: "deactivate_device", description: `Deactivate one device. ${"Details. ".repeat(40)}` },
+        {
+          name: "list_deactivated",
+          description: `List deactivated accounts, newest first. ${"Filters follow. ".repeat(20)}`,
+          annotations: { readOnlyHint: true },
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([conn]), BASE);
+    const page = textOf(await mt.searchTools({ query: "deactivate", connector: "directory" })) as SearchResult;
+    const row = (name: string) => page.tools.find((tool) => tool.name === name);
+    expect(row("deactivate_user")).toMatchObject({ classification: "write", description: deactivate });
+    expect(row("deactivate_user")?.description).toContain(precondition);
+    expect(row("deactivate_user")?.descriptionTruncated).toBeUndefined();
+    expect(row("deactivate_archive")).toMatchObject({
+      description: "Purge one archive with everything in it.",
+      descriptionTruncated: true,
+    });
+    expect(row("deactivate_device")?.descriptionTruncated).toBeUndefined();
+    expect(row("list_deactivated")).toMatchObject({
+      classification: "read",
+      description: "List deactivated accounts, newest first.",
+      descriptionTruncated: true,
+    });
+    expect(textOf(await mt.searchTools({ query: "deactivate", connector: "directory" }))).toEqual(page);
+    const [described] = await new CatalogService(makeRegistry([conn]), BASE).describe({
+      addresses: ["directory.deactivate_archive"],
+      fullDescriptions: true,
+    });
+    expect(described?.description).toBe(big);
   });
 
   it("describes full text by default, within one budget per call", async () => {

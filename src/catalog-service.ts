@@ -112,7 +112,10 @@ const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
-/** UTF-8 bytes of full tool purposes one describe call returns; fallback summaries have their own bound. */
+/**
+ * UTF-8 bytes of full tool purposes one describe call returns, and of full
+ * write purposes one search page returns; fallback summaries have their own bound.
+ */
 export const MAX_DESCRIBE_DESCRIPTION_BYTES = 32 * 1024;
 const MAX_QUERY_TERMS = 8;
 const MAX_QUERY_TERM_LENGTH = 64;
@@ -1953,6 +1956,7 @@ export class CatalogService {
       });
       const pageMatches = matches.slice(offset, offset + limit);
       const withSchemas = args.includeSchemas;
+      let writeDescriptionBytes = MAX_DESCRIBE_DESCRIPTION_BYTES;
       const entries = pageMatches.map((selected) => {
         const match = { ...selected, tool: cloneTool(selected.tool) };
         const output = withSchemas ? this.outputSchema(match.connector.id, match.tool) : {};
@@ -1976,10 +1980,17 @@ export class CatalogService {
             ? renderSearchSchema(output.schema, schemaFormat)
             : undefined;
         const schemaKeys = withSchemas && args.includeSchemaKeys ? schemaKeyMetadata(input, output.schema) : undefined;
-        const summary =
+        let summary =
           match.tool.description && args.fullDescriptions !== true
             ? discoverySummary(match.tool.description)
             : undefined;
+        if (summary?.truncated && match.tool.classification !== "read") {
+          const bytes = encoder.encode(match.tool.description).length;
+          if (bytes <= writeDescriptionBytes) {
+            writeDescriptionBytes -= bytes;
+            summary = undefined;
+          }
+        }
         const description = summary ? summary.text : match.tool.description || undefined;
         const requiredReasons = guideRequiredReasons(
           match.connector,
