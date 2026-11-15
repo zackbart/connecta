@@ -1549,14 +1549,17 @@ export class CatalogService {
     // The same view discovery serves: a read-only scope never names a write here.
     const visible = tools.filter((tool) => tool.classification === "read" || this.servesWrite(connector, tool.name));
     const suggestions = hasControlCharacters(toolName) ? [] : describeSuggestions(connector.id, toolName, visible);
+    const unknown = hasControlCharacters(toolName)
+      ? `Unknown tool on connector "${connector.id}"`
+      : `Unknown tool "${boundedEchoText(toolName)}" on connector "${connector.id}"`;
     return {
       ok: false,
       error: {
         ...framingError(
           "unknown_tool",
-          hasControlCharacters(toolName)
-            ? `Unknown tool on connector "${connector.id}"`
-            : `Unknown tool "${boundedEchoText(toolName)}" on connector "${connector.id}"`,
+          this.servesWrite(connector, toolName)
+            ? unknown
+            : `${unknown}. Search omits writes refused here; a write's exact address returns read_only_endpoint, not unknown_tool.`,
         ),
         nextAction: this.searchRecovery(
           { query: hasControlCharacters(toolName) ? "" : recoveryQuery(toolName), connector: connector.id },
