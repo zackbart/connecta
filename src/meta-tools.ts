@@ -31,6 +31,7 @@ import {
   flatSearchResult,
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
+  MAX_INLINE_DISCOVERY_BYTES,
   MAX_SEARCH_LIMIT,
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
@@ -68,7 +69,7 @@ import { PROGRAM_RESULT_PAGE_BYTES, PROGRAM_RESULT_WIRE_BYTES, type ProgramResul
 import { previewResult, type ResultPreview } from "./result-preview.js";
 import type { NativeCallRoute } from "./native-tools.js";
 
-export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_SEARCH_LIMIT };
+export { MAX_DESCRIBE_ADDRESSES, MAX_DISCOVERY_RESULT_BYTES, MAX_INLINE_DISCOVERY_BYTES, MAX_SEARCH_LIMIT };
 
 interface TextContent {
   type: "text";
@@ -1464,6 +1465,7 @@ function metaToolsForRequest(
                         {
                           ...args,
                           includeSchemaKeys: args.includeSchemas !== undefined,
+                          maxTextBytes: MAX_INLINE_DISCOVERY_BYTES,
                         },
                       ]),
                     ),
@@ -1471,7 +1473,7 @@ function metaToolsForRequest(
                 );
               }),
             ),
-            "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
+            "One row exceeds it alone: use compact schemas, omit includeSchemas, or omit fullDescriptions.",
           ),
         );
       }),

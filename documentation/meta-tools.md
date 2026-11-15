@@ -174,8 +174,11 @@ that still moves to a file:
 
 The 8,192 extra characters cover those notices, headers, facts and counts. The defaults (24,000) stay under the host's line without the key
 ([why](#truncated-direct-call-results)), so a default deployment sends no
-size hint. `search_tools`, `skills` and `authorize_connector` return results no
-configured cap bounds and carry no size hint; a read-only endpoint's
+size hint. `search_tools` carries none because its pages end within the
+36,000-byte [inline page budget](#lexical-discovery), under every surveyed host's
+line; a lone row past that budget is the exception and may move to a file.
+`skills` and `authorize_connector` return results no configured cap bounds and
+carry no size hint; a read-only endpoint's
 `call_destructive_tool` only refuses, so it carries none either.
 
 ## Read programs
@@ -806,6 +809,7 @@ totals describe exactly that text.
 | `results.maxStashEntries`          | 64 per shared storage ledger        |
 | Downstream MCP tool answer         | larger of `maxStashBytes` and 8 MiB |
 | Top-level discovery result ceiling | 256,000 UTF-8 bytes                 |
+| `search_tools` inline page budget  | 36,000 UTF-8 bytes of the text copy |
 | Downstream MCP `isError` text      | 512 UTF-8 bytes plus an `…` marker  |
 
 A remote MCP tool answer past its bound is not read further and fails the call
@@ -814,7 +818,9 @@ describes; it is never stashed or previewed.
 
 The discovery ceiling counts text, `structuredContent`, and JSON escaping
 together, because measuring one copy would advertise half the bytes the adapter
-actually returns; error framing may shorten a bounded `isError` reason further to
+actually returns. The inline page budget counts one copy, the compact JSON text,
+because each host reads one: [search pagination](#lexical-discovery) describes
+how a page ends within it. Error framing may shorten a bounded `isError` reason further to
 fit the call's result cap on the same arithmetic. Both stash options accept
 non-negative safe integers, zero disabling stashing, and are shared across all
 subjects and pools; they count the stored ASCII paging envelope, base64 overhead
@@ -1278,6 +1284,20 @@ compact schema strings and TypeScript signatures. Compact schemas are text;
 `inputSchema.properties` is meaningful only in JSON mode. Pagination counts
 rows across connectors: `nextOffset` is present only when another page remains.
 
+A `search_tools` page also ends within an inline budget of 36,000 UTF-8 bytes of
+its compact JSON text, so it arrives inline on every surveyed host: under the
+40,000-character cut past which one host keeps only the head and tail, with room
+for that host's own framing, and under the 50,000-character line past which
+others move a result to a file. `structuredContent` repeats the same JSON, and a
+host reads one copy or merges the two, so the budget counts one. When the next
+row would pass the budget, the page ends before it with `hasMore: true` and a
+`nextOffset` that starts at that row; `limit` stays as requested. A page always
+holds its first row: a row past the budget alone is returned alone, complete,
+within the 256,000-byte ceiling. A page within the budget, such as the default
+eight rows without schemas, is unchanged. The budget is fixed, not configurable.
+A program's `connecta.search` page ends the same way at the 256,000-byte
+ceiling instead, because its result reaches the sandbox, not the host.
+
 A row's `description` is a summary: the first complete sentence, joined to the
 following ones until it reaches 40 characters, within 160 UTF-16 code units. Text
 with no sentence end in that range is cut at a word and marked `…`. The row
@@ -1289,9 +1309,9 @@ a write's description is on the page that finds it. Write descriptions share
 one budget of 32 KiB UTF-8 per page in rank order: when the next write would
 exceed what remains, the page ends before it with `hasMore: true` and a
 `nextOffset` that starts at that write. A write whose description alone exceeds
-the budget is returned alone on its page, complete. The 256,000-byte page
-ceiling and its smaller-limit recovery still apply. `fullDescriptions: true`
-lifts the budget, and pages stay deterministic for an unchanged catalog.
+the budget is returned alone on its page, complete. The inline page budget
+still applies. `fullDescriptions: true` lifts the write budget, not the inline
+one, and pages stay deterministic for an unchanged catalog.
 
 Search tokenizes tool names, titles and full descriptions at punctuation and
 camel-case boundaries. Whole-token matches, a small set of inflectional variants

@@ -121,6 +121,7 @@ const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
+export const MAX_INLINE_DISCOVERY_BYTES = 36_000;
 /**
  * UTF-8 bytes of full tool purposes one describe call returns, and of full
  * write purposes one search page returns; fallback summaries have their own bound.
@@ -410,6 +411,7 @@ export interface CatalogSearchArgs {
   includeSchemas?: SchemaFormat;
   /** Code-mode helper metadata; never exposed by the public search_tools schema. */
   includeSchemaKeys?: boolean;
+  maxTextBytes?: number;
 }
 
 function discoverySafety(value: unknown): "readOnly" | "approvalRequired" | "all" {
@@ -2302,10 +2304,6 @@ export class CatalogService {
               };
             })
           : [];
-      const nextOffset = offset + entries.length < matches.length ? offset + entries.length : undefined;
-      const pageTools = new Set(
-        pageMatches.flatMap((match) => [match.tool, ...(alsoOn.get(match) ?? []).map((other) => other.tool)]),
-      );
       const matchingTools = (term: string) =>
         new Set([
           ...(statistics.nameMatches.get(term) ?? []),
@@ -2314,19 +2312,25 @@ export class CatalogService {
           ...(statistics.inputMatches.get(term) ?? []),
           ...vocabularyTools,
         ]);
-      const representedTerms: string[] = [];
-      const otherResultTerms: string[] = [];
-      const unmatchedTerms: string[] = [];
-      for (const term of analyzedTerms) {
-        const termTools = matchingTools(term);
-        if ([...termTools].some((tool) => pageTools.has(tool))) {
-          representedTerms.push(displayTerm(term));
-        } else if (termTools.size > 0) {
-          otherResultTerms.push(displayTerm(term));
-        } else {
-          unmatchedTerms.push(displayTerm(term));
+      const termsOnPage = (kept: typeof pageMatches) => {
+        const pageTools = new Set(
+          kept.flatMap((match) => [match.tool, ...(alsoOn.get(match) ?? []).map((other) => other.tool)]),
+        );
+        const representedTerms: string[] = [];
+        const otherResultTerms: string[] = [];
+        const unmatchedTerms: string[] = [];
+        for (const term of analyzedTerms) {
+          const termTools = matchingTools(term);
+          if ([...termTools].some((tool) => pageTools.has(tool))) {
+            representedTerms.push(displayTerm(term));
+          } else if (termTools.size > 0) {
+            otherResultTerms.push(displayTerm(term));
+          } else {
+            unmatchedTerms.push(displayTerm(term));
+          }
         }
-      }
+        return { representedTerms, otherResultTerms, unmatchedTerms };
+      };
       const unavailableCatalogs = catalogs.filter(Result.isFailure).length;
       const staleCatalogs = catalogs.filter(
         (catalog) => Result.isSuccess(catalog) && catalogStaleness(catalog.success),
@@ -2506,12 +2510,61 @@ export class CatalogService {
           : "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches.";
       };
       const guidance = searchGuidance();
+      const pageOf = (count: number): CatalogSearchPage => {
+        const nextOffset = offset + count < matches.length ? offset + count : undefined;
+        const { representedTerms, otherResultTerms, unmatchedTerms } = termsOnPage(pageMatches.slice(0, count));
+        return {
+          catalogErrors,
+          ...(absence ? { absence } : {}),
+          entries: entries.slice(0, count),
+          ...(readyCalls.length ? { readyCalls } : {}),
+          total: matches.length,
+          offset,
+          limit,
+          hasMore: nextOffset !== undefined,
+          ...(nextOffset !== undefined ? { nextOffset } : {}),
+          ...(matchMode === "partial" && matches.length > 0 ? { matchMode } : {}),
+          ...(reportsQueryAnalysis
+            ? {
+                queryAnalysis: {
+                  representedTerms,
+                  otherResultTerms,
+                  unmatchedTerms,
+                  ...(queryMetadataTruncated ? { truncated: true as const } : {}),
+                  ...(args.connector ? { connectorScope: args.connector } : {}),
+                  ...(args.connector && !scopedConnector
+                    ? {
+                        unknownConnector: true as const,
+                        configuredConnectors: this.registry.listConnectors().map((connector) => connector.id),
+                      }
+                    : {}),
+                  ...(unavailableCatalogs > 0 ? { unavailableConnectorCount: unavailableCatalogs } : {}),
+                  ...(scopedCatalogError ? { catalogError: scopedCatalogError } : {}),
+                  ...(scopedGuide
+                    ? {
+                        guide: scopedGuide.guide,
+                        ...(scopedGuide.guideSummary ? { guideSummary: scopedGuide.guideSummary } : {}),
+                        ...(scopedGuide.required
+                          ? {
+                              guideRequired: true as const,
+                              guideRequiredReasons: ["connector_required" as const],
+                            }
+                          : {}),
+                      }
+                    : {}),
+                  ...(guidance ? { guidance } : {}),
+                },
+              }
+            : {}),
+        };
+      };
+      const page = pageOf(fittedRowCount(entries.length, args.maxTextBytes, pageOf));
       // Counts, ranking, and term analysis use the whole searched corpus, not
       // just this page's tools. Bind every searched connector, including failed
       // catalogs and off-page matches, so paging cannot reveal a hidden
       // connector's contribution. Keep provenance host-only.
       for (const connector of connectors) onCatalogReference?.(connector.id);
-      for (const entry of entries) {
+      for (const entry of page.entries) {
         onCatalogReference?.(entry.connector.id, entry.tool.name);
         for (const other of entry.alsoOn ?? []) onCatalogReference?.(other.connector.id, entry.tool.name);
       }
@@ -2522,50 +2575,7 @@ export class CatalogService {
       // An unknown scope's guidance lists the visible roster without searching it.
       if (reportsQueryAnalysis && args.connector && !scopedConnector)
         for (const connector of visibleConnectors) onCatalogReference?.(connector.id);
-      return {
-        catalogErrors,
-        ...(absence ? { absence } : {}),
-        entries,
-        ...(readyCalls.length ? { readyCalls } : {}),
-        total: matches.length,
-        offset,
-        limit,
-        hasMore: nextOffset !== undefined,
-        ...(nextOffset !== undefined ? { nextOffset } : {}),
-        ...(matchMode === "partial" && matches.length > 0 ? { matchMode } : {}),
-        ...(reportsQueryAnalysis
-          ? {
-              queryAnalysis: {
-                representedTerms,
-                otherResultTerms,
-                unmatchedTerms,
-                ...(queryMetadataTruncated ? { truncated: true as const } : {}),
-                ...(args.connector ? { connectorScope: args.connector } : {}),
-                ...(args.connector && !scopedConnector
-                  ? {
-                      unknownConnector: true as const,
-                      configuredConnectors: this.registry.listConnectors().map((connector) => connector.id),
-                    }
-                  : {}),
-                ...(unavailableCatalogs > 0 ? { unavailableConnectorCount: unavailableCatalogs } : {}),
-                ...(scopedCatalogError ? { catalogError: scopedCatalogError } : {}),
-                ...(scopedGuide
-                  ? {
-                      guide: scopedGuide.guide,
-                      ...(scopedGuide.guideSummary ? { guideSummary: scopedGuide.guideSummary } : {}),
-                      ...(scopedGuide.required
-                        ? {
-                            guideRequired: true as const,
-                            guideRequiredReasons: ["connector_required" as const],
-                          }
-                        : {}),
-                    }
-                  : {}),
-                ...(guidance ? { guidance } : {}),
-              },
-            }
-          : {}),
-      };
+      return page;
     });
   }
 
@@ -2761,6 +2771,20 @@ function pageTail(page: CatalogSearchPage) {
     ...(page.matchMode ? { matchMode: page.matchMode } : {}),
     ...(page.queryAnalysis ? { queryAnalysis: page.queryAnalysis } : {}),
   };
+}
+
+function fittedRowCount(rows: number, budget: number | undefined, pageOf: (count: number) => CatalogSearchPage) {
+  const fits = (count: number) =>
+    budget === undefined || encoder.encode(JSON.stringify(flatSearchResult(pageOf(count)))).length <= budget;
+  if (rows <= 1 || fits(rows)) return rows;
+  let low = 1;
+  let high = rows - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (fits(middle)) low = middle;
+    else high = middle - 1;
+  }
+  return low;
 }
 
 export function flatSearchResult(page: CatalogSearchPage): CatalogSearchResult {

@@ -345,14 +345,18 @@ schema omits the corresponding list. `search_tools` carries the same metadata
 whenever schemas are requested, and `includeSchemaKeys: false` buys the bytes
 back.
 
-**S3.** Discovery bounds throw rather than silently shrink. `invalid_args`
-covers a `limit` outside 1–100, an `offset` that is not a non-negative integer,
+**S3.** Invalid discovery arguments and a row too large to return throw;
+byte-limited pages shrink instead, so a program that needs the complete result
+must follow `nextOffset` while `hasMore` is true. `invalid_args` covers a `limit` outside 1–100, an `offset` that is not a non-negative integer,
 a supplied `query` that is not a string, and a `connector` over 512 UTF-8 bytes
 — refused whole, since a clipped scope names a different connector. Omitted
-`offset` starts at 0; omitted `query` browses. A page whose serialized form
-exceeds 256,000 bytes is `result_too_large`; a program's page is measured as its
-serialized value, while top-level `search_tools` measures the complete tool
-result including both copies and JSON escaping. Each error carries a correction
+`offset` starts at 0; omitted `query` browses. A page ends before the row that
+would take its serialized value past 256,000 bytes, with `hasMore: true` and a
+`nextOffset` at that row, and always holds its first row; only a page whose
+first row alone passes the ceiling is `result_too_large`. Top-level
+`search_tools` ends its pages within a 36,000-byte inline budget instead and
+measures its ceiling over the complete tool result, both copies and JSON
+escaping included ([search pagination](./meta-tools.md#lexical-discovery)). Each error carries a correction
 hint and the stable `code`, `retryable`, and `details` fields (`E1`).
 
 ### connecta.describe
@@ -1301,7 +1305,7 @@ because connecta enforces them above the sandbox:
 | Host calls per execution, shared by every guest call but `emit`, `budget` and the `unawaited` notice | 20 by default, `execute.maxHostCalls`                                                                                                                                                                                                                             |
 | Writes per run on a writable endpoint, on top of the host calls they also spend (`W10`)              | 10 by default, `execute.maxWrites`                                                                                                                                                                                                                                |
 | Deadline per host call                                                                               | `connecta.call`: its `timeoutMs`, else `calls.defaultTimeoutMs`, else `execute.hostCallTimeoutMs` (15 s); `result`, `skill` and `read`: `execute.hostCallTimeoutMs`. One deadline covers catalog resolution, admission, the connector call, and result processing |
-| Discovery page                                                                                       | ≤ 100 tools, ≤ 256,000 serialized bytes                                                                                                                                                                                                                           |
+| Discovery page                                                                                       | ≤ 100 tools, ending before the row that would pass 256,000 serialized bytes                                                                                                                                                                                       |
 | `describe` addresses                                                                                 | ≤ 100                                                                                                                                                                                                                                                             |
 | `describe` nearby suggestions                                                                        | ≤ 3 canonical addresses per failed entry                                                                                                                                                                                                                          |
 | Caller text echoed by `describe` recovery                                                            | ≤ 512 UTF-8 bytes per field, plus `…`                                                                                                                                                                                                                             |
