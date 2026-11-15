@@ -767,7 +767,7 @@ isolation, allowed routes, construction snapshots and full-renderer ordering.
 the `until` timestamp continuation. It sends the same teamId/slug routing as the
 other named reads, `search` (Vercel's name search) and `limit` (1–100), and
 reads `pagination.next` through the shared Vercel adapter into a signed cursor
-bound to those filters and, when pinned, the team pin. Rows project only `id`,
+bound to those filters and to the team pin or, unpinned, the configured routing default (absent counts as personal scope), so a changed default refuses an old cursor before dispatch. `list_teams` needs no such binding: `GET /v2/teams` takes no team selector. Rows project only `id`,
 `name`, `accountId`, `framework`, `createdAt`, `updatedAt` and the linked
 repository's `type`, owner (`org`, `projectNamespace` or `owner`), name (`repo`,
 `projectName` or `slug`) and `productionBranch`. Environment values, deploy hook
