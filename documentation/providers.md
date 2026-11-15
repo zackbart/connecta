@@ -401,11 +401,11 @@ discovery for your deployment's catalog.
 </details>
 
 <details>
-<summary>Vercel (11 tools)</summary>
+<summary>Vercel (12 tools)</summary>
 
 [Setup](#vercel). **API source:** [Upstream OpenAPI](https://openapi.vercel.sh/).
 
-- **Named reads:** `get_deployment_build_logs`, `get_runtime_logs`, `list_project_env_vars`, `list_teams`.
+- **Named reads:** `get_deployment_build_logs`, `get_runtime_logs`, `list_project_env_vars`, `list_projects`, `list_teams`.
 - **Named writes:** `update_project_env_var`, `upsert_project_env_var`.
 - **API reads:** `vercel_api_details`, `vercel_api_read`, `vercel_api_search`.
 - **API writes:** `vercel_api_upload`, `vercel_api_write`.
@@ -954,7 +954,7 @@ proxy or test double. Set `callAdmission` for downstream endpoint limits and
 values cannot be returned; there is no option to widen this boundary. The token
 must have the permissions and Vercel plan required by the selected endpoint.
 
-Team lists default to 20 and allow 100 rows. Build logs default to 200 and allow
+Team and project lists default to 20 and allow 100 rows. Build logs default to 200 and allow
 2,000 events; runtime logs default to 200 and allow 1,000 rows over 1–20 seconds.
 Log prefixes stop at 1 MiB; each projected text field stops at 4,000 characters.
 Uploads accept at most 8 MiB of explicit bytes. Regular response bodies stop at
@@ -963,7 +963,7 @@ acknowledgements; check the target after an unknown write outcome before repeati
 
 A numeric hatch `query.until` can set the initial upper time boundary on timestamp
 lists. Subsequent pages use signed `page.nextCursor` in that same parameter.
-Named `list_teams` uses only its top-level `cursor` for continuation.
+Named `list_teams` and `list_projects` use only their top-level `cursor` for continuation.
 
 ## GitHub
 

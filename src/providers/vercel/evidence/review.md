@@ -760,3 +760,18 @@ guides, results and schemas retain their original bytes. Discovery performs no
 credential, ownership, admission or transport work. The regression matrix checks
 every denied operation against the unchanged call policy, plus connection
 isolation, allowed routes, construction snapshots and full-renderer ordering.
+
+## Named project list (#1431)
+
+`list_projects` serves `GET /v10/projects`, already a reviewed hatch read with
+the `until` timestamp continuation. It sends the same teamId/slug routing as the
+other named reads, `search` (Vercel's name search) and `limit` (1–100), and
+reads `pagination.next` through the shared Vercel adapter into a signed cursor
+bound to those filters and to the team pin or, unpinned, the configured routing default (absent counts as personal scope), so a changed default refuses an old cursor before dispatch. `list_teams` needs no such binding: `GET /v2/teams` takes no team selector. Rows project only `id`,
+`name`, `accountId`, `framework`, `createdAt`, `updatedAt` and the linked
+repository's `type`, owner (`org`, `projectNamespace` or `owner`), name (`repo`,
+`projectName` or `slug`) and `productionBranch`. Environment values, deploy hook
+URLs, protection-bypass keys and route conditions are never projected, and the
+connection's value-safety table still redacts the response before projection.
+Recorded traffic showed listing projects through the hatch took five calls
+(search, browse, API search, details, read).

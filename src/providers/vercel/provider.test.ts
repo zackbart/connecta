@@ -599,6 +599,90 @@ describe("vercel() over an access token", () => {
     expect(Date.now() - quick).toBeLessThan(5_000);
   });
 
+  it("INV-5: lists projects as compact rows without secrets and continues with a bound until cursor", async () => {
+    const connector = vercel("hosting", TOKEN);
+    const ctx = keyed("k7Q9w2E4r6T8y1U3");
+    const project = {
+      id: "prj_web",
+      name: "web",
+      accountId: "team_default",
+      framework: "nextjs",
+      createdAt: 1700000000000,
+      updatedAt: 1700000100000,
+      env: [{ key: "API_KEY", value: "stored-env-marker" }],
+      link: {
+        type: "github",
+        org: "alice",
+        repo: "widget",
+        productionBranch: "main",
+        deployHooks: [{ name: "rebuild", url: "https://api.vercel.com/v1/integrations/deploy/prj_web/hook-marker" }],
+      },
+    };
+    respond = () =>
+      Response.json({
+        projects: [
+          project,
+          {
+            id: "prj_docs",
+            name: "docs",
+            framework: null,
+            link: { type: "gitlab", projectNamespace: "bob", projectName: "docs" },
+          },
+        ],
+        pagination: { count: 2, next: 1699999999000 },
+      });
+    const first = (await connector.callTool("list_projects", { search: "w", limit: 2 }, ctx)) as any;
+    expect(first.items).toEqual([
+      {
+        id: "prj_web",
+        name: "web",
+        accountId: "team_default",
+        framework: "nextjs",
+        createdAt: 1700000000000,
+        updatedAt: 1700000100000,
+        repository: { type: "github", owner: "alice", name: "widget", productionBranch: "main" },
+      },
+      { id: "prj_docs", name: "docs", framework: null, repository: { type: "gitlab", owner: "bob", name: "docs" } },
+    ]);
+    expect(JSON.stringify(first)).not.toMatch(/stored-env-marker|hook-marker/);
+    expect(first.page).toEqual({ hasMore: true, nextCursor: expect.any(String) });
+    expect(Object.fromEntries(sent.at(-1)!.url.searchParams)).toEqual({
+      teamId: "team_default",
+      search: "w",
+      limit: "2",
+    });
+
+    const before = sent.length;
+    await expect(
+      connector.callTool("list_projects", { search: "x", limit: 2, cursor: first.page.nextCursor }, ctx),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(sent).toHaveLength(before);
+
+    respond = () => Response.json({ projects: [], pagination: { count: 0, next: null } });
+    const last = (await connector.callTool(
+      "list_projects",
+      { search: "w", limit: 2, cursor: first.page.nextCursor, fields: ["name"] },
+      ctx,
+    )) as any;
+    expect(sent.at(-1)!.url.searchParams.get("until")).toBe("1699999999000");
+    expect(last).toEqual({ items: [], page: { hasMore: false } });
+
+    respond = () => Response.json({ projects: [project], pagination: { count: 1, next: 1699999999000 } });
+    for (const selectors of [{}, { teamId: "team_default" }, { teamId: null }, { slug: "studio" }]) {
+      const issued = (await connector.callTool("list_projects", selectors, ctx)) as any;
+      for (const changed of [
+        vercel("hosting", { ...TOKEN, teamId: "team_other" }),
+        vercel("hosting", { purpose: TOKEN.purpose, auth: TOKEN.auth }),
+      ]) {
+        const count = sent.length;
+        await expect(
+          changed.callTool("list_projects", { ...selectors, cursor: issued.page.nextCursor }, ctx),
+        ).rejects.toMatchObject({ code: "invalid_args" });
+        expect(sent).toHaveLength(count);
+      }
+    }
+  });
+
   it("reads Vercel's x-ratelimit-reset as the retry delay", async () => {
     const connector = vercel("hosting", TOKEN);
     const reset = String(Math.ceil(Date.now() / 1000) + 30);
@@ -651,6 +735,7 @@ describe("vercel() over an access token", () => {
     for (const selectors of [{}, { teamId: "team_other" }, { teamId: null }, { slug: "studio" }]) {
       sent = [];
       await call(connector, "vercel_api_read", { path: "/v10/projects", query: selectors });
+      await call(connector, "list_projects", selectors);
       await call(connector, "list_project_env_vars", { projectId: "web", ...selectors });
       await call(connector, "vercel_api_upload", {
         method: "POST",
@@ -665,7 +750,12 @@ describe("vercel() over an access token", () => {
             ? "slug=studio"
             : `teamId=${"teamId" in selectors ? selectors.teamId : "team_default"}`;
       for (const request of sent)
-        expect(request.url.searchParams.toString().replace(/&?decrypt=false&?/, "")).toBe(expected);
+        expect(
+          request.url.searchParams
+            .toString()
+            .replace(/&?decrypt=false&?/, "")
+            .replace(/&?limit=20&?/, ""),
+        ).toBe(expected);
     }
     // The signed cursor is bound to resolved default selectors, including config changes.
     const ctx = keyed("k7Q9w2E4r6T8y1U3");
@@ -804,6 +894,8 @@ describe("vercel() with a deployment team pin", () => {
       ["vercel_api_read", { path: "/v10/projects", query: { teamId: ["team_alice", "team_bob"] } }],
       ["vercel_api_read", { path: "/v10/projects", query: { teamId: "team_alice", "%74eamId": "team_bob" } }],
       ["vercel_api_read", { path: "/v2/teams/team_%62ob" }],
+      ["list_projects", { teamId: "team_bob" }],
+      ["list_projects", { teamId: null }],
       ["list_project_env_vars", { projectId: "web", teamId: "team_bob" }],
       ["get_deployment_build_logs", { deploymentId: "dpl_web", teamId: null }],
       ["get_runtime_logs", { projectId: "web", deploymentId: "dpl_web", teamId: "team_bob" }],

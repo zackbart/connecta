@@ -7,6 +7,7 @@ import { Refusal } from "../../http/errors.js";
 import { read, write, list } from "../../http/tools.js";
 import { fieldsContract, selectFields } from "../../http/fields.js";
 import { vercelPage } from "../../http/hatch-paging.js";
+import { isMinChars } from "../../http/json-schema.js";
 import type { Connection } from "../../http/vendor.js";
 import type { JsonSchema } from "../../types.js";
 import { schema, typedParams } from "../_shared/rest/kit.js";
@@ -112,6 +113,44 @@ function envMetadata(value: unknown): JsonRecord {
     createdAt: variable["createdAt"],
     updatedAt: variable["updatedAt"],
   });
+}
+
+const Text = Schema.String.check(isMinChars(1));
+const TeamSlug = Text.annotate({ description: "Team slug; overrides the routing default when teamId is omitted." });
+
+const Repository = Schema.Struct({
+  type: Schema.String,
+  owner: Schema.optionalKey(Schema.String),
+  name: Schema.optionalKey(Schema.String),
+  productionBranch: Schema.optionalKey(Schema.String),
+}).annotate({ description: "The linked Git repository, as its host names the owner and repository." });
+
+function present<K extends string, V>(key: K, value: V | undefined): { [P in K]?: V } {
+  return value === undefined ? {} : ({ [key]: value } as { [P in K]: V });
+}
+
+function repository(value: unknown): { repository?: typeof Repository.Type } {
+  const link = record(value);
+  const type = text(link["type"]);
+  if (!type) return {};
+  return {
+    repository: {
+      type,
+      ...present("owner", text(link["org"]) ?? text(link["projectNamespace"]) ?? text(link["owner"])),
+      ...present("name", text(link["repo"]) ?? text(link["projectName"]) ?? text(link["slug"])),
+      ...present("productionBranch", text(link["productionBranch"])),
+    },
+  };
+}
+
+const timestamp = (value: unknown) => (typeof value === "number" ? value : undefined);
+
+function untilPage(body: JsonRecord, path: string) {
+  const next = vercelPage.next(body, { path, query: {}, headers: {} });
+  return {
+    hasMore: next !== null && next !== undefined,
+    nextCursor: next === null || next === undefined || typeof next === "object" ? null : JSON.stringify(next),
+  };
 }
 
 function closed(properties: Record<string, JsonSchema>, required: string[]): JsonSchema {
@@ -722,8 +761,7 @@ export function vercelTools({
           const result = yield* send("GET", "/v2/teams", {
             query: { limit: _args.limit, ...(cursor ? { until: JSON.parse(cursor) as unknown } : {}) },
           });
-          const body = record(result.data),
-            next = vercelPage.next(body, { path: "/v2/teams", query: {}, headers: {} });
+          const body = record(result.data);
           const rows = Array.isArray(body["teams"]) ? body["teams"] : [];
           return {
             rows: rows.map((team) => {
@@ -735,10 +773,61 @@ export function vercelTools({
                 ...(text(record(e["membership"])["role"]) ? { role: text(record(e["membership"])["role"])! } : {}),
               };
             }),
-            page: {
-              hasMore: next !== null && next !== undefined,
-              nextCursor: next === null || next === undefined || typeof next === "object" ? null : JSON.stringify(next),
-            },
+            page: untilPage(body, "/v2/teams"),
+          };
+        }),
+    }),
+    list(connection, {
+      name: "list_projects",
+      description: options.pin
+        ? "List the pinned team's Vercel projects with ids, names, frameworks, linked Git repositories and update times; search matches names."
+        : "List Vercel projects with ids, names, frameworks, linked Git repositories and update times; search matches names. Defaults to the configured team.",
+      filters: {
+        teamId: Schema.optionalKey(Schema.NullOr(Text).annotate({ description: String(TEAM_ID.description) })),
+        slug: Schema.optionalKey(TeamSlug),
+        search: Schema.optionalKey(Text.annotate({ description: "Match projects by name." })),
+      },
+      row: Schema.Struct({
+        id: Schema.String,
+        name: Schema.String,
+        accountId: Schema.optionalKey(Schema.String),
+        framework: Schema.NullOr(Schema.String),
+        createdAt: Schema.optionalKey(Schema.Number),
+        updatedAt: Schema.optionalKey(Schema.Number),
+        repository: Schema.optionalKey(Repository),
+      }),
+      limit: { default: 20, max: 100, description: "Projects per page, default 20, maximum 100." },
+      cursor: "bound",
+      cursorScope: Object.freeze(
+        options.pin ? { vercelTeamPin: options.pin.teamId } : { vercelDefaultTeam: teamId ?? null },
+      ),
+      page: (args, cursor) =>
+        Effect.gen(function* () {
+          const result = yield* send("GET", "/v10/projects", {
+            query: compact({
+              teamId: args.teamId,
+              slug: args.slug,
+              search: args.search,
+              limit: args.limit,
+              until: cursor === undefined ? undefined : (JSON.parse(cursor) as unknown),
+            }),
+          });
+          const body = record(result.data);
+          const rows = Array.isArray(body["projects"]) ? body["projects"] : [];
+          return {
+            rows: rows.map((value) => {
+              const project = record(value);
+              return {
+                id: String(project["id"]),
+                name: String(project["name"]),
+                ...present("accountId", text(project["accountId"])),
+                framework: text(project["framework"]) ?? null,
+                ...present("createdAt", timestamp(project["createdAt"])),
+                ...present("updatedAt", timestamp(project["updatedAt"])),
+                ...repository(project["link"]),
+              };
+            }),
+            page: untilPage(body, "/v10/projects"),
           };
         }),
     }),

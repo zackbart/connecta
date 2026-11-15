@@ -188,6 +188,7 @@ const Query = Schema.Record(Schema.String, Schema.Union([Schema.String, Schema.A
 const params = (...names: string[]) => Schema.Struct(Object.fromEntries(names.map((name) => [name, Schema.String])));
 const currentUser = get("currentUser", "/v2/user", { success: Schema.Unknown });
 const teams = get("teams", "/v2/teams", { query: Query, success: Schema.Unknown });
+const projects = get("projects", "/v10/projects", { query: Query, success: Schema.Unknown });
 const projectEnv = get("projectEnv", "/v10/projects/:idOrName/env", {
   params: params("idOrName"),
   query: Query,
@@ -215,7 +216,7 @@ const runtimeLogs = get("runtimeLogs", "/v1/projects/:projectId/deployments/:dep
   query: Query,
   success: Schema.Unknown,
 });
-export const named = [currentUser, teams, projectEnv, upsertEnv, updateEnv, buildLogs, runtimeLogs];
+export const named = [currentUser, teams, projects, projectEnv, upsertEnv, updateEnv, buildLogs, runtimeLogs];
 const canonicalTemplate = (path: string) => path.replace(/:([^/]+)/g, "{$1}");
 
 /** Exact operation/media pairs from the pin; named logs also accept bounded equivalents. */
