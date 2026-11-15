@@ -1364,10 +1364,10 @@ describe("production HTTP dispatcher", () => {
         ["/health;tail", "GET", 404, ["ui"]],
         ["/%68ealth", "GET", 404, ["ui"]],
         ["/HEALTH", "GET", 404, ["ui"]],
-        ["/mcp/%", "POST", 401, ["ui", "auth", "metadata"]],
-        ["/mcp/%FF", "PROPFIND", 401, ["ui", "auth", "metadata"]],
-        ["/mcp/a;b", "POST", 401, ["ui", "auth", "metadata"]],
-        ["/mcp/" + "x".repeat(200), "POST", 401, ["ui", "auth", "metadata"]],
+        ["/mcp/%", "POST", 404, ["ui"]],
+        ["/mcp/%FF", "PROPFIND", 404, ["ui"]],
+        ["/mcp/a;b", "POST", 404, ["ui"]],
+        ["/mcp/" + "x".repeat(200), "POST", 404, ["ui"]],
         ["/connect/%", "POST", 405, ["ui"]],
         ["/connect/%FF", "GET", 403, ["ui"]],
         ["/oauth/callback/%", "PROPFIND", 405, ["ui"]],
@@ -1398,15 +1398,15 @@ describe("production HTTP dispatcher", () => {
         return { active, queued, admitted: totals.admitted };
       };
       for (const [path, method, status, expectedTrace] of cases) {
-        const publicCimd = path.startsWith("/oauth/client-metadata/");
-        const before = publicCimd ? await admission() : undefined;
+        const unadmitted = path.startsWith("/oauth/client-metadata/") || path.startsWith("/mcp/");
+        const before = unadmitted ? await admission() : undefined;
         trace.length = 0;
         storageCalls.forEach((spy) => spy.mockClear());
         const request = new Request(BASE + path, { method, ...(method === "POST" ? { body: "unread" } : {}) });
         const response = await app.fetch(request);
         expect(response.status, `${method} ${path}`).toBe(status);
         expect(trace, `${method} ${path}`).toEqual(expectedTrace);
-        if (publicCimd) {
+        if (unadmitted) {
           expect(request.bodyUsed).toBe(false);
           expect(await admission()).toEqual(before);
           for (const spy of storageCalls) expect(spy).not.toHaveBeenCalled();

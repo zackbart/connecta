@@ -23,7 +23,6 @@ export function handoffFixture(options: {
   catalogAuth?: boolean;
   native?: boolean;
   credential?: boolean;
-  manage?: boolean;
   authScope?: "personal" | "shared";
   executor?: Executor;
 } = {}) {
@@ -81,14 +80,10 @@ export function handoffFixture(options: {
   const app = createTestConnecta({
     connectors: [connector, ...(options.native ? [{ ...connector, id: "outside" }] : [])], storage, vault, publicUrl: HANDOFF_BASE, logger: "silent", executor,
     auth: ["alice", "bob"].map(user => fakeClerkAuth({ token: user, userId: user })),
-    // Without management alice is only a pool member; bob stays the maintainer.
-    ...(options.manage === false ? { maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }] } : {}),
     pools: { team: { tools: ["service"], members: [{ namespace: "https://clerk.example.test", id: "alice" }], readOnly: true, ...(options.native ? { surface: "native" as const, executeCode: false } : {}) } },
   });
-  const rpc = async (name: string, args: Record<string, unknown>, pool = "team") => {
-    const request = mcpRpc("tools/call", { name, arguments: args }, { token: "alice" });
-    return (await readJsonRpc(await app.fetch(new Request(`${HANDOFF_BASE}/mcp/${pool}`, request)))).result;
-  };
+  const rpc = async (name: string, args: Record<string, unknown>) =>
+    (await readJsonRpc(await app.fetch(mcpRpc("tools/call", { name, arguments: args }, { token: "alice" })))).result;
   const browser = (url: string, user = "alice") => app.fetch(new Request(url, { headers: { Cookie: `__session=${user}` } }));
   const complete = async (url: string) => {
     expect((await browser(url, "bob")).status).toBe(403);

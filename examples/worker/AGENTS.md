@@ -16,7 +16,7 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
   admits the request before the Worker runs; a service identity alone is
   refused inside connecta. Do not add JWT parsing or another identity gate.
   Signed-in maintainers alone manage shared credentials and agent tokens; pool
-  members connect only their own accounts on personal connectors in their pools.
+  members connect only their own accounts on personal connectors in their pool.
 - Attach Access to the Worker itself, not only its hostname: keep the
   Worker's `access` property pointing at the Worker-level application in
   `alchemy.run.ts`. Enable Managed OAuth on that Access application. CIMD is
@@ -79,7 +79,7 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
   `cta_` bearer as their only credential. That needs the self-hosted Access
   application `ConnectaAgents` in `alchemy.run.ts`, one `<host>/agent/*`
   destination per agent hostname with a single Bypass policy, beside the
-  Worker-level application (README.md § "Let agents through Access"). Never bypass any other path. `/mcp` and `/mcp/<pool>` refuse `cta_`.
+  Worker-level application (README.md § "Let agents through Access"). Never bypass any other path. `/mcp` refuses `cta_`.
   `connecta doctor` also reads `/health` behind Access: set
   `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET`, and `CONNECTA_TOKEN`
   together, and pass `--pool ci`, a pool that lists the agent.

@@ -291,7 +291,6 @@ describe("deployment shapes", () => {
       expect((await initialize(token)).status).toBe(200);
       // Agents reach pools only at /agent/<pool>; human endpoints refuse cta_ (#837).
       expect((await initialize(token, "/mcp")).status).toBe(401);
-      expect((await initialize(token, "/mcp/local")).status).toBe(401);
       const { token: rotated } = await manager.rotate("local-machine", "local-provisioning");
       expect((await initialize(token)).status).toBe(401);
       expect((await initialize(rotated)).status).toBe(200);

@@ -61,8 +61,7 @@ function setup(
     skills?: boolean;
     privateArguments?: "top-level" | "nested" | "array";
     catalogSchema?: JsonSchema;
-    /** Bob reaches this sole pool at plain /mcp; alice stays the maintainer. */
-    routed?: string;
+    poolName?: string;
     storage?: ReturnType<typeof memoryStorage>;
   } = {},
 ) {
@@ -246,11 +245,10 @@ function setup(
     auth: ["alice", "bob"].map((user) => fakeClerkAuth({ token: user, userId: user })),
     ...(options.authFirst ? { ui: operatorUi() } : {}),
     activity: activityHistory({ store: activity }),
-    ...(options.routed ? { maintainers: [{ namespace: "https://clerk.example.test", id: "alice" }] } : {}),
     pools: {
-      [options.routed ?? "trusted"]: {
+      [options.poolName ?? "trusted"]: {
         tools: ["service"],
-        members: ["alice", "bob"].map((id) => ({ namespace: "https://clerk.example.test", id })),
+        members: [{ namespace: "https://clerk.example.test", id: "bob" }],
         readOnly: false,
         ...(options.native ? { surface: "native" as const } : {}),
       },
@@ -278,7 +276,7 @@ function setup(
       responses?: Record<string, unknown>;
       capabilities?: Record<string, unknown>;
       user?: string;
-      pool?: string;
+      path?: string;
       legacy?: boolean;
     } = {},
   ) => {
@@ -305,9 +303,8 @@ function setup(
       request.headers.set("Mcp-Name", name);
       if (typeof args.address === "string") request.headers.set("Mcp-Param-Address", args.address);
     }
-    request.headers.set("Authorization", `Bearer ${opts.user ?? "alice"}`);
-    const pool = opts.pool ?? (options.native ? "trusted" : undefined);
-    return readJsonRpc(await app.fetch(pool ? new Request(`${BASE}/mcp/${pool}`, request) : request));
+    request.headers.set("Authorization", `Bearer ${opts.user ?? (options.native ? "bob" : "alice")}`);
+    return readJsonRpc(await app.fetch(opts.path ? new Request(`${BASE}${opts.path}`, request) : request));
   };
   return {
     rpc,
@@ -503,15 +500,11 @@ describe("downstream input relay", { tags: ["node"] }, () => {
     expect(flow.call).toHaveBeenLastCalledWith("read", { id: 1 }, OPAQUE, { connecta_auth: { action: "accept" } });
   });
 
-  it("INV-4 INV-5 INV-9: rejects tamper, replay, concurrent forks, cross-principal, cross-pool, and expiry", async () => {
+  it("INV-4 INV-5 INV-9: rejects tamper, replay, concurrent forks, cross-principal, and expiry", async () => {
     const flow = setup();
     const first = (await flow.rpc()).result;
     const responses = { [Object.keys(first.inputRequests)[0]!]: { action: "accept" } };
-    for (const opts of [
-      { state: `${first.requestState}x` },
-      { state: first.requestState, user: "bob" },
-      { state: first.requestState, pool: "trusted" },
-    ]) {
+    for (const opts of [{ state: `${first.requestState}x` }, { state: first.requestState, user: "bob" }]) {
       expect((await flow.rpc({ ...opts, responses })).error).toMatchObject({
         code: -32602,
         data: { reason: "invalid_request_state" },
@@ -534,16 +527,16 @@ describe("downstream input relay", { tags: ["node"] }, () => {
 
   it("INV-4 INV-9: binds routed /mcp continuations to the resolved pool and the requested path", async () => {
     const storage = memoryStorage();
-    const flow = setup({ routed: "team", storage });
+    const flow = setup({ poolName: "team", storage });
     const first = (await flow.rpc({ user: "bob" })).result;
     const responses = { [Object.keys(first.inputRequests)[0]!]: { action: "accept" } };
-    // The same pool through its explicit path is a different endpoint.
-    expect((await flow.rpc({ state: first.requestState, user: "bob", pool: "team", responses })).error).toMatchObject({
-      code: -32602,
-      data: { reason: "invalid_request_state" },
+    expect(
+      (await flow.rpc({ state: first.requestState, user: "bob", path: "/mcp/team", responses })).error,
+    ).toMatchObject({
+      code: -33004,
     });
     // A redeploy that routes bob to another pool refuses the continuation.
-    const moved = setup({ routed: "other", storage });
+    const moved = setup({ poolName: "other", storage });
     expect((await moved.rpc({ state: first.requestState, user: "bob", responses })).error).toMatchObject({
       code: -32602,
       data: { reason: "invalid_request_state" },
@@ -649,7 +642,6 @@ describe("downstream input relay", { tags: ["node"] }, () => {
       const result = (
         await flow.rpc({
           name: "execute_code",
-          pool: "trusted",
           args: { code: `return await connecta.call('service.${write ? "write" : "read"}', { id: 1 });` },
         })
       ).result;

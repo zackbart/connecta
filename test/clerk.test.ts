@@ -375,7 +375,10 @@ describe("clerkAuth inbound auth", () => {
         .map((part) => part.replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"))
         .join(".");
 
-    function deployment(allowedOAuthClientIds: readonly string[] | undefined = ["client_connecta"]) {
+    function deployment(
+      allowedOAuthClientIds: readonly string[] | undefined = ["client_connecta"],
+      caller: "maintainer" | "member" = "maintainer",
+    ) {
       const auth = clerkAuth({
         publishableKey,
         secretKey: "sk_test_fake",
@@ -400,8 +403,9 @@ describe("clerkAuth inbound auth", () => {
             ],
           }),
         ],
-        maintainers: ["user_123"],
-        pools: { support: { tools: ["calc"], members: ["user_123"] } },
+        ...(caller === "maintainer"
+          ? { maintainers: ["user_123"] }
+          : { maintainers: ["user_maintainer"], pools: { support: { tools: ["calc"], members: ["user_123"] } } }),
       });
     }
 
@@ -437,16 +441,15 @@ describe("clerkAuth inbound auth", () => {
       });
     }
 
-    async function expectUnauthorized(c: ReturnType<typeof deployment>, path = "/mcp") {
-      const response = await c.fetch(mcpRequest(path));
+    async function expectUnauthorized(c: ReturnType<typeof deployment>) {
+      const response = await c.fetch(mcpRequest("/mcp"));
       expect(response.status).toBe(401);
-      const metadataPath = path === "/mcp" ? "" : path;
       expect(response.headers.get("WWW-Authenticate")).toBe(
-        `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource${metadataPath}", scope="openid profile email"`,
+        `Bearer error="invalid_token", resource_metadata="${BASE}/.well-known/oauth-protected-resource", scope="openid profile email"`,
       );
       expect(await response.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
-      const metadata = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource${metadataPath}`));
-      expect(await metadata.json()).toMatchObject({ resource: `${BASE}${path}` });
+      const metadata = await c.fetch(new Request(`${BASE}/.well-known/oauth-protected-resource`));
+      expect(await metadata.json()).toMatchObject({ resource: `${BASE}/mcp` });
     }
 
     it.each([
@@ -464,27 +467,30 @@ describe("clerkAuth inbound auth", () => {
       await expectUnauthorized(deployment());
     });
 
-    it.each(["/mcp", "/mcp/support"])(
-      "accepts the canonical resource audience at %s without a fallback allowlist",
-      async (path) => {
-        authenticateOAuth(jwt({ aud: `${BASE}${path}` }));
-        const response = await deployment([]).fetch(mcpRequest(path));
+    it.each(["maintainer", "member"] as const)(
+      "accepts the canonical resource audience at /mcp for a %s without a fallback allowlist",
+      async (caller) => {
+        authenticateOAuth(jwt({ aud: `${BASE}/mcp` }));
+        const response = await deployment([], caller).fetch(mcpRequest("/mcp"));
         expect(response.status).toBe(200);
         expect(await response.text()).toContain('"serverInfo"');
         expect(mocks.authenticateRequest).toHaveBeenCalledWith(expect.any(Request), { acceptsToken: "oauth_token" });
       },
     );
 
-    it("INV-4: does not treat the base resource audience as a pool audience", async () => {
-      authenticateOAuth(jwt({ aud: `${BASE}/mcp` }));
-      await expectUnauthorized(deployment(), "/mcp/support");
+    it("INV-4: refuses a pool-path audience at /mcp and serves no pool-path metadata", async () => {
       authenticateOAuth(jwt({ aud: `${BASE}/mcp/support` }));
-      await expectUnauthorized(deployment());
+      await expectUnauthorized(deployment(undefined, "member"));
+      const metadata = await deployment(undefined, "member").fetch(
+        new Request(`${BASE}/.well-known/oauth-protected-resource/mcp/support`),
+      );
+      expect(metadata.status).toBe(404);
+      expect(await metadata.text()).not.toContain(`${BASE}/mcp/support`);
     });
 
-    it("keeps allowlisted unbound tokens working on pools", async () => {
+    it.each(["maintainer", "member"] as const)("keeps allowlisted unbound tokens working for a %s", async (caller) => {
       authenticateOAuth("oat_verified");
-      const response = await deployment().fetch(mcpRequest("/mcp/support"));
+      const response = await deployment(undefined, caller).fetch(mcpRequest("/mcp"));
       expect(response.status).toBe(200);
       await response.text();
     });
@@ -500,7 +506,6 @@ describe("clerkAuth inbound auth", () => {
       });
       const c = deployment([]);
       await expectUnauthorized(c);
-      await expectUnauthorized(c, "/mcp/support");
       const response = await c.fetch(
         new Request(`${BASE}/ui/data`, {
           headers: { Authorization: "Bearer supplied-token" },

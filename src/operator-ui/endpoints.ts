@@ -3,6 +3,7 @@ import type {
   OperatorConnectorPoolCell,
   OperatorGrant,
   OperatorMember,
+  OperatorPoolV2,
   OperatorRunsAs,
   OperatorSharedSource,
   OperatorTool,
@@ -29,14 +30,37 @@ export interface EndpointGroup {
   unlisted: boolean;
 }
 
-export interface EndpointRow {
-  /** `null` is plain /mcp. */
-  pool: string | null;
-  label: string;
-  /** Where people connect: `/mcp` or the pool's humanPath. */
+/** Who connects at an endpoint's URL: people at `/mcp`, agents at `/agent/<pool>`. */
+export type EndpointAudience = "people" | "agents";
+
+/**
+ * Identifies one endpoint row or matrix column. People pools and the
+ * maintainers' default all connect at `/mcp`, so the URL cannot: the pool can.
+ */
+export function endpointKey(pool: string | null): string {
+  return pool === null ? "default" : `pool:${pool}`;
+}
+
+/** The URL a pool's members connect at, and who they are. */
+export function poolEndpoint(pool: Pick<OperatorPoolV2, "humanPath" | "agentPath">): {
   path: string;
-  /** The pool's agentPath, only when an agent is a member. */
-  agentPath: string | null;
+  audience: EndpointAudience;
+} {
+  return pool.agentPath
+    ? { path: pool.agentPath, audience: "agents" }
+    : { path: pool.humanPath ?? "/mcp", audience: "people" };
+}
+
+export interface EndpointRow {
+  /** `null` is the maintainers' whole catalog at plain /mcp. */
+  pool: string | null;
+  /** {@link endpointKey}: unique where `path` is not. */
+  key: string;
+  /** The pool's name, or "Default" for the maintainers' endpoint. */
+  label: string;
+  /** Where its callers connect: `/mcp` for people, `/agent/<pool>` for agents. */
+  path: string;
+  audience: EndpointAudience;
   readOnly: boolean;
   surface: "meta" | "native";
   executeCode: boolean;
@@ -173,6 +197,8 @@ export function toolSplit(tools: ReadonlyArray<{ classification: "read" | "write
   return { read, write };
 }
 
+const DEFAULT_LABEL = "Default";
+
 /** One row for plain /mcp, then one per pool, in contract order. Maintainer view only. */
 export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
   if (contract.role !== "maintainer") return [];
@@ -181,9 +207,10 @@ export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
     const groups = endpointGroups(contract, rootGrants(contract), contract.root.readOnly, null);
     rows.push({
       pool: null,
-      label: "Default",
+      key: endpointKey(null),
+      label: DEFAULT_LABEL,
       path: contract.root.path,
-      agentPath: null,
+      audience: "people",
       readOnly: contract.root.readOnly,
       surface: "meta",
       executeCode: true,
@@ -196,9 +223,9 @@ export function endpointRows(contract: OperatorUiContractV2): EndpointRow[] {
     const groups = endpointGroups(contract, pool.tools, pool.readOnly, pool.name, pool.writes, pool.unlisted);
     rows.push({
       pool: pool.name,
+      key: endpointKey(pool.name),
       label: pool.name,
-      path: pool.humanPath,
-      agentPath: pool.members.some((member) => member.kind === "agent") ? pool.agentPath : null,
+      ...poolEndpoint(pool),
       readOnly: pool.readOnly && pool.writes.length === 0,
       surface: pool.surface,
       executeCode: pool.executeCode,
@@ -246,20 +273,26 @@ export function runsAsLabel(runsAs: OperatorRunsAs, day: (value: string) => stri
   }
 }
 
-/** One matrix column: plain /mcp first, then each pool. */
+/** One matrix column: the maintainers' default first, then each pool. */
 export interface MatrixColumn {
   pool: string | null;
-  path: string;
+  /** {@link endpointKey}. */
+  key: string;
+  /** The pool's name, or "Default". */
+  label: string;
   readOnly: boolean;
 }
 
 export function matrixColumns(contract: OperatorUiContractV2): MatrixColumn[] {
   if (contract.role !== "maintainer") return [];
   return [
-    ...(contract.root ? [{ pool: null, path: contract.root.path, readOnly: contract.root.readOnly }] : []),
+    ...(contract.root
+      ? [{ pool: null, key: endpointKey(null), label: DEFAULT_LABEL, readOnly: contract.root.readOnly }]
+      : []),
     ...contract.pools.map((pool) => ({
       pool: pool.name,
-      path: pool.humanPath,
+      key: endpointKey(pool.name),
+      label: pool.name,
       readOnly: pool.readOnly && pool.writes.length === 0,
     })),
   ];
@@ -314,9 +347,9 @@ export function matrixCellText(cell: MatrixCell): string {
   return cell.kind === "all" ? "all" : String(cell.coverage.granted);
 }
 
-/** The cell's accessible name, e.g. "GitHub on /mcp/support: 1 of 2 live tools". */
-export function matrixCellLabel(connector: string, column: Pick<MatrixColumn, "path" | "readOnly">, cell: MatrixCell) {
-  const where = `${connector} on ${column.path}`;
+/** The cell's accessible name, e.g. "GitHub on support: 1 of 2 live tools". */
+export function matrixCellLabel(connector: string, column: Pick<MatrixColumn, "label" | "readOnly">, cell: MatrixCell) {
+  const where = `${connector} on ${column.label}`;
   if (cell.kind === "none") return `${where}: no tools`;
   const what = !cell.coverage
     ? "unknown live tool coverage"

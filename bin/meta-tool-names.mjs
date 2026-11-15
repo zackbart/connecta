@@ -8,5 +8,5 @@ export const META_TOOL_NAMES = Object.freeze([
   "skills",
 ]);
 
-/** A writable `/mcp` or `/mcp/<pool>` endpoint also lists this, unless `execute.readRoute` is false. */
+/** A writable `/mcp` or `/agent/<pool>` endpoint also lists this, unless `execute.readRoute` is false. */
 export const READ_PROGRAM_TOOL = "execute_read_code";

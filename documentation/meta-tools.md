@@ -39,7 +39,7 @@ pools keep code available by default.
 ## The meta-tools
 
 Every deployment requires an executor. A meta endpoint's `tools/list` is exactly
-these six, plus `execute_read_code` on a writable `/mcp`, `/mcp/<pool>` or
+these six, plus `execute_read_code` on a writable `/mcp` or
 `/agent/<pool>` unless `execute.readRoute` is `false` ([read programs](#read-programs)).
 A read-only endpoint lists six. This is the default; a pool may instead use the
 [native tool surface](#native-tool-surface). No other configuration changes the
@@ -188,12 +188,12 @@ carry no size hint; a read-only endpoint's
 that gates on annotations does not prompt for a read-only program. On a writable
 endpoint `execute_code` stays annotated as a write.
 
-| Endpoint                                        | Lists `execute_read_code`                     |
-| ----------------------------------------------- | --------------------------------------------- |
-| Writable `/mcp`, `/mcp/<pool>`, `/agent/<pool>` | Yes, unless `execute.readRoute: false`        |
-| Read-only pool with a `writes` grant            | Yes, unless `execute.readRoute: false`        |
-| Read-only endpoint, read-only agent pool        | No: `execute_code` is already read-only there |
-| Native pool                                     | No                                            |
+| Endpoint                                 | Lists `execute_read_code`                     |
+| ---------------------------------------- | --------------------------------------------- |
+| Writable `/mcp`, `/agent/<pool>`         | Yes, unless `execute.readRoute: false`        |
+| Read-only pool with a `writes` grant     | Yes, unless `execute.readRoute: false`        |
+| Read-only endpoint, read-only agent pool | No: `execute_code` is already read-only there |
+| Native pool                              | No                                            |
 
 On a writable `/agent/<pool>`, an agent host that reviews writes can let `call_tool`
 and `execute_read_code` run and review only `execute_code` and `call_destructive_tool`.
@@ -689,8 +689,8 @@ appears. Past 120 UTF-8 bytes, ids give way, in registry order, to an exact
 `+N more` count, and the inventory carries the fuller list.
 
 They also include pool scope: a pool that sets a
-[`description`](./auth.md#pools) has it placed first at `/mcp/<pool>` and
-`/agent/<pool>`, and for a person routed to that pool at plain `/mcp`, so the model
+[`description`](./auth.md#pools) has it placed first at `/agent/<pool>`, and
+for its members at plain `/mcp`, so the model
 learns that endpoint's scope, for example
 `Team tier: shared tools only. For someone's own mail or files, ask them to message you one-on-one.`
 A maintainer at plain `/mcp` receives none. The description changes no tool or tool
@@ -2233,8 +2233,8 @@ pools: {
 
 `executeCode: false` is valid only with `surface: "native"`; construction
 refuses it otherwise, and refuses any `surface` other than `"meta"` or
-`"native"`. Both pool endpoints, `/mcp/<pool>` and `/agent/<pool>`, serve the
-pool's surface.
+`"native"`. A people pool's members at plain `/mcp` and an agent pool's agents
+at `/agent/<pool>` receive the pool's surface.
 
 | A native pool lists          | Shape                                                                                                                                                                                                                                                      |
 | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

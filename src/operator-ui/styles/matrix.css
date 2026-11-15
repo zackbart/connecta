@@ -68,7 +68,8 @@
 .data-table.matrix-table td.matrix-cell {
   padding-block: 0.625rem;
 }
-.matrix-head code {
+.matrix-head code,
+.matrix-head .endpoint-title {
   color: var(--text-2);
   font-weight: var(--weight-medium);
 }
@@ -206,7 +207,8 @@
   margin: 0;
   min-width: 0;
 }
-.matrix-popover-title code {
+.matrix-popover-title code,
+.matrix-popover-title .endpoint-title {
   color: var(--text-3);
   font-size: var(--text-xs);
   font-weight: var(--weight-medium);

@@ -99,34 +99,38 @@ export function forSurface(connecta: Connecta, surface: Surface): Connecta {
   return surface === "code" || surface === "five" ? withCodeSurface(connecta, surface) : connecta;
 }
 
-const READ_ARM_PERSON = "eval-person";
+const READ_ARM_MAINTAINER = "eval-maintainer";
 const READ_ARM_POOL_SUFFIX = "-person";
+const readArmPerson = (pool: string): string => `eval-person-${pool}`;
 
-/** The read arm's person. Hosts hold a machine token; only this adapter's rewrite reaches `/mcp/<pool>`. */
+/** The read arm's people, one per pool. Hosts hold a machine token; only this adapter's rewrite signs in as one. */
 const readArmAuth = {
   kind: "clerk" as const,
   interactiveOperator: true,
   activityActorNamespace: "https://eval-directory.test",
   uiAuth: { kind: "clerk" as const, publishableKey: "pk_test_fake", frontendApiUrl: "https://eval-directory.test" },
-  recognizesCredential: (request: Request) => request.headers.get("authorization") === `Bearer ${READ_ARM_PERSON}`,
-  authorize: (request: Request) =>
-    request.headers.get("authorization") === `Bearer ${READ_ARM_PERSON}`
-      ? { ok: true as const, userId: READ_ARM_PERSON }
-      : { ok: false as const, response: new Response("Unauthorized", { status: 401 }) },
+  recognizesCredential: (request: Request) =>
+    (request.headers.get("authorization") ?? "").startsWith("Bearer eval-person-"),
+  authorize: (request: Request) => {
+    const userId = /^Bearer (eval-person-[a-z0-9_-]+)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+    return userId
+      ? { ok: true as const, userId }
+      : { ok: false as const, response: new Response("Unauthorized", { status: 401 }) };
+  },
 };
 
-/** A sibling of each pool for the arm's person, so the agent's own pool still checks the host's token. */
+/** A sibling of each pool for its own arm person, so the agent's own pool still checks the host's token. */
 export function readArmConfig<T extends ConnectaConfig>(config: T): T {
   const pools = {
     ...config.pools,
     ...Object.fromEntries(
       Object.entries(config.pools ?? {}).map(([id, pool]) => [
         `${id}${READ_ARM_POOL_SUFFIX}`,
-        { ...pool, members: [READ_ARM_PERSON] },
+        { ...pool, members: [readArmPerson(id)] },
       ]),
     ),
   };
-  return { ...config, auth: readArmAuth, maintainers: [READ_ARM_PERSON], pools } as T;
+  return { ...config, auth: readArmAuth, maintainers: [READ_ARM_MAINTAINER], pools } as T;
 }
 
 /**
@@ -155,9 +159,10 @@ function withReadArm(connecta: Connecta): Connecta {
       );
       if (admitted.status === 401 || admitted.status === 403 || admitted.status === 404) return admitted;
       await admitted.body?.cancel();
-      url.pathname = `${url.pathname.replace(/^\/agent\//, "/mcp/")}${READ_ARM_POOL_SUFFIX}`;
+      const pool = url.pathname.slice("/agent/".length);
+      url.pathname = "/mcp";
       const headers = new Headers(request.headers);
-      headers.set("authorization", `Bearer ${READ_ARM_PERSON}`);
+      headers.set("authorization", `Bearer ${readArmPerson(pool)}`);
       return connecta.fetch(new Request(url, new Request(request, { headers })), env, ctx);
     },
   };

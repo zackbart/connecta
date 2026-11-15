@@ -57,8 +57,8 @@ const PROBLEM_TITLE: Readonly<Record<UiProblem, string>> = {
   catalog_failed: "couldn't load its tools",
 };
 
-function affects(paths: string[]): string {
-  return paths.length ? `Affects ${joinList(paths)}` : "No endpoint serves it";
+function affects(endpoints: string[]): string {
+  return endpoints.length ? `Affects ${joinList(endpoints)}` : "No endpoint serves it";
 }
 
 /**
@@ -81,7 +81,9 @@ export function attentionItems(
     if ((verdict.tone !== "warn" && verdict.tone !== "danger") || !verdict.action) continue;
     const title = config.title ?? config.id;
     const id = encodeURIComponent(config.id);
-    const paths = rows.filter((row) => row.groups.some((group) => group.config.id === config.id)).map((r) => r.path);
+    const endpoints = rows
+      .filter((row) => row.groups.some((group) => group.config.id === config.id))
+      .map((r) => r.label);
     const connection = `/connectors/${id}#connection`;
     const base = {
       key: `connector:${config.id}`,
@@ -100,21 +102,21 @@ export function attentionItems(
       connectors.push({
         ...base,
         problem: PROBLEM_TITLE[problem],
-        body: signals.failed ? `Details didn't load · ${affects(paths)}` : affects(paths),
+        body: signals.failed ? `Details didn't load · ${affects(endpoints)}` : affects(endpoints),
         fix: problem === "caller_refused" ? null : { kind: problem, connectorId: config.id },
       });
     } else if (signals.failed) {
       connectors.push({
         ...base,
         problem: "didn't load on this page",
-        body: affects(paths),
+        body: affects(endpoints),
         fix: null,
       });
     } else if (live.status !== "ok") {
       connectors.push({
         ...base,
         problem: verdict.label === "Authorization needed" ? "needs authorization" : "isn't connected",
-        body: affects(paths),
+        body: affects(endpoints),
         fix: null,
       });
     }

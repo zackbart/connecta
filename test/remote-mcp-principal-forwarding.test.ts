@@ -155,10 +155,7 @@ async function deployment(
     agents: ["assistant"],
     accessTokens: accessTokens(storage),
     storage,
-    pools: {
-      team: { tools: ["notes"], members: ["alice", "bob"] },
-      "team-agents": { tools: ["notes"], members: ["agent:assistant"] },
-    },
+    pools: { "team-agents": { tools: ["notes"], members: ["agent:assistant"] } },
     ...(options.executor ? { executor: options.executor } : {}),
     logger: options.logger ?? silentLogger,
   });
@@ -175,7 +172,7 @@ async function callOver(
   const request = mcpRpc(
     "tools/call",
     { name, arguments: args },
-    { token, ...(token.startsWith("cta_") ? { agentPool: "team-agents" } : { pool: "team" }) },
+    { token, ...(token.startsWith("cta_") ? { agentPool: "team-agents" } : {}) },
   );
   for (const [header, value] of Object.entries(headers)) request.headers.set(header, value);
   return (await readJsonRpc(await connecta.fetch(request))).result;

@@ -189,6 +189,53 @@ test.describe("agent tokens", () => {
   });
 });
 
+test("endpoints and matrix columns are told apart by pool, each with the URL its callers use", async ({ page }) => {
+  await install(page, crowdedMaintainer());
+  await page.goto(VISUAL_ORIGIN + "/endpoints#pool:team");
+  const rows = page.locator("[data-endpoint]");
+  await expect(rows).toHaveCount(4);
+  expect(await rows.evaluateAll((all) => all.map((row) => row.getAttribute("data-endpoint")))).toEqual([
+    "default",
+    "pool:ada",
+    "pool:support",
+    "pool:team",
+  ]);
+  const row = (key: string) => page.locator(`[data-endpoint="${key}"]`);
+  await expect(row("pool:team").locator(".endpoint-toggle")).toHaveAttribute("aria-expanded", "true");
+  for (const key of ["default", "pool:ada", "pool:support"])
+    await expect(row(key).locator(".endpoint-toggle")).toHaveAttribute("aria-expanded", "false");
+  await expect(rows.locator(".endpoint-toggle")).toHaveText(["Default", "ada", "support", "team"]);
+  for (const [key, kind, path] of [
+    ["default", "People", "/mcp"],
+    ["pool:ada", "Agents", "/agent/ada"],
+    ["pool:support", "People", "/mcp"],
+    ["pool:team", "People", "/mcp"],
+  ] as const) {
+    const lines = row(key).locator(".endpoint-urls .endpoint");
+    await expect(lines).toHaveCount(1);
+    await expect(lines.locator(".endpoint-kind")).toHaveText(kind);
+    await expect(lines.locator("code")).toHaveText(VISUAL_ORIGIN + path);
+  }
+  await expect(page.getByRole("group", { name: "Who can use support", exact: true })).toHaveCount(1);
+  const setup = page.getByRole("dialog", { name: "Client setup", exact: true });
+  for (const [label, line] of [
+    ["ada", `claude mcp add --transport http production-ada ${VISUAL_ORIGIN}/agent/ada`],
+    ["support", `claude mcp add --transport http production ${VISUAL_ORIGIN}/mcp`],
+  ] as const) {
+    await page.getByRole("button", { name: `Client setup for ${label}`, exact: true }).click();
+    await expect(setup.locator(".setup-code")).toHaveText(line);
+    await page.keyboard.press("Escape");
+    await expect(setup).toHaveCount(0);
+  }
+
+  await page.goto(VISUAL_ORIGIN + "/connectors?view=matrix");
+  const matrix = page.getByRole("table", { name: "Connectors by endpoint" });
+  await expect(matrix.locator("thead th")).toHaveText(["Connector", "Default", "ada", /^support/, "team"]);
+  await expect(matrix.getByRole("button", { name: "GitHub on support: 1 of 2 live tools, read-only" })).toBeVisible();
+  await expect(matrix.getByRole("button", { name: "GitHub on team: 1 of 2 live tools" })).toBeVisible();
+  await noCsp(page);
+});
+
 test("the member credential form submits named fields and masks its secret input", async ({ page }) => {
   const sent = await install(page, memberWithNotes(["save"]), ({ method, path }) =>
     method === "PUT" && path === "/ui/credentials/notes" ? { json: { ok: true } } : undefined,

@@ -39,7 +39,7 @@ export interface ServerOptions {
   registry: Registry;
   /** Resolved `maintainers`: the only principals plain `/mcp` and operator routes admit. */
   maintainers: readonly IdentityReference[];
-  /** Validated named pools served at `/mcp/<name>`; empty when none declared. */
+  /** Validated named pools: people's at plain `/mcp`, agents' at `/agent/<name>`; empty when none declared. */
   pools: ReadonlyMap<string, ResolvedPool>;
   /** Required sandbox backing execute_code, wrapped in fallback admission if needed. */
   executor: Executor;
@@ -189,12 +189,9 @@ const providerChallengeNative = /* @__PURE__ */ registerAuth(
           new Response(response.body, { status: response.status, statusText: response.statusText, headers }),
         );
       }
-      const path = new URL(request.url).pathname;
-      const pool = /^\/mcp\/([a-z0-9_-]+)$/.exec(path)?.[1];
-      const metadataRequest = new Request(
-        new URL(`/.well-known/oauth-protected-resource${pool ? `/mcp/${pool}` : ""}`, baseUrl),
-        { signal: request.signal },
-      );
+      const metadataRequest = new Request(new URL("/.well-known/oauth-protected-resource", baseUrl), {
+        signal: request.signal,
+      });
       const owner = (yield authCall(authMetadata, [metadataRequest, baseUrl, auth])) as {
         provider: InboundAuth;
         response: Response;
@@ -703,26 +700,18 @@ export function admitsMaintainer(opts: ServerOptions, authz: AuthorizedIdentity)
 }
 
 /**
- * The declared pool `/mcp/<name>` serves to this person, or undefined for the
- * same 404. An agent is never admitted here, even when listed.
+ * The one pool plain `/mcp` serves this person, matched only against the
+ * resolved namespaced principal. An agent is never admitted here, even when listed.
  */
-export function memberPool(
+export function personPool(
   opts: ServerOptions,
-  name: string,
   identity: Readonly<AuthenticatedIdentity>,
-): ResolvedPool | undefined {
+): { name: string; pool: ResolvedPool } | undefined {
   if (identity.agent !== undefined) return undefined;
-  const pool = opts.pools.get(name);
-  return pool?.members.some((member) => isMember(member, identity)) ? pool : undefined;
-}
-
-/** Human memberships, matched only against the resolved namespaced principal. */
-export function personPools(
-  opts: ServerOptions,
-  identity: Readonly<AuthenticatedIdentity>,
-): Array<[string, ResolvedPool]> {
-  if (identity.agent !== undefined) return [];
-  return [...opts.pools].filter(([, pool]) => pool.members.some((member) => isMember(member, identity)));
+  for (const [name, pool] of opts.pools) {
+    if (pool.members.some((member) => isMember(member, identity))) return { name, pool };
+  }
+  return undefined;
 }
 
 /** The declared pool `/agent/<name>` serves to this agent, or undefined for the same 404. */
@@ -730,33 +719,32 @@ export function agentPool(
   opts: ServerOptions,
   name: string,
   identity: Readonly<AuthenticatedIdentity>,
-): ResolvedPool | undefined {
+): { name: string; pool: ResolvedPool } | undefined {
   if (identity.agent === undefined) return undefined;
   const pool = opts.pools.get(name);
-  return pool?.members.some((member) => member.kind === "agent" && isMember(member, identity)) ? pool : undefined;
+  return pool?.members.some((member) => member.kind === "agent" && isMember(member, identity))
+    ? { name, pool }
+    : undefined;
 }
 
 /**
- * The connectors of every pool this identity is a member of that their
- * connector members also admit, with each one's grant owner when it admits
- * them too: what a pool member may ever manage, and only their personal ones
- * among these.
+ * The connectors of this person's pool that their connector members also
+ * admit, with each one's grant owner when it admits them too: what a pool
+ * member may ever manage, and only their personal ones among these.
  */
 export function memberConnectors(
   opts: ServerOptions,
   identity: Readonly<AuthenticatedIdentity>,
 ): "all" | ReadonlySet<string> {
   const ids = new Set<string>();
-  for (const name of opts.pools.keys()) {
-    const pool = memberPool(opts, name, identity);
-    if (!pool) continue;
-    if (pool.access.connectorIds === "all") return "all";
-    for (const id of pool.access.connectorIds) {
-      if (!opts.registry.connectorAdmits(id, identity)) continue;
-      ids.add(id);
-      const owner = opts.registry.grantOwner(id);
-      if (opts.registry.connectorAdmits(owner, identity)) ids.add(owner);
-    }
+  const pool = personPool(opts, identity)?.pool;
+  if (!pool) return ids;
+  if (pool.access.connectorIds === "all") return "all";
+  for (const id of pool.access.connectorIds) {
+    if (!opts.registry.connectorAdmits(id, identity)) continue;
+    ids.add(id);
+    const owner = opts.registry.grantOwner(id);
+    if (opts.registry.connectorAdmits(owner, identity)) ids.add(owner);
   }
   return ids;
 }
@@ -766,7 +754,7 @@ export function memberConnectors(
  * Only an interactive person ever may; an agent or any other machine
  * credential manages nothing. Shared auth is deployment-wide, so it takes a
  * maintainer. A personal connector takes a stable principal that is a
- * maintainer, whose plain `/mcp` includes it, or a member of a pool that
+ * maintainer, whose plain `/mcp` includes it, or a member of the pool that
  * contains it or a connector using its grant, and either way one the
  * `members` of the connector and of its grant owner admit; it is
  * always the caller's own partition, which callers bind by principal. Every path that issues a link, starts,

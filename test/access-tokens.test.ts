@@ -419,11 +419,8 @@ describe("agent identity", () => {
       maintainers,
       agents: ["simon"],
       accessTokens: accessTokens(storage),
-      // The person's pool and the agent's pool declare the same personal connector.
-      pools: {
-        shared: { tools: ["calc", "mine"], members: ["owner"] },
-        "shared-agents": { tools: ["calc", "mine"], members: ["agent:simon"] },
-      },
+      // The agent's pool declares the personal connector the maintainer reaches at /mcp.
+      pools: { "shared-agents": { tools: ["calc", "mine"], members: ["agent:simon"] } },
     });
     try {
       const call = (address: string, credential: string) =>
@@ -431,7 +428,7 @@ describe("agent identity", () => {
           app,
           "tools/call",
           { name: "call_tool", arguments: { address, args: {} } },
-          { token: credential, ...(credential === token ? { agentPool: "shared-agents" } : { pool: "shared" }) },
+          { token: credential, ...(credential === token ? { agentPool: "shared-agents" } : {}) },
         );
       const denied = await readJsonRpc(await call("mine.read", token));
       expect(denied.result.isError).toBe(true);

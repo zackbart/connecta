@@ -33,7 +33,7 @@ export interface ConnectorCaller {
    * with or without a subject, a Connecta-issued access token.
    */
   authenticated: boolean;
-  /** The admitted pool: routed at `/mcp` or selected at `/mcp/<pool>` or `/agent/<pool>`. */
+  /** The admitted pool: a person's at plain `/mcp`, or selected at `/agent/<pool>`. */
   pool?: string;
   /**
    * That pool's configured `owner`, the Workspace address an agent acts as

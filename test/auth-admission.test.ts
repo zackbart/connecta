@@ -159,7 +159,7 @@ describe("inbound authentication admission", () => {
     }
   });
 
-  it("INV-7: MCP, pools, operator APIs, and agent storage share the bound across deployments", async () => {
+  it("INV-7: MCP, operator APIs, and agent storage share the bound across deployments", async () => {
     const gate = blocking();
     const pending = Array.from({ length: 32 }, () => gate.start());
     const storage = memoryStorage();
@@ -176,14 +176,14 @@ describe("inbound authentication admission", () => {
       pools: { team: { tools: ["calc"], members: ["agent:assistant"] } },
     });
     try {
-      for (const path of ["/mcp", "/mcp/team", "/ui/api/config", "/ui/data", "/ui/api/activity", "/ui/access-tokens"]) {
+      for (const path of ["/mcp", "/ui/api/config", "/ui/data", "/ui/api/activity", "/ui/access-tokens"]) {
         await expectBusy(await app.fetch(new Request(`${BASE}${path}`)));
       }
       const agent = mcpRpc("tools/list", {}, { agentPool: "team", token: `cta_${"a".repeat(43)}` });
       await expectBusy(await app.fetch(agent));
       expect(get).not.toHaveBeenCalled();
       expect(human.authorize).not.toHaveBeenCalled();
-      for (const path of ["/health", "/", "/unknown", "/agent", "/.well-known/unknown"]) {
+      for (const path of ["/health", "/", "/unknown", "/mcp/team", "/agent", "/.well-known/unknown"]) {
         const res = await app.fetch(new Request(`${BASE}${path}`));
         expect(res.status).not.toBe(503);
         await res.text();

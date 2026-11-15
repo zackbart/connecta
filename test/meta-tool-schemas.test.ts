@@ -397,11 +397,7 @@ describe("search_tools output schema", () => {
   ] as const)("validates real %s handoff pages under every host draft", async (_kind, options) => {
     const flow = handoffFixture({ catalogAuth: true, ...options });
     try {
-      const list = await readJsonRpc(
-        await flow.app.fetch(
-          new Request("https://connecta.test/mcp/team", mcpRpc("tools/list", {}, { token: "alice" })),
-        ),
-      );
+      const list = await readJsonRpc(await flow.app.fetch(mcpRpc("tools/list", {}, { token: "alice" })));
       const schema = list.result.tools.find((tool: { name: string }) => tool.name === "search_tools").outputSchema;
       const pages = [
         (await flow.rpc("search_tools", {})).structuredContent,
@@ -886,7 +882,9 @@ describe("meta-tool results under advertised output schemas", () => {
         return required(programs[name], name)(required(providers.find((p) => p.name === "connecta")).fns);
       },
     };
-    const member = [{ namespace: "https://clerk.example.test", id: "alice" }];
+    const memberOf = { meta: "alice", native: "nora", results: "rita" } as const;
+    type Pool = keyof typeof memberOf;
+    const member = (pool: Pool) => [{ namespace: "https://clerk.example.test", id: memberOf[pool] }];
     const app = createTestConnecta({
       connectors: [calcApi(), notes, flaky, big, service, asker],
       storage,
@@ -894,22 +892,32 @@ describe("meta-tool results under advertised output schemas", () => {
       publicUrl: HANDOFF_BASE,
       logger: "silent",
       executor,
-      auth: fakeClerkAuth({ token: "alice", userId: "alice" }),
+      auth: Object.values(memberOf).map((user) => fakeClerkAuth({ token: user, userId: user })),
       maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }],
       pools: {
-        meta: { tools: ["calc", "notes", "flaky", "big", "service", "asker"], members: member, readOnly: false },
+        meta: {
+          tools: ["calc", "notes", "flaky", "big", "service", "asker"],
+          members: member("meta"),
+          readOnly: false,
+        },
         native: {
           tools: ["calc", "notes", "service", "asker"],
-          members: member,
+          members: member("native"),
           readOnly: false,
           surface: "native",
           executeCode: true,
         },
-        results: { tools: ["calc"], members: member, readOnly: false, surface: "native", executeCode: false },
+        results: {
+          tools: ["calc"],
+          members: member("results"),
+          readOnly: false,
+          surface: "native",
+          executeCode: false,
+        },
       },
     });
     const send = async (
-      pool: string,
+      pool: Pool,
       name: string,
       args: Record<string, unknown>,
       round?: { state?: string; action?: string },
@@ -929,21 +937,21 @@ describe("meta-tool results under advertised output schemas", () => {
             }
           : {}),
       };
-      const request = mcpRpc("tools/call", params, { token: "alice" });
+      const request = mcpRpc("tools/call", params, { token: memberOf[pool], baseUrl: HANDOFF_BASE });
       if (round) {
         request.headers.set("MCP-Protocol-Version", "2026-07-28");
         request.headers.set("Mcp-Method", "tools/call");
         request.headers.set("Mcp-Name", name);
       }
-      return readJsonRpc(await app.fetch(new Request(`${HANDOFF_BASE}/mcp/${pool}`, request)));
+      return readJsonRpc(await app.fetch(request));
     };
     const program = (name: string) => ({ code: `async () => "case:${name}"` });
-    const declined = async (pool: string, tool: string, args: Record<string, unknown>) => {
+    const declined = async (pool: Pool, tool: string, args: Record<string, unknown>) => {
       const opened = await send(pool, tool, args, {});
       expect(opened.result.resultType, `${pool} ${tool}`).toBe("input_required");
       return send(pool, tool, args, { state: opened.result.requestState, action: "decline" });
     };
-    const roundLimit = async (pool: string, tool: string, args: Record<string, unknown>) => {
+    const roundLimit = async (pool: Pool, tool: string, args: Record<string, unknown>) => {
       let round = await send(pool, tool, args, {});
       for (let accepted = 0; accepted < 3; accepted++) {
         expect(round.result.resultType, `${pool} ${tool} round ${accepted}`).toBe("input_required");
@@ -954,9 +962,9 @@ describe("meta-tool results under advertised output schemas", () => {
     try {
       const ajv = new AjvJsonSchemaValidator();
       const declaring: Record<string, Record<string, JsonSchemaValidator<unknown>>> = {};
-      for (const pool of ["meta", "native", "results"]) {
+      for (const pool of ["meta", "native", "results"] as const) {
         const list = await readJsonRpc(
-          await app.fetch(new Request(`${HANDOFF_BASE}/mcp/${pool}`, mcpRpc("tools/list", {}, { token: "alice" }))),
+          await app.fetch(mcpRpc("tools/list", {}, { token: memberOf[pool], baseUrl: HANDOFF_BASE })),
         );
         declaring[pool] = Object.fromEntries(
           (list.result.tools as Array<{ name: string; outputSchema?: JsonSchemaType }>).flatMap((tool) =>

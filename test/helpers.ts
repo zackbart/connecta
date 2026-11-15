@@ -6,7 +6,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { testMaintainerOf } from "./helpers/machine-auth.js";
 import type { CredentialVault } from "../src/credentials.js";
 import type { ActivityRequestContext, ToolCallActivityEvent } from "../src/activity.js";
-import type { Connector, Executor, KVStorage, Logger } from "../src/types.js";
+import type { Connector, Executor, IdentityReference, KVStorage, Logger } from "../src/types.js";
 import { fingerprintSerializedCatalog } from "../src/catalog-fingerprint.js";
 import { CatalogService } from "../src/catalog-service.js";
 import { InvocationService } from "../src/invocation.js";
@@ -28,14 +28,23 @@ const stubExecutor: Executor = {
 /**
  * Writable unless a test chooses `readOnly`; deployments must choose it
  * themselves. With inbound auth and no `maintainers`, every principal the
- * test's auth fixtures admit is a maintainer, so a suite about something
- * other than access reaches plain `/mcp` as before (#837).
+ * test's auth fixtures admit is a maintainer unless a pool lists it, so a
+ * suite about something other than access reaches plain `/mcp` as before
+ * (#837) and a pool's people reach their pool there. When pools list every
+ * such principal, a principal no test signs in as is the maintainer.
  */
 export function createTestConnecta(
   config: Omit<ConnectaConfig, "executor" | "readOnly"> & { executor?: Executor; readOnly?: boolean },
 ) {
   const auth = config.auth === undefined ? [] : Array.isArray(config.auth) ? config.auth : [config.auth];
-  const maintainers = [
+  const pooled = Object.values(config.pools ?? {}).flatMap((pool) => (Array.isArray(pool.members) ? pool.members : []));
+  const inPool = (principal: IdentityReference): boolean =>
+    pooled.some((member) =>
+      typeof member === "string"
+        ? member === principal.id
+        : member.namespace === principal.namespace && member.id === principal.id,
+    );
+  const admitted = [
     ...new Map(
       auth.flatMap((provider) => {
         const principal = testMaintainerOf(provider);
@@ -43,6 +52,11 @@ export function createTestConnecta(
       }),
     ).values(),
   ];
+  const unpooled = admitted.filter((principal) => !inPool(principal));
+  const maintainers =
+    unpooled.length > 0 || admitted.length === 0
+      ? unpooled
+      : [{ namespace: admitted[0]!.namespace, id: "test-maintainer" }];
   return createRuntimeConnecta({
     ui: operatorUi(),
     ...(maintainers.length > 0 ? { maintainers } : {}),

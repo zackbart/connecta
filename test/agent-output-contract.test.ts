@@ -359,7 +359,7 @@ it.each([
             authorize: () => ({ ok: true as const, userId: "caller" }),
           },
           // The caller is a maintainer except where the refusal is that it is not one (#837).
-          maintainers: [kind === "not-maintainer-404" ? "other" : "caller"],
+          maintainers: [kind === "not-maintainer-404" ? "operator" : "caller"],
         }),
     pools: { refused: { tools: ["calc"], members: [{ namespace: "connecta:test", id: "other" }] } },
   });

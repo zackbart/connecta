@@ -69,7 +69,7 @@ it("INV-4 INV-7: repeated and concurrent program and catalog errors reuse one ha
 
 it("INV-4 INV-5 INV-10: auth handoffs preserve management boundaries and stateless credential recovery", async () => {
   // A pool member who is not a maintainer cannot manage a shared connector (#837).
-  const flow = setup({ manage: false, catalogAuth: true, authScope: "shared" });
+  const flow = setup({ catalogAuth: true, authScope: "shared" });
   const result = (await flow.rpc("execute_code", { code: AUTH_PROGRAM })).structuredContent.result;
   for (const error of [
     ...result.calls.map((call: { data: unknown }) => call.data),
@@ -161,11 +161,7 @@ it("INV-4 INV-5 INV-10: auth handoffs preserve management boundaries and statele
 it("INV-4 INV-8 INV-10: native without code discovers recovery, completes consent and lists the repaired catalog", async () => {
   const flow = setup({ native: true, catalogAuth: true });
   const list = async () =>
-    (
-      await readJsonRpc(
-        await flow.app.fetch(new Request(`${HANDOFF_BASE}/mcp/team`, mcpRpc("tools/list", {}, { token: "alice" }))),
-      )
-    ).result.tools;
+    (await readJsonRpc(await flow.app.fetch(mcpRpc("tools/list", {}, { token: "alice" })))).result.tools;
   const before = await list();
   expect(before.map((tool: { name: string }) => tool.name).sort()).toEqual([
     "authorize_connector",

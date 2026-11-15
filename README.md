@@ -71,9 +71,10 @@ connections and access rules still need configuring.
    services, enables the credential vault, connects accounts, and starts
    the server with the access rules you choose.
 3. **Connect your AI app.** This app is the MCP client: it uses Connecta's
-   tools on your agent's behalf. Give it the pool address and authentication
-   method supplied by your operator. A person in a single pool can use the
-   plain `/mcp` address; their sign-in selects the pool. [Connecting agents](./guides/connecting-agents.md)
+   tools on your agent's behalf. People connect at the plain `/mcp` address;
+   their sign-in selects their one pool, or the whole tool list for a
+   maintainer. Agents use the pool address and token supplied by your
+   operator. [Connecting agents](./guides/connecting-agents.md)
    explains what to ask for; the [deployment guide](./documentation/deploying.md)
    has runnable steps and [settings for common AI apps](./documentation/deploying.md#connect-an-mcp-host).
 

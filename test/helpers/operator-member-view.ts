@@ -137,10 +137,10 @@ export function memberViewExpectation(source: MemberViewSource): MemberViewExpec
     ];
   });
   return {
-    pools: pools.map(({ name, humanPath, agentPath, readOnly, surface, executeCode, tools, writes }) => ({
+    pools: pools.map(({ name, readOnly, surface, executeCode, tools, writes }) => ({
       name,
-      humanPath: pools.length === 1 ? "/mcp" : humanPath,
-      agentPath,
+      humanPath: "/mcp",
+      agentPath: null,
       readOnly,
       surface,
       executeCode,
@@ -296,6 +296,7 @@ export function expectMemberViewWithholds(response: unknown, expected: MemberVie
   text(you.viewerKey, "you.viewerKey");
 
   const pools = list(body.pools, "pools");
+  expect(pools.length, "a person belongs to at most one pool").toBeLessThanOrEqual(1);
   unique(
     pools.map((p) => (p as Json)?.name),
     "pools",
@@ -320,7 +321,9 @@ export function expectMemberViewWithholds(response: unknown, expected: MemberVie
     oneOf(pool.surface, ["meta", "native"], `pools[${i}].surface`);
     oneOf(pool.executeCode, [true, false], `pools[${i}].executeCode`);
     oneOf(pool.readOnly, [true, false], `pools[${i}].readOnly`);
-    for (const key of ["name", "humanPath", "agentPath"]) text(pool[key], `pools[${i}].${key}`);
+    text(pool.name, `pools[${i}].name`);
+    expect(pool.humanPath, `pools[${i}].humanPath`).toBe("/mcp");
+    expect(pool.agentPath, `pools[${i}].agentPath`).toBeNull();
     const grants = list(pool.tools, `pools[${i}].tools`);
     unique(
       grants.map((g) => (g as Json)?.connectorId),

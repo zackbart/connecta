@@ -349,11 +349,13 @@ const pool = {
     },
   }),
   /**
-   * Who may open `/mcp/<name>`: principal ids in the namespace of the one
+   * Who this pool serves: principal ids in the namespace of the one
    * interactive auth provider, `{ namespace, id }`, or `"agent:<name>"` for a
-   * declared agent. All members must be people or all must be agents. Required
-   * and non-empty; the pool serves exactly its `tools` to these members and
-   * the same 404 to everyone else.
+   * declared agent. All members must be people or all must be agents. People
+   * reach it at plain `/mcp`, so a person is a member of at most one pool and
+   * a maintainer of none; agents reach it at `/agent/<name>`. Required and
+   * non-empty; the pool serves exactly its `tools` to these members and the
+   * same 404 to everyone else.
    */
   members: required(
     opaque<readonly MemberRef[]>({ check: assertMemberList }),
@@ -377,10 +379,10 @@ const pool = {
   }),
   /**
    * What this pool is for, in plain words for the model: appended to the MCP
-   * `initialize` instructions at `/mcp/<name>` and `/agent/<name>`, so a
-   * caller learns its scope ("Team tier: shared tools only."). Trimmed, 1 to
-   * 500 UTF-16 code units, no line breaks or control characters. It grants and hides nothing; plain
-   * `/mcp` never shows it.
+   * `initialize` instructions for its members, so a caller learns its scope
+   * ("Team tier: shared tools only."). Trimmed, 1 to 500 UTF-16 code units, no
+   * line breaks or control characters. It grants and hides nothing; a
+   * maintainer's whole-catalog `/mcp` never shows it.
    */
   description: opaque<string>({ check: assertPoolDescription }),
   /**
@@ -497,10 +499,10 @@ const connectaConfig = {
    * The people who may use plain `/mcp`, which serves the whole catalog with
    * the deployment's `readOnly`, and who administer the deployment. Same
    * reference forms as pool `members`, people only. Required with inbound
-   * auth; a maintainer opens no pool unless listed among its members.
+   * auth; a maintainer belongs to no pool.
    */
   maintainers: opaque<readonly MemberRef[]>({ check: assertMemberList }),
-  /** Named tool pools, each served at `/mcp/<name>` to its members only. */
+  /** Named tool pools, each served to its members only: people at plain `/mcp`, agents at `/agent/<name>`. */
   pools: record(object(pool)),
   /** Exact connector id -> tool name -> verdict. Hidden tools cannot be discovered or called.
    * `"read"` applies only where the source is silent, and asserts the call is safe to repeat; a
@@ -717,8 +719,8 @@ export type RequestAdmissionConfig = ConfigInput<typeof requestAdmission>;
 /** Runtime-portable server-memory boundaries for `/mcp` and fallback code-mode work. */
 export type ConnectaAdmissionConfig = ConfigInput<typeof admission>;
 /**
- * A named tool pool served at `/mcp/<name>`: exactly its `tools`, to its
- * `members` only.
+ * A named tool pool: exactly its `tools`, to its `members` only, people at
+ * plain `/mcp` and agents at `/agent/<name>`.
  */
 export type ConnectaPoolConfig = ConfigInput<typeof pool>;
 

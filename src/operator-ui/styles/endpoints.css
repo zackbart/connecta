@@ -88,7 +88,8 @@
   outline: 2px solid var(--link);
   outline-offset: -2px;
 }
-.endpoint-toggle > code {
+.endpoint-toggle > code,
+.endpoint-toggle > .endpoint-title {
   font-size: var(--text-base);
   font-weight: var(--weight-semibold);
   overflow-wrap: anywhere;

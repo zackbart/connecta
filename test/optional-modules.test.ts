@@ -255,7 +255,7 @@ describe("optional deployment modules", () => {
       app,
       "tools/call",
       { name: "authorize_connector", arguments: { connector: "oauth" } },
-      { baseUrl: BASE, token: "human", pool: "team" },
+      { baseUrl: BASE, token: "human" },
     );
     expect(await response.text()).toContain("not permitted");
     expect(oauth.startAuth).not.toHaveBeenCalled();

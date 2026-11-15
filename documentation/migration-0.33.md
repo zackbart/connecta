@@ -42,7 +42,10 @@ the sections in order, then [verify](#verify).
 
 This guide records the 0.33 migration. Current versions require every pool to
 list only people or only agents. If a 0.33 deployment combined them, follow
-[Split mixed pools](./pool-membership-upgrade.md) as well.
+[Split mixed pools](./pool-membership-upgrade.md) as well. Current versions
+also serve people only at plain `/mcp`, keep maintainers out of pools, and
+allow a person in at most one pool; the `/mcp/<pool>` steps below are
+historical, so follow [Move people to plain `/mcp`](./plain-mcp-upgrade.md).
 
 ## Maintainers and pool members
 

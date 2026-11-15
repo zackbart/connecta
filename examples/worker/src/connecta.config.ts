@@ -107,7 +107,8 @@ export default defineConfig((env: Env) => {
       .map((id) => id.trim())
       .filter(Boolean),
     // Everyone else uses a pool that lists them, which serves exactly its
-    // tools: people at /mcp/<name>, agents at /agent/<name>. Members are
+    // tools: people at plain /mcp (one pool per person, never a maintainer),
+    // agents at /agent/<name>. Members are
     // Access user ids or "agent:<name>". The starter pool is the agent's base
     // pool (shared connectors, no owner), named after the agent as the agent
     // pool layout requires.

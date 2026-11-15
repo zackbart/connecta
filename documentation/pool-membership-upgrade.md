@@ -18,8 +18,8 @@ const pools = {
 };
 ```
 
-Keep the original human pool name when possible so people's existing
-`/mcp/team` address stays valid. Point the agent harness at
+People reach the people pool at plain `/mcp`, whatever its name; see
+[Move people to plain `/mcp`](./plain-mcp-upgrade.md). Point the agent harness at
 `/agent/assistant-team` and update its tier list to that name. Copy the
 original `readOnly`, `surface`, `executeCode` and `description` settings
 to both new pools as appropriate so each preserves its intended behavior.
@@ -28,11 +28,11 @@ Workspace address the agent acts as, and without it Workspace connectors with
 a mapping `subject` disappear for the agent. People never use `owner`; they
 always act as themselves, so the people pool does not need it. Agent pools
 never count toward a person's plain `/mcp` routing, so a person who was in
-one mixed pool and no other still reaches the people pool at plain `/mcp`.
+one mixed pool reaches the people pool at plain `/mcp`.
 
 For personal `assistant-alice` pools, keep only `"agent:assistant"` in
 `members` and retain the owner's Workspace address and tools. Give people
-their own people-only pools. Workspace mapping connectors act as each person;
+people-only pools, at most one per person. Workspace mapping connectors act as each person;
 shared-auth connectors act as their saved account for every member, so review
 those grants before copying personal tool lists.
 

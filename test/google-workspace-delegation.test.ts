@@ -954,7 +954,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       const connecta = createTestConnecta({
         connectors: [mailbox({ subject: mapping }), ...(options.extra ?? [])],
         auth: people(),
-        maintainers: ["alice"],
+        maintainers: ["carol"],
         agents: ["assistant"],
         accessTokens: accessTokens(storage),
         storage,
@@ -970,7 +970,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           // A group pool names no owner, so its agents have no mailbox.
           group: {
             tools: ["mail", ...(options.extra ?? []).map((connector) => connector.id)],
-            members: ["alice", "bob"],
+            members: ["bob"],
           },
           "group-agents": {
             tools: ["mail", ...(options.extra ?? []).map((connector) => connector.id)],
@@ -986,15 +986,14 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
     const callOver = async (
       connecta: { fetch(request: Request): Promise<Response> },
       token: string,
-      pool: string,
+      agentPool?: string,
       args: Record<string, unknown> = {},
       headers: Record<string, string> = {},
     ) => {
-      // Agents use /agent/<pool>; people use /mcp/<pool> (#837).
       const request = mcpRpc(
         "tools/call",
         { name: "call_tool", arguments: { address: "mail.list_labels", args } },
-        { token, ...(token.startsWith("cta_") ? { agentPool: pool } : { pool }) },
+        { token, ...(agentPool ? { agentPool } : {}) },
       );
       for (const [name, value] of Object.entries(headers)) request.headers.set(name, value);
       return (await readJsonRpc(await connecta.fetch(request))).result;
@@ -1005,12 +1004,12 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
       NODE,
       async () => {
         const { connecta, mapping, assistant } = await deployment();
-        // The same agent at a human pool endpoint is refused before any delegation.
+        // The same agent at the people's endpoint is refused before any delegation.
         const human = await connecta.fetch(
           mcpRpc(
             "tools/call",
             { name: "call_tool", arguments: { address: "mail.list_labels", args: {} } },
-            { token: assistant, pool: "assistant-alice" },
+            { token: assistant },
           ),
         );
         expect(human.status).toBe(401);
@@ -1033,7 +1032,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
 
     it("INV-3: a human in someone else's owned pool still acts as themselves", NODE, async () => {
       const { connecta, mapping } = await deployment();
-      expect((await callOver(connecta, "alice", "assist-bob")).isError).toBeFalsy();
+      expect((await callOver(connecta, "alice")).isError).toBeFalsy();
       expect(mapping).toHaveBeenCalledTimes(1);
       expect(tokenCalls.map((_, index) => sub(index))).toEqual(["alice@org.example"]);
       await connecta.close();
@@ -1065,12 +1064,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
             callGhost: await fns.call!("ghost.list_labels", {}).catch(code),
           })),
         });
-        const rpc = async (
-          token: string,
-          endpoint: { pool?: string; agentPool?: string },
-          name: string,
-          args: object,
-        ) =>
+        const rpc = async (token: string, endpoint: { agentPool?: string }, name: string, args: object) =>
           (
             await readJsonRpc(
               await connecta.fetch(mcpRpc("tools/call", { name, arguments: args }, { token, ...endpoint })),
@@ -1132,7 +1126,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expect(asGhost(program.call)).toBe(JSON.stringify(program.callGhost));
 
         // People in the same pool, and the agent in an owned pool, still see it.
-        const both = await rpc("alice", { pool: "group" }, "search_tools", { query: "labels" });
+        const both = await rpc("bob", {}, "search_tools", { query: "labels" });
         expect(both.structuredContent.tools.map((tool: { address: string; alsoOn?: string[] }) => tool.alsoOn)).toEqual(
           LABEL_HITS.map((tool) => [`shared_mail.${tool}`]),
         );
@@ -1140,9 +1134,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
         expect(
           addresses(await rpc(assistant, { agentPool: "assistant-alice" }, "search_tools", { query: "labels" })),
         ).toEqual(labelHits("mail"));
-        expect(addresses(await rpc("alice", { pool: "group" }, "search_tools", { query: "form" }))).toContain(
-          "forms.get_form",
-        );
+        expect(addresses(await rpc("bob", {}, "search_tools", { query: "form" }))).toContain("forms.get_form");
         expect(mapping).not.toHaveBeenCalled();
         expect(formsMapping).not.toHaveBeenCalled();
         expect(tokenCalls).toEqual([]);
@@ -1213,7 +1205,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
           pools: {
             group: {
               tools: connectors.map((connector) => connector.id),
-              members: ["alice"],
+              members: ["bob"],
               ...(owner ? { owner } : {}),
             },
             "group-agents": {
@@ -1339,7 +1331,7 @@ describe("pool owners: agents act as the pool's owner, humans as themselves (dec
             connectors: [mailbox()],
             auth: people(),
             maintainers: ["alice"],
-            pools: { mine: { tools: ["mail"], members: ["alice"], owner: owner as string } },
+            pools: { mine: { tools: ["mail"], members: ["bob"], owner: owner as string } },
             logger: silentLogger,
           }),
         ).toThrow("ConnectaConfig.pools.mine.owner must be a Google Workspace email address.");
@@ -3646,13 +3638,13 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
           connecta.fetch(
             new Request(`${BASE}${path}`, { ...init, headers: { Authorization: `Bearer ${token}`, ...init.headers } }),
           );
-        const consent = async (token = "bob", pool = "team", iss: string | null = "https://accounts.google.com") => {
+        const consent = async (token = "bob", iss: string | null = "https://accounts.google.com") => {
           const handoff = await readJsonRpc(
             await connecta.fetch(
               mcpRpc(
                 "tools/call",
                 { name: "authorize_connector", arguments: { connector: "mail", force: true } },
-                { token, pool, baseUrl: BASE },
+                { token, baseUrl: BASE },
               ),
             ),
           );
@@ -3668,7 +3660,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
         try {
           // Bob's id in another namespace is not bob: no entry, so no rules and no disclosure.
           await signsInAs("impostor", "bob@org.example");
-          const impostor = await consent("impostor", "elsewhere");
+          const impostor = await consent("impostor");
           const impostorPage = await impostor.text();
           expect(impostor.status).toBe(403);
           expect(impostorPage).toContain('data-oauth-callback="account_not_listed"');
@@ -3715,7 +3707,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
             [null, "missing iss"],
           ] as const) {
             const exchanges = google.tokenRequests.length;
-            const wrongIssuer = await consent("bob", "team", iss);
+            const wrongIssuer = await consent("bob", iss);
             expect(wrongIssuer.status).toBe(400);
             expect(await wrongIssuer.text()).toContain('data-oauth-callback="invalid_callback"');
             expect(google.tokenRequests).toHaveLength(exchanges);
@@ -3868,9 +3860,7 @@ describe("OAuth mode: each connected Google account's own grant (#1375)", () => 
       const asBob = (url: string) => connecta.fetch(new Request(url, { headers: { Cookie: "__session=bob" } }));
       try {
         const rpc = async (name: string, args: Record<string, unknown>) =>
-          readJsonRpc(
-            await connecta.fetch(mcpRpc("tools/call", { name, arguments: args }, { token: "bob", pool: "team" })),
-          );
+          readJsonRpc(await connecta.fetch(mcpRpc("tools/call", { name, arguments: args }, { token: "bob" })));
         const handoff = JSON.parse(
           (await rpc("authorize_connector", { connector: "work_gmail" })).result.content[0].text,
         );

@@ -29,6 +29,8 @@ const CLERK = "https://clerk.example.test";
 const ada: OperatorMember = { kind: "human", namespace: CLERK, id: "user_ada", label: "Ada Lovelace" };
 const grace: OperatorMember = { kind: "human", namespace: CLERK, id: "user_grace", label: null };
 const lin: OperatorMember = { kind: "human", namespace: CLERK, id: "user_lin", label: "Lin Chen" };
+const ines: OperatorMember = { kind: "human", namespace: CLERK, id: "user_ines", label: "Ines Moreau" };
+const kai: OperatorMember = { kind: "human", namespace: CLERK, id: "user_kai", label: null };
 
 const defaults = <T extends Record<string, number | boolean>>(values: T) =>
   Object.fromEntries(Object.entries(values).map(([key, value]) => [key, { value, source: "default" }])) as Record<
@@ -74,14 +76,13 @@ const config: ConnectaConfigDescription = {
     { namespace: CLERK, id: "user_ada" },
     { namespace: CLERK, id: "user_grace" },
   ],
-  peopleInSeveralPools: [],
   classification: {},
   auth: [{ kind: "clerk", interactive: true, ui: "clerk" }],
   agents: ["simon-ada", "triage"],
   pools: [
     {
       name: "ada",
-      path: "/mcp/ada",
+      path: "/agent/ada",
       tools: ["gmail", "github.read"],
       members: [
         { kind: "agent", name: "simon-ada" },
@@ -97,10 +98,10 @@ const config: ConnectaConfigDescription = {
     },
     {
       name: "support",
-      path: "/mcp/support",
+      path: "/mcp",
       tools: ["github.read", "drive.search"],
       members: [
-        { kind: "human", namespace: CLERK, id: "user_lin" },
+        { kind: "human", namespace: CLERK, id: "user_kai" },
       ],
       readOnly: true,
       surface: "meta",
@@ -112,10 +113,10 @@ const config: ConnectaConfigDescription = {
     },
     {
       name: "team",
-      path: "/mcp/team",
+      path: "/mcp",
       tools: ["slack", "notes", "calendar", "github.read"],
       members: [
-        { kind: "human", namespace: CLERK, id: "user_ada" },
+        { kind: "human", namespace: CLERK, id: "user_ines" },
         { kind: "human", namespace: CLERK, id: "user_lin" },
       ],
       readOnly: false,
@@ -178,7 +179,7 @@ const pools: OperatorPoolV2[] = [
   // Per-person: agents act as Ada's Workspace address.
   {
     name: "ada",
-    humanPath: "/mcp/ada",
+    humanPath: null,
     agentPath: "/agent/ada",
     readOnly: false,
     surface: "meta",
@@ -194,8 +195,8 @@ const pools: OperatorPoolV2[] = [
   },
   {
     name: "support",
-    humanPath: "/mcp/support",
-    agentPath: "/agent/support",
+    humanPath: "/mcp",
+    agentPath: null,
     readOnly: true,
     surface: "meta",
     executeCode: true,
@@ -206,13 +207,13 @@ const pools: OperatorPoolV2[] = [
       { connectorId: "github", tools: [{ name: "read", requireReadOnly: false }] },
       { connectorId: "drive", tools: [{ name: "search", requireReadOnly: true }] },
     ],
-    members: [lin],
+    members: [kai],
   },
   // A people-only group pool; Workspace mappings use each person.
   {
     name: "team",
-    humanPath: "/mcp/team",
-    agentPath: "/agent/team",
+    humanPath: "/mcp",
+    agentPath: null,
     readOnly: false,
     surface: "meta",
     executeCode: true,
@@ -223,10 +224,9 @@ const pools: OperatorPoolV2[] = [
       { connectorId: "slack", tools: "all" },
       { connectorId: "notes", tools: "all" },
       { connectorId: "calendar", tools: "all" },
-      // GitHub also reaches Lin through support, so it lists two pools.
       { connectorId: "github", tools: [{ name: "read", requireReadOnly: false }] },
     ],
-    members: [ada, lin],
+    members: [ines, lin],
   },
 ];
 
@@ -316,18 +316,9 @@ const memberConnectors: OperatorMemberConnector[] = [
   {
     id: "github",
     title: "GitHub",
-    pools: ["support", "team"],
+    pools: ["team"],
     authScope: "shared",
     tools: [{ address: "github.read", classification: "read" }],
-    connection: null,
-    manage: { kind: "none" },
-  },
-  {
-    id: "drive",
-    title: "Drive",
-    pools: ["support"],
-    authScope: "shared",
-    tools: [{ address: "drive.search", classification: "read" }],
     connection: null,
     manage: { kind: "none" },
   },
@@ -373,7 +364,7 @@ const memberConnectors: OperatorMemberConnector[] = [
   },
 ];
 
-/** Lin's view: only their pools, stripped of owner and members. */
+/** Lin's view: only their one pool, stripped of owner and members. */
 export const OPERATOR_V2_MEMBER = {
   schemaVersion: 2,
   role: "member",
@@ -382,7 +373,7 @@ export const OPERATOR_V2_MEMBER = {
   live: { connectors: [], activity: "forbidden" },
   root: null,
   pools: pools
-    .filter((pool) => pool.name === "support" || pool.name === "team")
+    .filter((pool) => pool.name === "team")
     .map((pool) => ({ ...pool, owner: null, members: [] })),
   agents: [],
   matrix: [],
@@ -410,14 +401,14 @@ const notesManage = (stored: boolean): OperatorMemberManage => ({
   actions: stored ? ["save", "test", "clear"] : ["save"],
 });
 
-/** Each member's own partition status. Ada's and Lin's differ, so neither may see the other's. */
+/** Each member's own partition status. Ines's and Lin's differ, so neither may see the other's. */
 export const OPERATOR_V2_PARTITIONS = {
   user_lin: {
     slack: { state: "ok" },
     notes: { state: "credential_required", problem: "credential_required" },
     calendar: { state: "ok" },
   },
-  user_ada: {
+  user_ines: {
     slack: { state: "auth_required", problem: "oauth_required" },
     notes: { state: "ok" },
     calendar: { state: "ok" },
@@ -432,7 +423,7 @@ export const OPERATOR_V2_PARTITIONS = {
 export function operatorV2MemberSource(id: keyof typeof OPERATOR_V2_PARTITIONS): MemberViewSource {
   const connections: Record<"slack" | "notes" | "calendar", MemberPartition["connection"]> =
     OPERATOR_V2_PARTITIONS[id];
-  // Ada's Notes is connected, so her partition holds a value; Lin's holds none.
+  // Ines's Notes is connected, so that partition holds a value; Lin's holds none.
   const manages = { ...manage, notes: notesManage(connections.notes.state === "ok") };
   const partition = (connector: keyof typeof manages): MemberPartition => ({
     connection: { ...connections[connector] },

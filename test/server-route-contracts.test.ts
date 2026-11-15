@@ -6,8 +6,8 @@ import type { Connector } from "../src/types.js";
 import { mcpRpc } from "./fixtures/http.js";
 import { bindCallback, callbackAuth } from "./fixtures/oauth.js";
 import { CLERK_OPTIONS } from "./fixtures/ui.js";
-import { createTestConnecta, required, silentLogger } from "./helpers.js";
-import { machineAuth } from "./helpers/machine-auth.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
+import { machineAuth, TEST_MACHINE_NAMESPACE } from "./helpers/machine-auth.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "route-contract-token";
@@ -192,51 +192,47 @@ describe("server route contracts", () => {
     await connecta.close();
   });
 
-  it("authenticates every pool suffix before returning the same pool refusal", async () => {
+  it("INV-4: refuses every /mcp/<suffix> with one MCP 404 before auth and admission", async () => {
+    const auth = machineAuth(TOKEN);
+    const authorize = vi.spyOn(auth, "authorize");
     const connecta = createTestConnecta({
       connectors: [testConnector("docs")],
-      auth: machineAuth(TOKEN),
+      auth,
       publicUrl: BASE,
-      // The caller is a maintainer but no pool's member; a declared pool it is
-      // not in, an undeclared one, and a malformed suffix refuse identically.
-      pools: {
-        support: { tools: ["docs"], members: NOBODY },
-        others: { tools: ["docs"], members: [{ namespace: "test", id: "other" }] },
-      },
+      pools: { support: { tools: ["docs"], members: [{ namespace: TEST_MACHINE_NAMESPACE, id: "machine" }] } },
     });
+    const admitted = async () =>
+      ((await (await connecta.fetch(new Request(`${BASE}/health`))).json()) as any).admission.requests.totals.admitted;
     let baseline: Awaited<ReturnType<typeof responseShape>> | undefined;
-    for (const suffix of ["support", "others", "missing", "Support", "日本語", "support.extra", "nested/path", ""]) {
-      const url = `${BASE}/mcp/${suffix}`;
-      const unauthenticated = await connecta.fetch(new Request(url));
-      expect(unauthenticated.status).toBe(401);
-      expectMcpCors(unauthenticated);
-      expect(await unauthenticated.json()).toMatchObject({ error: { code: "host_auth_required", retryable: false } });
-      const response = await connecta.fetch(new Request(url, { headers: { Authorization: `Bearer ${TOKEN}` } }));
-      expectMcpCors(response);
-      const shape = await responseShape(response);
-      expect(shape.status).toBe(404);
-      expect(JSON.parse(shape.body)).toEqual({
-        jsonrpc: "2.0",
-        error: { code: -33004, message: "MCP endpoint not found." },
-      });
-      baseline ??= shape;
-      expect(shape).toEqual(baseline);
+    for (const suffix of ["support", "missing", "", "Support", "日本語", "support.extra", "nested/path"]) {
+      for (const init of [
+        {},
+        { headers: { Authorization: `Bearer ${TOKEN}` } },
+        { headers: { Authorization: `Bearer ${TOKEN}`, Accept: "text/html" } },
+        mcpRpc("tools/list", {}, { token: TOKEN }),
+      ]) {
+        const response = await connecta.fetch(new Request(`${BASE}/mcp/${suffix}`, init));
+        expectMcpCors(response);
+        expect(response.headers.get("WWW-Authenticate")).toBeNull();
+        const shape = await responseShape(response);
+        expect(shape.status, suffix).toBe(404);
+        expect(JSON.parse(shape.body)).toEqual({
+          jsonrpc: "2.0",
+          error: { code: -33004, message: "MCP endpoint not found." },
+        });
+        baseline ??= shape;
+        expect(shape).toEqual(baseline);
+      }
     }
-    // MCP pool refusals stay JSON-RPC even when the client asks for HTML.
-    const pages = new Set<string>();
-    for (const suffix of ["support", "others", "missing"]) {
-      const response = await connecta.fetch(
-        new Request(`${BASE}/mcp/${suffix}`, {
-          headers: { Authorization: `Bearer ${TOKEN}`, Accept: "text/html" },
-        }),
-      );
-      expect(response.status).toBe(404);
-      expectMcpCors(response);
-      pages.add(await response.text());
-    }
+    expect(authorize).not.toHaveBeenCalled();
+    expect(await admitted()).toBe(0);
+    // The pool's member reaches it at plain /mcp.
+    const pooled = await connecta.fetch(new Request(`${BASE}/mcp`, mcpRpc("tools/list", {}, { token: TOKEN })));
+    expect(pooled.status).toBe(200);
+    expect(await pooled.text()).toContain("search_tools");
+    expect(authorize).toHaveBeenCalled();
+    expect(await admitted()).toBeGreaterThan(0);
     const unserved = await connecta.fetch(new Request(`${BASE}/nowhere`, { headers: { Accept: "text/html" } }));
-    expect(pages.size).toBe(1);
-    expect(JSON.parse(required([...pages][0]))).toMatchObject({ error: { code: -33004 } });
     expect(await unserved.text()).toContain("<h1>Page not found</h1>");
     await connecta.close();
   });

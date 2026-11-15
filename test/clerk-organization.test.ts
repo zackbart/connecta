@@ -28,6 +28,7 @@ const ORG = `org_${"A".repeat(27)}`;
 const OTHER_ORG = `org_${"B".repeat(27)}`;
 const ALICE = "user_alice";
 const BOB = "user_bob";
+const CAROL = "user_carol";
 const MEMBERSHIPS = `/v1/organizations/${ORG}/memberships`;
 
 /** An already SDK-verified JWT access token for `/mcp`, issued by this instance. */
@@ -351,10 +352,10 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
         }),
       ],
       maintainers: [BOB],
-      pools: { support: { tools: ["calc"], members: [BOB] } },
+      pools: { support: { tools: ["calc"], members: [CAROL] } },
     });
     try {
-      // Alice administers the organization in Clerk; the deployment names Bob.
+      // Alice administers the organization in Clerk; the deployment names Bob and Carol.
       mocks.fetch.mockImplementation(async (input: RequestInfo | URL) => {
         const userId = new URL(String(input)).searchParams.get("user_id")!;
         return Response.json({ data: [membershipRow(ORG, userId, "org:admin")], total_count: 1 });
@@ -374,14 +375,14 @@ describe("clerkAuth organization membership on MCP OAuth tokens", () => {
             params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } },
           }),
         });
-      for (const path of ["/mcp", "/mcp/support"]) {
-        oauth(jwt({ aud: `${BASE}${path}`, org_id: ORG }), ALICE);
-        const refused = await app.fetch(initialize(path));
-        expect(refused.status).toBe(404);
-        await refused.text();
-        oauth(jwt({ aud: `${BASE}${path}`, sub: BOB }), BOB);
-        const admitted = await app.fetch(initialize(path));
-        expect(admitted.status).toBe(200);
+      oauth(jwt({ aud: `${BASE}/mcp`, org_id: ORG }), ALICE);
+      const refused = await app.fetch(initialize("/mcp"));
+      expect(refused.status).toBe(404);
+      await refused.text();
+      for (const user of [BOB, CAROL]) {
+        oauth(jwt({ aud: `${BASE}/mcp`, sub: user }), user);
+        const admitted = await app.fetch(initialize("/mcp"));
+        expect(admitted.status, user).toBe(200);
         await admitted.text();
       }
     } finally {

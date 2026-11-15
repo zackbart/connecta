@@ -56,15 +56,15 @@ links the executable checks.
   Effective or source write forbids Connecta's own replay and makes an ambiguous
   dispatched failure non-retryable. Missing or contradictory hints fail closed.
 - **INV-2: Writes respect the endpoint.** Each endpoint scope (plain `/mcp`,
-  which serves a maintainer the whole catalog and another person their single
-  pool, and a pool at `/mcp/<pool>` and `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint lists write
+  which serves a maintainer the whole catalog and another person their one
+  pool, and an agent pool at `/agent/<pool>`) is writable or read-only. A `readOnly` endpoint lists write
   tools in search and describe as not callable, omits them from a native pool's tool list, and refuses
   every write call on every path before validation or dispatch. A connector's `readOnly` applies the same restriction on every endpoint and composes with endpoint policy by OR. A writable endpoint sends writes only through
   `call_destructive_tool`, programs, and on a native pool the write's own
   tool, annotated destructive and run on the `call_destructive_tool` route;
   a native name is bound to its classification, so a name a host holds for a
   read cannot run a write, however often it is resent. A writable endpoint
-  annotates `execute_code` as a write. Writable `/mcp`, `/mcp/<pool>` and `/agent/<pool>`
+  annotates `execute_code` as a write. Writable `/mcp` and `/agent/<pool>`
   also list `execute_read_code`, annotated read-only: below the sandbox it refuses every
   call whose effective or source class is write, before dispatch. Approval belongs
   to the host.

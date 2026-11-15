@@ -46,7 +46,6 @@ function setup(
     logger: "silent",
     auth: [fakeClerkAuth({ token: "alice", userId: "alice" })],
     ...(options.catalogTtlSeconds === undefined ? {} : { discovery: { catalogTtlSeconds: options.catalogTtlSeconds } }),
-    pools: { trusted: { tools: connectors.map((item) => item.id), members: ["alice"], readOnly: false } },
     executor: {
       execute: async (_code, providers) => {
         const call = required(providers.find((provider) => provider.name === "connecta")).fns.call!;
@@ -82,11 +81,7 @@ function setup(
     request.headers.set("Mcp-Name", name);
     request.headers.set("Authorization", "Bearer alice");
     if (name !== "execute_code" && name !== "search_tools") request.headers.set("Mcp-Param-Address", address);
-    return (
-      await readJsonRpc(
-        await app.fetch(name === "execute_code" ? new Request(`${BASE}/mcp/trusted`, request) : request),
-      )
-    ).result;
+    return (await readJsonRpc(await app.fetch(request))).result;
   };
   const connect = async () => {
     const ctx = () => app.registry.contextFor("service", BASE);

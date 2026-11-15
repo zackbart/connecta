@@ -108,14 +108,14 @@ test.beforeAll(async () => {
     serverInfo: { name: "Production", version: "1" },
     calls: { maxResultBytes: CONFIG_DEFAULTS.calls.maxResultBytes },
     // pages-user is the default maintainer, and so sees every connector and
-    // pool (#837); it is also support's one member.
+    // pool (#837); pages-member is support's one member.
     pools: {
       support: {
         surface: "native",
         executeCode: false,
         tools: ["github.read"],
         readOnly: true,
-        members: ["pages-user"],
+        members: ["pages-member"],
       },
     },
     accessTokens: accessTokens(storage),

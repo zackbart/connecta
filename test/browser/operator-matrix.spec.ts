@@ -122,15 +122,14 @@ test("INV-4 INV-6: a member gets their own page on every path and never asks for
   expectMemberViewWithholds(await (await served).json(), OPERATOR_V2_MEMBER_EXPECTED);
   await expect(page.getByRole("heading", { name: "Your connections", exact: true })).toBeVisible();
   const rows = page.locator("#memberView .member-endpoint");
-  await expect(rows.locator(".endpoint code")).toHaveText([
-    VISUAL_ORIGIN + "/mcp/support",
-    VISUAL_ORIGIN + "/mcp/team",
-  ]);
+  await expect(rows.locator(".endpoint code")).toHaveText([VISUAL_ORIGIN + "/mcp"]);
   await expect(navLinks(page)).toHaveCount(0);
-  const trigger = page.getByRole("button", { name: "Client setup for support", exact: true });
+  const trigger = page.getByRole("button", { name: "Client setup for team", exact: true });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Client setup", exact: true });
-  await expect(dialog).toContainText(VISUAL_ORIGIN + "/mcp/support");
+  await expect(dialog.locator(".setup-code")).toHaveText(
+    `claude mcp add --transport http connecta ${VISUAL_ORIGIN}/mcp`,
+  );
   await expect(dialog).toContainText("claude mcp add");
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();

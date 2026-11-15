@@ -27,16 +27,17 @@ tokens, upgrading, and diagnosis with `connecta doctor` to their procedures.
 - Optional modules (Clerk sign-in, credential vault, activity history) are type-checked code in `src/connecta.config.ts`, switched on by
   their environment variables. Follow README "Select optional modules". Shared auth management
   requires a signed-in maintainer, and a pool member manages only their own
-  account on a personal connector in their pools; visibility alone never grants it. Clerk supplies human identity; machine clients are the
+  account on a personal connector in their pool; visibility alone never grants it. Clerk supplies human identity; machine clients are the
   `agents` declared by name in `src/connecta.config.ts`, each with one `cta_` token.
   Keep `accessTokens(storage)` installed even before the first token exists.
   Issue or rotate an agent's token with `npm run --silent rotate-token -- <agent>`
   against the same configuration and database the server uses; bind a token
   from before agents once with `npm run adopt-token -- <token-id> <agent>`.
   Plain `/mcp` serves `maintainers` the whole catalog and each other person
-  in exactly one pool that pool; people also reach `/mcp/<pool>` and agents
-  `/agent/<pool>` for a pool listing them in `members` (`npm run doctor`
-  checks `/agent/local-machine`). Human endpoints refuse `cta_` tokens. `CONNECTA_TOKEN` is only for clients and doctor; never add a configured
+  their one pool; maintainers belong to no pool, and a person belongs to at
+  most one, so construction throws on a maintainer in `members` or a person
+  in two pools. Agents reach `/agent/<pool>` for each pool listing them in
+  `members` (`npm run doctor` checks `/agent/local-machine`). Human endpoints refuse `cta_` tokens. `CONNECTA_TOKEN` is only for clients and doctor; never add a configured
   static bearer or an open startup mode.
   All state, activity included, lives in the one SQLite file `CONNECTA_DATABASE`
   names, through `@zackbart/connecta/sqlite`.

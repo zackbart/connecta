@@ -1,6 +1,6 @@
 /**
- * Client setup snippets for one MCP endpoint: the deployment's `/mcp` or a
- * `/mcp/<pool>`. Three formats and no more — Claude Code's CLI, Codex's CLI,
+ * Client setup snippets for one MCP endpoint: the deployment's `/mcp` or an
+ * `/agent/<pool>`. Three formats and no more — Claude Code's CLI, Codex's CLI,
  * and the `mcpServers` JSON most other clients read — because a longer list
  * is a list to keep current.
  *
@@ -18,7 +18,8 @@ export interface ClientSetupCommand {
 /**
  * The name a client files this server under. Derived from the deployment's
  * configured server name, reduced to the characters every client CLI accepts
- * unquoted, with the pool appended so two endpoints never collide.
+ * unquoted. An agent pool's name is appended, since each agent pool has its
+ * own URL; people all connect at the same `/mcp`.
  */
 export function clientServerName(serverName: string | undefined, pool?: string): string {
   const base =

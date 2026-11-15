@@ -63,10 +63,10 @@ export type OperatorMember =
 
 export interface OperatorPoolV2 {
   name: string;
-  /** `/mcp/<name>`. */
-  humanPath: string;
-  /** `/agent/<name>`. */
-  agentPath: string;
+  /** `/mcp` for a pool of people, null for a pool of agents. */
+  humanPath: string | null;
+  /** `/agent/<name>` for a pool of agents, null for a pool of people. */
+  agentPath: string | null;
   readOnly: boolean;
   surface: "meta" | "native";
   executeCode: boolean;
