@@ -538,12 +538,10 @@ describe("search_tools", () => {
     expect(await ready("list meetings")).toEqual(["workspace.granola_api_read /v1/notes"]);
     expect(await ready("list deployments")).toEqual(["hosting.vercel_api_read /v7/deployments"]);
     expect(await ready("list customers")).toEqual(["billing.stripe_api_read /v1/customers"]);
-    // list_project_env_vars also matches, but its name adds "env" and "vars".
+    // The authored list answers it, so the hatch offers no ready call beside it.
     const projects = await search("list projects");
-    expect(projects.tools[0]?.address).toBe("hosting.list_project_env_vars");
-    expect(projects.readyCalls?.map((call) => `${call.address} ${call.args.path}`)).toEqual([
-      "hosting.vercel_api_read /v10/projects",
-    ]);
+    expect(projects.tools[0]?.address).toBe("hosting.list_projects");
+    expect(projects.readyCalls ?? []).toEqual([]);
     // One top-ranked call per connector, and a word inside a compound segment
     // such as event_destinations never names that resource.
     const scoped = async (query: string, connector: string) =>
@@ -840,7 +838,7 @@ describe("search_tools", () => {
     ];
     const toolCount = (await Promise.all(connectors.map((connector) => connector.listTools({} as never)))).flat()
       .length;
-    expect(toolCount).toBe(680);
+    expect(toolCount).toBe(682);
     const cloned = textOf(
       await createMetaTools(makeRegistry(connectors), BASE).searchTools({ query, limit: MAX_SEARCH_LIMIT }),
     ) as SearchResult;

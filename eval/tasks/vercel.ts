@@ -141,7 +141,7 @@ async function reference(suffix: string, ctx: ReferenceContext) {
     });
   else if (suffix === "team-project-alias") {
     await read(ctx, "list_teams");
-    await read(ctx, "vercel_api_read", { path: "/v10/projects", query: { teamId: "team_fake" } });
+    await read(ctx, "list_projects", { teamId: "team_fake" });
     await read(ctx, "vercel_api_read", { path: "/v2/deployments/dpl_release000/aliases" });
     await read(ctx, "vercel_api_read", { path: "/v9/projects/prj_web/domains" });
   } else if (suffix === "deployment-paging") {

@@ -136,6 +136,7 @@ export const vercel = defineApiProvider<VercelOptions>({
     pathExample: "/v13/deployments/dpl_123",
     named: {
       "GET /v2/teams": "list_teams",
+      "GET /v10/projects": "list_projects",
       "GET /v10/projects/{idOrName}/env": "list_project_env_vars",
       "POST /v10/projects/{idOrName}/env": "upsert_project_env_var",
       "PATCH /v9/projects/{idOrName}/env/{id}": "update_project_env_var",
