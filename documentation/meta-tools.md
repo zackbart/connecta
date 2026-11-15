@@ -2090,9 +2090,15 @@ is why no `outputSchema` is advertised. A truncated result's notice pages with
 `connecta.result` inside `execute_code`, or with `read_result` on a pool without
 `execute_code`.
 
-A native downstream tool's arguments lose any [host-injected key](#the-meta-tools)
-unless that tool's input schema declares the key as a top-level property, in
-which case the downstream tool receives it unchanged.
+A native downstream tool's arguments lose a [host-injected key](#the-meta-tools)
+only when its input schema provably cannot accept that key as an argument;
+otherwise the downstream tool receives it unchanged. The schema may accept it
+when any local `$ref` target or `allOf`, `anyOf`, `oneOf`, `if`, `then`, `else`,
+`dependentSchemas` or `dependencies` branch names it in `properties`,
+`required`, `dependentRequired` or a matching `patternProperties` pattern, or
+carries a schema-valued `additionalProperties` or `unevaluatedProperties`. An
+unresolvable or non-local `$ref`, a `$dynamicRef` or `$recursiveRef`, an
+invalid pattern, or a malformed keyword also keeps the key.
 
 **Approval is the host's, enforcement is Connecta's.** The host approves from
 the annotations of the list it cached, and some hosts resend calls they believe

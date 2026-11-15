@@ -820,7 +820,7 @@ describe("native tool surface", () => {
     }
   });
 
-  it("drops a host's wait_for_previous unless the downstream tool declares it", async () => {
+  it("drops a host's wait_for_previous unless the downstream tool may declare it", async () => {
     const storage = memoryStorage();
     const received: Array<[string, unknown]> = [];
     const app = createTestConnecta({
@@ -842,6 +842,40 @@ describe("native tool surface", () => {
               name: "queue",
               annotations: { readOnlyHint: true },
               inputSchema: { type: "object", properties: { wait_for_previous: { type: "boolean" } } },
+            },
+            {
+              name: "lookup",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                $ref: "#/$defs/lookup",
+                $defs: { lookup: { type: "object", properties: { id: { type: "string" } } } },
+              },
+            },
+            {
+              name: "queue_ref",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                $ref: "#/$defs/queue",
+                $defs: { queue: { type: "object", properties: { wait_for_previous: { type: "boolean" } } } },
+              },
+            },
+            {
+              name: "enqueue",
+              annotations: { readOnlyHint: false },
+              inputSchema: {
+                type: "object",
+                allOf: [
+                  { properties: { name: { type: "string" } } },
+                  { properties: { wait_for_previous: { type: "boolean" } } },
+                ],
+              },
+            },
+            {
+              name: "opaque",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                anyOf: [{ type: "object", properties: { id: { type: "string" } } }, { $ref: "#/$defs/missing" }],
+              },
             },
           ],
           callTool: async (name, args) => {
@@ -869,6 +903,10 @@ describe("native tool surface", () => {
         ["crm__get", { id: "p1" }],
         ["crm__WRITE__create", { name: "Bob" }],
         ["crm__queue", {}],
+        ["crm__lookup", { id: "p1" }],
+        ["crm__queue_ref", {}],
+        ["crm__WRITE__enqueue", { name: "Bob" }],
+        ["crm__opaque", { id: "p1" }],
       ] as const) {
         const result = await call(name, { ...args, wait_for_previous: true });
         expect(result.isError, name).toBeFalsy();
@@ -877,6 +915,10 @@ describe("native tool surface", () => {
         ["get", { id: "p1" }],
         ["create", { name: "Bob" }],
         ["queue", { wait_for_previous: true }],
+        ["lookup", { id: "p1" }],
+        ["queue_ref", { wait_for_previous: true }],
+        ["enqueue", { name: "Bob", wait_for_previous: true }],
+        ["opaque", { id: "p1", wait_for_previous: true }],
       ]);
       expect((await call("skills", { wait_for_previous: true })).isError).toBeFalsy();
       const unknown = await call("read_result", { id: "res_missing", wait_for_previous: true });

@@ -83,9 +83,9 @@ export function openOutputSchema<Input, Output>(
 // https://github.com/google-gemini/gemini-cli/blob/4ed06ed0ddc523a6d356a4ad35ddfea331041888/packages/core/src/tools/mcp-tool.ts#L414-L421
 const HOST_CONTROL_KEYS: readonly string[] = ["wait_for_previous"];
 
-export function withoutHostControlKeys<T>(value: T, declared: readonly string[] = []): T {
+export function withoutHostControlKeys<T>(value: T, declared: (key: string) => boolean = () => false): T {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
-  const injected = HOST_CONTROL_KEYS.filter((key) => Object.hasOwn(value, key) && !declared.includes(key));
+  const injected = HOST_CONTROL_KEYS.filter((key) => Object.hasOwn(value, key) && !declared(key));
   if (injected.length === 0) return value;
   return Object.fromEntries(Object.entries(value).filter(([key]) => !injected.includes(key))) as T;
 }

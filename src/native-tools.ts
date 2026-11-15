@@ -207,6 +207,16 @@ function annotationsFor(tool: ToolDef, stale: boolean) {
     : { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
 }
 
+function localRef(root: JsonSchema, ref: unknown): unknown {
+  if (typeof ref !== "string" || !ref.startsWith("#/")) return undefined;
+  let target: unknown = root;
+  for (const part of ref.slice(2).split("/")) {
+    if (!target || typeof target !== "object") return undefined;
+    target = (target as JsonSchema)[part.replace(/~1/g, "/").replace(/~0/g, "~")];
+  }
+  return target;
+}
+
 /** Object arguments retain every applicable constraint, including local refs. */
 function nativeInputSchema(schema: JsonSchema): Record<string, unknown> | undefined {
   function supportsObject(value: unknown, seen = new Set<unknown>()): boolean {
@@ -221,13 +231,8 @@ function nativeInputSchema(schema: JsonSchema): Record<string, unknown> | undefi
     )
       return false;
     if (node.$ref !== undefined) {
-      if (typeof node.$ref !== "string" || !node.$ref.startsWith("#/")) return false;
-      let target: unknown = schema;
-      for (const part of node.$ref.slice(2).split("/")) {
-        if (!target || typeof target !== "object") return false;
-        target = (target as JsonSchema)[part.replace(/~1/g, "/").replace(/~0/g, "~")];
-      }
-      if (!supportsObject(target, next)) return false;
+      const target = localRef(schema, node.$ref);
+      if (target === undefined || !supportsObject(target, next)) return false;
     }
     for (const key of ["anyOf", "oneOf", "allOf"]) {
       const branches = node[key];
@@ -263,9 +268,62 @@ function passThroughSchema(schema: JsonSchema | undefined): StandardSchemaWithJS
   } as StandardSchemaWithJSON;
 }
 
-function declaredKeys(schema: JsonSchema | undefined): string[] {
-  const properties = schema?.properties;
-  return properties && typeof properties === "object" ? Object.keys(properties) : [];
+const COMPOSED = ["allOf", "anyOf", "oneOf", "if", "then", "else"] as const;
+const UNFOLLOWED = ["$dynamicRef", "$recursiveRef"] as const;
+const MAX_DECLARATION_DEPTH = 32;
+
+function plainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function mayDeclare(root: JsonSchema | undefined, key: string): boolean {
+  if (root === undefined) return false;
+  const schema = root;
+  function visit(value: unknown, depth: number, seen: Set<unknown>): boolean {
+    if (typeof value === "boolean") return false;
+    if (!plainObject(value) || depth > MAX_DECLARATION_DEPTH) return true;
+    if (seen.has(value)) return false;
+    const next = new Set(seen).add(value);
+    const node = value as JsonSchema;
+    if (UNFOLLOWED.some((keyword) => node[keyword] !== undefined)) return true;
+    if (node.properties !== undefined && (!plainObject(node.properties) || Object.hasOwn(node.properties, key)))
+      return true;
+    if (Array.isArray(node.required) && node.required.includes(key)) return true;
+    if (node.patternProperties !== undefined) {
+      if (!plainObject(node.patternProperties)) return true;
+      for (const pattern of Object.keys(node.patternProperties)) {
+        try {
+          if (new RegExp(pattern, "u").test(key)) return true;
+        } catch {
+          return true;
+        }
+      }
+    }
+    for (const keyword of ["additionalProperties", "unevaluatedProperties"]) {
+      if (node[keyword] !== undefined && typeof node[keyword] !== "boolean") return true;
+    }
+    if (node.$ref !== undefined) {
+      const target = localRef(schema, node.$ref);
+      if (target === undefined || visit(target, depth + 1, next)) return true;
+    }
+    for (const keyword of COMPOSED) {
+      const branches = node[keyword];
+      if (branches === undefined) continue;
+      const list = keyword.endsWith("Of") ? branches : [branches];
+      if (!Array.isArray(list) || list.some((branch) => visit(branch, depth + 1, next))) return true;
+    }
+    for (const keyword of ["dependentSchemas", "dependencies", "dependentRequired"]) {
+      const map = node[keyword];
+      if (map === undefined) continue;
+      if (!plainObject(map)) return true;
+      for (const [trigger, dependent] of Object.entries(map)) {
+        if (trigger === key) return true;
+        if (Array.isArray(dependent) ? dependent.includes(key) : visit(dependent, depth + 1, next)) return true;
+      }
+    }
+    return false;
+  }
+  return visit(schema, 0, new Set());
 }
 
 function describe(entry: NativeTool, executeCode: boolean, guideName?: string): string {
@@ -520,7 +578,10 @@ export class NativeSurface {
               const result = yield* upwardStep(
                 authInvoke<unknown>(self.options, "route", [
                   boundClassification(name) === "read" ? "call_tool" : "call_destructive_tool",
-                  { address, args: withoutHostControlKeys(args, declaredKeys(target.entry.tool.inputSchema)) },
+                  {
+                    address,
+                    args: withoutHostControlKeys(args, (key) => mayDeclare(target.entry.tool.inputSchema, key)),
+                  },
                   request,
                 ]),
               );
