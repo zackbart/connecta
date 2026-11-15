@@ -124,6 +124,60 @@ reach a handler, and never go downstream. The list is exactly
 `Unrecognized key` error that names them, and the other meta-tools ignore them.
 Keys inside `args` belong to the downstream tool and are never dropped.
 
+### Host tool metadata
+
+Two `tools/list` entry `_meta` keys are host-specific hints, not MCP
+semantics. Claude Code reads them; other hosts may ignore them, and claude.ai
+ignores `anthropic/alwaysLoad`. Both come from configuration and the caller's
+admitted connectors alone, never from catalogs, calls or auth state. A
+caller's listing keeps the same hints as long as its admitted connector scope
+holds: `call_tool`, `call_destructive_tool` and `read_result` take the largest
+cap among the connectors the request admits, so two people on plain `/mcp`
+admitted to different connectors may see different values.
+
+| Key                            | Where                                                                                                                                            | Value                                                                                            |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ |
+| `anthropic/alwaysLoad`         | Exactly one tool on a meta endpoint: `execute_read_code` where it is listed, else `execute_code`. Never on a [native pool](#native-tool-surface) | `true`                                                                                           |
+| `anthropic/maxResultSizeChars` | `call_tool`, `call_destructive_tool` (writable endpoints), native downstream tools and `read_result`                                             | The direct-call cap plus 8,192, at most 500,000; present only when that sum exceeds 50,000       |
+| `anthropic/maxResultSizeChars` | `execute_code`, `execute_read_code`                                                                                                              | `execute.maxResultChars` plus 12,192, at most 500,000; present only when that sum exceeds 50,000 |
+
+A host that defers MCP tools behind its own tool search loads the
+`anthropic/alwaysLoad` tool upfront. The entry tool is the program route the
+endpoint leads with, because one program can search, call and return the
+answer, so an agent can start without a tool-search hop. Loading `search_tools`
+upfront would still need a second hop to reach a tool that runs the call. The
+read route is the one that needs no write approval; on an endpoint without it,
+`execute_code` is the program route. Its description carries the connector
+inventory and stays under the 4,096 characters such a host keeps of a tool it
+loads upfront. A native pool lists each downstream tool under its own name and
+description, which is what the host's tool search indexes, so no tool there
+loads upfront. The person configuring the server can still override the hint.
+
+`anthropic/maxResultSizeChars` raises the host's inline result threshold, which
+otherwise moves any text result over 50,000 characters to a file. Each value is
+an upper bound on the tool's result text, so a capped result arrives inline
+whenever that bound is at most the host's 500,000-character ceiling. A cap
+whose bound exceeds 500,000 is advertised as 500,000, and a result longer than
+that still moves to a file:
+
+- A direct call's text is at most its cap (the connector's `maxResultBytes`,
+  else `calls.maxResultBytes`), since a character is at least one UTF-8 byte,
+  plus a truncation notice of under 1,000 characters. A `read_result` page is
+  at most the cap of the call that stashed it plus a one-line header. `call_tool`,
+  `call_destructive_tool` and `read_result` use the largest cap among the
+  connectors the request admits; a native downstream tool uses its own
+  connector's.
+- A program's text is at most `execute.maxResultChars` (the return and emitted
+  text share it), 4,000 for logs (measured as serialized JSON), and the error
+  facts, notes and counts around them. An error's `message` is at most 4,096
+  serialized characters ([code mode](./code-mode.md)).
+
+The 8,192 extra characters cover those notices, headers, facts and counts. The defaults (24,000) stay under the host's line without the key
+([why](#truncated-direct-call-results)), so a default deployment sends no
+size hint. `search_tools`, `skills` and `authorize_connector` return results no
+configured cap bounds and carry no size hint; a read-only endpoint's
+`call_destructive_tool` only refuses, so it carries none either.
+
 ## Read programs
 
 `execute_read_code` runs a program with the same guest API, sandbox and budgets as
@@ -948,7 +1002,8 @@ inline byte cap, and 24,000 matches the default program result boundary in
 escaping, capped by the call's own inline cap: 3,829 bytes by default. A deployment whose
 clients take more can raise the cap, and one whose clients take less can lower
 it, per connector if need be; a result between 24,000 and 50,000 bytes that
-used to arrive whole now pages. A client that spills rather than rejects keeps
+used to arrive whole now pages. A raised cap also raises Claude Code's line for
+the tools it bounds ([host tool metadata](#host-tool-metadata)). A client that spills rather than rejects keeps
 the notice whatever its threshold, since the notice is the first few hundred
 characters. One that rejects outright — Claude Code with
 `MAX_MCP_OUTPUT_TOKENS` set below 12,500 — needs a cap under twice its limit.
@@ -2057,13 +2112,13 @@ refuses it otherwise, and refuses any `surface` other than `"meta"` or
 `"native"`. Both pool endpoints, `/mcp/<pool>` and `/agent/<pool>`, serve the
 pool's surface.
 
-| A native pool lists          | Shape                                                                                                                                                                                             |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Each visible downstream tool | A read is `<connector>__<tool>`, a write `<connector>__WRITE__<tool>`; object input constraints and local references preserved; no `outputSchema`; `_meta["dev.connecta/address"]` is its address |
-| `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes                                           |
-| `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks                                 |
-| `authorize_connector`        | Always; requests the existing typed authorization handoff for a granted connector                                                                                                                 |
-| `skills`                     | Always                                                                                                                                                                                            |
+| A native pool lists          | Shape                                                                                                                                                                                                                                                      |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Each visible downstream tool | A read is `<connector>__<tool>`, a write `<connector>__WRITE__<tool>`; object input constraints and local references preserved; no `outputSchema`; `_meta["dev.connecta/address"]` is its address, beside any [host result-size hint](#host-tool-metadata) |
+| `execute_code`               | Unless `executeCode: false`. Each downstream tool's description then ends with `Program address: <connector>.<tool>`, the address `connecta.call` takes                                                                                                    |
+| `read_result`                | Only with `executeCode: false`: `{ id, offset?, page?, maxBytes? }` pages a stashed result exactly as `connecta.result` does, with the same bindings and rechecks                                                                                          |
+| `authorize_connector`        | Always; requests the existing typed authorization handoff for a granted connector                                                                                                                                                                          |
+| `skills`                     | Always                                                                                                                                                                                                                                                     |
 
 `search_tools`, `call_tool`, and `call_destructive_tool` are not listed. Auth failures still carry their handoff in the error envelope.
 

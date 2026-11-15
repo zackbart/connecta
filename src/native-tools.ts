@@ -30,7 +30,8 @@ import { catalogStaleness, type CatalogStaleness } from "./catalog-freshness.js"
 import { jsonResult, type ToolResult } from "./meta-tools.js";
 import { withoutHostControlKeys } from "./advertised-schema.js";
 import { failureRecord, logFailure } from "./operator-record.js";
-import type { RegistryView } from "./registry.js";
+import { resolveMaxResultBytes, type RegistryView } from "./registry.js";
+import { resultSizeMeta } from "./host-tool-meta.js";
 import type { DeferredWork } from "./connector-scope.js";
 import type { Connector, JsonSchema, Logger, ToolDef } from "./types.js";
 
@@ -461,6 +462,7 @@ export class NativeSurface {
           ? {
               _meta: {
                 "dev.connecta/address": `${entry.connector.id}.${entry.tool.name}`,
+                ...resultSizeMeta(resolveMaxResultBytes(entry.connector.maxResultBytes, this.registry.maxResultBytes)),
                 ...(entry.stale
                   ? {
                       "dev.connecta/stale": {

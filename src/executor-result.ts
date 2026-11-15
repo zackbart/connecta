@@ -83,9 +83,18 @@ export function guardExecuteResultValue(
   return truncationEnvelope(text, maxChars, text.length, hint);
 }
 
+/** Clamp text so its JSON string, escapes and truncation marker included, fits `max` characters. */
 export function truncateExecuteText(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${tokenPrefix(text, max)}\n--- TRUNCATED (${text.length} chars total) — filter/map/slice data inside your code and return only what you need ---`;
+  if (JSON.stringify(text).length <= max) return text;
+  const marker = `\n--- TRUNCATED (${text.length} chars total) — filter/map/slice data inside your code and return only what you need ---`;
+  let low = 0;
+  let high = Math.min(text.length, max);
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (JSON.stringify(text.slice(0, mid) + marker).length <= max) low = mid;
+    else high = mid - 1;
+  }
+  return `${tokenPrefix(text, low)}${marker}`;
 }
 
 /**

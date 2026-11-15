@@ -14,6 +14,7 @@ import type { DownstreamInputResult } from "./downstream-input-context.js";
 import type { AuthorizeConnectorResult } from "./authorization-handoff.js";
 import { authCall, authInvoke, authFlow, authMethod, authStorage, registerAuth } from "./auth/native.js";
 import { registryProgram } from "./runtime/registry.js";
+import { directResultCap, resultSizeMeta, toolMeta } from "./host-tool-meta.js";
 import { runEdge, withDeadlineEffect } from "./runtime/run.js";
 import { authorizationHandoff, authorizeConnector, bindAuthorizationHandoffs } from "./authorization-handoff.js";
 import { bindMcpClient, type McpClientContext } from "./mcp-client-context.js";
@@ -1977,6 +1978,7 @@ export function registerMetaTools(
   });
 
   const routeProgram = ctx.routes?.program ?? META_ROUTES.program;
+  const directResultMeta = toolMeta(resultSizeMeta(directResultCap(registry)));
   const bindRequest = (request: ServerContext): void => {
     if (ctx.client) bindMcpClient(request, ctx.client, ctx.activity);
   };
@@ -2044,7 +2046,12 @@ export function registerMetaTools(
     if (!ctx.native.executeCode) {
       server.registerTool(
         "read_result",
-        { description: READ_RESULT_DESC, inputSchema: READ_RESULT_INPUT, annotations: READ_ONLY_LOCAL },
+        {
+          description: READ_RESULT_DESC,
+          inputSchema: READ_RESULT_INPUT,
+          ...directResultMeta,
+          annotations: READ_ONLY_LOCAL,
+        },
         authMethod(
           (
             args: { id: string; offset?: number | undefined; page?: number | undefined; maxBytes?: number | undefined },
@@ -2108,6 +2115,7 @@ export function registerMetaTools(
     {
       description: CALL_DESC(ctx.readOnly === true, routeProgram),
       inputSchema: CALL_INPUT,
+      ...directResultMeta,
       // Default mode returns native content, so no structured result is promised.
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
@@ -2148,6 +2156,7 @@ export function registerMetaTools(
           ? CALL_DESTRUCTIVE_READ_ONLY_DESC
           : describedFor(registry, CALL_DESTRUCTIVE_DESC, "destructive"),
       inputSchema: CALL_DESTRUCTIVE_INPUT,
+      ...(ctx.readOnly === true ? {} : directResultMeta),
       annotations: {
         destructiveHint: true,
         readOnlyHint: false,

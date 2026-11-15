@@ -700,7 +700,9 @@ acting on (`Y3`). When shutdown tears down a program that had already started,
 accepted blocks are reported as discarded under `M4`; a failure before execution
 started carries no discard fields. A returned `error` field is a failure even
 when empty. An empty string reports `program_error` with
-`Program Error: Execution failed without an error message.`
+`Program Error: Execution failed without an error message.` A failed run's
+`error.message` is at most 4,096 characters as a JSON string; a longer one is
+cut before a token and ends `… [truncated]`.
 
 **E6.** A guest `TypeError`, `ReferenceError`, syntax error, invented API, or
 program-authored throw is `program_error`. `details.name` is a bounded engine
@@ -897,8 +899,8 @@ JSON serialization preserves lone surrogates as escapes, so ordinary
 JSON-returning programs can page them losslessly.
 
 **R5.** `console.log`, `console.warn`, and `console.error` are captured in call
-order and returned as one `logs` string, capped at 4,000 characters with a
-truncation marker. Logs survive program failure through either a returned error
+order and returned as one `logs` string whose JSON form, escapes and
+truncation marker included, is at most 4,000 characters. Logs survive program failure through either a returned error
 result or a thrown error carrying `logs: string[]`. QuickJS streams captured
 entries to its parent and preserves the received prefix on cancellation,
 shutdown, deadline termination, child crashes, and IPC failures (`X4`). How a
@@ -1228,7 +1230,7 @@ because connecta enforces them above the sandbox:
 | `describe` nearby suggestions                                                                        | ≤ 3 canonical addresses per failed entry                                                                                                                                                                                                                          |
 | Caller text echoed by `describe` recovery                                                            | ≤ 512 UTF-8 bytes per field, plus `…`                                                                                                                                                                                                                             |
 | Result                                                                                               | 24,000 serialized characters by default, `execute.maxResultChars` (4,000–1,000,000)                                                                                                                                                                               |
-| Logs presented to the model                                                                          | 4,000 characters                                                                                                                                                                                                                                                  |
+| Logs presented to the model                                                                          | 4,000 serialized characters                                                                                                                                                                                                                                       |
 
 For any tool whose output declares `page`, continue while `page.hasMore` is true.
 When approaching the program's host-call limit, return `page.nextCursor` before

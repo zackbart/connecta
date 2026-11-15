@@ -429,6 +429,9 @@ describe("always-loaded agent surface budgets", () => {
           if (tool.outputSchema === undefined) expect(schemaBudget, name).toBeUndefined();
           else expect(JSON.stringify(tool.outputSchema).length, name).toBeLessThanOrEqual(schemaBudget!);
         }
+        const upfront = tools.filter((tool) => tool._meta?.["anthropic/alwaysLoad"] === true);
+        expect(upfront.map((tool) => tool.name)).toEqual([readOnly ? "execute_code" : "execute_read_code"]);
+        expect(tools.filter((tool) => tool._meta?.["anthropic/maxResultSizeChars"] !== undefined)).toEqual([]);
         const usage = await callTool(app, "skills", { name: "usage" });
         expect(usage.content[0].text.length).toBeLessThanOrEqual(BUDGETS.usage);
         for (const mode of ["default", "compact"] as const) {
@@ -449,6 +452,113 @@ describe("always-loaded agent surface budgets", () => {
               guideSummary: "Accounts are scoped by workspace. Use ISO dates.",
             },
           });
+        }
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it.each([false, true])(
+    "keeps the upfront entry tool within a deferring host's upfront description cut at a full inventory (readOnly %s)",
+    async (readOnly) => {
+      const connectors = Array.from({ length: 40 }, (_, i) =>
+        api(`connector_number_${i}`, {
+          title: `A Long Connector Title Number ${i}`,
+          description: `Purpose text that tells connector ${i} apart from its look-alike neighbours here`,
+          usageGuide: { content: "# Guide\n\nRead first.", required: true },
+          tools: [
+            { name: "read", description: "Read one record", annotations: { readOnlyHint: true }, handler: () => 1 },
+          ],
+        }),
+      );
+      const app = makeDeployment({ executor: stubExecutor, readOnly, connectors });
+      try {
+        const { tools } = await fixedSurface(app);
+        const upfront = tools.filter((tool) => tool._meta?.["anthropic/alwaysLoad"] === true);
+        expect(upfront).toHaveLength(1);
+        expect(upfront[0]!.description.length).toBeLessThanOrEqual(4_096);
+      } finally {
+        await app.close();
+      }
+    },
+  );
+
+  it("derives each result-returning tool's host result threshold from its configured cap", async () => {
+    const surfaceMeta = async (config: Parameters<typeof makeDeployment>[0]) => {
+      const app = makeDeployment({ executor: stubExecutor, ...config });
+      try {
+        const { tools } = await fixedSurface(app);
+        return Object.fromEntries(tools.map((tool) => [tool.name, tool._meta?.["anthropic/maxResultSizeChars"]]));
+      } finally {
+        await app.close();
+      }
+    };
+    expect(
+      await surfaceMeta({ readOnly: false, calls: { maxResultBytes: 41_000 }, execute: { maxResultChars: 37_000 } }),
+    ).toEqual(Object.fromEntries(Object.keys(GOLDEN).map((name) => [name, undefined])));
+    expect(
+      await surfaceMeta({ readOnly: false, calls: { maxResultBytes: 45_000 }, execute: { maxResultChars: 600_000 } }),
+    ).toEqual({
+      skills: undefined,
+      search_tools: undefined,
+      authorize_connector: undefined,
+      call_tool: 53_192,
+      call_destructive_tool: 53_192,
+      execute_code: 500_000,
+      execute_read_code: 500_000,
+    });
+    expect(
+      await surfaceMeta({
+        readOnly: true,
+        connectors: [{ ...calcApi(), maxResultBytes: 120_000 }],
+        execute: { maxResultChars: 60_000 },
+      }),
+    ).toEqual({
+      skills: undefined,
+      search_tools: undefined,
+      authorize_connector: undefined,
+      call_tool: 128_192,
+      call_destructive_tool: undefined,
+      execute_code: 72_192,
+    });
+  });
+
+  it.each([
+    ["at-cap control-character return", { result: "\u0001".repeat(70_000), logs: ['\u0000"\\\n'.repeat(5_000)] }],
+    [
+      "many quote-heavy log entries",
+      { result: { rows: '"'.repeat(59_000) }, logs: Array.from({ length: 5_000 }, () => '"\u001f') },
+    ],
+    [
+      "oversized thrown message",
+      { result: undefined, error: "\u0001".repeat(300_000), logs: ["\u0000".repeat(5_000)] },
+    ],
+    [
+      "oversized TypeError message",
+      { result: undefined, error: `TypeError: ${'"'.repeat(300_000)}`, logs: ["\u0002".repeat(5_000)] },
+    ],
+  ] satisfies Array<[string, ExecuteResult]>)(
+    "keeps a program response within its advertised result threshold: %s",
+    async (_case, outcome) => {
+      const app = makeDeployment({
+        executor: { execute: async () => outcome },
+        readOnly: false,
+        execute: { maxResultChars: 60_000 },
+      });
+      try {
+        const { tools } = await fixedSurface(app);
+        for (const name of ["execute_code", "execute_read_code"]) {
+          const limit = tools.find((tool) => tool.name === name)!._meta["anthropic/maxResultSizeChars"];
+          expect(limit, name).toBe(72_192);
+          const result = await callTool(app, name, { code: "async () => 1", diagnostics: true });
+          const text = (result.content as Array<{ type: string; text?: string }>)
+            .filter((block) => block.type === "text")
+            .reduce((total, block) => total + block.text!.length, 0);
+          expect(text, name).toBeLessThanOrEqual(limit);
+          expect(JSON.stringify(result.structuredContent.logs ?? "").length, name).toBeLessThanOrEqual(4_000);
+          if (result.structuredContent.error)
+            expect(JSON.stringify(result.structuredContent.error.message).length, name).toBeLessThanOrEqual(4_096);
         }
       } finally {
         await app.close();
