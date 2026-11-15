@@ -80,10 +80,12 @@ of a request, never a streamed or SSE response.
 Calling `close()` on the server `listen()` returns, directly or through the
 shutdown below, ends keep-alive at once: idle connections and accepted sockets
 without a first HTTP request close, and a connection closes as soon as all its
-admitted responses finish. Requests already received at `close()` are admitted
-and answered normally, including ones pipelined behind an active response. A
-request that arrives on an open connection after `close()` never reaches the
-application: once every earlier response on that connection has been written,
+admitted responses finish. Admission follows Node's `request` event, which
+fires once a request's headers are parsed: a request whose headers were parsed
+before `close()` is admitted and answered normally, including one pipelined
+behind an active response, even if its body is still arriving. A request whose
+headers are parsed after `close()`, even one already waiting unread on the
+socket, never reaches the application: once every earlier response on that connection has been written,
 it is answered `503` with `Retry-After: 1` and `Connection: close`, and the
 connection ends. A client that keeps pipelining therefore cannot hold `close()`
 open. The `close()` callback waits only for admitted responses, never for the
