@@ -1291,7 +1291,11 @@ and a few unambiguous abbreviations (`config`/`configuration`, `db`/`database`,
 arbitrary mid-word substrings. Document frequency weights rare domain terms above
 ubiquitous action terms. A term weighs most in the name, then the summary, then
 the title (`title` or `annotations.title`), and least in the rest of the
-description, which stays searchable but is weak evidence. A tool's score is then
+description, which stays searchable but is weak evidence. Two weaker zones count
+toward coverage and document frequency but never make a match complete: the
+owning connector's configured title and description, which match every tool of
+that connector (so `money` reaches a connector titled "Money tracker"), and a
+tool's top-level input property names and their descriptions. A tool's score is then
 multiplied by the square of the share of the query's total rarity it covers in
 any zone, so rare words in a description's tail outrank a common verb in a name,
 and a tool covering every term is unaffected.
@@ -1341,12 +1345,23 @@ connector ID and title words the query names most, then the best-ranked, so
 read-only connector is in no `alsoOn`. `total`, `offset` and `nextOffset` count
 rows after grouping. A browse lists every address and groups nothing.
 
+A short shared synonym map widens a query word on every connector, as an
+ordinary whole-token match ranked below the word itself: `email`/`mail`/`gmail`,
+`schedule`/`calendar`/`agenda`, `meeting`/`event`,
+`money`/`finance`/`financial`/`payment`,
+`spend`/`spending`/`expense`/`transaction`, `bill`/`recurring`/`invoice`,
+`file`/`document`, `changed`/`modified`/`updated`, `task`/`todo`,
+`workout`/`activity`/`exercise`, `revenue`/`mrr`/`income`/`sales`,
+`subscriber`/`subscription`, `deploy`/`deployment`, `tweet`/`post`,
+`contact`/`person`/`people` and `feed`/`timeline`. Words with a common second
+sense, such as `run`, `chat` or `message`, stay out of it.
+
 A maintained provider may declare `searchSynonyms`: groups of single lowercase
 words its users and its vendor use for the same record, such as `household`
 and `family` for Church Community Builder. A query word then matches that
 provider's tools and operation vocabulary through any word in its group, as an
-ordinary whole-token match ranked below the word itself. Synonyms never widen
-another connector's matches. Church Community Builder declares
+ordinary whole-token match ranked below the word itself. Provider synonyms never
+widen another connector's matches. Church Community Builder declares
 `person`/`individual` and `household`/`family`; Granola declares
 `meeting`/`note`.
 An exact connector ID or title query browses that connector's tools, even when

@@ -1977,10 +1977,16 @@ export class CatalogService {
         const index = searchableCatalogs.findIndex((catalog) => Result.isSuccess(catalog) && catalog.success === tools);
         return index < 0 ? undefined : searchSynonyms(connectors[index]!);
       };
+      const connectorTextFor = (tools: ToolDef[]) => {
+        const index = searchableCatalogs.findIndex((catalog) => Result.isSuccess(catalog) && catalog.success === tools);
+        const connector = connectors[index];
+        return connector && `${connector.title ?? ""} ${connector.description ?? ""}`;
+      };
       const statistics = lexicalCorpusStatistics(
         searchableCatalogs.flatMap((catalog) => (Result.isSuccess(catalog) ? [catalog.success] : [])),
         retrievalQuery,
         synonymsFor,
+        connectorTextFor,
       );
       const trimmedQuery = query.trim();
       const isBrowse = trimmedQuery.length === 0;
@@ -2015,7 +2021,7 @@ export class CatalogService {
                 : []),
             ]);
             const localStatistics = exactConnector
-              ? lexicalCorpusStatistics([catalog.success], retrievalQuery, synonymsFor)
+              ? lexicalCorpusStatistics([catalog.success], retrievalQuery, synonymsFor, connectorTextFor)
               : undefined;
             // An exact identity is a browse even when one tool repeats that
             // identity in its name or description. Action queries still keep
@@ -2307,6 +2313,8 @@ export class CatalogService {
         new Set([
           ...(statistics.nameMatches.get(term) ?? []),
           ...(statistics.descriptionMatches.get(term) ?? []),
+          ...(statistics.connectorMatches.get(term) ?? []),
+          ...(statistics.inputMatches.get(term) ?? []),
           ...vocabularyTools,
         ]);
       const representedTerms: string[] = [];
@@ -2364,9 +2372,8 @@ export class CatalogService {
               required: connectorGuideRequired(scopedConnector),
             }
           : undefined;
-      // Partial identity words can still explain a miss. Exact identities are
-      // already ranking inputs above; this guidance handles a title word such
-      // as "warehouse" when the full title is "Warehouse stock".
+      // Identity words can still explain a miss when no tool of the connector
+      // they name matched the rest of the query.
       const identityConnectorIds =
         matches.length === 0 && !isBrowse && !unsearchableQuery && !scopedConnector
           ? connectors
