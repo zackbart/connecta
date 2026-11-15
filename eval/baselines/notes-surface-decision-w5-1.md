@@ -99,8 +99,8 @@ Paging tasks on the comparable roster (4 tasks), passing medians:
 
 | Model | six | native | native-no-code |
 | --- | --- | --- | --- |
-| Sonnet turns / input / wall / arm cost | 5.5 / 24.1k / 15.6 s / $0.73 | 5 / 20.3k / 13.5 s / $0.89 | **10 / 280k / 17.6 s / $7.62** |
-| Luna calls / input / wall | 11 / 89.9k / 25.1 s | 9 / 83.8k / 22.0 s | 13.5 / 145.7k / 19.9 s |
+| Sonnet turns / input / wall / paging-task cost | 5.5 / 24.1k / 15.6 s / $0.73 | 5 / 20.3k / 13.5 s / $0.89 | **10 / 280k / 17.6 s / $7.62** |
+| Luna calls / input / wall | 11 / 89.1k / 25.1 s | 9 / 83.8k / 22.0 s | 13.5 / 145.7k / 19.9 s |
 
 Without code, both models page retained results through repeated `read_result` calls (7 pages per
 log for Sonnet), so each page re-sends the growing context.
@@ -132,12 +132,14 @@ six vs native (unpatched compare, diagnostic): Sonnet six 100 vs native 97 passi
 
 - Pass rate: native beats native-no-code for both models as measured (Sonnet 84 vs 79/85,
   Luna 48 vs 47/54). The margin is not robust. Sonnet's five-trial gap is a grader false
-  negative on `p5-trusted-program-write`, and Luna's one trial is noise. Adjusted, both are ties.
+  negative on `p5-trusted-program-write`, and Luna's one trial is noise. Adjusted, Luna ties
+  (52 vs 52/54) and Sonnet ranges from one trial behind to tied (84–85 vs 85/85).
 - Turns or tokens on reduction/join/paging: the pooled medians show no win (Sonnet 5 vs 5 turns,
   21.0k vs 20.8k tokens). For Luna, no-code is cheaper (62.4k vs 70.9k). The pool hides a
-  split. On paging, code wins by a wide margin: Sonnet takes half the turns and 1/14 of the input,
-  and Luna uses 42% less input. On joins, Sonnet does not write programs on either native arm,
-  and Luna on no-code uses Codex's host `code_mode`, which is cheaper than Connecta programs.
+  split. On paging, code wins by a wide margin: Sonnet takes half the turns and 1/14 of the input
+  tokens (20.3k vs 280k median), and Luna uses 42% less input. On joins, Sonnet does not write
+  programs on either native arm, and Luna on no-code uses Codex's host `code_mode`, which is
+  cheaper than Connecta programs.
 - **Verdict: PASS as printed.** Code earns its place on native pools. The evidence that holds up
   is paging/retained results, not joins.
 
@@ -156,9 +158,10 @@ no extra duplicate writes, fewer turns):
 ## Recommendation
 
 1. **Keep `executeCode` on for native pools by default.** Hosts without their own code mode (the
-   Claude runner) should not get native-no-code: paging doubles turns and costs about 14× the input
-   (3.8× arm cost) with no pass-rate gain, and the program-only capabilities (budgeted fan-out,
-   `connecta.read`, `connecta.emit`) disappear.
+   Claude runner) should not get native-no-code: on paging tasks it took twice the turns, about
+   14× the input tokens (280k vs 20.3k median) and 8.6× native's API-equivalent cost ($7.62 vs $0.89),
+   with no pass-rate gain. Across the whole arm its cost was 3.1× native's ($9.34 vs $2.97). The
+   program-only capabilities (budgeted fan-out, `connecta.read`, `connecta.emit`) also disappear.
 2. **For hosts with their own code mode (Codex `code_mode`), native-no-code is a viable opt-in, not a
    default.** It reached parity on the comparable roster (47 vs 48/54; 52 vs 52 adjusted). It was
    cheaper on joins (Luna plan-join 58k vs 87k, group-services-join 72k vs 108k) and faster

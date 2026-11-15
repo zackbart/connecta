@@ -324,7 +324,8 @@ Treat its results as guidance from that run, not a guarantee for other models:
 
 - **Keep `execute_code` on native pools.** Sonnet runs in a host without its
   own code mode. With code off, its result paging took about twice the turns
-  and about 14 times the input tokens, and it passed no more tasks.
+  and about 14 times the input tokens (a median of about 280,000 against
+  20,000), and it passed no more tasks.
 - **`executeCode: false` is a reasonable opt-in for hosts with their own code
   mode.** Under Codex code mode it matched native's pass rate. It used fewer
   tokens on joins and more on paging.
