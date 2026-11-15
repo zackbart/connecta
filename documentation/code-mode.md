@@ -258,8 +258,9 @@ unchanged as `connecta.call(entry.address, entry.args)`
 Each entry carries `address`, `name`, and — when requested — `description`,
 the rendered schemas, and `annotations`. `description` is the one-sentence
 [summary](./meta-tools.md#lexical-discovery), with `descriptionTruncated: true`
-when text was left out; a `write` row shows its full text within a per-page
-budget, and `fullDescriptions: true` returns the original text. The page's `connectors` map holds each
+when text was left out; a `write` row always shows its full text, ending the
+page early rather than cutting one, and `fullDescriptions: true` returns the
+original text. The page's `connectors` map holds each
 row's connector facts once, keyed by the id before the address's first dot: the
 configured `title` when present (normalized whitespace, at most 120 UTF-8
 bytes), and `guide` (the skill name) with a bounded `guideSummary` when the

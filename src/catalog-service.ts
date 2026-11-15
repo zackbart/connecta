@@ -1954,9 +1954,20 @@ export class CatalogService {
           a.order - b.order
         );
       });
-      const pageMatches = matches.slice(offset, offset + limit);
+      const fullWriteBytes = (tool: ToolDef) =>
+        args.fullDescriptions !== true && tool.classification !== "read" && tool.description
+          ? encoder.encode(tool.description).length
+          : 0;
+      const pageMatches: typeof matches = [];
+      let writeDescriptionBytes = 0;
+      for (const match of matches.slice(offset, offset + limit)) {
+        const bytes = fullWriteBytes(match.tool);
+        if (pageMatches.length > 0 && writeDescriptionBytes + bytes > MAX_DESCRIBE_DESCRIPTION_BYTES) break;
+        pageMatches.push(match);
+        writeDescriptionBytes += bytes;
+        if (writeDescriptionBytes > MAX_DESCRIBE_DESCRIPTION_BYTES) break;
+      }
       const withSchemas = args.includeSchemas;
-      let writeDescriptionBytes = MAX_DESCRIBE_DESCRIPTION_BYTES;
       const entries = pageMatches.map((selected) => {
         const match = { ...selected, tool: cloneTool(selected.tool) };
         const output = withSchemas ? this.outputSchema(match.connector.id, match.tool) : {};
@@ -1980,17 +1991,10 @@ export class CatalogService {
             ? renderSearchSchema(output.schema, schemaFormat)
             : undefined;
         const schemaKeys = withSchemas && args.includeSchemaKeys ? schemaKeyMetadata(input, output.schema) : undefined;
-        let summary =
-          match.tool.description && args.fullDescriptions !== true
+        const summary =
+          match.tool.description && args.fullDescriptions !== true && match.tool.classification === "read"
             ? discoverySummary(match.tool.description)
             : undefined;
-        if (summary?.truncated && match.tool.classification !== "read") {
-          const bytes = encoder.encode(match.tool.description).length;
-          if (bytes <= writeDescriptionBytes) {
-            writeDescriptionBytes -= bytes;
-            summary = undefined;
-          }
-        }
         const description = summary ? summary.text : match.tool.description || undefined;
         const requiredReasons = guideRequiredReasons(
           match.connector,
