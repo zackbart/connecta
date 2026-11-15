@@ -564,6 +564,82 @@ describe("search_tools", () => {
     expect((await search({ query: "" })).total).toBe(10);
   });
 
+  it("keeps rows apart when any per-address fact differs: output schema, guide, read-program callability", async () => {
+    const wide = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 400 }, (_, index) => [`field_${index}_with_a_long_name`, { type: "string" }]),
+      ),
+    };
+    const record = (id: string, tool: Partial<ToolDef> = {}, extra: Partial<Connector> = {}) =>
+      connectorWith({
+        id,
+        kind: "api",
+        tools: [
+          {
+            name: "get_record",
+            description: "Get one record by id.",
+            annotations: { readOnlyHint: true, destructiveHint: false },
+            ...tool,
+          },
+        ],
+        ...extra,
+      });
+    const rows = (page: Awaited<ReturnType<CatalogService["search"]>>) =>
+      page.entries.map((entry) => [entry.tool.address, entry.tool.alsoOn]);
+
+    const outputs = new CatalogService(
+      makeRegistry([
+        record("shapes", { outputSchema: { type: "object", properties: { id: { type: "string" } } } }),
+        record("lists", { outputSchema: { type: "array", items: { type: "number" } } }),
+      ]),
+      BASE,
+    );
+    const shaped = await outputs.search({ query: "get record", includeSchemas: "json" });
+    expect(rows(shaped)).toEqual([
+      ["shapes.get_record", undefined],
+      ["lists.get_record", undefined],
+    ]);
+    expect(shaped.entries.map((entry) => entry.tool.outputSchema)).toEqual([
+      { type: "object", properties: { id: { type: "string" } } },
+      { type: "array", items: { type: "number" } },
+    ]);
+
+    // An optional guide adds `schema_truncated` only where it exists, so guided and unguided never share a row.
+    const guides = new CatalogService(
+      makeRegistry([
+        record("plain", { inputSchema: wide }),
+        record("guided", { inputSchema: wide }, { usageGuide: "Records are keyed by id." }),
+      ]),
+      BASE,
+    );
+    const guided = await guides.search({ query: "get record", includeSchemas: "compact" });
+    expect(rows(guided)).toEqual([
+      ["plain.get_record", undefined],
+      ["guided.get_record", undefined],
+    ]);
+    expect(guided.entries[1]!.tool.guideRequiredReasons).toEqual(["schema_truncated"]);
+    expect(guided.entries[0]!.tool.guideRequired).toBeUndefined();
+
+    // A source-silent tool overridden to read publishes the same facts as a declared read, but a read program refuses it.
+    const program = new CatalogService(
+      makeRegistry([record("declared"), record("silent", { annotations: {} })], {
+        classification: { silent: { get_record: "read" } },
+      }),
+      BASE,
+      { markUncallableWrites: true },
+    );
+    const callable = await program.search({ query: "get record" });
+    expect(callable.entries.map((entry) => [entry.tool.address, entry.tool.alsoOn, entry.tool.callable])).toEqual([
+      ["declared.get_record", undefined, undefined],
+      ["silent.get_record", undefined, false],
+    ]);
+    expect(callable.entries.map((entry) => entry.tool.annotations)).toEqual([
+      { readOnlyHint: true, destructiveHint: false },
+      { readOnlyHint: true, destructiveHint: false },
+    ]);
+  });
+
   it("matches provider-declared synonyms lexically within that provider's catalog only", async () => {
     const other: Connector = connectorWith({
       id: "other",
