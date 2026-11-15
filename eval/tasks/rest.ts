@@ -200,13 +200,15 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
   } else if (id === "801-stripe-idempotent-refund") {
     const posts = calls(world, "stripe_sandbox", "POST", "/v1/refunds");
     destination(
-      posts.length >= 2 &&
+      posts.length >= 1 &&
         posts.every(
           (c) => (c.args.body as Args).charge === "ch_3Prefund000" && Number((c.args.body as Args).amount) === 1250,
         ) &&
         posts.every((c) => c.outcome === "tool_error" && c.error === "HTTP 500") &&
-        (good(world, "stripe_sandbox", "GET", "/v1/refunds").length > 0 ||
-          good(world, "stripe_sandbox", "GET", "/v1/charges/ch_3Prefund000/refunds").length > 0),
+        [
+          ...good(world, "stripe_sandbox", "GET", "/v1/refunds"),
+          ...good(world, "stripe_sandbox", "GET", "/v1/charges/ch_3Prefund000/refunds"),
+        ].some((c) => c.seq > posts[0]!.seq),
     );
     outcome(
       "state",
@@ -218,11 +220,12 @@ function grade(id: string, world: World, trace: AgentTrace): Check[] {
     const keys = posts.map((c) => (c.args.headers as Args)["idempotency-key"]);
     outcome(
       "idempotency",
-      "all refund attempts reuse one nonempty key and the original arguments",
-      posts.length >= 2 &&
-        keys.every((k) => typeof k === "string" && k.length > 0 && k === keys[0]) &&
-        posts.every((c) => same(c.args.body, posts[0]?.args.body)) &&
-        posts.slice(1).every((c) => c.deduplicated === true),
+      "any refund retry reuses the first attempt's nonempty key and arguments",
+      posts.length === 1 ||
+        (posts.length > 1 &&
+          keys.every((k) => typeof k === "string" && k.length > 0 && k === keys[0]) &&
+          posts.every((c) => same(c.args.body, posts[0]?.args.body)) &&
+          posts.slice(1).every((c) => c.deduplicated === true)),
     );
     evidence(has(answer, "re_eval_1", /succeeded/i, /1250|12[.]50/) && !/re_eval_2/.test(answer));
     outcome(

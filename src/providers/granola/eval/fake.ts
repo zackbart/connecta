@@ -114,13 +114,18 @@ export class FakeGranola {
     if (url.pathname === "/v1/spaces") return page("spaces", this.state.spaces);
     if (url.pathname === "/v1/folders") return page("folders", this.state.folders);
     if (url.pathname === "/v1/notes") {
-      if (query.space_id !== GRANOLA_SPACE || query.folder_id !== GRANOLA_FOLDER) return page("notes", []);
+      const notes = this.state.notes.filter(
+        (note) =>
+          (query.space_id === undefined || note.space_membership.some((space) => space.id === query.space_id)) &&
+          (query.folder_id === undefined || note.folder_membership.some((folder) => folder.id === query.folder_id)),
+      );
+      if (!notes.length) return page("notes", []);
       return !query.cursor
         ? send({ notes: [], hasMore: true, cursor: "notes-next" })
         : query.cursor === "notes-next"
           ? page(
               "notes",
-              this.state.notes.map(({ id, title }) => ({ id, title })),
+              notes.map(({ id, title }) => ({ id, title })),
             )
           : send({ error: "Invalid cursor" }, 400);
     }

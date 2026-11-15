@@ -94,7 +94,7 @@ const GRANOLA_TASK: ActiveTask = {
         reads.some(
           (c) =>
             c.args.path === "/v1/notes" &&
-            query(c).space_id === GRANOLA_SPACE &&
+            [undefined, GRANOLA_SPACE].includes(query(c).space_id) &&
             query(c).folder_id === GRANOLA_FOLDER &&
             query(c).cursor === "notes-next",
         ) &&

@@ -100,7 +100,12 @@ export const GOOGLE_EXPECTED: Record<GoogleProduct, readonly unknown[]> = {
   drive: [
     { ids: Array.from({ length: 6 }, (_, i) => `pdf${i + 1}`) },
     { id: "pdf1", direct: "reviewer@example.com", inherited: ALICE, driveId: "shared1" },
-    { ids: ["docs1", "forms1", ...Array.from({ length: 146 }, (_, i) => `pdf${i + 1}`), "sheets1", "slides1"].sort() },
+    {
+      ids: [
+        ...GOOGLE_PRODUCTS.filter((p) => !["gmail", "drive"].includes(p)).map((p) => `${p}1`),
+        ...Array.from({ length: 146 }, (_, i) => `pdf${i + 1}`),
+      ].sort(),
+    },
     { revisions: ["rv1", "rv2"], modified: ["2026-10-01T12:00:00Z", "2026-10-02T12:00:00Z"] },
     { id: "upload1", folderId: "folder1", bytes: ATTACHMENT.length },
     { id: "pdf1", name: "Reviewed report.pdf" },
@@ -179,6 +184,81 @@ function subset(actual: unknown, expected: unknown): boolean {
   return actual === expected;
 }
 
+const single = (value: unknown) => (Array.isArray(value) && value.length === 1 ? value[0] : value);
+const pair = (value: unknown) =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? [(value as Row).start ?? (value as Row).startIndex, (value as Row).end ?? (value as Row).endIndex]
+    : value;
+
+function normalizeAnswer(product: GoogleProduct, task: number, answer: Row | undefined): Row | undefined {
+  if (!answer || typeof answer !== "object") return answer;
+  const out: Row = { ...answer };
+  if (Array.isArray(out.ids))
+    out.ids = out.ids.map((id: unknown) => (id && typeof id === "object" ? (id as Row).id : id));
+  const at = `${product}-${task}`;
+  if (at === "gmail-7" && typeof out.limitation === "string" && /attachment/i.test(out.limitation))
+    out.limitation = "attachments";
+  if (at === "drive-2")
+    for (const [key, inherited, role] of [
+      ["direct", false, "reader"],
+      ["inherited", true, "organizer"],
+    ] as const) {
+      const holder = single(out[key]);
+      if (holder && typeof holder === "object" && !Array.isArray(holder))
+        out[key] =
+          (holder.inherited === undefined || holder.inherited === inherited) &&
+          (holder.role === undefined || holder.role === role)
+            ? (holder.email ?? holder.emailAddress)
+            : undefined;
+      else out[key] = holder;
+    }
+  if (at === "docs-2" && Array.isArray(out.tabs)) {
+    const titles = (GOOGLE_EXPECTED.docs[1] as Row).titles as string[];
+    out.tabs = out.tabs.map((tab: unknown, i: number) =>
+      tab && typeof tab === "object"
+        ? (tab as Row).title === undefined || (tab as Row).title === titles[i]
+          ? ((tab as Row).id ?? (tab as Row).tabId)
+          : undefined
+        : tab,
+    );
+  }
+  if (at === "docs-3") {
+    if (typeof out.positions === "string")
+      out.positions = [...out.positions.matchAll(/(\d+)\s*[-–:]\s*(\d+)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+    else if (Array.isArray(out.positions)) out.positions = out.positions.map(pair);
+  }
+  if (at === "sheets-2" && out.names && typeof out.names === "object" && !Array.isArray(out.names))
+    out.names = ["record1", "record2"].map((record) => out.names[record]);
+  if (at === "slides-3" && Array.isArray(out.id) && typeof out.slides === "number" && out.slides === out.id.length)
+    Object.assign(out, { id: "slides1", slides: out.id });
+  if (at === "slides-7")
+    for (const key of ["deck", "comment"])
+      if (typeof out[key] === "string") out[key] = /^\s*(saved|unconfirmed)\b/i.exec(out[key])?.[1]?.toLowerCase();
+  if (at === "forms-2" && out.answers && typeof out.answers === "object")
+    out.answers = (
+      Array.isArray(out.answers) ? out.answers : Object.entries(out.answers).map(([id, value]) => ({ id, value }))
+    ).map((entry: unknown) =>
+      entry && typeof entry === "object"
+        ? {
+            id: (entry as Row).id ?? (entry as Row).responseId,
+            value: single((entry as Row).value ?? (entry as Row).answer ?? (entry as Row).answers),
+          }
+        : entry,
+    );
+  if (at === "forms-4") {
+    if (Array.isArray(out.options))
+      out.options = out.options.map((option: unknown) =>
+        option && typeof option === "object" ? (option as Row).value : option,
+      );
+    out.correct = single(out.correct);
+  }
+  if (at === "meet-2" && Array.isArray(out.users))
+    out.users = out.users.map((user: unknown) =>
+      typeof user === "string" && /^\d+$/.test(user) ? `users/${user}` : user,
+    );
+  return out;
+}
+
 function evidence(trace: AgentTrace): Row | undefined {
   const text = trace.finalAnswer ?? "";
   const match = /ANSWER:\s*(\{[^\n]+\})/i.exec(text);
@@ -196,7 +276,7 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
   const source = calls.filter((c) => c.service === product && c.args.subject === ALICE);
   const writes = calls.filter((c) => c.kind === "write");
   const a = world.google.state.accounts[ALICE];
-  const answer = evidence(trace);
+  const answer = normalizeAnswer(product, task, evidence(trace));
   const out: Check[] = [];
   const add = (id: string, pass: boolean) => out.push(check(id, id.replaceAll("-", " "), pass));
   const expected = GOOGLE_EXPECTED[product][task - 1];
@@ -211,7 +291,7 @@ function gradeGoogle(product: GoogleProduct, task: number, world: World, trace: 
       }
       return [String(use.input.address)];
     }
-    if (use.tool !== "execute_code" || typeof use.input.code !== "string") return [];
+    if (!["execute_code", "execute_read_code"].includes(use.tool) || typeof use.input.code !== "string") return [];
     const code = use.input.code.trim();
     return world.programs
       .filter((program) => program.code === code || program.code.includes(`\n${code}\n`))

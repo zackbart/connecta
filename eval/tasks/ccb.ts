@@ -35,9 +35,10 @@ const isWrite = (address: unknown) => REST_TOOL_KINDS.get(String(address)) !== "
  * A program also has to have read the profile, not just returned the write's reply.
  */
 function readBackProfile(world: World, trace: AgentTrace): boolean {
-  const direct = trace.toolUses.filter((u) => u.tool !== "execute_code" && !isWrite(u.input.address));
+  const program = (tool: string) => tool === "execute_code" || tool === "execute_read_code";
+  const direct = trace.toolUses.filter((u) => !program(u.tool) && !isWrite(u.input.address));
   if (deliveredValues({ ...trace, toolUses: direct }).some(isProfile)) return true;
-  const programs = trace.toolUses.filter((u) => u.tool === "execute_code");
+  const programs = trace.toolUses.filter((u) => program(u.tool));
   return (
     deliveredValues({ ...trace, toolUses: programs }).some(isProfile) &&
     world.programs.some((p) =>

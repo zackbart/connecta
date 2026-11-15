@@ -109,11 +109,13 @@ check exits nonzero with the results JSON. Install Chromium once with
 
 The Granola task (`granola-workspace-journey`) runs the published provider with
 the same reference and independent grader on Node and the `node-granola` /
-`worker-granola` smoke targets. It discovers space/folder IDs, reads a filtered
-note list across an empty intermediate page, recovers HTTP 413 through complete
+`worker-granola` smoke targets. It discovers space/folder IDs, reads a
+folder-filtered note list (a space filter is optional) across an empty
+intermediate page, recovers HTTP 413 through complete
 transcript paging (including another empty page), narrows fields and reuses the
 encrypted shared credential after application reconstruction. The fake owns
-the meeting facts, an inaccessible private meeting and a bearer photo URL.
+the meeting facts, an inaccessible private meeting and a bearer photo URL. Its
+note list applies each space and folder filter independently.
 The grader requires actual delivered facts, physical cursor/filter requests,
 the exact final dossier, no mutations and no credential/photo/private-note
 disclosure. No-op, fabricated physical reads and erased delivered-data controls
@@ -861,7 +863,7 @@ records method, path, query, body, version and idempotency headers, and verified
 credential framing without recording credential headers. These tasks cover:
 
 - Stripe charge declines, recovery after rejected parameters, and an HTTP 500
-  after a committed refund followed by a retry with the same idempotency key;
+  after a committed refund, reconciled by a later refund read;
 - one Cloudflare DNS TTL change with decoys, a Global API Key account-pin
   refusal, and GraphQL analytics from the named read-only pool;
 - Vercel's bounded non-following build logs and an environment rotation that
@@ -871,8 +873,10 @@ The pin task's deployment instructions supply the operator's known zone id,
 because pinned zone lists intentionally omit other accounts. The agent still
 has to observe and report the real pin refusal. REST worlds expose only their
 vendor connectors. Refund retry metrics distinguish
-vendor-proven idempotent replays from duplicate business writes. The grader
-still requires identical arguments and one nonempty key across attempts.
+vendor-proven idempotent replays from duplicate business writes. A retry is
+never required: a successful refund read after the first attempt confirms it.
+Any retry must reuse that attempt's arguments and nonempty key and be
+deduplicated by the vendor.
 The rejected-parameter task accepts an email-filtered customer list whose
 page reaches the five newest matches: any integer `limit` of at least 5, or
 Stripe's default of 10. The answer must still name exactly those five ids,
@@ -976,8 +980,8 @@ records any fall-through:
 The refund fake follows Stripe API v1 idempotency: the same account/mode/key
 and parameters replay the original status and body, including HTTP 500; changed
 parameters return `idempotency_error`. The fault commits a refund before its
-HTTP 500, so confirmation requires reconciliation through a read. The reference
-also replays that 500 with the same key. No grader requires a successful replay.
+HTTP 500, so confirmation requires reconciliation through a read after it. The reference
+also replays that 500 with the same key. No grader requires a replay.
 Read-only graders inspect the HTTP ledger, direct tool attempts and observed
 guest calls, including caught or refused writes. Their read inventory derives
 from the authored provider annotations; unknown tools fail closed. Analytics
@@ -1008,7 +1012,10 @@ complete set of fields, preserving commas within a record. Every record must
 have all its facts in at least one clause, in any order and case-insensitively.
 Hex commit SHAs match by their first seven characters. Any clause mixing a
 record's requested fact with a conflicting fact from another record fails, even if the
-answer also contains correct records. Shared facts such as `passed` are allowed.
+answer also contains correct records. Shared facts such as `passed` are allowed,
+and a clause naming several runs ("4811 and 4810 both passed") passes only when
+every named run has each other fact in that clause. Test counts ("0", "no" or
+"zero failed tests") are not run statuses.
 Consistency covers the fields each task requests. CI tasks request run id,
 status and commit; unrequested fields such as branch are out of scope by design.
 
@@ -1076,7 +1083,20 @@ a write receipt alone does not establish that verification.
 Gmail G3 accepts an exact complete id list sorted numerically or lexically;
 other orderings, duplicates and omissions fail. Drive D4 accepts `modified` as
 timestamps in revision order or as a map keyed by exactly the reported revision
-ids; a missing, extra or wrong timestamp fails. Sheets S5/S6 accept equivalent
+ids; a missing, extra or wrong timestamp fails. Prompts name answer keys but not
+value shapes, so answer evidence also maps these equivalent shapes before the
+literal comparison: id lists of `{id}` objects; a Gmail G7 limitation naming
+attachments; Drive D2 holders as one `{email|emailAddress}` object or a
+one-element list, whose `role` and `inherited`, when given, must match; Docs
+O2 tabs as `{id, title}` objects in order; Docs O3 positions as `start-end`
+text or `{start|startIndex, end|endIndex}` objects; Sheets S2 names keyed by
+record id; Slides L3 slide ids under `id` with `slides` as their count; Slides
+L7 statuses that begin with `saved` or `unconfirmed`; Forms F2 answers keyed by
+response id or as `{responseId, answers}`; Forms F4 options as `{value}`
+objects and a one-element `correct` list; Meet M2 bare numeric user ids. A
+wrong fact in any shape still fails. Drive D3's expected ids derive from the
+seeded folder, including the Meet file. Program reads count on either
+`execute_code` or `execute_read_code`. Sheets S5/S6 accept equivalent
 A..D append table-search ranges on the exact requested sheet and workbook;
 literal values, insert-rows mode, one write and read-back evidence remain
 required. The [disclosed offline correction](baselines/notes-google-grader-followups.md)
@@ -1595,6 +1615,9 @@ does not apply to `native-no-code` or `code`. These tasks are not enrolled in
   an unscoped search waits about 5 s. Trial timing on `discovery-failing-hung`
   includes that cost.
 - A final-answer regex recognizes common wording. `reports-limitation` requires a
-  clause naming the connector with a failure term, and `no-denial` refuses claims
+  clause naming the connector with a failure term, or followed by a clause that
+  opens with a pronoun (`it`, `this`, `that`, `which`) and carries one.
+  `discovery-absent-write` accepts contractions (`couldn't`, `wasn't`) and
+  `none` as the refusal. `no-denial` refuses claims
   that the capability does not exist. Check failed transcripts before treating a
   miss as agent behavior, and add any real wording to the answer controls.

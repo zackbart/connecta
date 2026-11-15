@@ -72,6 +72,7 @@ import {
   attributionControls,
   fakeTransportInterleaving,
   fakeTransportRedirects,
+  granolaNoteFilterControls,
   restTransportControls,
 } from "./tasks/rest-controls.js";
 
@@ -149,6 +150,8 @@ console.log("ok   Google transport: JWT scope/subject, fixed and ownerless pools
 await attributionControls();
 await restTransportControls();
 console.log("ok   fake vendor transport: concurrent worlds, credential/host refusals and cleanup");
+await granolaNoteFilterControls();
+console.log("ok   Granola fake: space and folder note filters narrow independently");
 await fakeTransportInterleaving();
 console.log("ok   fake vendor transport: interleaved families stay routed, fail closed and uninstall once");
 await fakeTransportRedirects();

@@ -138,8 +138,10 @@ function callsAllSettled(code: string): boolean {
   return found;
 }
 
+const programUses = (trace: AgentTrace) => [...uses(trace, "execute_code"), ...uses(trace, "execute_read_code")];
+
 function boundedFanout(world: World, trace: AgentTrace): boolean {
-  const programs = uses(trace, "execute_code");
+  const programs = programUses(trace);
   const index = world.programs.findIndex(
     (p) =>
       p.peakCalls >= 3 &&
@@ -387,7 +389,7 @@ const rich = (program: boolean): ActiveTask =>
         check(
           "image-delivered",
           "the successful MCP result contains the fake PNG and caption",
-          badgeDelivered(trace, ["execute_code", "call_tool"]),
+          badgeDelivered(trace, ["execute_code", "execute_read_code", "call_tool"]),
         ),
       ],
       reference: async ({ call }) => {
@@ -560,7 +562,7 @@ const fanout = withCorrectness(
       check(
         "terminal-budget",
         "the initial fan-out received budget_exceeded",
-        uses(trace, "execute_code").some((u) => u.isError && /budget_exceeded/.test(u.resultText ?? "")),
+        programUses(trace).some((u) => u.isError && /budget_exceeded/.test(u.resultText ?? "")),
       ),
       check(
         "reads-only",
