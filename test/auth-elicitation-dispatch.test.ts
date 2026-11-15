@@ -293,14 +293,16 @@ describe("auth recovery invocation eligibility", () => {
       });
       const accepted = await flow.request(first.requestState);
       expect(accepted.resultType).not.toBe("input_required");
-      expect(accepted.structuredContent.error).toMatchObject({
+      expect(JSON.parse(accepted.content[0].text).error).toMatchObject({
         code: "auth_replay_refused",
         retryable: false,
         reconciliationRequired: true,
         authorizationUrl: expect.stringContaining(`${BASE}/connect/service?h=`),
       });
       expect(flow.counts()).toMatchObject({ calls: 1, items: 0 });
-      expect((await flow.request(first.requestState)).structuredContent.error.code).toBe("invalid_request_state");
+      expect(JSON.parse((await flow.request(first.requestState)).content[0].text).error.code).toBe(
+        "invalid_request_state",
+      );
     },
   );
 

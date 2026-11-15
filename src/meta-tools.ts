@@ -57,7 +57,7 @@ import {
 import { hasConnectorGuides, SkillsRegistry } from "./skills.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, dispatchFloorMs, normalizeTimeoutMs } from "./timeout.js";
 import { isWriteLike } from "./tool-safety.js";
-import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT } from "./meta-output.js";
+import { AUTHORIZE_OUTPUT, SEARCH_OUTPUT, withinOutputSchema } from "./meta-output.js";
 import { RESULT_TTL_SECONDS, resultKeys } from "./storage/keys.js";
 import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "./sent-secrets.js";
 import { captureDownstreamInput } from "./downstream-input.js";
@@ -2020,15 +2020,18 @@ export function registerMetaTools(
       authFlow<InputRequiredResult | ToolResult>(function* () {
         bindRequest(request);
         const run = authMethod(() => authInvoke<ToolResult>(mt, "authorizeConnector", [args as AuthorizeArgs]));
-        return yield* upwardStep(
-          ctx.authElicitation
-            ? authInvoke<InputRequiredResult | ToolResult>(ctx.authElicitation, "run", [
-                "authorize_connector",
-                args,
-                request,
-                run,
-              ])
-            : authCall(run, []),
+        return withinOutputSchema(
+          AUTHORIZE_OUTPUT,
+          yield* upwardStep(
+            ctx.authElicitation
+              ? authInvoke<InputRequiredResult | ToolResult>(ctx.authElicitation, "run", [
+                  "authorize_connector",
+                  args,
+                  request,
+                  run,
+                ])
+              : authCall(run, []),
+          ),
         );
       }),
     ),
@@ -2089,7 +2092,10 @@ export function registerMetaTools(
       ) =>
         authFlow<ToolResult>(function* () {
           bindRequest(request);
-          return yield* upwardStep(authInvoke<ToolResult>(mt, "searchTools", [args as SearchArgs]));
+          return withinOutputSchema(
+            SEARCH_OUTPUT,
+            yield* upwardStep(authInvoke<ToolResult>(mt, "searchTools", [args as SearchArgs])),
+          );
         }),
     ),
   );

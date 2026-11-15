@@ -64,6 +64,12 @@ and `retryable`, may carry `retryAfterMs`, `retry`, `nextAction`, `stale`, `ageM
 and the authorization-handoff fields (`recovery`, `status`, `authorizationUrl`,
 `operatorUrl`, `instructions`, `credential`), and has no others; a `catalogErrors[]`
 entry also requires `connector`, which `queryAnalysis.catalogError` may carry.
+Some hosts validate `isError: true` responses too, so an error result from these
+tools keeps `structuredContent` only when it satisfies the advertised schema;
+otherwise its complete JSON travels in `content` alone. A `search_tools` refusal
+is no page, and an [authorization-boundary refusal](#authorization-recovery) on a program
+route (`auth_declined`, `auth_cancelled`, `auth_round_limit`, `auth_replay_refused`
+or `invalid_request_state`) has no `hostCalls`, so both are text-only.
 The two direct-call tools omit `outputSchema` because their default
 mode returns native `content`. Default-mode successes declare
 `_meta["dev.connecta/format"]: "json" | "text"`; value mode places the value in
@@ -1402,6 +1408,9 @@ support (`connector`, `recovery`, `authorizationUrl` or `operatorUrl`,
   "nextAction": { "url": "https://connecta.example/connect/service?h=...", "purpose": "..." }
 }
 ```
+
+On `execute_code` and `execute_read_code`, these refusals carry the same JSON in
+`content` without `structuredContent`, since they report no `hostCalls`.
 
 Give that link to the user once, then stop. Do not prompt again, retry, or reach
 the service another way until they confirm. If they already refused this

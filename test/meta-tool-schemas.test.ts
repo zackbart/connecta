@@ -15,7 +15,22 @@ import { Validator } from "@cfworker/json-schema";
 import type { Executor } from "../src/types.js";
 import { api } from "../src/connectors/api.js";
 import { calcApi, makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import { handoffFixture } from "./fixtures/authorization-handoff.js";
+import { HANDOFF_BASE, handoffFixture } from "./fixtures/authorization-handoff.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/client/validators/ajv";
+import type { JsonSchemaType, JsonSchemaValidator } from "@modelcontextprotocol/client";
+import { encryptedCredentialVault } from "../src/credentials.js";
+import { ConnectorCallError } from "../src/errors.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import type { Connector, ExecuteResult, ExecutorProvider } from "../src/types.js";
+import { fakeClerkAuth } from "./fixtures/http.js";
+import { guestErrorText, guestFailureFacts } from "./fixtures/misc.js";
+import { CREDENTIAL_KEY } from "./fixtures/ui.js";
+import { createTestConnecta, required, silentLogger } from "./helpers.js";
+import { ExecutorAdmissionError } from "../src/executor-admission.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
+import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { inputRequired } from "@modelcontextprotocol/server";
+import * as z from "zod";
 
 const TOKEN = "test-token-123";
 const DRAFT = "https://json-schema.org/draft/2020-12/schema";
@@ -493,4 +508,520 @@ it("front-loads configured scope and guidance within the instructions budget", a
       }),
     ).toThrow(/500 UTF-16 code units/);
   }
+});
+
+describe("meta-tool results under advertised output schemas", () => {
+  it("INV-3: every result path of a tool declaring an outputSchema conforms or carries its JSON in text alone", async () => {
+    const storage = memoryStorage();
+    let connected = false;
+    const authRequired = () => new ConnectorCallError("auth_required", "PRIVATE_DOWNSTREAM");
+    const service: Connector = {
+      id: "service",
+      kind: "api",
+      authScope: "personal",
+      listTools: async () => [{ name: "read", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }],
+      callTool: async () => {
+        if (!connected) throw authRequired();
+        return { connected: true };
+      },
+      status: async () => ({ state: connected ? "ok" : "auth_required" }),
+      startAuth: async () => ({
+        state: "auth_required" as const,
+        authorizationUrl: `https://consent.test/authorize?state=${crypto.randomUUID()}`,
+      }),
+    };
+    const HEADER_SECRET = "HEADER_CREDENTIAL_VALUE";
+    const OPAQUE = "DOWNSTREAM_OPAQUE_STATE";
+    const SECRETS = [HEADER_SECRET, OPAQUE, "Pick a name", "consent.test"];
+    const downstream = httpDownstream((server) => {
+      server.registerTool("ask", { inputSchema: z.object({}).loose(), annotations: { readOnlyHint: true } }, async () =>
+        inputRequired({
+          requestState: OPAQUE,
+          inputRequests: {
+            question: inputRequired.elicit({
+              message: "Pick a name",
+              requestedSchema: { type: "object", properties: { name: { type: "string" } } },
+            }),
+          },
+        }),
+      );
+    });
+    const asker = remoteMcp("asker", {
+      url: downstream.url,
+      fetch: downstream.fetch,
+      auth: { type: "headers", headers: { Authorization: `Bearer ${HEADER_SECRET}` } },
+      logger: silentLogger,
+    });
+    const flaky: Connector = {
+      id: "flaky",
+      kind: "api",
+      listTools: async () => {
+        throw new Error("catalog unavailable");
+      },
+      callTool: async () => ({}),
+    };
+    const notes = api("notes", {
+      description: "Notes",
+      tools: [
+        {
+          name: "save",
+          description: "Save a note",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: false },
+          handler: () => ({ saved: true }),
+        },
+      ],
+    });
+    const big = api("big", {
+      description: "Many verbose tools",
+      tools: Array.from({ length: 100 }, (_, index) => ({
+        name: `tool_${index}`,
+        description: `Lists records ${index}. ${"Detail ".repeat(600)}`,
+        inputSchema: { type: "object" },
+        annotations: { readOnlyHint: true },
+        handler: () => ({}),
+      })),
+    });
+    const settle = async (run: () => Promise<unknown>): Promise<ExecuteResult> => {
+      try {
+        return { result: await run() };
+      } catch (error) {
+        return { result: undefined, error: guestErrorText(error), failure: guestFailureFacts(error) };
+      }
+    };
+    const programs: Record<string, (fns: ExecutorProvider["fns"]) => Promise<ExecuteResult>> = {
+      value: async () => ({ result: { answer: 42 }, logs: ["ran"] }),
+      thrown: async () => ({ result: undefined, error: "Error: boom", failure: { name: "Error" }, logs: ["ran"] }),
+      timeout: async () => ({
+        result: undefined,
+        error: "timed out",
+        failure: { name: "Error", timeout: { elapsedMs: 50, deadlineMs: 40 } },
+      }),
+      crash: async () => {
+        throw new Error("sandbox unavailable");
+      },
+      syntax: async () => {
+        throw new SyntaxError("Unexpected token");
+      },
+      malformed: async () => "not an ExecuteResult" as unknown as ExecuteResult,
+      oversized: async () => ({ result: "x".repeat(100_000) }),
+      budget: (fns) =>
+        settle(async () => {
+          for (let call = 0; call < 25; call++) await fns.call!("calc.add", { a: 1, b: 2 });
+        }),
+      wrote: async (fns) => {
+        await settle(() => fns.call!("notes.save", {}));
+        return { result: undefined, error: "Error: after the write", failure: { name: "Error" } };
+      },
+      auth: (fns) => settle(() => fns.call!("service.read", {})),
+      ask: (fns) => settle(() => fns.call!("asker.ask", {})),
+      cancel: async () => {
+        throw new ExecutorAdmissionError("executor_cancelled", "Execution was cancelled during result processing.");
+      },
+    };
+    const executor: Executor = {
+      execute: async (code, providers) => {
+        const name = required(/case:(\w+)/.exec(code)?.[1], "program case");
+        return required(programs[name], name)(required(providers.find((p) => p.name === "connecta")).fns);
+      },
+    };
+    const member = [{ namespace: "https://clerk.example.test", id: "alice" }];
+    const app = createTestConnecta({
+      connectors: [calcApi(), notes, flaky, big, service, asker],
+      storage,
+      vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
+      publicUrl: HANDOFF_BASE,
+      logger: "silent",
+      executor,
+      auth: fakeClerkAuth({ token: "alice", userId: "alice" }),
+      maintainers: [{ namespace: "https://clerk.example.test", id: "bob" }],
+      pools: {
+        meta: { tools: ["calc", "notes", "flaky", "big", "service", "asker"], members: member, readOnly: false },
+        native: {
+          tools: ["calc", "notes", "service", "asker"],
+          members: member,
+          readOnly: false,
+          surface: "native",
+          executeCode: true,
+        },
+        results: { tools: ["calc"], members: member, readOnly: false, surface: "native", executeCode: false },
+      },
+    });
+    const send = async (
+      pool: string,
+      name: string,
+      args: Record<string, unknown>,
+      round?: { state?: string; action?: string },
+    ) => {
+      const params = {
+        name,
+        arguments: args,
+        ...(round?.state === undefined ? {} : { requestState: round.state }),
+        ...(round?.action === undefined ? {} : { inputResponses: { connecta_auth: { action: round.action } } }),
+        ...(round
+          ? {
+              _meta: {
+                "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                "io.modelcontextprotocol/clientInfo": { name: "schema-test", version: "1" },
+                "io.modelcontextprotocol/clientCapabilities": { elicitation: { url: {}, form: {} } },
+              },
+            }
+          : {}),
+      };
+      const request = mcpRpc("tools/call", params, { token: "alice" });
+      if (round) {
+        request.headers.set("MCP-Protocol-Version", "2026-07-28");
+        request.headers.set("Mcp-Method", "tools/call");
+        request.headers.set("Mcp-Name", name);
+      }
+      return readJsonRpc(await app.fetch(new Request(`${HANDOFF_BASE}/mcp/${pool}`, request)));
+    };
+    const program = (name: string) => ({ code: `async () => "case:${name}"` });
+    const declined = async (pool: string, tool: string, args: Record<string, unknown>) => {
+      const opened = await send(pool, tool, args, {});
+      expect(opened.result.resultType, `${pool} ${tool}`).toBe("input_required");
+      return send(pool, tool, args, { state: opened.result.requestState, action: "decline" });
+    };
+    const roundLimit = async (pool: string, tool: string, args: Record<string, unknown>) => {
+      let round = await send(pool, tool, args, {});
+      for (let accepted = 0; accepted < 3; accepted++) {
+        expect(round.result.resultType, `${pool} ${tool} round ${accepted}`).toBe("input_required");
+        round = await send(pool, tool, args, { state: round.result.requestState, action: "accept" });
+      }
+      return round;
+    };
+    try {
+      const ajv = new AjvJsonSchemaValidator();
+      const declaring: Record<string, Record<string, JsonSchemaValidator<unknown>>> = {};
+      for (const pool of ["meta", "native", "results"]) {
+        const list = await readJsonRpc(
+          await app.fetch(new Request(`${HANDOFF_BASE}/mcp/${pool}`, mcpRpc("tools/list", {}, { token: "alice" }))),
+        );
+        declaring[pool] = Object.fromEntries(
+          (list.result.tools as Array<{ name: string; outputSchema?: JsonSchemaType }>).flatMap((tool) =>
+            tool.outputSchema ? [[tool.name, ajv.getValidator(tool.outputSchema)]] : [],
+          ),
+        );
+      }
+      expect(Object.keys(declaring.meta!).sort()).toEqual([
+        "authorize_connector",
+        "execute_code",
+        "execute_read_code",
+        "search_tools",
+      ]);
+      expect(Object.keys(declaring.native!).sort()).toEqual(["authorize_connector", "execute_code"]);
+      expect(Object.keys(declaring.results!)).toEqual(["authorize_connector"]);
+
+      const handoff = {
+        connector: "service",
+        recovery: "oauth",
+        authorizationUrl: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=`),
+        nextAction: { url: expect.stringContaining(`${HANDOFF_BASE}/connect/service?h=`) },
+      };
+      type Path = {
+        label: string;
+        pool: string;
+        tool: string;
+        run: () => Promise<any>;
+        shape: "structured" | "text" | "input" | "protocol";
+        text?: Record<string, unknown> | string;
+      };
+      const path = (
+        label: string,
+        pool: string,
+        tool: string,
+        run: () => Promise<any>,
+        shape: Path["shape"],
+        text?: Path["text"],
+      ): Path => ({ label, pool, tool, run, shape, ...(text === undefined ? {} : { text }) });
+      const paths: Path[] = [
+        path(
+          "search page",
+          "meta",
+          "search_tools",
+          () => send("meta", "search_tools", { connector: "calc" }),
+          "structured",
+        ),
+        path("search catalog failure", "meta", "search_tools", () => send("meta", "search_tools", {}), "structured"),
+        path(
+          "search scoped catalog failure",
+          "meta",
+          "search_tools",
+          () => send("meta", "search_tools", { connector: "flaky" }),
+          "structured",
+        ),
+        path(
+          "search refusal",
+          "meta",
+          "search_tools",
+          () => send("meta", "search_tools", { connector: "c".repeat(513) }),
+          "text",
+          { error: { code: "invalid_args", message: "connector must be at most 512 UTF-8 bytes.", retryable: false } },
+        ),
+        path(
+          "search over the discovery ceiling",
+          "meta",
+          "search_tools",
+          () => send("meta", "search_tools", { connector: "big", fullDescriptions: true, limit: 100 }),
+          "text",
+          {
+            error: {
+              code: "result_too_large",
+              message: expect.stringContaining("256000-byte ceiling"),
+              retryable: false,
+            },
+          },
+        ),
+        path(
+          "search invalid input",
+          "meta",
+          "search_tools",
+          () => send("meta", "search_tools", { limit: 0 }),
+          "text",
+          "Invalid arguments for tool search_tools: limit",
+        ),
+        path(
+          "authorize handoff",
+          "meta",
+          "authorize_connector",
+          () => send("meta", "authorize_connector", { connector: "service" }),
+          "structured",
+        ),
+        path(
+          "authorize unknown connector",
+          "meta",
+          "authorize_connector",
+          () => send("meta", "authorize_connector", { connector: "missing" }),
+          "text",
+          'Unknown connector "missing"',
+        ),
+        path(
+          "authorize elicitation",
+          "meta",
+          "authorize_connector",
+          () => send("meta", "authorize_connector", { connector: "service" }, {}),
+          "input",
+        ),
+        path(
+          "authorize elicitation declined",
+          "meta",
+          "authorize_connector",
+          () => declined("meta", "authorize_connector", { connector: "service" }),
+          "structured",
+        ),
+        path(
+          "authorize invalid request state",
+          "meta",
+          "authorize_connector",
+          () => send("meta", "authorize_connector", { connector: "service" }, { state: "forged", action: "accept" }),
+          "protocol",
+        ),
+        path(
+          "authorize round limit",
+          "meta",
+          "authorize_connector",
+          () => roundLimit("meta", "authorize_connector", { connector: "service" }),
+          "structured",
+        ),
+        path(
+          "native authorize handoff",
+          "results",
+          "authorize_connector",
+          () => send("results", "authorize_connector", { connector: "calc" }),
+          "structured",
+        ),
+        ...(["execute_code", "execute_read_code"] as const).flatMap((tool) =>
+          (
+            [
+              ["value", { result: { answer: 42 } }],
+              ["thrown", { error: { code: "program_error" } }],
+              ["timeout", { error: { code: "timeout" } }],
+              ["crash", { error: { code: "executor_failed" } }],
+              ["syntax", { error: { code: "program_error", details: { name: "SyntaxError" } } }],
+              ["malformed", { error: { code: "executor_failed" } }],
+              ["oversized", { result: { truncated: true, resultId: expect.any(String) } }],
+              ["budget", { error: { code: "budget_exceeded" } }],
+              ["wrote", { error: { code: "program_error" } }],
+              ["auth", { error: { code: "downstream_oauth_required", ...handoff } }],
+              ["ask", { error: { code: "input_required_unsupported" } }],
+            ] as const
+          ).map(([name, body]) =>
+            path(
+              `${tool} ${name}`,
+              "meta",
+              tool,
+              () => send("meta", tool, program(name), name === "ask" ? {} : undefined),
+              "structured",
+              body,
+            ),
+          ),
+        ),
+        path(
+          "execute_code cancelled",
+          "meta",
+          "execute_code",
+          () => send("meta", "execute_code", program("cancel")),
+          "structured",
+          { error: { code: "executor_cancelled", retryable: false } },
+        ),
+        path(
+          "execute_code over the code cap",
+          "meta",
+          "execute_code",
+          () => send("meta", "execute_code", { code: `async () => "${"x".repeat(70_000)}"` }),
+          "structured",
+        ),
+        path(
+          "execute_code invalid input",
+          "meta",
+          "execute_code",
+          () => send("meta", "execute_code", {}),
+          "text",
+          "Invalid arguments for tool execute_code: code",
+        ),
+        path(
+          "execute_code elicitation",
+          "meta",
+          "execute_code",
+          () => send("meta", "execute_code", program("auth"), {}),
+          "input",
+        ),
+        path(
+          "execute_code elicitation declined",
+          "meta",
+          "execute_code",
+          () => declined("meta", "execute_code", program("auth")),
+          "text",
+          { ok: false, error: { code: "auth_declined", retryable: false, ...handoff } },
+        ),
+        path(
+          "execute_code invalid request state",
+          "meta",
+          "execute_code",
+          () => send("meta", "execute_code", program("auth"), { state: "forged", action: "accept" }),
+          "protocol",
+        ),
+        path(
+          "execute_code request state for other code",
+          "meta",
+          "execute_code",
+          async () => {
+            const opened = await send("meta", "execute_code", program("auth"), {});
+            return send("meta", "execute_code", program("value"), {
+              state: opened.result.requestState,
+              action: "accept",
+            });
+          },
+          "text",
+          {
+            ok: false,
+            error: { code: "invalid_request_state", message: "Invalid or expired requestState", retryable: false },
+          },
+        ),
+        path(
+          "execute_code round limit",
+          "meta",
+          "execute_code",
+          () => roundLimit("meta", "execute_code", program("auth")),
+          "text",
+          {
+            ok: false,
+            error: { code: "auth_round_limit", message: expect.stringContaining("three prompts"), retryable: false },
+          },
+        ),
+        path(
+          "execute_read_code elicitation declined",
+          "meta",
+          "execute_read_code",
+          () => declined("meta", "execute_read_code", program("auth")),
+          "text",
+          { ok: false, error: { code: "auth_declined", retryable: false, ...handoff } },
+        ),
+        path(
+          "execute_read_code round limit",
+          "meta",
+          "execute_read_code",
+          () => roundLimit("meta", "execute_read_code", program("auth")),
+          "text",
+          { ok: false, error: { code: "auth_round_limit", retryable: false } },
+        ),
+        path(
+          "native execute_code value",
+          "native",
+          "execute_code",
+          () => send("native", "execute_code", program("value")),
+          "structured",
+        ),
+        path(
+          "native execute_code auth",
+          "native",
+          "execute_code",
+          () => send("native", "execute_code", program("auth")),
+          "structured",
+          {
+            error: { code: "downstream_oauth_required", nextAction: { url: expect.any(String) } },
+          },
+        ),
+        path(
+          "native execute_code input",
+          "native",
+          "execute_code",
+          () => send("native", "execute_code", program("ask"), {}),
+          "structured",
+          {
+            error: { code: "input_required_unsupported" },
+          },
+        ),
+        path(
+          "native execute_code elicitation declined",
+          "native",
+          "execute_code",
+          () => declined("native", "execute_code", program("auth")),
+          "text",
+          { ok: false, error: { code: "auth_declined", retryable: false, ...handoff } },
+        ),
+        path(
+          "native execute_code round limit",
+          "native",
+          "execute_code",
+          () => roundLimit("native", "execute_code", program("auth")),
+          "text",
+          { ok: false, error: { code: "auth_round_limit", retryable: false } },
+        ),
+      ];
+      const shapes: Record<string, string> = {};
+      for (const { label, pool, tool, run, text } of paths) {
+        const response = await run();
+        const wire = JSON.stringify(response);
+        for (const secret of SECRETS) expect(wire, `${label} leaks ${secret}`).not.toContain(secret);
+        if (response.error) {
+          expect(response.result, label).toBeUndefined();
+          shapes[label] = "protocol";
+          continue;
+        }
+        const result = response.result;
+        if (result.resultType === "input_required") {
+          expect(result.structuredContent, label).toBeUndefined();
+          shapes[label] = "input";
+          continue;
+        }
+        expect(result.content[0].type, label).toBe("text");
+        if (result.structuredContent === undefined) {
+          expect(result.isError, label).toBe(true);
+          if (typeof text === "string") expect(result.content[0].text, label).toContain(text);
+          else expect(JSON.parse(result.content[0].text), label).toMatchObject(required(text, `${label} text`));
+          shapes[label] = "text";
+          continue;
+        }
+        if (text !== undefined) expect(result.structuredContent, label).toMatchObject(text as object);
+        const verdict = required(declaring[pool]![tool], tool)(result.structuredContent);
+        expect(verdict.errorMessage, label).toBeUndefined();
+        expect(JSON.parse(result.content[0].text), label).toEqual(result.structuredContent);
+        shapes[label] = "structured";
+      }
+      expect(shapes).toEqual(Object.fromEntries(paths.map(({ label, shape }) => [label, shape])));
+    } finally {
+      await app.close();
+    }
+  });
 });
