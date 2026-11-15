@@ -13,7 +13,7 @@ import { actorKey, principalActor, resolveActorLabels } from "./actor-labels.js"
 import { bindActivityRequest } from "../activity-request.js";
 import { AGENT_NAMESPACE } from "../agent-identity.js";
 import { configValuePaths } from "../config-value-sources.js";
-import { Effect } from "effect";
+import { Deferred, Effect } from "effect";
 import type { ActivityOutcome, ActivityPage, ActivityRequestContext } from "../activity.js";
 import type { ConnectorAccess } from "../connector-access.js";
 import { credentialTestRule, storedCredentialShape } from "../credential-rules.js";
@@ -257,7 +257,8 @@ export function scanOperatorActivity(
     if (!permitted) return "forbidden" as const;
     const byId = new Map(rows.map((row) => [row.id, row]));
     const byAgent = new Map(agents.map((agent) => [agent.name, agent]));
-    let readerIgnoresFilter = false;
+    let fallback: { events: ActivityPage["events"]; cursor: string | undefined } | undefined;
+    const fallbackChosen = yield* Deferred.make<void>();
     const visible = (event: ActivityPage["events"][number]) =>
       isTimestamp(event.occurredAt) && activityEventVisible(context, authz, registry, event);
     // A last call is a call; any row recorded for an agent, a catalog
@@ -286,30 +287,32 @@ export function scanOperatorActivity(
     const pages = (
       connectorId: string | undefined,
       answered: (event: ActivityPage["events"][number]) => boolean,
+      first?: { events: ActivityPage["events"]; cursor: string | undefined },
     ): Effect.Effect<void, unknown> =>
       Effect.gen(function* () {
-        let filter = connectorId;
-        let visit = answered;
-        let cursor: string | undefined;
+        let cursor = first?.cursor;
         const seen = new Set<string>();
-        for (let pageIndex = 0; pageIndex < 10; pageIndex++) {
-          if (filter !== undefined && readerIgnoresFilter) return;
+        if (first) {
+          if (first.events.map(answered).some(Boolean) || !cursor) return;
+          seen.add(cursor);
+        }
+        for (let pageIndex = first ? 1 : 0; pageIndex < 10; pageIndex++) {
+          if (connectorId !== undefined && fallback) return;
           const page = yield* attempt(() =>
             activity.store.list!({
               limit: 100,
               ...(cursor ? { cursor } : {}),
-              ...(filter !== undefined ? { connectorId: filter } : {}),
+              ...(connectorId !== undefined ? { connectorId } : {}),
             }),
           );
           const events = page.events.slice(0, 100);
-          if (filter !== undefined && events.some((event) => event.connectorId !== filter)) {
-            if (readerIgnoresFilter) return;
-            readerIgnoresFilter = true;
-            filter = undefined;
-            visit = (event) => (visitCall(event), false);
+          if (connectorId !== undefined && events.some((event) => event.connectorId !== connectorId)) {
+            if (fallback) return;
+            fallback = { events, cursor: page.nextCursor };
+            return yield* Deferred.succeed(fallbackChosen, undefined);
           }
           let done = false;
-          for (const event of events) if (visit(event)) done = true;
+          for (const event of events) if (answered(event)) done = true;
           cursor = page.nextCursor;
           if (done || !cursor || seen.has(cursor)) return;
           seen.add(cursor);
@@ -320,10 +323,12 @@ export function scanOperatorActivity(
       context,
       () =>
         Effect.gen(function* () {
-          yield* Effect.forEach(rows, (row) => pages(row.id, visitCall), {
-            concurrency: CONNECTOR_SCAN_CONCURRENCY,
-            discard: true,
-          });
+          yield* Effect.forEach(
+            rows,
+            (row) => Effect.raceFirst(pages(row.id, visitCall), Deferred.await(fallbackChosen)),
+            { concurrency: CONNECTOR_SCAN_CONCURRENCY, discard: true },
+          );
+          if (fallback) yield* pages(undefined, (event) => (visitCall(event), false), fallback);
           return true;
         }),
       () =>

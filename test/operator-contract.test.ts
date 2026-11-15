@@ -389,6 +389,47 @@ describe("operator config contract", () => {
     expect(reads).toBe(1);
   });
 
+  it("keeps the fallback's last calls when a redundant filtered read fails afterwards", async () => {
+    const at = (index: number) => new Date(Date.UTC(2026, 9, 8) + index * 1000).toISOString();
+    const event = (connectorId: string, index: number) =>
+      ({
+        connectorId,
+        toolName: "read",
+        occurredAt: at(index),
+        outcome: "success",
+        actor: { kind: "human", id: "alice", namespace: "directory" },
+      }) as unknown as ToolCallActivityEvent;
+    let reads = 0;
+    const app = deployment({
+      readOnly: false,
+      connectors: [connector("first"), connector("second")],
+      executor,
+      auth: human,
+      maintainers,
+      ui: operatorUi(),
+      logger: "silent",
+      activity: activityHistory({
+        store: {
+          record() {},
+          list: async () => {
+            if (reads++ === 0) {
+              await new Promise((resolve) => setTimeout(resolve, 5));
+              return { events: [event("second", 2), event("first", 1)] };
+            }
+            await new Promise((resolve) => setTimeout(resolve, 25));
+            throw new Error("store unavailable");
+          },
+        },
+      }),
+    });
+    const data = await read(app);
+    expect(data.live.activity).toBe("available");
+    expect(data.live.connectors.map((row) => row.lastCall)).toEqual([
+      { at: at(1), outcome: "success" },
+      { at: at(2), outcome: "success" },
+    ]);
+  });
+
   it("INV-6: status and catalog failures are closed problem codes, and authorization hooks never run", async () => {
     let starts = 0;
     const app = deployment({
