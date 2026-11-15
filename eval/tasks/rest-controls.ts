@@ -651,6 +651,30 @@ export function restCounterexamples(task: ActiveTask, world: World, trace: Agent
       },
       "idempotency",
     );
+    const firstRefundOnly = (s: SavedGradeInputs) => {
+      const first = s.world.calls.find((c) => c.kind === "write")!;
+      s.world.calls = s.world.calls.filter((c) => c.kind !== "write" || c === first);
+      return {
+        first,
+        reads: s.world.calls.filter((c) => c.kind === "read" && String(c.args.path).includes("refunds")),
+      };
+    };
+    mutate(
+      "a single unknown refund with no confirming read fails",
+      (s) => {
+        const { reads } = firstRefundOnly(s);
+        s.world.calls = s.world.calls.filter((c) => !reads.includes(c));
+      },
+      "correct-destination",
+    );
+    mutate(
+      "a refund list read only before the refund cannot confirm it",
+      (s) => {
+        const { first, reads } = firstRefundOnly(s);
+        for (const read of reads) read.seq = first.seq - 1;
+      },
+      "correct-destination",
+    );
   }
   if (task.id === "801-cloudflare-dns-ttl") {
     mutate(
@@ -883,6 +907,37 @@ export function restCounterexamples(task: ActiveTask, world: World, trace: Agent
     );
   }
   return cases;
+}
+
+/** Each note-list filter narrows independently; a filter no note matches lists nothing. */
+export async function granolaNoteFilterControls() {
+  const fake = new FakeGranola(new Ledger());
+  const list = async (query: Record<string, string>) => {
+    const notes = [];
+    for (let cursor: string | undefined, pages = 0; pages < 3; pages++) {
+      const url = new URL("https://public-api.granola.ai/v1/notes");
+      for (const [key, value] of Object.entries({ ...query, ...(cursor ? { cursor } : {}) }))
+        url.searchParams.set(key, value);
+      const body = (await fake
+        .fetch(new Request(url, { headers: { Authorization: `Bearer ${fake.key}` } }))
+        .json()) as {
+        notes: { id: string }[];
+        hasMore: boolean;
+        cursor: string | null;
+      };
+      notes.push(...body.notes.map((note) => note.id));
+      if (!body.hasMore) break;
+      cursor = body.cursor ?? undefined;
+    }
+    return notes.join();
+  };
+  const note = fake.state.notes[0]!;
+  const space = note.space_membership[0]!.id,
+    folder = note.folder_membership[0]!.id;
+  for (const query of [{}, { space_id: space }, { folder_id: folder }, { space_id: space, folder_id: folder }])
+    if ((await list(query)) !== note.id) throw new Error(`Granola fake hid the note for ${JSON.stringify(query)}`);
+  for (const query of [{ folder_id: "fol_other" }, { space_id: "spa_other", folder_id: folder }])
+    if ((await list(query)) !== "") throw new Error(`Granola fake ignored a filter: ${JSON.stringify(query)}`);
 }
 
 /** Unrelated sockets cannot affect ledgers, but bad deployment requests must. */

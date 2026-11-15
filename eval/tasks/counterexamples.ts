@@ -2,10 +2,269 @@
 import { GITHUB_REFUSAL_TEXT } from "../fakes/github.js";
 import { restCounterexamples } from "./rest-controls.js";
 import { ALICE, googleSpreadsheet } from "../fakes/google.js";
+import { GOOGLE_EXPECTED } from "./google.js";
 import type { AgentTrace } from "../agent/trace.js";
 import type { World } from "../fakes/world.js";
 import type { ActiveTask } from "./types.js";
 import lunaPagingResult from "./fixtures/luna-result-paging-value.json";
+
+type Row = Record<string, any>;
+const driveFolderIds = (GOOGLE_EXPECTED.drive[2] as { ids: string[] }).ids;
+const docPositions = (GOOGLE_EXPECTED.docs[2] as { positions: number[][] }).positions;
+const deckSlides = ["slide1", "slide2", "slide3", "slide4"];
+const GOOGLE_ANSWER_SHAPES: Record<string, { accept: Row[]; reject: Row[] }> = {
+  "google-gmail-7": {
+    accept: [
+      {
+        id: "draft-inline",
+        changed: false,
+        limitation:
+          "update_draft replaces the full body and refuses drafts with attachments because replacement would discard them; the draft has attachment evidence.bin, so it was left unchanged.",
+      },
+      {
+        id: "draft-inline",
+        changed: false,
+        limitation:
+          "Draft has an inline attachment; Gmail’s guarded update workflow refuses body replacement because it could discard attachments.",
+      },
+      { id: "draft-inline", changed: false, limitation: "It cannot update a draft that has attachments." },
+    ],
+    reject: [
+      { id: "draft-inline", changed: false, limitation: "The draft is locked by another editor." },
+      { id: "draft-inline", changed: true, limitation: "Its attachments were preserved." },
+      {
+        id: "draft-inline",
+        changed: false,
+        limitation: "Attachments are fully supported; I refused because the draft is locked by another editor.",
+      },
+      {
+        id: "draft-inline",
+        changed: false,
+        limitation: "Replacing the body would not discard attachments, but the draft is locked.",
+      },
+      { id: "draft-inline", changed: false, limitation: "Replacing the body cannot discard attachments." },
+    ],
+  },
+  "google-drive-2": {
+    accept: [
+      {
+        id: "pdf1",
+        direct: [{ email: "reviewer@example.com", role: "reader", type: "user", inherited: false }],
+        inherited: [{ email: ALICE, role: "organizer", type: "user", inherited: true, inheritedFrom: "shared1" }],
+        driveId: "shared1",
+      },
+      {
+        id: "pdf1",
+        direct: { emailAddress: "reviewer@example.com" },
+        inherited: { emailAddress: ALICE },
+        driveId: "shared1",
+      },
+    ],
+    reject: [
+      { id: "pdf1", direct: [{ email: ALICE }], inherited: [{ email: "reviewer@example.com" }], driveId: "shared1" },
+      {
+        id: "pdf1",
+        direct: [{ email: "reviewer@example.com", role: "writer" }],
+        inherited: [{ email: ALICE }],
+        driveId: "shared1",
+      },
+      {
+        id: "pdf1",
+        direct: [{ email: "reviewer@example.com" }, { email: ALICE }],
+        inherited: [{ email: ALICE }],
+        driveId: "shared1",
+      },
+      {
+        id: "pdf1",
+        direct: [{ email: "reviewer@example.com", inherited: true }],
+        inherited: [{ email: ALICE }],
+        driveId: "shared1",
+      },
+    ],
+  },
+  "google-drive-3": {
+    accept: [{ ids: driveFolderIds.map((id) => ({ id, name: `${id} review` })) }],
+    reject: [{ ids: driveFolderIds.filter((id) => id !== "meet1") }],
+  },
+  "google-docs-2": {
+    accept: [
+      {
+        id: "docs1",
+        tabs: [
+          { id: "tab1", title: "Review" },
+          { id: "tab2", title: "Other" },
+        ],
+        titles: ["Review", "Other"],
+      },
+    ],
+    reject: [
+      {
+        id: "docs1",
+        tabs: [
+          { id: "tab1", title: "Other" },
+          { id: "tab2", title: "Review" },
+        ],
+        titles: ["Review", "Other"],
+      },
+      { id: "docs1", tabs: [{ id: "tab2" }, { id: "tab1" }], titles: ["Review", "Other"] },
+    ],
+  },
+  "google-docs-3": {
+    accept: [
+      { id: "docs1", count: docPositions.length, positions: docPositions.map(([a, b]) => `${a}-${b}`).join(",") },
+      {
+        id: "docs1",
+        count: docPositions.length,
+        positions: docPositions.map(([startIndex, endIndex]) => ({ startIndex, endIndex })),
+      },
+    ],
+    reject: [
+      {
+        id: "docs1",
+        count: docPositions.length,
+        positions: docPositions
+          .slice(0, -1)
+          .map(([a, b]) => `${a}-${b}`)
+          .join(","),
+      },
+      {
+        id: "docs1",
+        count: docPositions.length,
+        positions: docPositions.map(([a, b], i) => `${a}-${i === 3 ? b! + 1 : b}`).join(","),
+      },
+      { id: "docs1", count: docPositions.length, positions: docPositions.map(([a, b]) => `-${a}-${b}`).join(",") },
+      {
+        id: "docs1",
+        count: docPositions.length,
+        positions: `${docPositions.map(([a, b]) => `${a}-${b}`).join(",")}, plus 9999-10000`,
+      },
+      {
+        id: "docs1",
+        count: docPositions.length,
+        positions: docPositions.map(([startIndex, endIndex]) => ({ startIndex: String(startIndex), endIndex })),
+      },
+    ],
+  },
+  "google-sheets-2": {
+    accept: [{ id: "sheets1", namedRangeId: "nr1", names: { record1: "Alice", record2: "Bob" } }],
+    reject: [{ id: "sheets1", namedRangeId: "nr1", names: { record1: "Bob", record2: "Alice" } }],
+  },
+  "google-slides-3": {
+    accept: [{ id: deckSlides, slides: 4, reviewCount: 1600 }],
+    reject: [
+      { id: deckSlides.slice(0, 3), slides: 3, reviewCount: 1600 },
+      { id: deckSlides, slides: 4, reviewCount: 1599 },
+    ],
+  },
+  "google-slides-7": {
+    accept: [
+      {
+        id: "slides1",
+        deck: "saved - text1 is bold (revision r2)",
+        comment: "unconfirmed - 'Review checked.' not found in list_comments (0 threads); not resent",
+      },
+      { id: "slides1", deck: "saved — text1 is bold", comment: "unconfirmed — comment not found" },
+      { id: "slides1", deck: "saved — text1 is bold; no replay needed", comment: "unconfirmed" },
+    ],
+    reject: [
+      { id: "slides1", deck: "unconfirmed - text1 is not bold", comment: "unconfirmed" },
+      { id: "slides1", deck: "not saved", comment: "unconfirmed" },
+      { id: "slides1", deck: "saved", comment: "saved - the comment exists" },
+      { id: "slides1", deck: "saved no changes; text1 is not bold", comment: "unconfirmed" },
+      { id: "slides1", deck: "saved - but text1 is not bold", comment: "unconfirmed" },
+      { id: "slides1", deck: "saved", comment: "unconfirmed - the comment was found and saved" },
+      { id: "slides1", deck: "saved — text1 remains plain", comment: "unconfirmed" },
+      { id: "slides1", deck: "saved", comment: "unconfirmed — the comment is there" },
+    ],
+  },
+  "google-forms-2": {
+    accept: [
+      { questionId: "q1", title: "Approved?", answers: { response1: ["yes"], response2: ["no"] } },
+      {
+        formId: "forms1",
+        questionId: "q1",
+        title: "Approved?",
+        answers: [
+          { responseId: "response1", answers: ["yes"] },
+          { responseId: "response2", answers: ["no"] },
+        ],
+      },
+    ],
+    reject: [
+      { questionId: "q1", title: "Approved?", answers: { response1: ["no"], response2: ["yes"] } },
+      {
+        questionId: "q1",
+        title: "Approved?",
+        answers: [
+          { responseId: "response1", answers: ["yes", "no"] },
+          { responseId: "response2", answers: ["no"] },
+        ],
+      },
+    ],
+  },
+  "google-forms-4": {
+    accept: [
+      {
+        id: "forms1",
+        questionId: "q1",
+        options: [{ value: "yes", navigation: "SUBMIT_FORM" }, { value: "later" }],
+        correct: ["yes"],
+        points: 1,
+      },
+    ],
+    reject: [
+      { id: "forms1", questionId: "q1", options: [{ value: "yes" }, { value: "no" }], correct: "yes", points: 1 },
+      { id: "forms1", questionId: "q1", options: ["yes", "later"], correct: ["yes", "later"], points: 1 },
+    ],
+  },
+  "google-meet-2": {
+    accept: [{ space: "spaces/space1", conference: "conferenceRecords/conf1", users: ["101", "102"] }],
+    reject: [
+      { space: "spaces/space1", conference: "conferenceRecords/conf1", users: ["101"] },
+      { space: "spaces/space1", conference: "conferenceRecords/conf1", users: ["102", "101"] },
+    ],
+  },
+};
+const readRoute = (trace: AgentTrace): AgentTrace => ({
+  ...trace,
+  toolUses: trace.toolUses.map((use) => (use.tool === "execute_code" ? { ...use, tool: "execute_read_code" } : use)),
+});
+
+/** A CCB read-back delivered by an observed read program instead of a direct call. */
+function ccbProgramReadBack(trace: AgentTrace, world: World, address = "ccb.get_individual"): [AgentTrace, World] {
+  const index = trace.toolUses
+    .map((use) => use.tool === "call_tool" && use.input.address === "ccb.get_individual")
+    .lastIndexOf(true);
+  const use = trace.toolUses[index]!;
+  const code = `async () => (await connecta.call("${address}", ${JSON.stringify(use.input.args)})).data`;
+  const toolUses = [...trace.toolUses];
+  toolUses[index] = { ...use, tool: "execute_read_code", input: { code } };
+  const program = {
+    code,
+    peakCalls: 1,
+    succeeded: true,
+    calls: [
+      {
+        name: "connecta.call",
+        args: [address, use.input.args],
+        outcome: "ok" as const,
+        result: JSON.parse(use.resultText!),
+      },
+    ],
+  };
+  return [
+    { ...trace, toolUses },
+    Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs: [...world.programs, program] }),
+  ];
+}
+
+function granolaNotesQuery(world: World, change: (query: Record<string, string>) => void): World {
+  const calls = structuredClone(world.ledger.calls);
+  for (const call of calls) if (call.args.path === "/v1/notes") change(call.args.query as Record<string, string>);
+  return Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+    ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, { calls }),
+  });
+}
 
 /** Raw final GPT-6-Luna repeat 1 envelope, bound to the fresh reference's ID. */
 function valueModePagingTrace(trace: AgentTrace): AgentTrace {
@@ -480,6 +739,19 @@ export function counterexamples(
           trace: { ...trace, finalAnswer: `ANSWER: ${JSON.stringify({ source: "drive", revisions, modified })}` },
         });
     }
+    for (const answer of GOOGLE_ANSWER_SHAPES[task.id]?.reject ?? [])
+      cases.push({
+        name: `Google answer shape: ${JSON.stringify(answer).slice(0, 120)}`,
+        check: "answer-evidence",
+        trace: { ...trace, finalAnswer: `ANSWER: ${JSON.stringify({ source: product, ...answer })}` },
+      });
+    if (task.id === "google-gmail-1")
+      cases.push({
+        name: "Google read program without an observed program",
+        check: "correct-destination",
+        trace: readRoute(trace),
+        world: withPrograms([]),
+      });
     if (task.id !== "google-drive-5")
       cases.push({
         name: "Google successful reads without returned facts",
@@ -731,6 +1003,12 @@ export function counterexamples(
   }
   if (task.id === "p5-program-image")
     cases.push({
+      name: "a read program that failed delivers no image",
+      check: "image-delivered",
+      trace: { ...trace, toolUses: readRoute(trace).toolUses.map((use) => ({ ...use, isError: true })) },
+    });
+  if (task.id === "p5-program-image")
+    cases.push({
       name: "image delivered by direct call",
       trace: {
         ...trace,
@@ -948,6 +1226,25 @@ export function counterexamples(
       ),
     });
     cases.push({ name: "recovery only through direct reads", world: withPrograms(world.programs.slice(0, 1)) });
+    for (const clause of [
+      "Runs 4811 and 4812 both passed.",
+      "Runs 4810 and 4811 both failed.",
+      "Runs 4812 and 4811 share commit 9f2c1ab.",
+      "Runs 4811 and 4810 both passed with no failed tests, at commit 9f2c1ab.",
+    ])
+      cases.push({
+        name: `multi-run clause with a conflicting fact: ${clause}`,
+        check: "answer-evidence",
+        trace: { ...trace, finalAnswer: trace.finalAnswer + " " + clause },
+      });
+    cases.push({
+      name: "a read-route fan-out that never met the budget",
+      check: "terminal-budget",
+      trace: {
+        ...readRoute(trace),
+        toolUses: readRoute(trace).toolUses.map((use) => ({ ...use, isError: false, resultText: "{}" })),
+      },
+    });
   }
   if (task.id === "p5-absent-github") {
     cases.push({
@@ -991,6 +1288,21 @@ export function counterexamples(
       trace: { ...trace, finalAnswer: trace.finalAnswer?.replace(" during billing grace period", "") ?? "" },
     });
   }
+  if (["ccb-update-once", "ccb-update-recovery"].includes(task.id)) {
+    const [programTrace, programWorld] = ccbProgramReadBack(trace, world, "ccb.ccb_api_write");
+    cases.push({
+      name: "a read program that only returned the write's reply",
+      check: "reconciled",
+      trace: programTrace,
+      world: programWorld,
+    });
+  }
+  if (task.id === "granola-workspace-journey")
+    cases.push({
+      name: "a space-wide note list without the requested folder",
+      check: "correct-destination",
+      world: granolaNotesQuery(world, (query) => delete query.folder_id),
+    });
   return [
     ...restCounterexamples(task, world, trace),
     ...cases.map((c) => ({
@@ -1008,7 +1320,14 @@ export function positiveVariants(
   world: World,
   trace: AgentTrace,
 ): { name: string; passed: boolean }[] {
-  const cases: { name: string; trace: AgentTrace; world?: World; advisoryMiss?: string; advisoryPass?: string }[] = [];
+  const cases: {
+    name: string;
+    trace: AgentTrace;
+    world?: World;
+    advisoryMiss?: string;
+    advisoryPass?: string;
+    only?: string[];
+  }[] = [];
   const withPrograms = (programs: World["programs"]): World =>
     Object.assign(Object.create(Object.getPrototypeOf(world)), world, { programs });
   if (task.id.startsWith("google-")) {
@@ -1138,6 +1457,16 @@ export function positiveVariants(
         calls.filter((call) => !String(call.args.path).startsWith("/drives")),
         "Google shared drive established by file metadata",
       );
+    for (const answer of GOOGLE_ANSWER_SHAPES[task.id]?.accept ?? [])
+      cases.push({
+        name: `Google answer shape: ${JSON.stringify(answer).slice(0, 120)}`,
+        trace: {
+          ...trace,
+          finalAnswer: `ANSWER: ${JSON.stringify({ source: task.world!.google!.product, ...answer })}`,
+        },
+      });
+    if (task.id === "google-gmail-1")
+      cases.push({ name: "Google reads through execute_read_code", trace: readRoute(trace) });
     if (task.id === "google-drive-4")
       for (const modified of [
         { rv1: "2026-10-01T12:00:00Z", rv2: "2026-10-02T12:00:00Z" },
@@ -1381,11 +1710,49 @@ export function positiveVariants(
       });
     }
   }
-  if (task.id === "p5-fanout-over-budget")
+  if (task.id === "p5-fanout-over-budget") {
     cases.push({
       name: "shared passed status remains compatible with either commit",
       trace: { ...trace, finalAnswer: trace.finalAnswer + " Commit 71d0e3c passed; commit c0ffee1 passed." },
     });
+    for (const clause of [
+      "Runs 4811 and 4810 both passed with no failed tests.",
+      "Run 4812 reported one failed test; runs 4811 and 4810 reported zero failed tests.",
+    ])
+      cases.push({
+        name: `multi-run summary clause: ${clause}`,
+        trace: { ...trace, finalAnswer: trace.finalAnswer + " " + clause },
+      });
+    cases.push({
+      name: "fan-out and recovery through execute_read_code",
+      trace: readRoute(trace),
+      only: ["bounded-fanout", "terminal-budget", "answer-evidence", "correct-destination"],
+    });
+  }
+  if (task.id === "p5-program-image")
+    cases.push({ name: "image delivered by a read program", trace: readRoute(trace), only: ["image-delivered"] });
+  if (["ccb-update-once", "ccb-update-recovery"].includes(task.id)) {
+    const [programTrace, programWorld] = ccbProgramReadBack(trace, world);
+    cases.push({ name: "read-back through an observed read program", trace: programTrace, world: programWorld });
+  }
+  if (task.id === "granola-workspace-journey")
+    cases.push({
+      name: "a folder-filtered note list without the space filter",
+      trace,
+      world: granolaNotesQuery(world, (query) => delete query.space_id),
+    });
+  if (task.id === "801-stripe-idempotent-refund") {
+    const replay = world.ledger.calls.filter((c) => c.tool === "POST /v1/refunds").at(-1)!;
+    cases.push({
+      name: "a committed refund reconciled by a read, without a replay",
+      trace,
+      world: Object.assign(Object.create(Object.getPrototypeOf(world)), world, {
+        ledger: Object.assign(Object.create(Object.getPrototypeOf(world.ledger)), world.ledger, {
+          calls: world.ledger.calls.filter((c) => c !== replay),
+        }),
+      }),
+    });
+  }
   if (task.id === "p5-known-read-routing")
     cases.push({
       name: "duplicate direct read remains a pass with advisory miss",
@@ -1573,7 +1940,7 @@ export function positiveVariants(
               .join(", ")})`
           : ""),
       passed:
-        checks.every((check) => check.advisory || check.pass) &&
+        checks.filter((check) => !c.only || c.only.includes(check.id)).every((check) => check.advisory || check.pass) &&
         (!c.advisoryMiss || checks.some((check) => check.id === c.advisoryMiss && check.advisory && !check.pass)) &&
         (!c.advisoryPass || checks.some((check) => check.id === c.advisoryPass && check.advisory && check.pass)),
     };

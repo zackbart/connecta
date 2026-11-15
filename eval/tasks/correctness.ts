@@ -144,7 +144,9 @@ function factPattern(fact: string): RegExp {
 function recordEvidence(answer: string, records: EvidenceRecord[], universe = records): boolean {
   // Markdown styling is presentation, not part of a fact. Test-count prose
   // is not a run status (for example, "0 failed tests").
-  answer = answer.replace(/[*`]/g, "").replace(/\b\d+\s+(?:failed|passed)\s+tests?\b/gi, "test count");
+  answer = answer
+    .replace(/[*`]/g, "")
+    .replace(/\b(?:\d+|no|zero|one|two|three)\s+(?:failed|failing|passed|passing)\s+tests?\b/gi, "test count");
   const patterns = records.map((record) =>
     Object.fromEntries(Object.entries(record).map(([key, fact]) => [key, factPattern(fact)])),
   );
@@ -220,6 +222,17 @@ function recordEvidence(answer: string, records: EvidenceRecord[], universe = re
         .filter((match) => match.facts.length);
       // Shared facts (such as two runs both passing) are compatible. Every
       // fact in a clause must be consistent with at least one single record.
+      const ids = matches.find((match) => match.field === "id")?.facts ?? [];
+      if (ids.length > 1)
+        return ids.every((id) => {
+          const record = compatible.find((candidate) => candidate.id!.source === id.source);
+          return (
+            !!record &&
+            matches.every(
+              ({ field, facts }) => field === "id" || facts.every((fact) => fact.source === record[field]?.source),
+            )
+          );
+        });
       return (
         matches.length < 2 ||
         compatible.some((record) =>
