@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-15: Description-first routing (#1431, #1444) adds the routing first lines, balanced title stripping and the capped native authorization roster. CI at 5f3e73ff on main at 826d8fc1 (run 43671316936, build (package)) measures the root at 451,707 B and examples/worker at 839,351 B, 177 B and 106 B past their caps. The root cap moves 451,530 to 452,057 B and the examples/worker cap 839,245 to 839,701 B, each about 350 B over CI.",
     "2026-11-15: Claude Code host metadata (#1431, #1443) adds the alwaysLoad entry-tool choice, derived maxResultSizeChars hints, serialized log and error-message clipping. CI at d3fd3b1c on main at 5fa5873a (run 43668349754, build (package)) measures the root at 451,179 B and examples/worker at 838,894 B, 98 B and 50 B past their caps. The root cap moves 451,081 to 451,530 B and the examples/worker cap 838,844 to 839,245 B, each about 350 B over CI.",
     "2026-11-15: Telemetry gaps (#1431, #1439) add User-Agent client identity for legacy clients, terminal budget-stop program rows, program write counts and the authorize operation row. CI at 2b08a8e7 on main at 76cf0794 (run 43665481640, build (package)) measures the root at 450,731 B and examples/worker at 838,494 B, 364 B and 84 B past their caps. The root cap moves 450,367 to 451,081 B and the examples/worker cap 838,410 to 838,844 B, each about 350 B over CI.",
     "2026-11-15: Catalog revalidation at most once per request with stored-evidence checks (#1431, #1433) adds the per-request revalidation record, stale-fallback provenance, the request-memo drop for one connector's cache keys and the storage-only peek before reuse. CI at e0d8ef95 on main at 60b44eac (run 43664489102, build (package)) measures the root at 450,017 B and examples/worker at 838,060 B, 57 B and 70 B past their caps. The root cap moves 449,960 to 450,367 B and the examples/worker cap 837,990 to 838,410 B, each about 350 B over CI.",
@@ -111,7 +112,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 451530
+      "maxGzip": 452057
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -206,7 +207,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 839245
+      "maxGzip": 839701
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
