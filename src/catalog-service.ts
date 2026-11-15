@@ -841,6 +841,7 @@ export class CatalogService {
   // the success for the rest of the request, recorded by the read itself
   // rather than by an asker, whose probe deadline may have ended its wait.
   private readonly catalogs = new Map<string, { identity: string; read: SharedRead<ToolDef[]>; settled: boolean }>();
+  private readonly revalidatedIdentities = new Map<string, string>();
   // Key by the private source array, never connector id: a replacement read
   // gets new views and indexes. Each service belongs to one request and one
   // registry visibility view (caller/pool, hidden tools and classification).
@@ -1011,7 +1012,11 @@ export class CatalogService {
       const listedForThisCall = !joined.settled;
       return Effect.flatMap(joined.read.join(callOptions.signal), (tools) => {
         if (listedForThisCall || catalogIsFresh(tools)) return Effect.succeed(tools);
-        if (this.catalogs.get(id) === joined) this.catalogs.delete(id);
+        if (this.catalogs.get(id) === joined) {
+          if (this.revalidatedIdentities.get(id) === joined.identity) return Effect.succeed(tools);
+          this.revalidatedIdentities.set(id, joined.identity);
+          this.catalogs.delete(id);
+        }
         return this.catalog(id, callOptions);
       });
     });

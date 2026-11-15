@@ -866,8 +866,11 @@ catalog they join had settled before they asked and has passed its TTL, it is
 evicted and listed again, replacing the whole retained catalog (INV-8), so a
 reclassification reaches such a program within the TTL without a `list_changed`
 notification. Concurrent askers share the one relisting, and a listing still in
-flight when a call asks is accepted. Discovery and all other calls keep the
-retained catalog for the request.
+flight when a call asks is accepted. Each connector is revalidated at most once
+per request and retained identity: a relisting that comes back expired (a zero
+TTL, an uncached listing, or the stale fallback) is kept for the request's
+remaining calls rather than listed again before each. Discovery and all other
+calls keep the retained catalog for the request.
 
 **Stale listings.** Discovery alone may list a tool catalog up to 24 hours past
 its expiry (`STALE_DISCOVERY_MS`), so chunks and manifests keep that storage TTL

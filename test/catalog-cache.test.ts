@@ -1398,6 +1398,37 @@ it("INV-9 INV-8: stale tool fallback preserves expiry, remains partitioned and e
   await expect(f.read(root)).rejects.toMatchObject({ code: "connector_call_failed" });
 });
 
+it("INV-1 INV-8: a request revalidates an expired catalog at most once, whatever its relisting brings back", async () => {
+  const calls = 5;
+  const revalidatingCalls = async (f: Awaited<ReturnType<typeof fixture>>, root: Registry) => {
+    const before = f.listings();
+    const resolved = await f.discover(f.viewFor(root), async (service) => {
+      const results = [];
+      for (let call = 0; call < calls; call++) results.push(await runEdge(service.resolve(`${f.id}.read`, {}, true)));
+      return results;
+    });
+    return { ok: resolved.map((resolution) => resolution.ok), listings: f.listings() - before };
+  };
+  const everyCall = Array(calls).fill(true);
+
+  const zeroTtl = await fixture({ ttl: 0 });
+  expect(await revalidatingCalls(zeroTtl, zeroTtl.registry())).toEqual({ ok: everyCall, listings: 2 });
+
+  const unavailable = await fixture({ ttl: 1_000 });
+  let now = Date.now();
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  const root = unavailable.registry();
+  await unavailable.read(root);
+  now += 1_100;
+  unavailable.mode("transient");
+  expect(await revalidatingCalls(unavailable, root)).toEqual({ ok: everyCall, listings: 2 });
+
+  const fresh = await fixture({ ttl: 60_000 });
+  const freshRoot = fresh.registry();
+  await fresh.read(freshRoot);
+  expect(await revalidatingCalls(fresh, freshRoot)).toEqual({ ok: everyCall, listings: 0 });
+});
+
 describe("stale catalog listing", () => {
   const search = (service: CatalogService) => service.search({ query: "read" });
   const clock = () => {
