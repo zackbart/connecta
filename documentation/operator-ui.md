@@ -158,7 +158,11 @@ Setup button.
   with a copy button. No snippet carries a token.
 
 Counts intersect live tools with the pool's declared tools (the `/mcp` matrix
-cells for the root), guarded grants' live verdicts, and read-only mode.
+cells for the root), guarded grants' live verdicts, and read-only mode. While
+any of an endpoint's connectors has no live tools yet (details pending, a
+stored row awaiting its live read, or a parked stored timeout), the row's
+count reads "–" and the map's sentences say its tools are not known yet,
+never zero.
 
 ### Connectors
 
@@ -205,7 +209,9 @@ endpoint, `/mcp` first. A row header is the connector's monogram and name, plus
 a status dot linking to Connection when it needs fixing. Each cell is a pie of
 how much of the live catalog it grants, with "all", a count, or a dash for
 none; read-only columns are hatched. Only granted names still in the live
-catalog count. An unknown catalog shows a dashed empty ring and "?". A cell
+catalog count. An unknown catalog shows a dashed empty ring and "?". A
+connector whose details are pending keeps its row in config order, marked
+"Checking…" in place of its status dot, with unknown cells. A cell
 with grants is a button named like "GitHub on /mcp/support: 1 of 2 live
 tools, read-only"; it opens a popover of that cell's tools, each with a read
 or write pill (a write struck through on a read-only endpoint), and its

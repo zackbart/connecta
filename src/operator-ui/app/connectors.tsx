@@ -284,7 +284,12 @@ export function ConnectorsPage({ state }: { state: OperatorState }) {
           {visible.length && view === "matrix" ? (
             <ConnectorMatrix
               contract={contract}
-              rows={visible.flatMap(({ config, row }) => (row ? [rowOf(config, row)] : []))}
+              rows={visible.map(({ config, row }) => ({
+                id: config.id,
+                title: config.title ?? config.id,
+                readOnly: config.readOnly === true,
+                live: row,
+              }))}
               state={state}
               health={health}
               link={(row) => <ConnectorLink id={row.id} name={row.title} />}

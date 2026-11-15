@@ -1,5 +1,5 @@
 import type { OperatorAgent, OperatorUiContractV2 } from "./contract.js";
-import { endpointRows, hueOf, initialsOf, type EndpointRow } from "./endpoints.js";
+import { endpointRows, hueOf, initialsOf, toolsPending, type EndpointRow } from "./endpoints.js";
 import { connectorVerdict, PENDING_VERDICT, type ConnectorSignals, type ConnectorVerdict } from "./view.js";
 
 /**
@@ -188,17 +188,19 @@ function callersOf(contract: OperatorUiContractV2, rows: EndpointRow[]): Caller[
 }
 
 /** Unique live tools a set of endpoints serves, by address. */
-function servedTools(rows: EndpointRow[]): { connectors: Set<string>; tools: number; write: number } {
+function servedTools(rows: EndpointRow[]): { connectors: Set<string>; phrase: string } {
   const connectors = new Set<string>();
   const tools = new Map<string, "read" | "write">();
+  let pending = false;
   for (const row of rows) {
     for (const group of row.groups) {
       connectors.add(group.config.id);
+      if (toolsPending(group)) pending = true;
       for (const tool of group.tools) tools.set(tool.address, tool.classification);
     }
   }
   const write = [...tools.values()].filter((value) => value === "write").length;
-  return { connectors, tools: tools.size, write };
+  return { connectors, phrase: pending ? "tools not known yet" : toolsPhrase(tools.size, write) };
 }
 
 export function toolsPhrase(tools: number, write: number): string {
@@ -217,7 +219,7 @@ function callerSummary(caller: Caller): string {
     caller.endpoints.map((row) => (caller.kind === "agent" ? (row.agentPath ?? row.path) : row.path)),
   );
   const reach = served.connectors.size
-    ? `${name} reaches ${plural(served.connectors.size, "connector")} through ${through}: ${toolsPhrase(served.tools, served.write)}.`
+    ? `${name} reaches ${plural(served.connectors.size, "connector")} through ${through}: ${served.phrase}.`
     : `${name} uses ${through}, which serves no connectors.`;
   if (caller.kind !== "agent" || tokenWorks(caller.agent)) return reach;
   const state = caller.agent?.token?.state;
@@ -244,7 +246,7 @@ function endpointSummary(row: EndpointRow, callers: Caller[]): string {
   const served = servedTools([row]);
   const mode = row.readOnly ? `${row.path} is read-only and serves ${users}` : `${row.path} serves ${users}`;
   if (!served.connectors.size) return `${mode}. It has no connectors.`;
-  return `${mode} with ${plural(served.connectors.size, "connector")}: ${toolsPhrase(served.tools, served.write)}.`;
+  return `${mode} with ${plural(served.connectors.size, "connector")}: ${served.phrase}.`;
 }
 
 const STATUS_SENTENCE: Readonly<Record<MapHealth, string>> = {

@@ -5,6 +5,7 @@ import {
   endpointRows,
   runsAsLabel,
   toolSplit,
+  toolsPending,
   visibleChips,
   type AccessChip,
   type EndpointGroup,
@@ -230,6 +231,17 @@ function ConnectorMarks({ endpoint, health }: { endpoint: EndpointRow; health: C
 }
 
 function ToolSummary({ endpoint }: { endpoint: EndpointRow }) {
+  if (endpoint.toolCount === null) {
+    return (
+      <div className="endpoint-tool-summary" title="Tools not known yet">
+        <span className="endpoint-count">
+          <span className="visually-hidden">Tools: not known yet</span>
+          <span aria-hidden="true">–</span>
+        </span>
+        <SplitBar read={0} write={0} />
+      </div>
+    );
+  }
   const split = toolSplit(endpoint.groups.flatMap((group) => group.tools));
   return (
     <div className="endpoint-tool-summary" title={`${split.read} read · ${split.write} write`}>
@@ -313,8 +325,10 @@ function EndpointTools({ endpoint, health }: { endpoint: EndpointRow; health: Co
                         </li>
                       ))}
                     </ul>
-                  ) : !group.live || group.live.observedAt !== undefined ? (
-                    <span className="meta">Checking…</span>
+                  ) : toolsPending(group) ? (
+                    <span className="meta">
+                      {group.live?.problem === "connector_timeout" ? "Not known until Refresh" : "Checking…"}
+                    </span>
                   ) : (
                     <span className="meta">No tools</span>
                   )}

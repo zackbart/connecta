@@ -555,7 +555,13 @@ test("an unread connector holds its place and height, counts in All only, and ne
   const breakdown = root.locator(".endpoint-breakdown");
   await expect(breakdown.locator("tr", { hasText: "Service svc1" })).toContainText("Checking…");
   await expect(breakdown.getByText("No tools")).toHaveCount(0);
+  await expect(root.locator(".endpoint-count")).toHaveText("Tools: not known yet–");
+  await page.getByRole("link", { name: "Connectors", exact: true }).click();
+  await page.getByRole("button", { name: "Matrix", exact: true }).click();
+  const matrix = page.getByRole("table", { name: "Connectors by endpoint" });
+  await expect(matrix.locator("tbody th")).toHaveText([/Service svc0/, /Service svc1Checking…/, /Service svc2/]);
   await page.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(view.locator('[data-node="endpoint:/mcp"]')).toHaveAttribute("aria-label", /tools not known yet/);
 
   releaseStored();
   await expect(view.getByText("All clear")).toBeVisible();

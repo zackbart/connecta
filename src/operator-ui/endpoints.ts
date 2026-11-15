@@ -40,7 +40,8 @@ export interface EndpointRow {
   readOnly: boolean;
   surface: "meta" | "native";
   executeCode: boolean;
-  toolCount: number;
+  /** Null while any connector's tools have not loaded. */
+  toolCount: number | null;
   groups: EndpointGroup[];
   /** Who can use it: root.maintainers for /mcp, the pool's members otherwise. */
   access: AccessChip[];
@@ -151,7 +152,12 @@ function endpointGroups(
   });
 }
 
-const toolCount = (groups: EndpointGroup[]) => groups.reduce((n, group) => n + group.tools.length, 0);
+/** The connector's details or live tools have not loaded, so its tools are unknown. */
+export const toolsPending = (group: EndpointGroup): boolean =>
+  !group.live || (group.live.observedAt !== undefined && group.live.tools.length === 0);
+
+const toolCount = (groups: EndpointGroup[]) =>
+  groups.some(toolsPending) ? null : groups.reduce((n, group) => n + group.tools.length, 0);
 
 /** How many of these tools read and how many write; an unclassified tool counts as neither. */
 export function toolSplit(tools: ReadonlyArray<{ classification: "read" | "write" | null }>): {
