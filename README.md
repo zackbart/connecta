@@ -75,7 +75,7 @@ connections and access rules still need configuring.
    method supplied by your operator. A person in a single pool can use the
    plain `/mcp` address; their sign-in selects the pool. [Connecting agents](./guides/connecting-agents.md)
    explains what to ask for; the [deployment guide](./documentation/deploying.md)
-   has runnable steps.
+   has runnable steps and [settings for common AI apps](./documentation/deploying.md#connect-an-mcp-host).
 
 ```mermaid
 flowchart LR

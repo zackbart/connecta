@@ -23,6 +23,7 @@ For a new deployment, start with [Deploying Connecta](./deploying.md).
 | Upgrade between versions                           | [Upgrade an existing deployment](./deploying.md#upgrade-an-existing-deployment), including [splitting mixed pools](./pool-membership-upgrade.md) and [migration to 0.33](./migration-0.33.md) |
 | Diagnose with `connecta doctor`                    | [Verify and diagnose](./deploying.md#verify-and-diagnose)                                                                                                                                     |
 | Connect a client with tool search                  | [Native tool surface](./meta-tools.md#native-tool-surface), [Eve agents](./meta-tools.md#eve-agents)                                                                                          |
+| Configure a specific MCP host                      | [Connect an MCP host](./deploying.md#connect-an-mcp-host)                                                                                                                                     |
 
 For removed hosted presets and the former hosted modes of Stripe, Vercel,
 Cloudflare, and GitHub, use [Migrate hosted MCP presets](./hosted-mcp-migration.md).

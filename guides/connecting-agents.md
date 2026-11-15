@@ -41,7 +41,10 @@ before saving those credentials or connecting accounts.
 - **The tools and accounts.** Know which actions are available, whose account
   they use, and whether changes are allowed. In 0.35.0, a pool can offer
   [native tools](../documentation/meta-tools.md#tool-presentation) for apps
-  with their own tool search.
+  with their own tool search or their own code mode.
+- **Settings for your AI app.** Some apps need a setting or a short
+  server name to work well; the [host notes](../documentation/deploying.md#connect-an-mcp-host)
+  list them.
 - **The approval policy.** Find out whether writes ask a person or run unattended.
 - **A safe first test.** Agree on a small read, such as listing one ticket,
   and the result you expect.
