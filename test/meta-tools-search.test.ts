@@ -62,11 +62,8 @@ function expectStructurallyCompleteTypeShape(text: string): void {
   expect(text).not.toContain("\uFFFD");
 }
 
-/**
- * Just below the measured 0.888, 27 and 0.856, 38. Connector descriptions cost one tune top-3:
- * Intercom's search passes the labelled tool for "find a conversation with a user".
- */
-const FLOOR = { tune: { mrr: 0.87, top3: 27 }, heldOut: { mrr: 0.84, top3: 38 } };
+/** Just below the measured 0.914, 28 and 0.868, 38. */
+const FLOOR = { tune: { mrr: 0.87, top3: 28 }, heldOut: { mrr: 0.84, top3: 38 } };
 
 describe("description summaries", () => {
   it("takes the first complete sentence, extends it to 40 characters and caps it at 160", () => {
