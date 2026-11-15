@@ -379,23 +379,29 @@ Rely on the pool's `readOnly` and `writes` for protection.
 
 ### Cursor
 
-- **OAuth uses dynamic client registration only.** Cursor registers a
-  `cursor://` custom-scheme redirect, plus `http://localhost:8787/callback`
-  for the desktop app and `https://www.cursor.com/agents/mcp/oauth/callback`
-  for web and cloud agents. Allow all three in your authorization server's
+- **OAuth registers dynamically or uses a pre-registered client.** Without
+  client settings, Cursor registers itself through dynamic client
+  registration. To use a client you registered yourself, set its
+  `auth.CLIENT_ID` (and `CLIENT_SECRET` and `scopes` if needed) in the server
+  entry; see [Cursor's MCP documentation](https://cursor.com/docs/mcp).
+  Either way, allow the callback for each Cursor surface you use:
+  `http://localhost:8787/callback` for the desktop app and
+  `https://www.cursor.com/agents/mcp/oauth/callback` for web and cloud
+  agents. With dynamic registration, add them to your authorization server's
   registration settings, for example
   [Managed OAuth's allowed redirect URIs](./auth.md#cloudflare-access-on-workers).
-  No current Cursor source confirms the exact `cursor://` string, so read it
-  from a failed registration if one is refused.
 - **Give a static agent token only at `/agent/<pool>`.** When OAuth discovery
   succeeds, Cursor starts OAuth and ignores a configured `Authorization`
   header. Agent endpoints publish no OAuth metadata, so the header is used.
   At `/mcp` and `/mcp/<pool>`, use Cursor's OAuth sign-in instead.
-- **Keep the server name short.** Cursor requires the server name plus the
-  tool name to stay under 60 characters. On a meta pool the longest tool is
-  `call_destructive_tool` (21 characters), so use a server name of at most 38.
-  On a native pool tool names reach 48 characters, so use at most 11.
-- Cursor's CLI ends a tool call at 60 seconds, like ChatGPT.
+- **Keep the server name short.** Cursor staff have reported a limit of 60
+  characters for the server name plus the tool name; current Cursor
+  documentation does not state one. On a meta pool the longest tool is
+  `call_destructive_tool` (21 characters), so a server name of at most 38
+  stays under it. On a native pool tool names reach 48 characters, so use at
+  most 11.
+- Cursor staff have also reported that Cursor's CLI ends a tool call after
+  about 60 seconds. Keep program work short, as for ChatGPT.
 
 ### VS Code and GitHub Copilot
 
@@ -415,23 +421,28 @@ Rely on the pool's `readOnly` and `writes` for protection.
 - Gemini CLI adds server instructions to the model's context only in trusted
   folders. Trust the project folder for Connecta's routing text to reach the
   model.
-- OAuth uses dynamic client registration only, and Gemini CLI registers again
-  on each `/mcp auth`. Configure the exact endpoint URL: the advertised
-  `resource` must match it, so watch for trailing slashes.
+- OAuth uses a provisioned client when the server's `oauth.clientId` is set,
+  and dynamic client registration otherwise; see
+  [Gemini CLI's MCP server documentation](https://geminicli.com/docs/tools/mcp-server/).
+  Without a configured client id, Gemini CLI registers again on each
+  `/mcp auth`. Configure the exact endpoint URL: the advertised `resource`
+  must match it, so watch for trailing slashes.
 - Gemini CLI runs tool calls in parallel by default, so two writes can run at
   the same time.
 
 ### ChatGPT
 
-- **Keep each call under 60 seconds.** ChatGPT ends every tool call at 60
-  seconds and may send it again. Connecta's default response ceiling of 55
-  seconds (`execute.watchdogMs`) fits, so do not raise it on an endpoint
-  ChatGPT uses. Keep program work short, and never resend a write after a
-  timeout ([response ceiling](./code-mode.md#cancellation-and-limits)).
+- **Keep each call short.** OpenAI staff have reported that ChatGPT ends a
+  tool call after about 60 seconds and may send it again; OpenAI's
+  documentation does not state a limit. Connecta's default response ceiling of
+  55 seconds (`execute.watchdogMs`) stays under that, so do not raise it on an
+  endpoint ChatGPT uses. Keep program work short, and never resend a write
+  after a timeout ([response ceiling](./code-mode.md#cancellation-and-limits)).
 - ChatGPT treats any tool without `readOnlyHint: true` as a write and asks
-  for confirmation. Connecta's read tools carry the hint, so only
-  `call_destructive_tool`, native write tools and a writable endpoint's
-  `execute_code` ask.
+  for confirmation. Connecta's read tools carry the hint. `call_destructive_tool`,
+  native write tools, a writable endpoint's `execute_code` and
+  `authorize_connector` do not, so they can ask, `authorize_connector` even on
+  a read-only endpoint.
 
 ## Verify and diagnose
 
