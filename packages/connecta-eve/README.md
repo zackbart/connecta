@@ -4,16 +4,14 @@ Connect an Eve agent to a Connecta agent pool and load its endpoint instructions
 once per turn. The helper runs in the Eve app; the Connecta server
 runs separately. No `@zackbart/connecta` dependency is installed by this package.
 
-Requires **Node 24+** and **Eve 1.0.0-rc.10**. Development and consumer
-checks use that exact release candidate. The peer stays pinned during the RC
-period; later candidates and stable 1.0 need a compatibility check. Helper
-releases share Connecta's version and tag; choose the helper version matching
-your server release.
+Requires **Node 24+** and **Eve 1.0.2 or a later 1.x release**. Development and
+consumer checks use Eve 1.0.2 exactly. Helper releases share Connecta's version
+and tag; choose the helper version matching your server release.
 
 ## Install and add two files
 
 ```sh
-npm install @zackbart/connecta-eve eve@1.0.0-rc.10
+npm install @zackbart/connecta-eve eve@^1.0.2
 ```
 
 The server must declare your agent, admit it to the named pool and issue its
@@ -138,16 +136,41 @@ use consistent trusted policy data as with a dynamic pool selector. This policy
 controls what the app offers; Connecta still enforces endpoint authorization.
 No Eve dynamic-value unwrapping is required.
 
-## Upgrading to Eve 1.0.0-rc.10
+## Upgrading to Eve 1.0
 
-Update the app to `eve@1.0.0-rc.10`, reinstall to refresh its lockfile, then
-rebuild and test it before deploying. The helper's connection, dynamic pool,
-instructions and approval APIs use Eve's stable entry points and require no
-authoring changes for this RC. Eve's
+Update the app to `eve@^1.0.2`, reinstall to refresh its lockfile, then rebuild
+and test it before deploying. The helper's connection, dynamic pool,
+instructions, skill and approval APIs use Eve's stable entry points and require
+no authoring changes. Eve's
 [1.0 stability policy](https://eve.dev/docs/reference/typescript-api#stability-policy)
 does not cover `experimental` fields or internal modules.
 
-From rc.4, review Eve's release notes for
+From rc.10, review Eve's release notes for
+[rc.11](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.11) through
+[1.0.2](https://github.com/vercel/eve/releases/tag/eve%401.0.2); the
+[1.0.0 notes](https://github.com/vercel/eve/releases/tag/eve%401.0.0) collect
+every candidate since 0.91. These change app-owned code and deployments the
+helper does not manage:
+
+- **MCP discovery.** A Streamable HTTP connection whose `server/discover`
+  request fails before the server answers now fails instead of retrying with
+  `initialize` (rc.17). Connecta answers `server/discover`, so its connections
+  are unaffected; set `protocolVersionDiscovery: false` on another server that
+  cannot handle it.
+- **Node.js 26.** New Eve projects target Node.js 26, and Eve moves an existing
+  project's `engines.node` pin to `26.x` when it updates `package.json` (rc.13).
+  Eve and this helper still run on Node 24.
+- **Dynamic schedules.** An `auth` callback that returns `null` now fails the
+  occurrence without a retry (rc.11); throw on a failed lookup instead.
+- **Web search.** Agents without `agent/tools/web_search.ts` search with Parallel
+  instead of Exa on AI Gateway models (1.0.1).
+- **Slack.** Approvals render as one card. For an approval with tool input,
+  `renderInteractionBlocks` returns a `container` whose `child_blocks` hold the
+  preview and actions (rc.12).
+- **Connect.** Eve no longer declares `@vercel/connect` as an optional peer
+  (1.0.1); an app that imports `@vercel/connect/eve` still installs 2.7.0 or later.
+
+From rc.4, also review Eve's release notes for
 [rc.5](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.5) through
 [rc.10](https://github.com/vercel/eve/releases/tag/eve%401.0.0-rc.10).
 These change app-owned code and deployments the helper does not manage:
@@ -340,7 +363,7 @@ custom audience, even when Vercel signed them.
 
 In a source checkout with dependencies installed and both packages built, run
 `pnpm --filter @zackbart/connecta-eve run probe:catalog --output /absolute/path/outside/checkout`
-on Node 24. This boots real Eve 1.0.0-rc.10 with a packed, installed helper against
+on Node 24. This boots real Eve 1.0.2 with a packed, installed helper against
 seeded local catalogs of 40, 100, 250, 500, and 1,000 downstream tools on the
 meta, native, and native-plus-code surfaces. Native listings include three
 Connecta tools beyond the downstream count. A 1,001-tool native catalog must
@@ -380,7 +403,7 @@ export default connectaSkill({
 });
 ```
 
-This uses the pinned Eve 1.0.0-rc.10 public `defineSkill` and `defineDynamic`
+This uses Eve 1.0's public `defineSkill` and `defineDynamic`
 APIs. Eve's deferred discovery searches the description; loading adds only
 instructions. It never installs tools. Use the same caller predicate and pool
 selector as the connection. A false or throwing predicate skips selection,
