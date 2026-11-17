@@ -12,6 +12,23 @@ export const PLAN = "4001";
 export const CATEGORY = "6001";
 export const REMOVED = "2999";
 export const NOTE = "Called about volunteering.";
+const DAY_MS = 86_400_000;
+function sundayAfter(days: number): Date {
+  const today = Math.floor(Date.now() / DAY_MS) * DAY_MS;
+  const day = new Date(today + days * DAY_MS);
+  return new Date(day.getTime() + ((7 - day.getUTCDay()) % 7) * DAY_MS);
+}
+function serviceDate(date: Date) {
+  const at = new Date(date.getTime() + 15 * 3_600_000);
+  return {
+    dates: date.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" }),
+    sort_date: at.toISOString().replace(/\.000Z$/, "Z"),
+    starts_at: at.toISOString().replace(/\.000Z$/, "Z"),
+    ends_at: new Date(at.getTime() + 3_600_000).toISOString().replace(/\.000Z$/, "Z"),
+  };
+}
+export const FUTURE_SERVICE = serviceDate(sundayAfter(14));
+export const PAST_SERVICE = serviceDate(sundayAfter(-35));
 const ref = (type: string, id: string) => ({ data: { type, id } });
 const resource = (type: string, id: string, attributes: Row, relationships: Row = {}) => ({
   type,
@@ -256,15 +273,15 @@ export class FakePlanningCenter {
           [
             resource("Plan", PLAN, {
               title: "October Gathering",
-              dates: "October 25, 2026",
-              sort_date: "2026-10-25T15:00:00Z",
+              dates: FUTURE_SERVICE.dates,
+              sort_date: FUTURE_SERVICE.sort_date,
               items_count: 2,
               plan_people_count: 1,
             }),
             resource("Plan", "4002", {
               title: "September Gathering",
-              sort_date: "2026-09-27T15:00:00Z",
-              dates: "September 27, 2026",
+              sort_date: PAST_SERVICE.sort_date,
+              dates: PAST_SERVICE.dates,
             }),
           ].filter((r) => q.filter !== "future" || r.id === PLAN),
         );
@@ -275,16 +292,16 @@ export class FakePlanningCenter {
             PLAN,
             {
               title: "October Gathering",
-              dates: "October 25, 2026",
-              sort_date: "2026-10-25T15:00:00Z",
+              dates: FUTURE_SERVICE.dates,
+              sort_date: FUTURE_SERVICE.sort_date,
               total_length: 2400,
             },
             { plan_times: { data: [{ type: "PlanTime", id: "4101" }] } },
           ),
           [
             resource("PlanTime", "4101", {
-              starts_at: "2026-10-25T15:00:00Z",
-              ends_at: "2026-10-25T16:00:00Z",
+              starts_at: FUTURE_SERVICE.starts_at,
+              ends_at: FUTURE_SERVICE.ends_at,
               time_type: "service",
             }),
           ],
@@ -315,8 +332,8 @@ export class FakePlanningCenter {
                   "Schedule",
                   `45${scheduled}`,
                   {
-                    dates: q.filter === "past" ? "September 27, 2026" : "October 25, 2026",
-                    sort_date: "2026-10-25T15:00:00Z",
+                    dates: (q.filter === "past" ? PAST_SERVICE : FUTURE_SERVICE).dates,
+                    sort_date: (q.filter === "past" ? PAST_SERVICE : FUTURE_SERVICE).sort_date,
                     service_type_name: "Sunday Morning",
                     team_name: "Welcome",
                     status: "C",

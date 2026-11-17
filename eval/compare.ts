@@ -20,6 +20,7 @@ import {
   fmtSize,
   median,
   modelEfficiency,
+  modelTurnsLabel,
   reliability,
   trialEfficiency,
   type Grade,
@@ -329,6 +330,7 @@ function settingMismatches(a: AgentResultFile, b: AgentResultFile, except: strin
   for (const trial of a.trials) {
     const paired = right.get(key(trial));
     if (!paired) continue;
+    if (isNA(trial, a.config.runner ?? "codex") || isNA(paired, b.config.runner ?? "codex")) continue;
     const served = (f: AgentResultFile, t: TrialResult) => observation(t, f.config.runner ?? "codex")?.servedModel;
     if (differ(served(a, trial), served(b, paired))) out.push(`served model for ${key(trial)}`);
   }
@@ -377,29 +379,39 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
     const lines = [
       `Native surface comparison: ${arms.join(" vs ")}; paired ${a.protocol!.pairId}; diagnostic only; use the preregistered Worker decision rule.`,
     ];
+    const graded = (file: AgentResultFile, trials: Map<string, TrialResult>): AgentResultFile => ({
+      ...file,
+      trials: [...trials.values()],
+    });
+    const regraded = [graded(a, left), graded(b, right)] as const;
     for (const [arm, file] of [
-      [arms[0], a],
-      [arms[1], b],
+      [arms[0], regraded[0]],
+      [arms[1], regraded[1]],
     ] as const) {
-      const passed = file.trials.filter((t) => trialOutcome(t, file.config.runner!).pass).length;
-      lines.push(`${arm}: ${passed}/${file.trials.length}; duplicate writes ${safety(file.trials).duplicates}`);
+      const runner = file.config.runner!;
+      const eligible = file.trials.filter((t) => !isNA(t, runner));
+      const passed = eligible.filter((t) => trialOutcome(t, runner).pass).length;
+      lines.push(
+        `${arm}: ${passed}/${eligible.length}; N/A ${file.trials.length - eligible.length} excluded; duplicate writes ${safety(file.trials).duplicates}`,
+      );
       for (const model of file.config.models)
         lines.push(
           ...efficiencyLines(
             modelEfficiency(
               file.trials.filter((t) => t.model === model),
-              { include: () => true, pass: (t) => trialOutcome(t, file.config.runner!).pass },
+              { include: (t) => !isNA(t, runner), pass: (t) => trialOutcome(t, runner).pass },
             ),
             reliability(
               file.trials.filter((t) => t.model === model),
               file.config.repeats,
-              (t) => (trialOutcome(t, file.config.runner!).pass ? "pass" : "fail"),
+              (t) => (isNA(t, runner) ? "exclude" : trialOutcome(t, runner).pass ? "pass" : "fail"),
             ),
+            modelTurnsLabel(runner),
           ),
         );
     }
-    const native = arms[0] === "native" ? a : arms[1] === "native" ? b : undefined;
-    const noCode = arms[0] === "native-no-code" ? a : arms[1] === "native-no-code" ? b : undefined;
+    const native = arms[0] === "native" ? regraded[0] : arms[1] === "native" ? regraded[1] : undefined;
+    const noCode = arms[0] === "native-no-code" ? regraded[0] : arms[1] === "native-no-code" ? regraded[1] : undefined;
     if (native && noCode) {
       const passedIn = (file: AgentResultFile) => (trial: TrialResult) => trialOutcome(trial, file.config.runner!).pass;
       lines.push(...noCodeDecisionLines(native, noCode, passedIn(native), passedIn(noCode)));
@@ -477,10 +489,10 @@ export function compare(a: AgentResultFile, b: AgentResultFile, options: { allow
         return t.saved ? Number(first?.isError === true) : undefined;
       });
       lines.push(
-        `  ${arm} mean/trial: model turns ${average(ts.map((t) => t.metrics.modelTurns))}; top-level calls ${average(ts.map((t) => sum([...Object.values(t.metrics.metaTools), ...Object.values(t.metrics.otherTools)])))}; input tokens ${average(ts.map((t) => t.metrics.tokens.input))}; output tokens ${average(ts.map((t) => t.metrics.tokens.output))}; wall ms ${average(ts.map((t) => t.metrics.wallMs))}; tool errors ${average(ts.map((t) => t.metrics.toolErrors))}; first-attempt program errors ${sum(firstErrors.filter((v): v is number => v !== undefined))}/${firstErrors.filter((v) => v !== undefined).length} observed`,
+        `  ${arm} mean/trial: ${modelTurnsLabel(runner)} ${average(ts.map((t) => t.metrics.modelTurns))}; top-level calls ${average(ts.map((t) => sum([...Object.values(t.metrics.metaTools), ...Object.values(t.metrics.otherTools)])))}; input tokens ${average(ts.map((t) => t.metrics.tokens.input))}; output tokens ${average(ts.map((t) => t.metrics.tokens.output))}; wall ms ${average(ts.map((t) => t.metrics.wallMs))}; tool errors ${average(ts.map((t) => t.metrics.toolErrors))}; first-attempt program errors ${sum(firstErrors.filter((v): v is number => v !== undefined))}/${firstErrors.filter((v) => v !== undefined).length} observed`,
       );
       lines.push(
-        `  ${arm} median/trial: model turns ${middle(ts.map((t) => t.metrics.modelTurns))}; top-level calls ${middle(ts.map((t) => sum([...Object.values(t.metrics.metaTools), ...Object.values(t.metrics.otherTools)])))}; input tokens ${middle(ts.map((t) => t.metrics.tokens.input))}; output tokens ${middle(ts.map((t) => t.metrics.tokens.output))}; wall ms ${middle(ts.map((t) => t.metrics.wallMs))}; tool errors ${middle(ts.map((t) => t.metrics.toolErrors))}`,
+        `  ${arm} median/trial: ${modelTurnsLabel(runner)} ${middle(ts.map((t) => t.metrics.modelTurns))}; top-level calls ${middle(ts.map((t) => sum([...Object.values(t.metrics.metaTools), ...Object.values(t.metrics.otherTools)])))}; input tokens ${middle(ts.map((t) => t.metrics.tokens.input))}; output tokens ${middle(ts.map((t) => t.metrics.tokens.output))}; wall ms ${middle(ts.map((t) => t.metrics.wallMs))}; tool errors ${middle(ts.map((t) => t.metrics.toolErrors))}`,
       );
       const efficiency = ts.map(trialEfficiency);
       const [summary] = modelEfficiency(ts, { include: () => true, pass: () => true });
@@ -556,9 +568,11 @@ export function crossTarget(node: AgentResultFile, worker: AgentResultFile): str
   ] as [string, TrialResult[]][]) {
     lines.push(`${label}:`);
     lines.push(
-      ...efficiencyLines(modelEfficiency(trials, options), reliability(trials, node.config.repeats, grade)).map(
-        (line) => `  ${line}`,
-      ),
+      ...efficiencyLines(
+        modelEfficiency(trials, options),
+        reliability(trials, node.config.repeats, grade),
+        modelTurnsLabel(runner),
+      ).map((line) => `  ${line}`),
     );
   }
   lines.push("Per task, passing medians (n passing/ran):");
@@ -575,7 +589,7 @@ export function crossTarget(node: AgentResultFile, worker: AgentResultFile): str
         const m = summary.medians;
         const value = (stat: { value: number | undefined }) => (stat.value === undefined ? "N/A" : String(stat.value));
         lines.push(
-          `    ${label.padEnd(6)} ${summary.model} ${summary.passing}/${summary.trials}: calls ${value(m.calls)}, model turns ${value(m.modelTurns)}, input tokens incl. cache ${value(m.promptTokens)}, wall ms ${value(m.wallMs)}, response ${fmtSize(m.responseBytes.value)}, tool errors ${value(m.toolErrors)}`,
+          `    ${label.padEnd(6)} ${summary.model} ${summary.passing}/${summary.trials}: calls ${value(m.calls)}, ${modelTurnsLabel(runner)} ${value(m.modelTurns)}, input tokens incl. cache ${value(m.promptTokens)}, wall ms ${value(m.wallMs)}, response ${fmtSize(m.responseBytes.value)}, tool errors ${value(m.toolErrors)}`,
         );
       }
   }

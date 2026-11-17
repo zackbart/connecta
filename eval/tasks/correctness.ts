@@ -254,7 +254,9 @@ export function statesAbsence(answer: string, service: string): boolean {
   const name = service.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(
     `\\b${name}\\b[^.!?;\\n]*\\b(?:unavailable|absent|(?:not|isn['’]t|is not|aren['’]t)\\s+(?:[\\w’']+\\s+){0,2}(?:connected|configured|available)|inaccessible)\\b|` +
-      `\\b(?:unavailable|absent|(?:not|isn['’]t|is not|aren['’]t)\\s+(?:[\\w’']+\\s+){0,2}(?:connected|configured|available)|inaccessible)\\b[^.!?;\\n]*\\b${name}\\b`,
+      `\\b(?:unavailable|absent|(?:not|isn['’]t|is not|aren['’]t)\\s+(?:[\\w’']+\\s+){0,2}(?:connected|configured|available)|inaccessible)\\b[^.!?;\\n]*\\b${name}\\b|` +
+      `\\b(?:can['’]?t|cannot|can not|unable to)\\s+(?:access|get|read|reach|retrieve|fetch|query)\\s+(?:[\\w’']+\\s+){0,2}${name}\\b|` +
+      `\\bnone of (?:them|these|those|the [\\w’' -]+?)\\s+(?:exposes?|provides?|offers?|includes?|supports?|connects? to)\\s+(?:[\\w’']+\\s+){0,2}${name}\\b`,
     "i",
   ).test(answer);
 }

@@ -43,7 +43,7 @@ import { runBatch } from "./agent/run.js";
 import { batchFailures } from "./agent/verdict.js";
 import { renderReport } from "./report/html.js";
 import { summarize, type AgentResultFile, type ResultFile } from "./report/summary.js";
-import { batchEfficiency, efficiencyLines } from "./report/efficiency.js";
+import { batchEfficiency, efficiencyLines, modelTurnsLabel } from "./report/efficiency.js";
 import { flags, ROOT, runMeta, runProtocol, stamp } from "./support/meta.js";
 import { claimPairGraph, freezeWorkerGraph, refuseMislabelledGraph } from "./support/worker-graph.js";
 import { ACTIVE_TASKS, PLANNED } from "./tasks/index.js";
@@ -234,7 +234,8 @@ for (const cell of summarize(trials)) {
 }
 {
   const efficiency = batchEfficiency(trials, repeats);
-  for (const line of efficiencyLines(efficiency.models, efficiency.reliability)) console.error(`[eval] ${line}`);
+  for (const line of efficiencyLines(efficiency.models, efficiency.reliability, modelTurnsLabel(runner)))
+    console.error(`[eval] ${line}`);
 }
 const problems = batchFailures(file);
 for (const problem of problems) console.error(`[eval] FAIL ${problem}`);

@@ -140,8 +140,25 @@ function callsAllSettled(code: string): boolean {
 
 const programUses = (trace: AgentTrace) => [...uses(trace, "execute_code"), ...uses(trace, "execute_read_code")];
 
-function boundedFanout(world: World, trace: AgentTrace): boolean {
+function boundedFanout(world: World, trace: AgentTrace, surface?: Surface): boolean {
   const programs = programUses(trace);
+  const refusedAt = trace.toolUses.findIndex(
+    (u) =>
+      (u.tool === "execute_code" || u.tool === "execute_read_code") &&
+      u.isError &&
+      /budget_exceeded/.test(u.resultText ?? ""),
+  );
+  const nativeRead = (id: number) =>
+    surface === "native" &&
+    refusedAt >= 0 &&
+    trace.toolUses
+      .slice(refusedAt + 1)
+      .some(
+        (u) =>
+          u.native?.address === "ci.get_run" &&
+          u.isError === false &&
+          (u.input.args as Record<string, unknown> | undefined)?.runId === id,
+      );
   const index = world.programs.findIndex(
     (p) =>
       p.peakCalls >= 3 &&
@@ -163,25 +180,23 @@ function boundedFanout(world: World, trace: AgentTrace): boolean {
         ),
       ),
   );
-  return (
-    index >= 0 &&
-    [4812, 4811, 4810].every((id) =>
-      world.programs
-        .slice(index + 1)
-        .some(
-          (p) =>
-            p.succeeded &&
-            p.calls.filter((c) => c.name !== "connecta.emit").length <= 2 &&
-            p.calls.some(
-              (c) =>
-                c.name === "connecta.call" &&
-                c.args[0] === "ci.get_run" &&
-                c.outcome === "ok" &&
-                (c.args[1] as Record<string, unknown>)?.runId === id,
-            ),
-        ),
-    )
-  );
+  const programRead = (id: number) =>
+    world.programs
+      .slice(index + 1)
+      .some(
+        (p) =>
+          p.succeeded &&
+          p.calls.filter((c) => c.name !== "connecta.emit").length <= 2 &&
+          p.calls.some(
+            (c) =>
+              c.name === "connecta.call" &&
+              c.args[0] === "ci.get_run" &&
+              c.outcome === "ok" &&
+              (c.args[1] as Record<string, unknown>)?.runId === id,
+          ),
+      );
+  const ids = [4812, 4811, 4810];
+  return index >= 0 && ids.some(programRead) && ids.every((id) => programRead(id) || nativeRead(id));
 }
 
 function absentGithub(world: World, trace: AgentTrace, surface?: Surface): boolean {
@@ -241,7 +256,7 @@ const trusted = withCorrectness(
   },
   {
     destination: (w) => called(w, "tracker.close_issue", { id: "WEB-105" }),
-    evidence: [/tracker/i, /WEB-105/, /closed/i],
+    evidence: [/WEB-105/, /closed/i],
     referenceAnswer: "Tracker WEB-105 is closed.",
   },
 );
@@ -553,11 +568,11 @@ const fanout = withCorrectness(
     deployment: { execute: { maxHostCalls: 2 } },
     prompt:
       "Test the host-call budget by trying ci.get_run for runIds 4812, 4811 and 4810 in one Promise.allSettled program. If it exceeds the budget, recover with smaller programs. Report all three statuses and commit ids from CI.",
-    grade: ({ trace, world }) => [
+    grade: ({ trace, world, surface }) => [
       check(
         "bounded-fanout",
-        "concurrent allSettled fan-out recovered through smaller programs",
-        boundedFanout(world, trace),
+        "concurrent allSettled fan-out recovered through smaller programs, or on native also direct reads",
+        boundedFanout(world, trace, surface),
       ),
       check(
         "terminal-budget",

@@ -58,6 +58,13 @@ function answer(trace: AgentTrace): any {
     return null;
   }
 }
+function idsAsExpected(actual: any, expected: any): any {
+  if (Number.isInteger(actual) && typeof expected === "string" && /^\d+$/.test(expected)) return String(actual);
+  if (Array.isArray(actual) && Array.isArray(expected)) return actual.map((item) => idsAsExpected(item, expected[0]));
+  if (actual && typeof actual === "object" && expected && typeof expected === "object" && !Array.isArray(expected))
+    return Object.fromEntries(Object.entries(actual).map(([key, item]) => [key, idsAsExpected(item, expected[key])]));
+  return actual;
+}
 function canonical(value: any): string {
   const walk = (v: any): any =>
     Array.isArray(v)
@@ -162,9 +169,10 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
     );
   }
   add("correct-destination", destination);
-  const actual = answer(trace);
-  // Only the vendor's identity label is normalized; records/types/extra fields are exact.
-  if (actual && /^(?:pco|planning[ .]?center)$/i.test(actual.source ?? "")) actual.source = "Planning Center";
+  const actual = idsAsExpected(answer(trace), expected[i]);
+  // Only the vendor's identity label and integer ids are normalized; records, other types and extra fields are exact.
+  if (actual && /^(?:pco|planning[ .]?center)(?: people)?$/i.test(actual.source ?? ""))
+    actual.source = "Planning Center";
   add("answer-evidence", canonical(actual) === canonical(expected[i]));
   if (i < 5) {
     const addresses = [

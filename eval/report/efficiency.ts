@@ -364,8 +364,11 @@ export function expenseReason(trial: ExpensiveTrial): string {
   return parts.join(", ");
 }
 
+export const modelTurnsLabel = (runner: string | undefined) =>
+  runner === "codex" ? "model turns (Codex proxy: model rounds)" : "model turns";
+
 /** Compact plain-text summary for the end of an `eval:agent` batch. */
-export function efficiencyLines(models: ModelEfficiency[], rel?: Reliability): string[] {
+export function efficiencyLines(models: ModelEfficiency[], rel?: Reliability, turns = "model turns"): string[] {
   const lines: string[] = [];
   for (const summary of models) {
     const m = summary.medians;
@@ -378,7 +381,7 @@ export function efficiencyLines(models: ModelEfficiency[], rel?: Reliability): s
           : ""),
     );
     lines.push(
-      `  passing medians: calls ${fmtCount(m.calls.value)}, model turns ${fmtCount(m.modelTurns.value)}${n(m.modelTurns)}, ` +
+      `  passing medians: calls ${fmtCount(m.calls.value)}, ${turns} ${fmtCount(m.modelTurns.value)}${n(m.modelTurns)}, ` +
         `first request ${fmtCount(m.firstTurnInputTokens.value, 0)}${n(m.firstTurnInputTokens)}, host searches ${fmtCount(m.hostSearchCalls.value)}${n(m.hostSearchCalls)}, errors before success ${fmtCount(m.toolErrorsBeforeFirstSuccess.value)}${n(m.toolErrorsBeforeFirstSuccess)}, input tokens ${fmtCount(m.promptTokens.value, 0)} incl. cache, output ${fmtCount(m.outputTokens.value, 0)}, ` +
         `wall ${m.wallMs.value === undefined ? "N/A" : `${(m.wallMs.value / 1000).toFixed(1)}s`}, tool errors ${fmtCount(m.toolErrors.value)}${n(m.toolErrors)}, ` +
         `guide fetches ${fmtCount(m.guideFetches.value)}${n(m.guideFetches)}, response ${fmtSize(m.responseBytes.value)}${n(m.responseBytes)}`,
