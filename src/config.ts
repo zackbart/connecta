@@ -119,7 +119,8 @@ const discovery = {
    * Replaces a remote MCP tools/list hint of exactly `ttlMs: 0`, then bounded
    * like a positive hint, so the effective TTL is
    * min(max(this, catalogMinTtlSeconds), catalogMaxTtlSeconds). Read programs
-   * see a reclassification to write within that effective TTL. Resource
+   * see a reclassification to write within that effective TTL, extended by the
+   * five-minute stale fallback when a relisting fails transiently. Resource
    * inventories are never floored. Default 0: a zero hint disables reuse.
    */
   catalogZeroTtlSeconds: seconds({ default: D.discovery.catalogZeroTtlSeconds }),

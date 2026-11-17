@@ -889,8 +889,9 @@ transiently can extend that by the five-minute stale fallback above, as it does
 for any positive TTL. The floor is part of the catalog configuration
 fingerprint, as `catalogTtlSeconds`, `catalogMinTtlSeconds` and
 `catalogMaxTtlSeconds` are, so a redeployment that changes or disables it
-addresses new entries: catalogs stored under the previous floor are never read
-again and are listed afresh.
+addresses new entries and lists afresh. Restoring an earlier floor can reach
+an entry stored under it that has not expired; that entry keeps its original
+expiry, so it stays within the restored floor's effective TTL.
 
 ```ts
 createConnecta({
