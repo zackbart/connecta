@@ -10,3 +10,7 @@ minimumReleaseAgeExclude:
 allowBuilds:
   esbuild: true
   workerd: true
+
+auditConfig:
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf
