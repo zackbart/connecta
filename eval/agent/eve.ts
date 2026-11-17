@@ -36,7 +36,7 @@ export function eveVersion(): string {
   const problem = eveHelperProblem();
   if (problem) throw new Error(problem);
   const version = JSON.parse(readFileSync(join(helper, "node_modules/eve/package.json"), "utf8")).version;
-  if (version !== "1.0.0-rc.10") throw new Error(`Eve runner requires eve@1.0.0-rc.10; got ${version}`);
+  if (version !== "1.0.2") throw new Error(`Eve runner requires eve@1.0.2; got ${version}`);
   return version;
 }
 
@@ -77,7 +77,7 @@ export async function runEve(options: CodexOptions & EveConnection & { testModel
       mkdir(join(root, "agent/instructions"), { recursive: true }),
       mkdir(join(root, "node_modules/@zackbart"), { recursive: true }),
     ]);
-    // Resolve the installed RC once; no install, registry request, or shared build.
+    // Resolve the installed Eve once; no install, registry request, or shared build.
     await symlink(join(helper, "node_modules/eve"), join(root, "node_modules/eve"));
     await symlink(helper, join(root, "node_modules/@zackbart/connecta-eve"));
     await writeFile(
@@ -85,7 +85,7 @@ export async function runEve(options: CodexOptions & EveConnection & { testModel
       JSON.stringify({
         name: "connecta-eval-eve",
         type: "module",
-        dependencies: { eve: "1.0.0-rc.10", "@zackbart/connecta-eve": `file:${helper}` },
+        dependencies: { eve: "1.0.2", "@zackbart/connecta-eve": `file:${helper}` },
       }),
     );
     const endpoint = new URL(options.mcpUrl);

@@ -5,16 +5,23 @@ import type { DynamicSentinel } from "eve/connections";
 import { ContextContainer } from "../node_modules/eve/dist/src/context/container.js";
 import { SessionIdKey } from "../node_modules/eve/dist/src/context/keys.js";
 import { renderSystem } from "../node_modules/eve/dist/src/definitions/definition.js";
-import { dynamicConnectionVersions } from "../node_modules/eve/dist/src/definitions/connections.js";
 import { DefinitionFailedError } from "../node_modules/eve/dist/src/definitions/kernel.js";
-import { slotsOf } from "../node_modules/eve/dist/src/definitions/state.js";
-import { evaluateValues, stepDraft } from "../node_modules/eve/dist/src/definitions/step.js";
 import { dynamicEvaluate } from "../node_modules/eve/dist/src/dynamic/definition.js";
 import { stepProjection } from "../node_modules/eve/dist/src/harness/session-machine/current.js";
-import { changedSinceOffered } from "../node_modules/eve/dist/src/harness/approval-outcome.js";
-import { createConnectionInstanceId } from "../node_modules/eve/dist/src/runtime/connections/instance-identity.js";
-import { BundleKey, type CompiledBundle } from "../node_modules/eve/dist/src/runtime/sessions/runtime-context-keys.js";
+import {
+  type CompiledBundle,
+  SessionAgentKey,
+} from "../node_modules/eve/dist/src/runtime/sessions/runtime-context-keys.js";
 import type { ResolvedConnectionDefinition } from "../node_modules/eve/dist/src/runtime/types.js";
+import {
+  changedSinceOffered,
+  createConnectionInstanceId,
+  dynamicConnectionVersions,
+  evaluateValues,
+  fromCompiledBundle,
+  slotsOf,
+  stepDraft,
+} from "./eve-internals.js";
 import {
   connectaConnection,
   connectaInstructions,
@@ -47,19 +54,21 @@ function eveSession(definitions: {
           },
         ]
       : [];
-  ctx.set(BundleKey, {
-    resolvedAgent: {
-      definitions: [
-        ...row("skill", "skills", definitions.skill),
-        ...row("connection", "connections", definitions.connection),
-        ...row("instructions", "instructions", definitions.instructions),
-      ],
-    },
-    turnAgent: {},
-    graph: { nodesByNodeId: new Map() },
-    toolRegistry: { toolsByName: new Map() },
-    subagentRegistry: { subagentsByName: new Map(), dynamicResolvers: [] },
-  } as unknown as CompiledBundle);
+  const authored = [
+    ...row("skill", "skills", definitions.skill),
+    ...row("connection", "connections", definitions.connection),
+    ...row("instructions", "instructions", definitions.instructions),
+  ];
+  ctx.set(
+    SessionAgentKey,
+    fromCompiledBundle({
+      resolvedAgent: { definitions: authored },
+      turnAgent: {},
+      graph: { nodesByNodeId: new Map(), root: { agent: { definitions: authored, connections: [] } } },
+      toolRegistry: { toolsByName: new Map() },
+      subagentRegistry: { subagentsByName: new Map(), dynamicResolvers: [] },
+    } as unknown as CompiledBundle),
+  );
   const projection = stepProjection(ctx, undefined);
   const step = { config: { tools: new Map() }, ctx, finalReplyOnly: false, session: { rootSessionId: "" } };
   const draft = () => stepDraft(step as unknown as Parameters<typeof stepDraft>[0]);

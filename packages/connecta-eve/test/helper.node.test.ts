@@ -14,9 +14,7 @@ import {
 } from "eve/instructions";
 // Eve keeps a defineDynamic() function behind a private symbol; read it as its runtime does.
 import { dynamicEvaluate } from "../node_modules/eve/dist/src/dynamic/definition.js";
-import { withAgentApproval } from "../node_modules/eve/dist/src/approval/agent.js";
-import { listToolMetadata } from "../node_modules/eve/dist/src/execution/catalog/connection-auth.js";
-import { rankCandidates } from "../node_modules/eve/dist/src/execution/catalog/rank.js";
+import { listToolMetadata, rankCandidates, withAgentApproval } from "./eve-internals.js";
 import { createConnecta, customExecutor } from "../../../src/index.js";
 import { accessTokens, AccessTokenManager } from "../../../src/access-tokens.js";
 import { api } from "../../../src/connectors/api.js";
