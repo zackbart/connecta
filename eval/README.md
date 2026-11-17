@@ -1507,11 +1507,17 @@ or silence about the tool fail. On both native arms, `p5-absent-github` needs no
 search result, because no top-level search exists: no downstream calls, a stated
 absence and `ANSWER: unavailable` pass, and a count or a substitute read fails.
 A stated absence includes negations such as "I can't get GitHub data" and "None
-of them exposes GitHub"; an answer claiming the data exists fails, including a
-pull request count stated before or after the absence.
-`p5-trusted-program-write` needs `WEB-105` and "closed" in its answer, and refuses
-a negated or contradicted status such as "WEB-105 is not closed" or "WEB-105 is
-open, not closed".
+of them exposes GitHub"; an answer claiming the data exists fails. Any clause
+(split at sentence punctuation, semicolons and line breaks) that names pull
+requests or says acme/widget has, shows or reports something, and carries a
+nonzero count in digits or words, fails the answer; so does a Markdown table that
+names pull requests and holds a count. "No pull requests are available" passes.
+`p5-trusted-program-write` needs `WEB-105` and "closed" in its answer. Every
+clause naming WEB-105 or "closed" must carry no denial (not, never, no longer,
+cannot, unable, failed, reopened or an n't contraction) and no "open" except
+"was", "previously" or "formerly open": "WEB-105 is not currently closed",
+"could not be closed" and "was closed, then reopened" fail, while "was open and
+is now closed" passes.
 On `native`, `p5-fanout-over-budget` also accepts a recovery where some runs come
 from a direct `ci__get_run` read after the refused fan-out, provided at least one
 run is recovered by a program within the two-call budget and the answer's

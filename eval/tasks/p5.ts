@@ -199,11 +199,24 @@ function boundedFanout(world: World, trace: AgentTrace, surface?: Surface): bool
   return index >= 0 && ids.some(programRead) && ids.every((id) => programRead(id) || nativeRead(id));
 }
 
-const CONTRADICTED_CLOSURE =
-  /\b(?:not|isn['’]t|wasn['’]t|never)\s+(?:yet\s+|been\s+)?closed\b|\bWEB-105\b[^.!?;\n]*\b(?:is|remains|stays|still)\s+(?:still\s+)?open\b/i;
-const CLAIMED_PULL_REQUESTS =
-  /\b(?:\d[\d,]*|a couple of|a few|several|many|some|no)\s+(?:open\s+)?(?:pull requests?|PRs?)\b(?!\s+(?:data|information|counts?|details|access|tools?)\b)|\bGitHub\b[^.!?;\n]*\b(?:has|have|shows|lists|reports|returns)\s+\d/i;
-const statesGithubAbsence = (answer: string) => statesAbsence(answer, "GitHub") && !CLAIMED_PULL_REQUESTS.test(answer);
+const clauses = (answer: string) => answer.split(/[.!?;\n]+/).filter((clause) => clause.trim());
+const COUNT =
+  /\b(?:[1-9][\d,]*|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|hundred|dozens?|several|a few|a couple)\b/i;
+const PULL_REQUEST_SUBJECT =
+  /\bpull requests?\b|\bPRs?\b|\bacme\/widget\b[^|]*\b(?:has|have|shows|lists|reports|returns)\b/i;
+const tableRows = (answer: string) => answer.split("\n").filter((line) => line.trim().startsWith("|"));
+const claimsPullRequests = (answer: string) =>
+  clauses(answer).some((clause) => PULL_REQUEST_SUBJECT.test(clause) && COUNT.test(clause)) ||
+  (tableRows(answer).some((row) => PULL_REQUEST_SUBJECT.test(row)) && tableRows(answer).some((row) => COUNT.test(row)));
+const statesGithubAbsence = (answer: string) => statesAbsence(answer, "GitHub") && !claimsPullRequests(answer);
+const DENIAL = /\b(?:not|never|no longer|cannot|unable|failed|reopen\w*)\b|\w+n['’]t\b/i;
+const contradictsClosure = (answer: string) =>
+  clauses(answer)
+    .filter((clause) => /\bclosed\b|\bWEB-105\b/i.test(clause))
+    .some(
+      (clause) =>
+        DENIAL.test(clause) || (/\bopen\b/i.test(clause) && !/\b(?:was|previously|formerly)\s+open\b/i.test(clause)),
+    );
 
 function absentGithub(world: World, trace: AgentTrace, surface?: Surface): boolean {
   const absent = (value: unknown) =>
@@ -263,7 +276,7 @@ const trusted = withCorrectness(
   {
     destination: (w) => called(w, "tracker.close_issue", { id: "WEB-105" }),
     evidence: [/WEB-105/, /closed/i],
-    consistentAnswer: (_world, answer) => !CONTRADICTED_CLOSURE.test(answer),
+    consistentAnswer: (_world, answer) => !contradictsClosure(answer),
     referenceAnswer: "Tracker WEB-105 is closed.",
   },
 );

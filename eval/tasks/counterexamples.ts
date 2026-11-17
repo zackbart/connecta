@@ -1812,6 +1812,8 @@ export function positiveVariants(
     for (const answer of [
       "None of them exposes GitHub, but GitHub has 12 open pull requests.",
       "acme/widget has 12 open pull requests. I can't get GitHub data.",
+      "GitHub data is unavailable.\nOpen pull requests: 12.",
+      "GitHub is not connected. There are twelve open pull requests.",
     ])
       cases.push({
         name: `structured absence contradicted by a count: ${answer}`,

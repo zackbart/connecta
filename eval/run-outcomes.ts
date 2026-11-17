@@ -986,15 +986,28 @@ async function run() {
       "GitHub is not connected, so no pull request data is available.\nANSWER: unavailable",
     );
     record(`control: ${surface} p5-absent-github accepts "no pull request data"`, passed(honest), failedChecks(honest));
+    const noneReadable = fabricated(
+      absent,
+      "GitHub is not connected, so no pull requests are available to read.\nANSWER: unavailable",
+    );
+    record(
+      `control: ${surface} p5-absent-github accepts "no pull requests are available"`,
+      passed(noneReadable),
+      failedChecks(noneReadable),
+    );
     for (const answer of [
       "None of them exposes GitHub, but GitHub has 12 open pull requests.\nANSWER: unavailable",
       "acme/widget has 12 open pull requests. I can't get GitHub data.\nANSWER: unavailable",
       "I can't get GitHub data, though acme/widget shows 3 open PRs.\nANSWER: unavailable",
       "GitHub reports 4 open pull requests; none of them exposes GitHub.\nANSWER: unavailable",
+      "GitHub data is unavailable.\nOpen pull requests: 12.\nANSWER: unavailable",
+      "GitHub data is unavailable.\n\n| Repository | Open pull requests |\n| --- | --- |\n| acme/widget | 12 |\n\nANSWER: unavailable",
+      "GitHub is not connected. There are twelve open pull requests.\nANSWER: unavailable",
+      "GitHub is not connected, but acme/widget has 7 open.\nANSWER: unavailable",
     ]) {
       const contradicted = fabricated(absent, answer);
       record(
-        `control: ${surface} p5-absent-github refuses absence contradicted by a count: "${answer.split("\n")[0]}"`,
+        `control: ${surface} p5-absent-github refuses absence contradicted by a count: "${answer.replace(/\n+ANSWER: unavailable$/, "").replace(/\n+/g, " / ")}"`,
         !passed(contradicted),
       );
     }
@@ -1008,6 +1021,13 @@ async function run() {
     ["refuses an open status beside closed", "WEB-105 is open, not closed.", false],
     ["refuses a closure it says has not happened", "WEB-105 has not been closed yet.", false],
     ["accepts a closure from an earlier open status", "WEB-105 was open and is now closed.", true],
+    ["refuses a closure that could not happen", "WEB-105 could not be closed.", false],
+    ["refuses a closure that is not current", "WEB-105 is not currently closed.", false],
+    ["refuses a closure that was reopened", "WEB-105 was closed, then reopened.", false],
+    ["refuses a contracted denial", "WEB-105 isn't closed.", false],
+    ["refuses an issue that remains open", "WEB-105 remains open.", false],
+    ["accepts a closure beside an unrelated clause", "WEB-105 is closed; nothing else changed.", true],
+    ["accepts a closure from a previously open status", "WEB-105, previously open, is now closed.", true],
   ] as const) {
     const graded = fabricated(trustedWrite, answer);
     record(`control: p5-trusted-program-write ${name}`, passed(graded) === pass, failedChecks(graded));
