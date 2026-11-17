@@ -748,7 +748,7 @@ describe("discovery health across requests", () => {
   });
 
   it("INV-7: starts no health storage after the discovery budget and finishes every operation it started", async () => {
-    // The native D1 adapter over a binding whose every round trip takes 150 ms.
+    // The native D1 adapter over a binding whose every round trip takes 400 ms.
     const module = "node:sqlite";
     const { DatabaseSync } = (await import(/* @vite-ignore */ module)) as typeof import("node:sqlite");
     const db = new DatabaseSync(":memory:");
@@ -765,7 +765,7 @@ describe("discovery health across requests", () => {
           } finally {
             op.settledAt = Date.now();
           }
-        }, 150),
+        }, 400),
       );
     };
     type Bound = ReturnType<D1DatabaseBinding["prepare"]> & { sql: string; params: unknown[] };
@@ -809,20 +809,20 @@ describe("discovery health across requests", () => {
       // The health read and the probe fit the budget; recording the timeout
       // starts inside it and finishes past it.
       const started = Date.now();
-      const { page } = await searchOnce(registry, { query: "read" }, { probeTimeoutMs: 100, discoveryBudgetMs: 300 });
+      const { page } = await searchOnce(registry, { query: "read" }, { probeTimeoutMs: 200, discoveryBudgetMs: 800 });
       const returned = Date.now();
       expect(page.catalogErrors).toEqual([expect.objectContaining({ connector: "hung", code: "timeout" })]);
       expect(ops.length).toBeGreaterThanOrEqual(2);
       for (const op of ops) {
-        expect(op.startedAt).toBeLessThan(started + 300);
+        expect(op.startedAt).toBeLessThan(started + 800);
         expect(op.settledAt).toBeDefined();
         expect(op.settledAt!).toBeLessThanOrEqual(returned);
       }
-      expect(Math.max(...ops.map((op) => op.settledAt!))).toBeGreaterThan(started + 300);
+      expect(Math.max(...ops.map((op) => op.settledAt!))).toBeGreaterThan(started + 800);
       // Committed before the search returned, and nothing runs afterwards.
       expect(await storage.list("connector-health:v1:hung:")).toHaveLength(1);
       const after = ops.length;
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await new Promise((resolve) => setTimeout(resolve, 500));
       expect(ops.length).toBe(after);
       // A budget already spent on a slow read starts nothing more.
       ops.length = 0;
