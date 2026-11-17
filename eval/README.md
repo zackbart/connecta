@@ -444,8 +444,9 @@ work that writes no raw item, so they add no round, and neither does a host
 It differs from Claude's count in that Claude reports turns itself, while
 Codex's are inferred from conversation items; a response that emits only an
 unrecognized item type would be missed. `eval:compare`, the decision-rule
-lines and the `eval:agent` summary print it as `model turns (Codex proxy: model
-rounds)`. `pnpm exec tsx eval/codex-fidelity.ts --events` checks it against the
+lines, the `eval:agent` summary and the HTML report print it as `model turns
+(Codex proxy: model rounds)`. A trace with raw input items but no model output
+records N/A, not 0. `pnpm exec tsx eval/codex-fidelity.ts --events` checks it against the
 real CLI: two scripted model requests, one of them an `exec` that calls a nested
 MCP tool, must record two rounds. Codex results recorded before the proxy, and
 saved traces regraded offline, keep no raw items and report N/A.
@@ -1506,7 +1507,11 @@ or silence about the tool fail. On both native arms, `p5-absent-github` needs no
 search result, because no top-level search exists: no downstream calls, a stated
 absence and `ANSWER: unavailable` pass, and a count or a substitute read fails.
 A stated absence includes negations such as "I can't get GitHub data" and "None
-of them exposes GitHub"; an answer claiming the data exists fails.
+of them exposes GitHub"; an answer claiming the data exists fails, including a
+pull request count stated before or after the absence.
+`p5-trusted-program-write` needs `WEB-105` and "closed" in its answer, and refuses
+a negated or contradicted status such as "WEB-105 is not closed" or "WEB-105 is
+open, not closed".
 On `native`, `p5-fanout-over-budget` also accepts a recovery where some runs come
 from a direct `ci__get_run` read after the refused fan-out, provided at least one
 run is recovered by a program within the two-call budget and the answer's

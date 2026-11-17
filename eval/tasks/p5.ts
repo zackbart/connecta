@@ -199,6 +199,12 @@ function boundedFanout(world: World, trace: AgentTrace, surface?: Surface): bool
   return index >= 0 && ids.some(programRead) && ids.every((id) => programRead(id) || nativeRead(id));
 }
 
+const CONTRADICTED_CLOSURE =
+  /\b(?:not|isn['’]t|wasn['’]t|never)\s+(?:yet\s+|been\s+)?closed\b|\bWEB-105\b[^.!?;\n]*\b(?:is|remains|stays|still)\s+(?:still\s+)?open\b/i;
+const CLAIMED_PULL_REQUESTS =
+  /\b(?:\d[\d,]*|a couple of|a few|several|many|some|no)\s+(?:open\s+)?(?:pull requests?|PRs?)\b(?!\s+(?:data|information|counts?|details|access|tools?)\b)|\bGitHub\b[^.!?;\n]*\b(?:has|have|shows|lists|reports|returns)\s+\d/i;
+const statesGithubAbsence = (answer: string) => statesAbsence(answer, "GitHub") && !CLAIMED_PULL_REQUESTS.test(answer);
+
 function absentGithub(world: World, trace: AgentTrace, surface?: Surface): boolean {
   const absent = (value: unknown) =>
     value &&
@@ -209,7 +215,7 @@ function absentGithub(world: World, trace: AgentTrace, surface?: Surface): boole
     // exist. Touching nothing and stating absence is the outcome; a count fails.
     ((surface === "native" || surface === "native-no-code") &&
       world.ledger.calls.length === 0 &&
-      statesAbsence(trace.finalAnswer ?? "", "GitHub") &&
+      statesGithubAbsence(trace.finalAnswer ?? "") &&
       structuredAbsence(trace.finalAnswer ?? "")) ||
     world.programs.some(
       (p) => p.succeeded && p.calls.some((c) => c.name === "connecta.search" && c.outcome === "ok" && absent(c.result)),
@@ -257,6 +263,7 @@ const trusted = withCorrectness(
   {
     destination: (w) => called(w, "tracker.close_issue", { id: "WEB-105" }),
     evidence: [/WEB-105/, /closed/i],
+    consistentAnswer: (_world, answer) => !CONTRADICTED_CLOSURE.test(answer),
     referenceAnswer: "Tracker WEB-105 is closed.",
   },
 );
@@ -707,7 +714,7 @@ const absence = withCorrectness(
         ...check(
           "states-absence",
           "the answer states that GitHub is unavailable",
-          statesAbsence(trace.finalAnswer ?? "", "GitHub"),
+          statesGithubAbsence(trace.finalAnswer ?? ""),
         ),
         advisory: true,
       },

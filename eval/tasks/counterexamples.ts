@@ -1809,6 +1809,15 @@ export function positiveVariants(
       trace: { ...trace, finalAnswer: "I can get GitHub data for acme/widget.\nANSWER: unavailable" },
       advisoryMiss: "states-absence",
     });
+    for (const answer of [
+      "None of them exposes GitHub, but GitHub has 12 open pull requests.",
+      "acme/widget has 12 open pull requests. I can't get GitHub data.",
+    ])
+      cases.push({
+        name: `structured absence contradicted by a count: ${answer}`,
+        trace: { ...trace, finalAnswer: `${answer}\nANSWER: unavailable` },
+        advisoryMiss: "states-absence",
+      });
     cases.push({
       name: "structured absence without advisory prose",
       trace: { ...trace, finalAnswer: "GitHub acme/widget\nANSWER: unavailable" },

@@ -981,12 +981,33 @@ async function run() {
       "I can get GitHub data: acme/widget has 12 open pull requests.\nANSWER: unavailable",
     );
     record(`control: ${surface} p5-absent-github refuses an answer claiming the data exists`, !passed(claimed));
+    const honest = fabricated(
+      absent,
+      "GitHub is not connected, so no pull request data is available.\nANSWER: unavailable",
+    );
+    record(`control: ${surface} p5-absent-github accepts "no pull request data"`, passed(honest), failedChecks(honest));
+    for (const answer of [
+      "None of them exposes GitHub, but GitHub has 12 open pull requests.\nANSWER: unavailable",
+      "acme/widget has 12 open pull requests. I can't get GitHub data.\nANSWER: unavailable",
+      "I can't get GitHub data, though acme/widget shows 3 open PRs.\nANSWER: unavailable",
+      "GitHub reports 4 open pull requests; none of them exposes GitHub.\nANSWER: unavailable",
+    ]) {
+      const contradicted = fabricated(absent, answer);
+      record(
+        `control: ${surface} p5-absent-github refuses absence contradicted by a count: "${answer.split("\n")[0]}"`,
+        !passed(contradicted),
+      );
+    }
   }
   const trustedWrite = await trial(task("p5-trusted-program-write"), "reference");
   for (const [name, answer, pass] of [
     ["accepts a closure that never says tracker", "WEB-105 is closed.", true],
     ["refuses an answer naming the wrong issue", "WEB-104 is closed.", false],
     ["refuses an answer reporting it open", "WEB-105 is open.", false],
+    ["refuses a negated closure", "WEB-105 is not closed.", false],
+    ["refuses an open status beside closed", "WEB-105 is open, not closed.", false],
+    ["refuses a closure it says has not happened", "WEB-105 has not been closed yet.", false],
+    ["accepts a closure from an earlier open status", "WEB-105 was open and is now closed.", true],
   ] as const) {
     const graded = fabricated(trustedWrite, answer);
     record(`control: p5-trusted-program-write ${name}`, passed(graded) === pass, failedChecks(graded));
@@ -1363,6 +1384,11 @@ async function run() {
   record(
     "control: a follow-up turn starts a new Codex model round",
     parseTrace([...rounds, output, input, output], [0, rounds.length], ["task", "next"]).modelTurns === 4,
+  );
+  record(
+    "control: Codex input-only raw telemetry records no turn count",
+    parseTrace([input], [0], ["task"]).modelTurns === undefined &&
+      parseTrace([input, input, ...nested], [0], ["task"]).modelTurns === undefined,
   );
   record(
     "control: a Codex trace without raw items records no turn count",

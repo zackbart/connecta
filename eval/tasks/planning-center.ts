@@ -58,6 +58,7 @@ function answer(trace: AgentTrace): any {
     return null;
   }
 }
+const PLANNING_CENTER_SOURCE = /^(?:pco|planning[ .]?center)(?: people)?$/i;
 function idsAsExpected(actual: any, expected: any): any {
   if (Number.isInteger(actual) && typeof expected === "string" && /^\d+$/.test(expected)) return String(actual);
   if (Array.isArray(actual) && Array.isArray(expected)) return actual.map((item) => idsAsExpected(item, expected[0]));
@@ -170,9 +171,7 @@ function grade(i: number, world: World, trace: AgentTrace): Check[] {
   }
   add("correct-destination", destination);
   const actual = idsAsExpected(answer(trace), expected[i]);
-  // Only the vendor's identity label and integer ids are normalized; records, other types and extra fields are exact.
-  if (actual && /^(?:pco|planning[ .]?center)(?: people)?$/i.test(actual.source ?? ""))
-    actual.source = "Planning Center";
+  if (actual && PLANNING_CENTER_SOURCE.test(actual.source ?? "")) actual.source = "Planning Center";
   add("answer-evidence", canonical(actual) === canonical(expected[i]));
   if (i < 5) {
     const addresses = [

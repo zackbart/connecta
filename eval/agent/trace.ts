@@ -134,10 +134,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
       });
       return;
     }
-    if (event.type === "host_raw_observed" && event.source === "input") {
-      modelRounds ??= 0;
-      awaitingModel = true;
-    }
+    if (event.type === "host_raw_observed" && event.source === "input") awaitingModel = true;
     if (event.type === "host_raw_observed" && event.source === "model") {
       modelRounds = (modelRounds ?? 0) + Number(awaitingModel);
       awaitingModel = false;
