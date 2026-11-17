@@ -12,6 +12,7 @@ export const CONFIG_DEFAULTS = {
     concurrency: 4,
     catalogTtlSeconds: 300,
     catalogMinTtlSeconds: 0,
+    catalogZeroTtlSeconds: 0,
     catalogMaxTtlSeconds: 86_400,
     probeTimeoutMs: 30_000,
   },

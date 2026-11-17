@@ -201,8 +201,23 @@ entries or interrupted reads; they are not proof of live relisting.
 `catalog.decode` counts JSON decodes and their UTF-8 input bytes;
 `catalog.validate` and `catalog.intake` count those stages without timing them.
 These three count-only families always have `durationMs: 0`.
-`catalog.chunks` records accepted chunk bytes and counts. These counters do not
-identify a connector, owner or private/public partition.
+`catalog.chunks` records accepted chunk bytes and counts.
+`catalog.store` counts catalogs the request published to storage, with their
+serialized bytes and chunk count in `items`. A store the cache declined counts
+under one `catalog.store.refused.<reason>` family, across every catalog method:
+`zero_ttl` (the listing's TTL resolved to 0, usually a downstream `ttlMs: 0`
+with no `discovery.catalogZeroTtlSeconds`, so the entry is deleted rather than
+written), `partial` (not a complete single-page result), `expired` (its expiry
+passed before publication), `fenced` (the entry's address, generation or
+credential no longer matches the listing) and `ended` (the request, listing or
+cache scope ended first). A warm deployment whose remote MCP connectors show
+`catalog.store.refused.zero_ttl` and no `catalog.cache.hit` is relisting every
+catalog; after setting `catalogZeroTtlSeconds`, the same requests show
+`catalog.store` on the first listing and `catalog.cache.hit` after it.
+`connector.mcp`, `connector.api` and `connector.custom` split the invocation
+`connector` duration by the called connector's kind (`remoteMcp()`, `api()` or a
+custom connector without one); each invocation records exactly one of them.
+These counters do not identify a connector, owner or private/public partition.
 Concurrent spans can overlap; do not sum them as wall time.
 `memo.hit`, `memo.miss` and `memo.fresh` describe the request-read memo
 (`absent` counts null values, not cache failures). `d1.read`, `d1.write` and

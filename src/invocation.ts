@@ -1,5 +1,5 @@
 import { utilityRecovery } from "./utility-recovery.js";
-import { traceFor } from "./timing-trace.js";
+import { recordInvocationTiming, traceFor } from "./timing-trace.js";
 import { routePhrases } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
 import { authCall, registerAuthMethod } from "./auth/native.js";
@@ -736,14 +736,13 @@ export class InvocationService {
           }
         }
         const diagnostics = timing();
-        const trace = traceFor(this.catalog.requestScope);
-        if (trace) {
-          trace.record("catalog", diagnostics.catalogMs);
-          trace.record("admission", diagnostics.admissionMs);
-          trace.record("connector", diagnostics.connectorMs);
-          trace.record("result", diagnostics.resultProcessingMs, resultBytes ?? 0);
-        }
         const target = resolved ?? activityTarget;
+        recordInvocationTiming(
+          traceFor(this.catalog.requestScope),
+          diagnostics,
+          resultBytes ?? 0,
+          target?.connector.kind,
+        );
         if (target && (error.code === "auth_required" || error.code === "downstream_oauth_required")) {
           recordAuthFailure(
             this.catalog.requestScope,
@@ -1251,13 +1250,12 @@ export class InvocationService {
       try {
         const value = sentSecrets.redact(processed.value, "envelope");
         const diagnostics = timing();
-        const trace = traceFor(this.catalog.requestScope);
-        if (trace) {
-          trace.record("catalog", diagnostics.catalogMs);
-          trace.record("admission", diagnostics.admissionMs);
-          trace.record("connector", diagnostics.connectorMs);
-          trace.record("result", diagnostics.resultProcessingMs, resultBytes ?? 0);
-        }
+        recordInvocationTiming(
+          traceFor(this.catalog.requestScope),
+          diagnostics,
+          resultBytes ?? 0,
+          completed.connector.kind,
+        );
         const friction = context.activityFriction?.(value);
         record("success", friction ? { friction } : {});
         return {

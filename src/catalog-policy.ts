@@ -16,6 +16,7 @@ export interface CatalogCacheSettings {
   sharedPartition?: string;
   defaultTtlMs: number;
   minTtlMs: number;
+  zeroTtlMs?: number;
   maxTtlMs: number;
   onCompletedCatalogRefresh?: (refresh: CompletedCatalogRefresh, ctx: ConnectorContext) => void | Promise<void>;
 }

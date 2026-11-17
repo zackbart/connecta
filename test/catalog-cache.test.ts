@@ -26,6 +26,7 @@ import { runEdge } from "../src/runtime/run.js";
 import { sqlStorage, type SqlStatement, type SqlDriver } from "../src/storage/sql.js";
 import { sentSecretsForRequest } from "../src/sent-secrets.js";
 import { oauthGrantKeys, responseCacheKeys, scopes } from "../src/storage/keys.js";
+import { startTimingTrace } from "../src/timing-trace.js";
 import { UNSCOPED_DISCOVERY_BUDGET_MS, withDeadline } from "../src/timeout.js";
 import { LOCAL_CLOSE_BUDGET_MS } from "../src/connectors/remote-mcp/transport.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
@@ -426,6 +427,114 @@ describe("SQL-backed SDK catalog cache", () => {
     expect(JSON.parse(facts!)).toEqual(refreshes[1]!.next);
     expect(facts).not.toMatch(/old|new|inputSchema/);
     expect(baseline).not.toMatch(/old|new|inputSchema/);
+  });
+
+  it.each([
+    { zeroTtlSeconds: undefined, listings: [1, 2, 3] },
+    { zeroTtlSeconds: 600, listings: [1, 1, 2] },
+  ])(
+    "INV-8: a 2026-07-28 catalog sent with ttlMs: 0 is reused across requests only under catalogZeroTtlSeconds ($zeroTtlSeconds)",
+    async ({ zeroTtlSeconds, listings: expected }) => {
+      const store = await storage();
+      const id = `zero_floor_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+      const wire: Array<{ version: string | null; ttlMs: unknown }> = [];
+      const downstream = httpDownstream((mcp) =>
+        mcp.registerTool("read", { annotations: { readOnlyHint: true } }, async () => ({ content: [] })),
+      );
+      const connector = remoteMcp(id, {
+        url: downstream.url,
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const body = request.method === "POST" ? ((await request.clone().json()) as { method?: string }) : undefined;
+          const response = await downstream.fetch(input, init);
+          if (body?.method === "tools/list")
+            wire.push({
+              version: request.headers.get("mcp-protocol-version"),
+              ttlMs: ((await response.clone().json()) as { result?: { ttlMs?: unknown } }).result?.ttlMs,
+            });
+          return response;
+        },
+      });
+      let now = Date.now();
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      const request = async () => {
+        const registry = new Registry([connector], {
+          storage: store,
+          logger: silentLogger,
+          catalogZeroTtlSeconds: zeroTtlSeconds,
+        });
+        const requestScope = {};
+        const records: Array<{ operations: Record<string, { count: number }> }> = [];
+        const finish = startTimingTrace(requestScope, 1, {
+          ...silentLogger,
+          info: (_message: string, record: unknown) => {
+            records.push(record as (typeof records)[number]);
+          },
+        });
+        const ctx = registry.contextFor(id, BASE, requestScope);
+        try {
+          await connector.listTools(ctx);
+        } finally {
+          await connector.closeScope!(ctx);
+          finish?.();
+        }
+        const count = (family: string) => records[0]!.operations[family]?.count ?? 0;
+        return {
+          listings: wire.length,
+          hit: count("catalog.cache.hit"),
+          stored: count("catalog.store"),
+          zeroTtl: count("catalog.store.refused.zero_ttl"),
+        };
+      };
+      const first = await request();
+      const second = await request();
+      now += 600_001;
+      const third = await request();
+      expect(wire[0]).toEqual({ version: "2026-07-28", ttlMs: 0 });
+      expect([first, second, third].map((step) => step.listings)).toEqual(expected);
+      if (zeroTtlSeconds === undefined) {
+        expect(first).toMatchObject({ hit: 0, stored: 0 });
+        expect(first.zeroTtl).toBeGreaterThan(0);
+        expect(second).toMatchObject({ hit: 0, stored: 0 });
+      } else {
+        expect(first).toMatchObject({ hit: 0, stored: 1, zeroTtl: 0 });
+        expect(second).toMatchObject({ hit: 1, stored: 0, zeroTtl: 0 });
+        expect(third).toMatchObject({ hit: 0, stored: 1, zeroTtl: 0 });
+      }
+    },
+  );
+
+  it("INV-8: catalogZeroTtlSeconds floors only tool catalogs, within the configured bounds", async () => {
+    const intakeTtl = async (bounds: { zeroTtlMs?: number; minTtlMs?: number; maxTtlMs?: number }) => {
+      const ctx = connectorContext(await storage());
+      attachCatalogCache(ctx, {
+        storage: ctx.storage,
+        partition: "principal/pool",
+        defaultTtlMs: 300_000,
+        minTtlMs: bounds.minTtlMs ?? 0,
+        maxTtlMs: bounds.maxTtlMs ?? 86_400_000,
+        ...(bounds.zeroTtlMs === undefined ? {} : { zeroTtlMs: bounds.zeroTtlMs }),
+      });
+      const cache = await catalogClientOptions(ctx, `zero_intake_${crypto.randomUUID().slice(0, 8)}`, "c", "g");
+      return {
+        tools: cache.intake(ctx, "tools/list", { tools: [], ttlMs: 0 }).ttlMs,
+        resources: cache.intake(ctx, "resources/list", { resources: [], ttlMs: 0 }).ttlMs,
+        templates: cache.intake(ctx, "resources/templates/list", { resourceTemplates: [], ttlMs: 0 }).ttlMs,
+      };
+    };
+    expect(await intakeTtl({})).toEqual({ tools: 0, resources: 0, templates: 0 });
+    expect(await intakeTtl({ minTtlMs: 60_000 })).toEqual({ tools: 0, resources: 0, templates: 0 });
+    expect(await intakeTtl({ zeroTtlMs: 600_000 })).toEqual({ tools: 600_000, resources: 0, templates: 0 });
+    expect(await intakeTtl({ zeroTtlMs: 30_000, minTtlMs: 60_000 })).toEqual({
+      tools: 60_000,
+      resources: 0,
+      templates: 0,
+    });
+    expect(await intakeTtl({ zeroTtlMs: 600_000, maxTtlMs: 120_000 })).toEqual({
+      tools: 120_000,
+      resources: 0,
+      templates: 0,
+    });
   });
 
   it("INV-6 INV-8: a modern zero-TTL catalog lists every call, writes no baseline while unchanged and still records drift", async () => {

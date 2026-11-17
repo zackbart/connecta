@@ -15,6 +15,15 @@ export type TimingFamily =
   | "catalog"
   | "admission"
   | "connector"
+  | "connector.mcp"
+  | "connector.api"
+  | "connector.custom"
+  | "catalog.store"
+  | "catalog.store.refused.zero_ttl"
+  | "catalog.store.refused.partial"
+  | "catalog.store.refused.expired"
+  | "catalog.store.refused.fenced"
+  | "catalog.store.refused.ended"
   | "result"
   | "d1.read"
   | "d1.write"
@@ -45,6 +54,15 @@ const families = new Set<TimingFamily>([
   "catalog",
   "admission",
   "connector",
+  "connector.mcp",
+  "connector.api",
+  "connector.custom",
+  "catalog.store",
+  "catalog.store.refused.zero_ttl",
+  "catalog.store.refused.partial",
+  "catalog.store.refused.expired",
+  "catalog.store.refused.fenced",
+  "catalog.store.refused.ended",
   "result",
   "d1.read",
   "d1.write",
@@ -92,6 +110,19 @@ export class TimingTrace {
     }
     this.totals.clear();
   }
+}
+export function recordInvocationTiming(
+  trace: TimingTrace | undefined,
+  diagnostics: { catalogMs: number; admissionMs: number; connectorMs: number; resultProcessingMs: number },
+  resultBytes: number,
+  connectorKind: "mcp" | "api" | undefined,
+): void {
+  if (!trace) return;
+  trace.record("catalog", diagnostics.catalogMs);
+  trace.record("admission", diagnostics.admissionMs);
+  trace.record("connector", diagnostics.connectorMs);
+  trace.record(`connector.${connectorKind ?? "custom"}`, diagnostics.connectorMs);
+  trace.record("result", diagnostics.resultProcessingMs, resultBytes);
 }
 /** Called for each MCP request, including those not sampled. */
 export function startTimingTrace(identity: object, sampleRate: number, logger: Logger): (() => void) | undefined {

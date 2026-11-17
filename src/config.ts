@@ -113,8 +113,17 @@ const discovery = {
   concurrency: whole({ min: 1, default: D.discovery.concurrency }),
   /** Fallback tool-list TTL when the downstream omits ttlMs. Default 300 seconds. */
   catalogTtlSeconds: seconds({ default: D.discovery.catalogTtlSeconds }),
-  /** Floor for positive downstream hints. Zero hints always disable reuse. Default 0. */
+  /** Floor for positive downstream hints. Zero hints are governed by catalogZeroTtlSeconds. Default 0. */
   catalogMinTtlSeconds: seconds({ default: D.discovery.catalogMinTtlSeconds }),
+  /**
+   * Replaces a remote MCP tools/list hint of exactly `ttlMs: 0`, then bounded
+   * like a positive hint, so the effective TTL is
+   * min(max(this, catalogMinTtlSeconds), catalogMaxTtlSeconds). Read programs
+   * see a reclassification to write within that effective TTL, extended by the
+   * five-minute stale fallback when a relisting fails transiently. Resource
+   * inventories are never floored. Default 0: a zero hint disables reuse.
+   */
+  catalogZeroTtlSeconds: seconds({ default: D.discovery.catalogZeroTtlSeconds }),
   /** Ceiling for downstream hints and the fallback, capped by the SDK at 24h. Default 86400. */
   catalogMaxTtlSeconds: seconds({ default: D.discovery.catalogMaxTtlSeconds }),
   /**
@@ -766,6 +775,9 @@ function assertCoherent(config: Parsed): void {
     config.discovery.catalogMaxTtlSeconds > 86_400
   ) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogMinTtlSeconds <= catalogMaxTtlSeconds <= 86400.");
+  }
+  if (config.discovery.catalogZeroTtlSeconds > config.discovery.catalogMaxTtlSeconds) {
+    throw new ConfigError("ConnectaConfig.discovery requires catalogZeroTtlSeconds <= catalogMaxTtlSeconds.");
   }
   const { vault } = config;
   const oauth = config.connectors.find((connector) => connector.startAuth);

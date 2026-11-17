@@ -378,6 +378,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       : undefined,
     toolCacheTtlSeconds: resolved.discovery.catalogTtlSeconds,
     catalogMinTtlSeconds: resolved.discovery.catalogMinTtlSeconds,
+    catalogZeroTtlSeconds: resolved.discovery.catalogZeroTtlSeconds,
     catalogMaxTtlSeconds: resolved.discovery.catalogMaxTtlSeconds,
     maxResultBytes: resolved.calls.maxResultBytes,
     results: resolved.results,
