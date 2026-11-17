@@ -4,7 +4,7 @@ import { workerRefusal } from "./deploy/targets.js";
 import { NO_CODE_CAPABILITY_MISMATCHES } from "./tasks/surface.js";
 import type { TrialResult } from "./agent/run.js";
 import type { AgentResultFile } from "./report/summary.js";
-import { median, trialEfficiency } from "./report/efficiency.js";
+import { median, modelTurnsLabel, trialEfficiency } from "./report/efficiency.js";
 export const WORKER_COMPARISON = [
   ...COMPARISON_TASKS.filter((task) => !workerRefusal(task)).map((task) => ({
     id: task.id,
@@ -58,7 +58,7 @@ export function noCodeDecisionLines(
     const reduced = passing.filter((trial) => reductions.has(trial.task)).map(trialEfficiency);
     const turns = median(reduced.flatMap((e) => (e.modelTurns === undefined ? [] : [e.modelTurns])));
     const tokens = median(reduced.map((e) => e.totalTokens));
-    return `${label}: ${passing.length}/${trials.length} passing; reduction/join/paging passing medians: model turns ${turns ?? "N/A"}, total tokens ${tokens ?? "N/A"}`;
+    return `${label}: ${passing.length}/${trials.length} passing; reduction/join/paging passing medians: ${modelTurnsLabel(file.config.runner)} ${turns ?? "N/A"}, total tokens ${tokens ?? "N/A"}`;
   };
   return [
     missing.length

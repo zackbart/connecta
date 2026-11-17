@@ -12,6 +12,7 @@ import { runCodex } from "./agent/codex.js";
 import type { Surface } from "./agent/surface.js";
 const root = await mkdtemp(join(tmpdir(), "connecta-fidelity-"));
 const observations: { surface: Surface; path: string; body: Record<string, unknown> }[] = [];
+const rounds: { surface: Surface; modelRequests: number; modelTurns: number | undefined; nestedCalls: number }[] = [];
 try {
   const authFile = join(root, "auth.json");
   await writeFile(authFile, JSON.stringify({ OPENAI_API_KEY: "sk-fake-local-fidelity-only" }));
@@ -32,7 +33,7 @@ try {
               call_id: "call_fidelity",
               name: "exec",
               namespace: "functions",
-              input: "text(ALL_TOOLS.map(t => t.name));",
+              input: "await tools.mcp__connecta__skills({}); text(ALL_TOOLS.map(t => t.name));",
             }
           : {
               type: "message",
@@ -100,13 +101,21 @@ try {
         nextTurn: async () => undefined,
         testHost: { executable: wrapper, args: [], authFile, version: "codex-cli 0.166.0" },
       });
+      const trace = parseTrace(run.events, run.turnStarts, []);
+      rounds.push({
+        surface,
+        modelRequests: responses,
+        modelTurns: trace.modelTurns,
+        nestedCalls: trace.toolUses.filter((use) => use.tool === "skills").length,
+      });
       console.log(
         JSON.stringify({
           surface,
           loadedTools: run.loadedTools,
           stderrTail: run.stderrTail,
           events: run.events,
-          hostSearchCalls: parseTrace(run.events, run.turnStarts, []).hostSearchCalls,
+          hostSearchCalls: trace.hostSearchCalls,
+          modelTurns: trace.modelTurns,
         }),
       );
     } finally {
@@ -118,6 +127,10 @@ try {
   }
   console.log(JSON.stringify({ modelRequests: observations }, null, 2));
   if (observations.length === 0) throw new Error("Fidelity failed: no model request captured");
+  console.log(JSON.stringify({ rounds }));
+  for (const round of rounds)
+    if (process.argv.includes("--events") && (round.modelTurns !== round.modelRequests || round.nestedCalls !== 1))
+      throw new Error(`Fidelity failed: ${round.surface} model-round proxy ${JSON.stringify(round)}`);
   for (const surface of ["six", "five", "native", "native-no-code"]) {
     const captured = observations.find((request) => request.surface === surface);
     if (!captured) throw new Error(`Fidelity failed: no ${surface} model request captured`);

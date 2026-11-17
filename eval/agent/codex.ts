@@ -64,6 +64,14 @@ function mcpResultText(value: unknown): string {
     : JSON.stringify(value);
 }
 
+export function codexItemSource(item: { type?: unknown; role?: unknown } | undefined): "model" | "input" | undefined {
+  const type = String(item?.type ?? "");
+  if (type === "message") return item?.role === "assistant" ? "model" : "input";
+  if (type.endsWith("_output")) return "input";
+  if (type === "reasoning" || type.endsWith("_call")) return "model";
+  return undefined;
+}
+
 /** Translate the documented app-server items into the existing trace format. */
 function codexEvent(event: { method?: string; params?: Record<string, any> }): StreamEvent[] {
   const item = event.params?.item;
@@ -285,7 +293,7 @@ export async function runCodex(options: CodexOptions): Promise<CodexRun> {
     }
     if (message.method === "rawResponseItem/completed") {
       const item = message.params?.item;
-      push({ type: "host_raw_observed" });
+      push({ type: "host_raw_observed", source: codexItemSource(item) });
       if (item?.type === "custom_tool_call" && /(^|[._])exec$/.test(String(item.name))) {
         push({ type: "host_exec" });
         push({

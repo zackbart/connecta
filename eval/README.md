@@ -430,6 +430,27 @@ recorded. Every trial has saved them since 0.29. Older files, such as the
 Trials missing other historical metrics such as `modelTurns` or `toolErrors`
 are left out of that median, which prints its smaller `n`.
 
+`metrics.modelTurns` comes from each runner's own record. Claude reports
+`num_turns` per conversation turn, its count of model requests, and the trace
+sums them. Codex reports none, so the Codex runner records a proxy in the same
+field: model rounds read from the app-server's `rawResponseItem/completed`
+stream. Each raw item is classed as model output (`reasoning`, an assistant
+`message`, or any `*_call`) or input (`*_output`, or a user, developer or system
+`message`); a model round is a run of output after input or after a turn starts.
+Reasoning plus calls in one response is one round, as one Claude message with
+parallel tool calls is one turn. MCP calls a host `exec` program makes are host
+work that writes no raw item, so they add no round, and neither does a host
+`exec` by itself, which is one `custom_tool_call` inside the round that sent it.
+It differs from Claude's count in that Claude reports turns itself, while
+Codex's are inferred from conversation items; a response that emits only an
+unrecognized item type would be missed. `eval:compare`, the decision-rule
+lines, the `eval:agent` summary and the HTML report print it as `model turns
+(Codex proxy: model rounds)`. A trace with raw input items but no model output
+records N/A, not 0. `pnpm exec tsx eval/codex-fidelity.ts --events` checks it against the
+real CLI: two scripted model requests, one of them an `exec` that calls a nested
+MCP tool, must record two rounds. Codex results recorded before the proxy, and
+saved traces regraded offline, keep no raw items and report N/A.
+
 ## Deployment targets
 
 `--target node` (the default) runs each trial against the Node template shape:
@@ -912,7 +933,13 @@ People profiles, a Groups/People/Services join, plan items and team identities,
 and reconciliation after a committed profile update answers HTTP 500. The same
 frozen prompts, state/HTTP-ledger graders and references support the legacy and
 standard surfaces. Structured answers require exact observed ids and facts;
-server-side filtering is an advisory efficiency check. No vendor account is used.
+server-side filtering is an advisory efficiency check. The prompt asks for
+literal JSON numbers, so an integer id matches the expected id string it spells,
+and the source may be `pco`, `Planning Center` or `Planning Center People`; a
+wrong id, another source or a count given as a string fails. The fake dates its
+future plan and schedules on the first Sunday at least 14 days after the run date
+and its past ones on the first Sunday on or after 35 days before it, fixed once
+per process, so "future schedule" tasks do not decay. No vendor account is used.
 The [paired notes](baselines/notes-planning-center-step2.md) preserve all final and diagnostic trials.
 
 Seven [Stripe step-2 tasks](tasks/stripe.ts) use an isolated extension of the
@@ -1440,7 +1467,17 @@ credential exists.
 `eval:compare` applies the rule's first sentence to a `native` and
 `native-no-code` pair: pass counts and reduction/join/paging medians over the
 comparable roster, each exclusion with its reason, and an explicit "not
-applicable" when the batch omits a comparable roster task.
+applicable" when the batch omits a comparable roster task. Comparisons that
+involve a native arm regrade every saved trial, as the six/code comparison does,
+and keep capability-mismatch N/A rows out of pass denominators, which each arm
+line prints as `N/A <n> excluded`. Those rows ran no model, so the per-trial
+served-model check skips them; a row that carries a runner observation is not
+N/A and is checked. Codex turns in these lines are the labelled proxy described
+in [Efficiency metrics](#efficiency-metrics), so the rule's turn criterion
+applies to Codex unchanged. `eval:outcomes` pairs a native and a native-no-code
+batch played from task references over the whole roster and requires a complete
+decision, both proxy medians, N/A-free denominators, refusal of an N/A row or a
+trial served by another model, and a regrade over a cached pass.
 
 `pnpm run eval:selftest --native-only` checks real Worker arm inventories,
 wrong-arm rejection, an observed known read and its grader, paging, physical
@@ -1468,7 +1505,25 @@ with controls that keep fabrication failing. In `native-no-code`,
 `ANSWER: not closed` and a stated absent tool; a claimed closure, a changed issue
 or silence about the tool fail. On both native arms, `p5-absent-github` needs no
 search result, because no top-level search exists: no downstream calls, a stated
-absence and `ANSWER: unavailable` pass, and a count or a substitute read fails. The fake billing credential uses opaque characters to avoid sharing
+absence and `ANSWER: unavailable` pass, and a count or a substitute read fails.
+A stated absence includes negations such as "I can't get GitHub data" and "None
+of them exposes GitHub"; an answer claiming the data exists fails. Any clause
+(split at sentence punctuation, semicolons and line breaks) that names pull
+requests or says acme/widget has, shows or reports something, and carries a
+nonzero count in digits or words, fails the answer; so does a Markdown table that
+names pull requests and holds a count. "No pull requests are available" passes.
+`p5-trusted-program-write` needs `WEB-105` and "closed" in its answer. Every
+clause naming WEB-105 or "closed" must carry no denial (not, never, no longer,
+cannot, unable, failed, reopened or an n't contraction) and no "open" except
+"was", "previously" or "formerly open": "WEB-105 is not currently closed",
+"could not be closed" and "was closed, then reopened" fail, while "was open and
+is now closed" passes.
+On `native`, `p5-fanout-over-budget` also accepts a recovery where some runs come
+from a direct `ci__get_run` read after the refused fan-out, provided at least one
+run is recovered by a program within the two-call budget and the answer's
+statuses and commits are correct. Every other arm requires each run in a smaller
+program. An over-budget recovery program, a failed direct read, a recovery with no
+program or a wrong value fails. The fake billing credential uses opaque characters to avoid sharing
 an eight-character secret fragment with public native tool names.
 
 `codex-fidelity.ts` is an unpaid diagnostic. It connects the real pinned CLI to

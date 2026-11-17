@@ -86,6 +86,8 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   let costUsd: number | undefined;
   let apiMs: number | undefined;
   let modelTurns: number | undefined;
+  let modelRounds: number | undefined;
+  let awaitingModel = true;
   let tokens: Tokens = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 };
   const permissionDenials: unknown[] = [];
   const resultSubtypes: string[] = [];
@@ -101,6 +103,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
   events.forEach((event, index) => {
     const startedTurn = turnStarts.indexOf(index);
     if (startedTurn >= 0) {
+      awaitingModel = true;
       finalAnswer = "";
       turn = startedTurn + 1;
       transcript.push({ kind: "user", turn, text: clip(prompts[startedTurn] ?? "", MAX_TEXT_CHARS) });
@@ -130,6 +133,11 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
         action: String(event.action),
       });
       return;
+    }
+    if (event.type === "host_raw_observed" && event.source === "input") awaitingModel = true;
+    if (event.type === "host_raw_observed" && event.source === "model") {
+      modelRounds = (modelRounds ?? 0) + Number(awaitingModel);
+      awaitingModel = false;
     }
     if (event.type === "host_exec") hostSearchCalls++;
     if (event.type === "eve_usage") {
@@ -278,7 +286,7 @@ export function parseTrace(events: StreamEvent[], turnStarts: number[], prompts:
     tokens,
     costUsd,
     apiMs,
-    modelTurns,
+    modelTurns: modelRounds === undefined ? modelTurns : (modelTurns ?? 0) + modelRounds,
     permissionDenials,
     resultSubtypes,
     model,

@@ -12,7 +12,7 @@ import {
   type ResultFile,
   type SmokeResultFile,
 } from "./summary.js";
-import { batchEfficiency, expenseReason, trialEfficiency } from "./efficiency.js";
+import { batchEfficiency, expenseReason, modelTurnsLabel, trialEfficiency } from "./efficiency.js";
 
 const esc = (value: unknown) =>
   String(value ?? "")
@@ -136,7 +136,7 @@ function efficiency(file: AgentResultFile): string {
       <td><ul class="checks">${expensive || `<li class="muted">none</li>`}</ul>${summary.distractors.length ? `<div class="sub">distractors: ${summary.distractors.map((t) => `${esc(t.task)} #${t.repeat} ${t.reads}r/${t.writes}w`).join(", ")}</div>` : ""}</td></tr>`;
   });
   const missing = models.reduce((total, summary) => total + summary.withoutSizes, 0);
-  return `<table class="compare"><thead><tr><th>model</th><th>pass@${k} / pass^${k}</th><th>calls · model turns</th><th>input incl. cache / output tokens</th><th>wall</th><th>tool errors · guide fetches</th><th>response bytes per trial; per call by tool</th><th>most expensive trials</th></tr></thead><tbody>${rows.join("")}</tbody></table>
+  return `<table class="compare"><thead><tr><th>model</th><th>pass@${k} / pass^${k}</th><th>calls · ${esc(modelTurnsLabel(file.config.runner))}</th><th>input incl. cache / output tokens</th><th>wall</th><th>tool errors · guide fetches</th><th>response bytes per trial; per call by tool</th><th>most expensive trials</th></tr></thead><tbody>${rows.join("")}</tbody></table>
   <p class="note">Medians per trial over passing trials. pass@${k} and pass^${k} are the chances that at least one, or all, of ${k} trials of a task pass, averaged over task cells; N/A and errors are excluded. Response bytes are UTF-8 sizes of the tool results the agent received. Guide fetches count <code>skills</code> calls with a name plus <code>connecta.skill</code> program calls. The most expensive trials rank by total tokens.${missing ? ` ${missing} trial(s) lack saved traces, so their response sizes and guide fetches are unknown.` : ""}</p>`;
 }
 
@@ -226,7 +226,7 @@ function trialHtml(trial: TrialResult): string {
       <div><h4>Checks</h4><ul class="checks">${checks || `<li class="muted">not graded</li>`}</ul></div>
       <div><h4>Metrics</h4><table class="kv">
         <tr><td>wall / API</td><td>${fmtMs(m.wallMs)} / ${fmtMs(m.apiMs)}</td></tr>
-        <tr><td>turns (user / model)</td><td>${m.conversationTurns} / ${m.modelTurns ?? "unknown"}</td></tr>
+        <tr><td>turns (user / ${esc(modelTurnsLabel(trial.runner))})</td><td>${m.conversationTurns} / ${m.modelTurns ?? "unknown"}</td></tr>
         <tr><td>tokens in / out</td><td>${fmtNum(m.tokens.input, 0)} + cache ${fmtNum(m.tokens.cacheRead, 0)}r/${fmtNum(m.tokens.cacheCreation, 0)}w / ${fmtNum(m.tokens.output, 0)}</td></tr>
         <tr><td>cost</td><td>${fmtUsd(m.costUsd)}</td></tr>
         <tr><td>meta-tool calls</td><td>${

@@ -161,6 +161,46 @@ function clipArgs(args: unknown): string {
   return text.length > 500 ? `${text.slice(0, 500)}…` : text;
 }
 
+export function skippedTrial(
+  trial: Pick<
+    TrialResult,
+    | "task"
+    | "taskDefinitionsHash"
+    | "timeoutMs"
+    | "runner"
+    | "target"
+    | "surface"
+    | "grading"
+    | "model"
+    | "repeat"
+    | "startedAt"
+  >,
+  skip: TrialSkip,
+): TrialResult {
+  return {
+    ...trial,
+    status: "skipped",
+    skip,
+    checks: [],
+    metrics: {
+      wallMs: 0,
+      apiMs: undefined,
+      modelTurns: undefined,
+      conversationTurns: 0,
+      tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
+      costUsd: undefined,
+      metaTools: {},
+      otherTools: {},
+      toolErrors: 0,
+      confirmationNudges: 0,
+      downstream: downstreamMetrics([], []),
+    },
+    approvals: { allowed: [], denied: [], gated: [], exercised: [], permissionDenials: [] },
+    transcript: [],
+    ledger: [],
+  };
+}
+
 async function runTrial(task: ActiveTask, model: string, repeat: number, options: TrialOptions): Promise<TrialResult> {
   const surfaceArm = options.surface ?? "six";
   const grading = options.grading ?? "route";
@@ -173,36 +213,20 @@ async function runTrial(task: ActiveTask, model: string, repeat: number, options
   const startedAt = new Date().toISOString();
   const skip = task.runnerSkips?.[options.runner ?? "codex"];
   if (skip)
-    return {
-      task: task.id,
-      ...protocol,
-      runner: options.runner ?? "codex",
-      target,
-      surface: surfaceArm,
-      grading,
-      model,
-      repeat,
-      startedAt,
-      status: "skipped",
-      skip,
-      checks: [],
-      metrics: {
-        wallMs: 0,
-        apiMs: undefined,
-        modelTurns: undefined,
-        conversationTurns: 0,
-        tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
-        costUsd: undefined,
-        metaTools: {},
-        otherTools: {},
-        toolErrors: 0,
-        confirmationNudges: 0,
-        downstream: downstreamMetrics([], []),
+    return skippedTrial(
+      {
+        task: task.id,
+        ...protocol,
+        runner: options.runner ?? "codex",
+        target,
+        surface: surfaceArm,
+        grading,
+        model,
+        repeat,
+        startedAt,
       },
-      approvals: { allowed: [], denied: [], gated: [], exercised: [], permissionDenials: [] },
-      transcript: [],
-      ledger: [],
-    };
+      skip,
+    );
   const world = new World(task.world, options.injection);
   let cleanupDeployment: Deployment | undefined;
   let cleanupHost: Awaited<ReturnType<typeof startAuthHost>> | undefined;

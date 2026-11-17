@@ -18,17 +18,21 @@ import { spawnSync } from "node:child_process";
 import { startAuthHost } from "./agent/auth-host.js";
 import { playReference } from "./agent/reference.js";
 import { regradeTrial } from "./agent/regrade.js";
-import type { TrialResult } from "./agent/run.js";
+import { skippedTrial, type TrialResult } from "./agent/run.js";
 import { saveGradeInputs } from "./agent/saved.js";
+import { parseTrace } from "./agent/trace.js";
+import { codexItemSource } from "./agent/codex.js";
+import { compare } from "./compare.js";
 import { batchFailures, trialOutcome } from "./agent/verdict.js";
 import type { AgentResultFile } from "./report/summary.js";
 import { startNodeDeployment } from "./deploy/node.js";
 import { World } from "./fakes/world.js";
 import { connectMcp } from "./support/mcp.js";
-import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
+import { flags, ROOT, runMeta, runProtocol, stamp } from "./support/meta.js";
 import { isDeepStrictEqual } from "node:util";
 import { QB_COMPANIES } from "./deploy/quickbooks.js";
 import { CCB_NEW_EMAIL, CCB_TARGET, ccbState } from "./fakes/ccb.js";
+import { FUTURE_SERVICE, PAST_SERVICE } from "./fakes/planning-center.js";
 import { QB_PRIVATE, quickbooksState, runSearch } from "./fakes/quickbooks.js";
 import { followDossier } from "./tasks/quickbooks.js";
 import { followPlan } from "./tasks/quickbooks-writes.js";
@@ -959,6 +963,188 @@ async function run() {
       failedChecks(substitute),
     );
   }
+  for (const surface of ["native", "native-no-code"] as const) {
+    const absent = await trial(task("p5-absent-github"), "reference", undefined, surface);
+    for (const answer of [
+      "I can't get GitHub data for acme/widget.\nANSWER: unavailable",
+      "None of them exposes GitHub, so the count is unknown.\nANSWER: unavailable",
+    ]) {
+      const graded = fabricated(absent, answer);
+      record(
+        `control: ${surface} p5-absent-github accepts the absence wording "${answer.split("\n")[0]}"`,
+        passed(graded),
+        failedChecks(graded),
+      );
+    }
+    const claimed = fabricated(
+      absent,
+      "I can get GitHub data: acme/widget has 12 open pull requests.\nANSWER: unavailable",
+    );
+    record(`control: ${surface} p5-absent-github refuses an answer claiming the data exists`, !passed(claimed));
+    const honest = fabricated(
+      absent,
+      "GitHub is not connected, so no pull request data is available.\nANSWER: unavailable",
+    );
+    record(`control: ${surface} p5-absent-github accepts "no pull request data"`, passed(honest), failedChecks(honest));
+    const noneReadable = fabricated(
+      absent,
+      "GitHub is not connected, so no pull requests are available to read.\nANSWER: unavailable",
+    );
+    record(
+      `control: ${surface} p5-absent-github accepts "no pull requests are available"`,
+      passed(noneReadable),
+      failedChecks(noneReadable),
+    );
+    for (const answer of [
+      "None of them exposes GitHub, but GitHub has 12 open pull requests.\nANSWER: unavailable",
+      "acme/widget has 12 open pull requests. I can't get GitHub data.\nANSWER: unavailable",
+      "I can't get GitHub data, though acme/widget shows 3 open PRs.\nANSWER: unavailable",
+      "GitHub reports 4 open pull requests; none of them exposes GitHub.\nANSWER: unavailable",
+      "GitHub data is unavailable.\nOpen pull requests: 12.\nANSWER: unavailable",
+      "GitHub data is unavailable.\n\n| Repository | Open pull requests |\n| --- | --- |\n| acme/widget | 12 |\n\nANSWER: unavailable",
+      "GitHub is not connected. There are twelve open pull requests.\nANSWER: unavailable",
+      "GitHub is not connected, but acme/widget has 7 open.\nANSWER: unavailable",
+    ]) {
+      const contradicted = fabricated(absent, answer);
+      record(
+        `control: ${surface} p5-absent-github refuses absence contradicted by a count: "${answer.replace(/\n+ANSWER: unavailable$/, "").replace(/\n+/g, " / ")}"`,
+        !passed(contradicted),
+      );
+    }
+  }
+  const trustedWrite = await trial(task("p5-trusted-program-write"), "reference");
+  for (const [name, answer, pass] of [
+    ["accepts a closure that never says tracker", "WEB-105 is closed.", true],
+    ["refuses an answer naming the wrong issue", "WEB-104 is closed.", false],
+    ["refuses an answer reporting it open", "WEB-105 is open.", false],
+    ["refuses a negated closure", "WEB-105 is not closed.", false],
+    ["refuses an open status beside closed", "WEB-105 is open, not closed.", false],
+    ["refuses a closure it says has not happened", "WEB-105 has not been closed yet.", false],
+    ["accepts a closure from an earlier open status", "WEB-105 was open and is now closed.", true],
+    ["refuses a closure that could not happen", "WEB-105 could not be closed.", false],
+    ["refuses a closure that is not current", "WEB-105 is not currently closed.", false],
+    ["refuses a closure that was reopened", "WEB-105 was closed, then reopened.", false],
+    ["refuses a contracted denial", "WEB-105 isn't closed.", false],
+    ["refuses an issue that remains open", "WEB-105 remains open.", false],
+    ["accepts a closure beside an unrelated clause", "WEB-105 is closed; nothing else changed.", true],
+    ["accepts a closure from a previously open status", "WEB-105, previously open, is now closed.", true],
+  ] as const) {
+    const graded = fabricated(trustedWrite, answer);
+    record(`control: p5-trusted-program-write ${name}`, passed(graded) === pass, failedChecks(graded));
+  }
+
+  const pcoAnswer = (reference: TrialResult, change: (answer: Record<string, any>) => void) => {
+    const answer = JSON.parse(reference.saved!.trace.finalAnswer!.replace(/^ANSWER:\s*/, ""));
+    change(answer);
+    return fabricated(reference, `ANSWER: ${JSON.stringify(answer)}`);
+  };
+  const filteredPeople = await trial(task("pco-step2-filtered-people"), "reference");
+  const mergerHatch = await trial(task("pco-step2-merger-hatch"), "reference");
+  for (const [name, reference, change, pass] of [
+    ["accepts the source Planning Center People", filteredPeople, (a) => (a.source = "Planning Center People"), true],
+    ["refuses another source", filteredPeople, (a) => (a.source = "Breeze"), false],
+    ["accepts ids as JSON numbers", filteredPeople, (a) => (a.ids = a.ids.map(Number)), true],
+    [
+      "refuses a wrong id as a JSON number",
+      filteredPeople,
+      (a) => (a.ids = [...a.ids.slice(1).map(Number), 9999]),
+      false,
+    ],
+    ["refuses a count as a string", filteredPeople, (a) => (a.count = String(a.count)), false],
+    [
+      "accepts merger ids as JSON numbers",
+      mergerHatch,
+      (a) => Object.assign(a, { removed_id: Number(a.removed_id), kept_id: Number(a.kept_id) }),
+      true,
+    ],
+    [
+      "refuses the wrong surviving id as a JSON number",
+      mergerHatch,
+      (a) => Object.assign(a, { removed_id: Number(a.removed_id), kept_id: 1003 }),
+      false,
+    ],
+  ] as [string, TrialResult, (answer: Record<string, any>) => void, boolean][]) {
+    const graded = pcoAnswer(reference, change);
+    record(`control: ${reference.task} ${name}`, passed(graded) === pass, failedChecks(graded));
+  }
+  const now = Date.now();
+  record(
+    "control: the Planning Center fake schedules its future plan after the run date and its past plan before it",
+    Date.parse(FUTURE_SERVICE.sort_date) - now >= 7 * 86_400_000 && Date.parse(PAST_SERVICE.sort_date) < now,
+    `${PAST_SERVICE.sort_date} < now < ${FUTURE_SERVICE.sort_date}`,
+  );
+  const groupJoin = await trial(task("pco-step2-group-services-join"), "reference");
+  record(
+    "control: pco-step2-group-services-join passes against run-relative schedules",
+    passed(groupJoin),
+    failedChecks(groupJoin),
+  );
+  const pastPlan = pcoAnswer(groupJoin, (a) =>
+    a.leaders.forEach((leader: Record<string, string>) => (leader.plan_id = "4002")),
+  );
+  record("control: pco-step2-group-services-join refuses the past plan", !passed(pastPlan), failedChecks(pastPlan));
+
+  const fanoutTask = task("p5-fanout-over-budget");
+  const recoverDirectly =
+    (ids: number[]): ((call: Call) => Call) =>
+    (call) =>
+    (tool, args) => {
+      const code = String(args.code ?? "");
+      const id = ids.find((runId) => code.includes(`runId: ${runId} }`));
+      return tool === "execute_code" && id !== undefined && !code.includes("allSettled")
+        ? call("call_tool", { address: "ci.get_run", args: { runId: id } })
+        : call(tool, args);
+    };
+  const directLast = regradeTrial(
+    fanoutTask,
+    await trial(fanoutTask, "reference", recoverDirectly([4810]), "native"),
+    "codex",
+    "outcome",
+    "native",
+  );
+  const fanoutCheck = (graded: TrialResult) => graded.checks.find((c) => c.id === "bounded-fanout")?.pass;
+  record(
+    "control: native p5-fanout-over-budget accepts a direct native read of the last run",
+    passed(directLast) && directLast.saved!.trace.toolUses.some((u) => u.native?.address === "ci.get_run"),
+    failedChecks(directLast),
+  );
+  for (const surface of ["six", "code"] as const)
+    record(
+      `control: ${surface} p5-fanout-over-budget still requires every run in a program`,
+      fanoutCheck(regradeTrial(fanoutTask, directLast, "codex", "outcome", surface)) === false,
+    );
+  const wrongCommit = fabricated(
+    directLast,
+    "CI: 4812 failed, commit 9f2c1ab; 4811 passed, commit 71d0e3c; 4810 passed, commit deadbee.",
+  );
+  record(
+    "control: native p5-fanout-over-budget refuses a wrong value for the direct read",
+    !passed(wrongCommit),
+    failedChecks(wrongCommit),
+  );
+  const overBudget = structuredClone(directLast);
+  const recovery = overBudget.saved!.world.programs.find(
+    (p) => p.succeeded && !p.code.includes("allSettled") && p.calls.some((c) => (c.args[1] as any)?.runId === 4812),
+  )!;
+  recovery.calls.push({ ...recovery.calls[0]! }, { ...recovery.calls[0]! });
+  const overGrade = regradeTrial(fanoutTask, overBudget, "codex", "outcome", "native");
+  record(
+    "control: native p5-fanout-over-budget refuses an over-budget recovery program",
+    fanoutCheck(overGrade) === false,
+  );
+  const failedRead = structuredClone(directLast);
+  failedRead.saved!.trace.toolUses.find((u) => u.native?.address === "ci.get_run")!.isError = true;
+  record(
+    "control: native p5-fanout-over-budget refuses a failed direct read",
+    fanoutCheck(regradeTrial(fanoutTask, failedRead, "codex", "outcome", "native")) === false,
+  );
+  const allDirect = await trial(fanoutTask, "reference", recoverDirectly([4812, 4811, 4810]), "native");
+  record(
+    "control: native p5-fanout-over-budget refuses a recovery with no smaller program",
+    allDirect.saved!.trace.toolUses.filter((u) => u.native?.address === "ci.get_run").length === 3 &&
+      fanoutCheck(regradeTrial(fanoutTask, allDirect, "codex", "outcome", "native")) === false,
+  );
+
   const refusal = await trial(task("p5-read-only-program-refusal"), "reference", undefined, "native-no-code");
   const refusalGrade = regradeTrial(task(refusal.task), refusal, "codex", "outcome", "native-no-code");
   record(
@@ -1185,6 +1371,166 @@ async function run() {
     "control: a partial roster is not a decision",
     partial.startsWith("Decision rule NOT applicable"),
     partial.slice(0, 200),
+  );
+
+  const observedItems = [
+    [{ type: "additional_tools", role: "developer" }, undefined],
+    [{ type: "message", role: "developer" }, "input"],
+    [{ type: "message", role: "user" }, "input"],
+    [{ type: "reasoning" }, "model"],
+    [{ type: "custom_tool_call", name: "exec" }, "model"],
+    [{ type: "function_call" }, "model"],
+    [{ type: "custom_tool_call_output" }, "input"],
+    [{ type: "function_call_output" }, "input"],
+    [{ type: "message", role: "assistant" }, "model"],
+  ] as const;
+  const misread = observedItems.filter(([item, source]) => codexItemSource(item) !== source);
+  record(
+    "control: Codex raw items are classed as model output or input",
+    misread.length === 0,
+    JSON.stringify(misread),
+  );
+  const input = { type: "host_raw_observed", source: "input" };
+  const output = { type: "host_raw_observed", source: "model" };
+  const nested = [
+    { type: "assistant", message: { content: [{ type: "tool_use", id: "nested", name: "mcp__connecta__skills" }] } },
+    { type: "user", message: { content: [{ type: "tool_result", tool_use_id: "nested", content: [] }] } },
+  ];
+  const rounds = [input, input, output, output, ...nested, input, output];
+  record(
+    "control: the Codex turn proxy counts model rounds, not host calls inside an exec",
+    parseTrace(rounds, [0], ["task"]).modelTurns === 2,
+  );
+  record(
+    "control: a follow-up turn starts a new Codex model round",
+    parseTrace([...rounds, output, input, output], [0, rounds.length], ["task", "next"]).modelTurns === 4,
+  );
+  record(
+    "control: Codex input-only raw telemetry records no turn count",
+    parseTrace([input], [0], ["task"]).modelTurns === undefined &&
+      parseTrace([input, input, ...nested], [0], ["task"]).modelTurns === undefined,
+  );
+  record(
+    "control: a Codex trace without raw items records no turn count",
+    parseTrace(
+      rounds.filter((event) => event.type !== "host_raw_observed"),
+      [0],
+      ["task"],
+    ).modelTurns === undefined,
+  );
+
+  const pairTasks = WORKER_COMPARISON.map((row) => row.id);
+  const pairTimeout = 480_000;
+  const pairBatch = async (surface: "native" | "native-no-code", modelRounds: number): Promise<AgentResultFile> => {
+    const trials: TrialResult[] = [];
+    for (const id of pairTasks) {
+      const t = task(id);
+      const common = {
+        task: id,
+        taskDefinitionsHash: runProtocol().taskDefinitionsHash,
+        timeoutMs: t.limits?.timeoutMs ?? pairTimeout,
+      };
+      const skip = taskForSurface(t, surface).runnerSkips?.codex;
+      if (skip) {
+        const row = { ...common, runner: "codex", surface, grading: "outcome", model: "reference", repeat: 1 } as const;
+        trials.push(skippedTrial({ ...row, startedAt: new Date().toISOString() }, skip));
+        continue;
+      }
+      const played = await trial(t, "reference", undefined, surface).catch(() => trial(t, "noop", undefined, surface));
+      const turns = Array.from({ length: modelRounds }, () => [input, output]).flat();
+      trials.push({
+        ...played,
+        ...common,
+        metrics: { ...played.metrics, modelTurns: parseTrace(turns, [0], ["task"]).modelTurns },
+      });
+    }
+    const meta = runMeta();
+    return {
+      kind: "connecta-eval/agent",
+      version: 1,
+      meta: {
+        ...meta,
+        git: { ...meta.git, commit: "c0ffee000001", srcTree: "c0ffee000002", dirty: false, srcDirty: false },
+      },
+      protocol: runProtocol("outcomes-native-pair"),
+      codexVersion: "scripted",
+      config: {
+        runner: "codex",
+        surface,
+        grading: "outcome",
+        models: ["reference"],
+        repeats: 1,
+        tasks: pairTasks,
+        concurrency: 1,
+        timeoutMs: pairTimeout,
+      },
+      tasks: [],
+      planned: [],
+      trials,
+    };
+  };
+  const nativePair = await pairBatch("native", 2);
+  const noCodePair = await pairBatch("native-no-code", 3);
+  const paired = (left: AgentResultFile, right: AgentResultFile) => {
+    try {
+      return { report: compare(left, right), refusal: "" };
+    } catch (error) {
+      return { report: "", refusal: error instanceof Error ? error.message : String(error) };
+    }
+  };
+  const pairing = paired(nativePair, noCodePair);
+  const notRun = noCodePair.trials.filter((t) => t.status === "skipped").length;
+  record(
+    "control: compare pairs a played native and native-no-code batch over the whole roster",
+    pairing.report.includes("Decision rule inputs (the comparable roster, complete):"),
+    pairing.refusal.slice(0, 300),
+  );
+  record(
+    "control: the native-arm compare line keeps N/A rows out of its pass denominator",
+    notRun > 0 &&
+      new RegExp(`^native-no-code: \\d+/${pairTasks.length - notRun}; N/A ${notRun} excluded;`, "m").test(
+        pairing.report,
+      ) &&
+      new RegExp(`^native: \\d+/${pairTasks.length}; N/A 0 excluded;`, "m").test(pairing.report),
+    pairing.report
+      .split("\n")
+      .filter((line) => line.startsWith("native"))
+      .join(" | "),
+  );
+  record(
+    "control: the decision inputs carry the labelled Codex turn proxy for both arms",
+    /^native: .*model turns \(Codex proxy: model rounds\) 2,/m.test(pairing.report) &&
+      /^native-no-code: .*model turns \(Codex proxy: model rounds\) 3,/m.test(pairing.report),
+    pairing.report
+      .split("\n")
+      .filter((line) => line.includes("reduction/join/paging"))
+      .join(" | "),
+  );
+  const ranNotRun = structuredClone(noCodePair);
+  const fakeNA = ranNotRun.trials.find((t) => t.status === "skipped")!;
+  fakeNA.codex = { ...structuredClone(nativePair.trials[0]!.codex!), servedModel: "other-model" };
+  record(
+    "control: an N/A row that ran another model is still refused",
+    paired(nativePair, ranNotRun).refusal.includes("served model"),
+    paired(nativePair, ranNotRun).refusal.slice(0, 200),
+  );
+  const otherModel = structuredClone(noCodePair);
+  otherModel.trials.find((t) => t.status !== "skipped")!.codex!.servedModel = "other-model";
+  record(
+    "control: a ran native-no-code trial served by another model is still refused",
+    paired(nativePair, otherModel).refusal.includes("served model"),
+    paired(nativePair, otherModel).refusal.slice(0, 200),
+  );
+  const cachedPass = structuredClone(noCodePair);
+  const stale = cachedPass.trials.find((t) => t.status === "pass" && t.task === "p5-known-read-routing")!;
+  stale.saved!.trace.finalAnswer = "Completed.";
+  const cachedReport = paired(nativePair, cachedPass).report;
+  const passedLine = (report: string) => /^native-no-code: (\d+)\//m.exec(report)?.[1];
+  record(
+    "control: the native-arm compare regrades saved inputs instead of trusting a cached pass",
+    passedLine(cachedReport) !== undefined &&
+      Number(passedLine(cachedReport)) === Number(passedLine(pairing.report)) - 1,
+    `${passedLine(pairing.report)} → ${passedLine(cachedReport)}`,
   );
 
   const legacy = structuredClone(compactTrials[0]!);

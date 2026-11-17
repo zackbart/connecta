@@ -1795,6 +1795,8 @@ export function positiveVariants(
       "GitHub is not currently connected",
       "GitHub isn't connected",
       "GitHub is not at present connected",
+      "I can't get GitHub data",
+      "None of them exposes GitHub",
     ]) {
       cases.push({
         name: `advisory absence wording: ${prose}`,
@@ -1802,6 +1804,22 @@ export function positiveVariants(
         advisoryPass: "states-absence",
       });
     }
+    cases.push({
+      name: "structured absence after claiming GitHub data exists",
+      trace: { ...trace, finalAnswer: "I can get GitHub data for acme/widget.\nANSWER: unavailable" },
+      advisoryMiss: "states-absence",
+    });
+    for (const answer of [
+      "None of them exposes GitHub, but GitHub has 12 open pull requests.",
+      "acme/widget has 12 open pull requests. I can't get GitHub data.",
+      "GitHub data is unavailable.\nOpen pull requests: 12.",
+      "GitHub is not connected. There are twelve open pull requests.",
+    ])
+      cases.push({
+        name: `structured absence contradicted by a count: ${answer}`,
+        trace: { ...trace, finalAnswer: `${answer}\nANSWER: unavailable` },
+        advisoryMiss: "states-absence",
+      });
     cases.push({
       name: "structured absence without advisory prose",
       trace: { ...trace, finalAnswer: "GitHub acme/widget\nANSWER: unavailable" },
