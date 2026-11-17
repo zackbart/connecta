@@ -852,6 +852,7 @@ const catalogLocation = authMethod((ctx: ConnectorContext, config: string, authP
       policy?.sharedPartition ?? JSON.stringify([ctx.baseUrl, ctx.publicUrl, callerOf(ctx)?.pool]),
       authPartition,
     ]);
+    const zeroTtlMs = Math.floor(policy?.zeroTtlMs ?? 0);
     const configHash = (
       (yield authCall(fingerprintSerializedCatalog, [
         JSON.stringify([
@@ -859,6 +860,7 @@ const catalogLocation = authMethod((ctx: ConnectorContext, config: string, authP
           policy?.defaultTtlMs ?? 300000,
           policy?.minTtlMs ?? 0,
           policy?.maxTtlMs ?? MAX_CACHE_TTL_MS,
+          ...(zeroTtlMs > 0 ? [zeroTtlMs] : []),
         ]),
       ])) as {
         fingerprint: string;

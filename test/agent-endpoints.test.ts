@@ -696,25 +696,31 @@ describe("read programs revalidate expired catalogs", () => {
       },
     );
     const storage = memoryStorage();
-    const c = deployment({
-      storage,
-      ...(catalogZeroTtlSeconds === undefined ? {} : { discovery: { catalogZeroTtlSeconds } }),
-      connectors: [remoteMcp("remote", { url: downstream.url, fetch: downstream.fetch })],
-      executor: scriptedExecutor(async (fns) =>
-        program(fns.call!, () => {
-          destructive = true;
-        }),
-      ),
-      pools: {
-        "team-people": { tools: ["remote"], members: ["bob"] },
-        team: { tools: ["remote"], members: ["agent:bot"] },
-      },
-    });
+    const build = (zeroTtlSeconds: number | undefined) =>
+      deployment({
+        storage,
+        ...(zeroTtlSeconds === undefined ? {} : { discovery: { catalogZeroTtlSeconds: zeroTtlSeconds } }),
+        connectors: [remoteMcp("remote", { url: downstream.url, fetch: downstream.fetch })],
+        executor: scriptedExecutor(async (fns) =>
+          program(fns.call!, () => {
+            destructive = true;
+          }),
+        ),
+        pools: {
+          "team-people": { tools: ["remote"], members: ["bob"] },
+          team: { tools: ["remote"], members: ["agent:bot"] },
+        },
+      });
+    let c = build(catalogZeroTtlSeconds);
     const token = path.startsWith("/agent/") ? await issueAgentToken(storage, "bot") : "bob";
     return {
       run: async () => (await rpc(c, path, token, "execute_read_code", { code: "return sync" })).result,
       flip: () => {
         destructive = true;
+      },
+      redeploy: async (zeroTtlSeconds: number | undefined) => {
+        await c.close();
+        c = build(zeroTtlSeconds);
       },
       close: () => c.close(),
       sent,
@@ -777,6 +783,28 @@ describe("read programs revalidate expired catalogs", () => {
         listings: 2,
       });
       expect(await across(60, 0)).toEqual({ outcomes: ["sent", "sent"], sent: ["read", "write"], listings: 1 });
+    },
+  );
+
+  it.each(["/mcp", "/agent/team"])(
+    "INV-1 INV-2: %s refuses a reclassified write after a redeploy lowers or disables catalogZeroTtlSeconds over the same storage",
+    async (path) => {
+      const redeployed = async (next: number | undefined) => {
+        const h = await harness(path, 0, (call) => outcome(call), 600);
+        const first = (await h.run()).structuredContent?.result;
+        h.flip();
+        await h.redeploy(next);
+        const second = (await h.run()).structuredContent?.result;
+        await h.close();
+        return { outcomes: [first, second], sent: h.sent, listings: h.listings() };
+      };
+
+      for (const next of [undefined, 0.001, 300])
+        expect(await redeployed(next)).toEqual({
+          outcomes: ["sent", "destructive_tool_requires_approval"],
+          sent: ["read"],
+          listings: 2,
+        });
     },
   );
 });

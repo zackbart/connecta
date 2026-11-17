@@ -116,9 +116,11 @@ const discovery = {
   /** Floor for positive downstream hints. Zero hints are governed by catalogZeroTtlSeconds. Default 0. */
   catalogMinTtlSeconds: seconds({ default: D.discovery.catalogMinTtlSeconds }),
   /**
-   * TTL a remote MCP tools/list hint of exactly `ttlMs: 0` is reused for, then
-   * bounded like a positive hint. Resource inventories are never floored.
-   * Default 0: a zero hint disables reuse.
+   * Replaces a remote MCP tools/list hint of exactly `ttlMs: 0`, then bounded
+   * like a positive hint, so the effective TTL is
+   * min(max(this, catalogMinTtlSeconds), catalogMaxTtlSeconds). Read programs
+   * see a reclassification to write within that effective TTL. Resource
+   * inventories are never floored. Default 0: a zero hint disables reuse.
    */
   catalogZeroTtlSeconds: seconds({ default: D.discovery.catalogZeroTtlSeconds }),
   /** Ceiling for downstream hints and the fallback, capped by the SDK at 24h. Default 86400. */

@@ -877,10 +877,20 @@ list, and resources have no stale fallback, so they keep requiring an unexpired
 positive hint. A floored catalog is an ordinary stored entry: the same
 generation, credential, partition and refusal-fence checks accept or refuse it,
 `list_changed` and invalidation still evict it, and a refusal still retires it.
-It also moves the read-program admission bound below from every call to the
-floored TTL: a downstream reclassification of a read to a write reaches a
-revalidating call no later than `catalogZeroTtlSeconds` after the listing, and
-such a call is then refused before dispatch.
+
+Such a catalog's effective TTL is the floored value after both bounds:
+`min(max(catalogZeroTtlSeconds, catalogMinTtlSeconds), catalogMaxTtlSeconds)`.
+With `catalogZeroTtlSeconds: 30` and `catalogMinTtlSeconds: 600`, it is reused
+for 600 seconds. That effective TTL replaces "every call" in the read-program
+admission bound below: a downstream reclassification of a read to a write
+reaches a revalidating call no later than the effective TTL after the listing,
+and such a call is then refused before dispatch. A relisting that fails
+transiently can extend that by the five-minute stale fallback above, as it does
+for any positive TTL. The floor is part of the catalog configuration
+fingerprint, as `catalogTtlSeconds`, `catalogMinTtlSeconds` and
+`catalogMaxTtlSeconds` are, so a redeployment that changes or disables it
+addresses new entries: catalogs stored under the previous floor are never read
+again and are listed afresh.
 
 ```ts
 createConnecta({
@@ -902,7 +912,8 @@ reclassification reaches such a program within the TTL without a `list_changed`
 notification. Concurrent askers share the one relisting, and a listing still in
 flight when a call asks is accepted. A relisting that succeeds follows its own
 TTL, so a zero-TTL or uncached catalog is relisted before each such call, and a
-zero-TTL tool catalog under `catalogZeroTtlSeconds` once that floor lapses. The
+zero-TTL tool catalog under `catalogZeroTtlSeconds` once its effective TTL
+(the floor after `catalogMinTtlSeconds` and `catalogMaxTtlSeconds`) lapses. The
 service records each revalidation's read per connector and retained identity.
 While that read's stale fallback (`markCatalogFallback`: its `fetchedAt`, and its
 expiry plus `STALE_FALLBACK_MS`) still holds, a later revalidating call admits
