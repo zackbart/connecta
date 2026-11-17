@@ -796,6 +796,13 @@ describe("discovery health across requests", () => {
     try {
       const storage = d1Storage(binding);
       await storage.get("warm-up");
+      const warmed = { healthy: false, listings: 0 };
+      await searchOnce(
+        makeRegistry([hangingConnector("hung", warmed), healthy], { storage: memoryStorage() }),
+        { query: "read" },
+        { probeTimeoutMs: 10 },
+      );
+      expect(warmed.listings).toBe(1);
       const state = { healthy: false, listings: 0 };
       const registry = makeRegistry([hangingConnector("hung", state), healthy], { storage });
       ops.length = 0;
