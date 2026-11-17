@@ -2,6 +2,23 @@
 
 All notable changes to this package are documented here.
 
+## 0.53.0 — 2026-11-17
+
+Connecta 0.53.0 lets a deployment reuse remote MCP tool catalogs whose servers mark every list immediately stale. The MCP TypeScript server SDK sends `ttlMs: 0` on `tools/list` by default, and Connecta honored it by never storing the catalog, so warm deployments relisted every remote MCP connector on nearly every request. The new `discovery.catalogZeroTtlSeconds` option replaces an explicit zero `tools/list` hint with a positive TTL, still bounded by `catalogMinTtlSeconds` and `catalogMaxTtlSeconds`. Resource inventories are never floored, and generation, credential, partition and refusal-fence checks apply to floored catalogs as to any other.
+
+The option defaults to 0, so nothing changes until a deployment sets it. Setting it trades freshness for reuse: a downstream tool newly added or reclassified from read to write reaches read programs and read-only routes within the effective TTL, `min(max(catalogZeroTtlSeconds, catalogMinTtlSeconds), catalogMaxTtlSeconds)`, plus the existing five-minute stale fallback after a transient relisting failure, instead of on the next request. Writes stay refused on read-only scopes once that window lapses. Changing or disabling the floor on redeploy changes the catalog configuration fingerprint, so the redeployment lists afresh.
+
+Timing traces gain `catalog.store` and `catalog.store.refused.<reason>` counters (`zero_ttl`, `partial`, `expired`, `fenced`, `ended`) and split invocation connector time into `connector.mcp`, `connector.api` and `connector.custom`, so an operator can confirm why catalogs are not reused and verify the fix. The remaining changes are test and eval-harness fixes that deployments can ignore.
+
+### Added
+
+- `discovery.catalogZeroTtlSeconds` (default 0, off) lets a deployment reuse remote MCP tool catalogs whose servers send `ttlMs: 0`, the MCP SDK server's default list hint: a positive value replaces an explicit zero `tools/list` hint and is bounded by `catalogMinTtlSeconds` and `catalogMaxTtlSeconds`. Resource inventories are not floored, `catalogMinTtlSeconds` still never applies to a zero hint, and generation, credential and refusal-fence checks still apply. The effective TTL is `min(max(catalogZeroTtlSeconds, catalogMinTtlSeconds), catalogMaxTtlSeconds)`; read-program and read-only revalidation relist such a catalog once it lapses, so a reclassification to write reaches those calls within that effective TTL (plus the existing five-minute stale fallback after a transient relisting failure). Changing or disabling the floor on redeploy changes the catalog configuration fingerprint, so the redeployment lists afresh; restoring an earlier floor can reach an unexpired entry stored under it, which keeps its original expiry. Timing traces add `catalog.store` and `catalog.store.refused.<reason>` (`zero_ttl`, `partial`, `expired`, `fenced`, `ended`) counters and split invocation connector time into `connector.mcp`, `connector.api` and `connector.custom`. `describeConfig().limits.discovery` reports the new option.
+
+### Fixed
+
+- Make the discovery-budget health storage test pass when run alone by warming the discovery path before its timed search.
+- `eval:compare` pairs `native` with `native-no-code`: the served-model check skips capability-mismatch N/A rows that ran no model, native-arm lines keep N/A rows out of pass denominators, and those comparisons regrade saved trials. The Codex runner records a model-round turn proxy in `metrics.modelTurns`, which compare labels as a proxy. Graders accept a closure of WEB-105 that omits "tracker", Planning Center answers sourced "Planning Center People" or with integer ids, absence phrasings such as "I can't get GitHub data", and on `native` a fan-out recovery that reads some runs directly. The Planning Center fake dates its schedules relative to the run. Each fix has a control proving a wrong answer still fails.
+
 ## 0.52.0 — 2026-11-15
 
 People now connect only at plain `/mcp`, and agents only at `/agent/<pool>`. Maintainers receive the whole catalog there and belong to no pool; every other person is listed in at most one pool, which plain `/mcp` serves them. `/mcp/<pool>` is removed: it answers the MCP 404 before authentication, and Clerk publishes protected-resource metadata only for `/mcp`.
