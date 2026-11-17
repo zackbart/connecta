@@ -751,7 +751,7 @@ derived from and the token digest both still hold. A missing
 or expired generation is a miss at every check and is never claimed or
 recreated. An unexpired complete entry is returned with no transport,
 handshake, session cleanup or storage write. A miss, an expired entry, an
-explicit `ttlMs: 0`, an invalidated generation, a credential, token or epoch
+explicit `ttlMs: 0` stored under no `catalogZeroTtlSeconds`, an invalidated generation, a credential, token or epoch
 change, an operator-disconnected or token-less grant, a cache read failure,
 and a downstream whose stored negotiation verdict is modern all connect as
 before. Modern downstreams connect without a handshake and read the cache
@@ -853,8 +853,8 @@ read without the slow listing, and a success clears the record.
 `discovery.catalogTtlSeconds` (300 by default) is the fallback for legacy
 listings without `ttlMs`. Positive hints are bounded by
 `catalogMinTtlSeconds` (0) and `catalogMaxTtlSeconds` (86400, also the SDK
-ceiling); an explicit zero is never reused. Both bounds are nonnegative finite
-seconds (fractions round down to milliseconds), with min <= max <= 86400. `persistCatalog` and `staleCatalogSeconds`
+ceiling). Both bounds are nonnegative finite seconds (fractions round down to
+milliseconds), with min <= max <= 86400. `persistCatalog` and `staleCatalogSeconds`
 have been removed. SQL storage is always used for remote catalogs; dynamic
 custom connectors are listed anew in each request; authenticated callers may
 retain a complete private fallback, and static catalogs remain
@@ -863,6 +863,31 @@ may use a complete catalog for up to five minutes after its expiry in the same
 auth partition. Partial walks, permission and auth failures do not use this
 fallback, and a refusal keeps later failures from using it until a listing succeeds.
 Resources require unexpired inventories.
+
+An explicit `ttlMs: 0`, the MCP SDK server's default list hint, is never reused
+unless the deployment sets `discovery.catalogZeroTtlSeconds` (0 by default,
+nonnegative finite seconds, at most `catalogMaxTtlSeconds`). A positive value
+replaces a remote MCP `tools/list` hint of exactly 0, and the result is then
+bounded by `catalogMinTtlSeconds` and `catalogMaxTtlSeconds` like any positive
+hint. `catalogMinTtlSeconds` alone never applies to a zero hint, so existing
+deployments keep refusing reuse until they opt in. Invalid hints (negative or
+fractional) are still refused. Resource and resource-template inventories are
+not floored: a zero hint there usually marks live data rather than a capability
+list, and resources have no stale fallback, so they keep requiring an unexpired
+positive hint. A floored catalog is an ordinary stored entry: the same
+generation, credential, partition and refusal-fence checks accept or refuse it,
+`list_changed` and invalidation still evict it, and a refusal still retires it.
+It also moves the read-program admission bound below from every call to the
+floored TTL: a downstream reclassification of a read to a write reaches a
+revalidating call no later than `catalogZeroTtlSeconds` after the listing, and
+such a call is then refused before dispatch.
+
+```ts
+createConnecta({
+  // ...connectors, storage, auth, executor
+  discovery: { catalogZeroTtlSeconds: 600 }, // reuse ttlMs: 0 tool catalogs for 10 minutes
+});
+```
 
 **Admission freshness.** A request retains each connector's catalog for its
 remaining calls. A call whose admission depends on a write restriction the
@@ -876,7 +901,8 @@ evicted and listed again, replacing the whole retained catalog (INV-8), so a
 reclassification reaches such a program within the TTL without a `list_changed`
 notification. Concurrent askers share the one relisting, and a listing still in
 flight when a call asks is accepted. A relisting that succeeds follows its own
-TTL, so a zero-TTL or uncached catalog is relisted before each such call. The
+TTL, so a zero-TTL or uncached catalog is relisted before each such call, and a
+zero-TTL tool catalog under `catalogZeroTtlSeconds` once that floor lapses. The
 service records each revalidation's read per connector and retained identity.
 While that read's stale fallback (`markCatalogFallback`: its `fetchedAt`, and its
 expiry plus `STALE_FALLBACK_MS`) still holds, a later revalidating call admits

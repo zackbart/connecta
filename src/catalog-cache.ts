@@ -561,11 +561,18 @@ export function closeCatalogCacheScope(
   return scope.invalidating ? runEdge(Deferred.await(scope.invalidating)) : undefined;
 }
 
-/** Zero is an explicit refusal to reuse. Positive hints use the configured bounds. */
-function catalogTtlMs(ctx: ConnectorContext, hint: unknown): number {
+/**
+ * Zero refuses reuse unless the deployment opted tool catalogs into
+ * `catalogZeroTtlSeconds`. Positive hints use the configured bounds.
+ */
+function catalogTtlMs(ctx: ConnectorContext, hint: unknown, method: CatalogMethod = "tools/list"): number {
   const policy = serviceFor(ctx, CatalogPolicy);
   const ttl =
-    hint === undefined ? Math.floor(policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000) : hint;
+    hint === undefined
+      ? Math.floor(policy?.defaultTtlMs ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds * 1000)
+      : hint === 0 && method === "tools/list"
+        ? Math.floor(policy?.zeroTtlMs ?? 0)
+        : hint;
   if (typeof ttl !== "number" || !Number.isSafeInteger(ttl) || ttl <= 0) return 0;
   return Math.floor(
     Math.min(Math.max(ttl, policy?.minTtlMs ?? 0), policy?.maxTtlMs ?? MAX_CACHE_TTL_MS, MAX_CACHE_TTL_MS),
@@ -1277,7 +1284,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
           throw catalogCeiling();
         return {
           ...clean,
-          ttlMs: catalogTtlMs(ctx, body.ttlMs),
+          ttlMs: catalogTtlMs(ctx, body.ttlMs, method),
           cacheScope: body.cacheScope === "public" ? ("public" as const) : ("private" as const),
         };
       };
@@ -1517,25 +1524,31 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
             authFlow<number>(function* () {
               const operation = capture();
               const { ctx, stopped, io } = operation;
+              const trace = traceFor(ctx.requestScope);
+              const refuse = (reason: "zero_ttl" | "partial" | "expired" | "fenced" | "ended") => {
+                trace?.record(`catalog.store.refused.${reason}`);
+                return 0;
+              };
               const root = (yield authCall(address, [key, operation])) as string | undefined;
-              if (!root || stopped()) return 0;
+              if (stopped()) return refuse("ended");
+              if (!root) return refuse("fenced");
               operation.listing?.manifests?.delete(root);
               const result = JSON.parse(entry.value) as CatalogResult;
               const method = key.method as CatalogMethod;
-              if (catalogTtlMs(ctx, result.ttlMs) === 0) {
+              if (catalogTtlMs(ctx, result.ttlMs, method) === 0) {
                 if (!stopped() && ((yield authCall(namespace, [operation])) as string | undefined) && !stopped())
                   (yield authCall(io, [
                     cacheMethod(() => authStorage(storage, "delete", [root]) as Effect.Effect<void, unknown>),
                   ])) as void;
                 if (method === "tools/list") (yield authCall(liftFence, [operation])) as void;
-                return 0;
+                return refuse("zero_ttl");
               }
               if (
                 !Array.isArray(catalogItems(method, result)) ||
                 "nextCursor" in result ||
                 (result.resultType !== undefined && result.resultType !== "complete")
               )
-                return 0;
+                return refuse("partial");
               const value = JSON.stringify(intake(ctx, method, result));
               const fingerprint = (yield authCall(fingerprintSerializedCatalog, [value])) as {
                 fingerprint: string;
@@ -1543,15 +1556,12 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               };
               const expiresAt = Math.min(
                 entry.expiresAt ?? Date.now(),
-                (catalogFetchedAt(ctx, method) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs),
+                (catalogFetchedAt(ctx, method) ?? Date.now()) + catalogTtlMs(ctx, result.ttlMs, method),
               );
-              if (
-                stopped() ||
-                expiresAt <= Date.now() ||
-                !((yield authCall(namespace, [operation])) as string | undefined) ||
-                stopped()
-              )
-                return 0;
+              if (stopped()) return refuse("ended");
+              if (expiresAt <= Date.now()) return refuse("expired");
+              if (!((yield authCall(namespace, [operation])) as string | undefined)) return refuse("fenced");
+              if (stopped()) return refuse("ended");
               const revision = crypto.randomUUID();
               const bytes = new TextEncoder().encode(value);
               const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -1560,7 +1570,8 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
               const ttlSeconds = () =>
                 Math.max(0.001, (expiresAt + (method === "tools/list" ? STALE_DISCOVERY_MS : 0) - Date.now()) / 1000);
               while (offset < bytes.length) {
-                if (stopped() || expiresAt <= Date.now()) return 0;
+                if (stopped()) return refuse("ended");
+                if (expiresAt <= Date.now()) return refuse("expired");
                 let end = Math.min(offset + MAX_CATALOG_CHUNK_BYTES, bytes.length);
                 while (end < bytes.length && (bytes[end]! & 192) === 128) end--;
                 const chunk = responseCacheKeys.chunk(root, revision, chunkCount++);
@@ -1574,21 +1585,19 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                       ]) as Effect.Effect<void, unknown>,
                   ),
                 ])) as void;
-                if (stopped()) return 0;
+                if (stopped()) return refuse("ended");
                 offset = end;
               }
               for (let attempt = 0; attempt < 16; attempt++) {
-                if (
-                  stopped() ||
-                  expiresAt <= Date.now() ||
-                  !((yield authCall(namespace, [operation])) as string | undefined) ||
-                  stopped()
-                )
-                  return 0;
+                if (stopped()) return refuse("ended");
+                if (expiresAt <= Date.now()) return refuse("expired");
+                if (!((yield authCall(namespace, [operation])) as string | undefined)) return refuse("fenced");
+                if (stopped()) return refuse("ended");
                 const previous = (yield authCall(io, [
                   cacheMethod(() => authStorage(storage, "get", [root]) as Effect.Effect<string | null, unknown>),
                 ])) as string | null;
-                if (stopped() || expiresAt <= Date.now()) return 0;
+                if (stopped()) return refuse("ended");
+                if (expiresAt <= Date.now()) return refuse("expired");
                 const stamp = Math.max(Date.now(), (manifest(previous)?.stamp ?? 0) + 1, lastStamp + 1);
                 const m: Manifest = {
                   stamp,
@@ -1610,7 +1619,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                       ]) as Effect.Effect<boolean, unknown>,
                   ),
                 ])) as boolean;
-                if (stopped()) return 0;
+                if (stopped()) return refuse("ended");
                 if (published) {
                   lastStamp = stamp;
                   const hint = hintKey(root, operation.generation.value!);
@@ -1641,6 +1650,7 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
                     }
                   }
                   if (method === "tools/list") (yield authCall(liftFence, [operation])) as void;
+                  trace?.record("catalog.store", 0, bytes.length, 0, 0, chunkCount);
                   return stamp;
                 }
               }

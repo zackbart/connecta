@@ -222,6 +222,7 @@ export interface RegistryOptions {
   catalogDriftActivity?: Omit<CatalogDriftActivityContext, "logger"> | undefined;
   toolCacheTtlSeconds?: number | undefined;
   catalogMinTtlSeconds?: number | undefined;
+  catalogZeroTtlSeconds?: number | undefined;
   catalogMaxTtlSeconds?: number | undefined;
   /**
    * Cap on inline result size before truncation + connecta.result paging. Must be a
@@ -952,6 +953,7 @@ export class Registry implements RegistryView {
       ]),
       defaultTtlMs: (this.opts.toolCacheTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogTtlSeconds) * 1000,
       minTtlMs: (this.opts.catalogMinTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMinTtlSeconds) * 1000,
+      zeroTtlMs: (this.opts.catalogZeroTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogZeroTtlSeconds) * 1000,
       maxTtlMs: (this.opts.catalogMaxTtlSeconds ?? CONFIG_DEFAULTS.discovery.catalogMaxTtlSeconds) * 1000,
       ...(this.opts.catalogDriftActivity?.recordChange
         ? {

@@ -1177,13 +1177,23 @@ describe("request budgets", () => {
     const app = d.build();
     await d.call(app, "modern.echo");
     await d.call(app, "modern.echo");
+    await d.call(app, "rest.echo");
     await d.settle();
-    expect(d.traceLogs).toHaveLength(2);
-    const record = d.traceLogs[1] as { operations: Record<string, { count: number; items: number }> };
-    expect(record.operations["catalog.cache.hit"]?.count).toBeGreaterThan(0);
-    expect(record.operations["catalog.accepted"]?.items).toBeGreaterThan(0);
-    expect(record.operations["d1.read"]?.count).toBeGreaterThan(0);
-    expect(record.operations["catalog"]?.count).toBe(1);
+    expect(d.traceLogs).toHaveLength(3);
+    type Operations = Record<string, { count: number; items: number; durationMs: number }>;
+    const [cold, record, api] = (d.traceLogs as Array<{ operations: Operations }>).map((log) => log.operations);
+    expect(cold!["catalog.store"]?.count).toBe(1);
+    expect(record!["catalog.cache.hit"]?.count).toBeGreaterThan(0);
+    expect(record!["catalog.accepted"]?.items).toBeGreaterThan(0);
+    expect(record!["d1.read"]?.count).toBeGreaterThan(0);
+    expect(record!["catalog"]?.count).toBe(1);
+    expect(record!["connector.mcp"]).toMatchObject({
+      count: 1,
+      durationMs: record!["connector"]!.durationMs,
+    });
+    expect(record!["connector.api"]).toBeUndefined();
+    expect(api!["connector.api"]).toMatchObject({ count: 1, durationMs: api!["connector"]!.durationMs });
+    expect(api!["connector.mcp"]).toBeUndefined();
     const text = JSON.stringify(d.traceLogs);
     for (const secret of ["modern", "echo", TOKEN, "access-1", "operator-1"]) expect(text).not.toContain(secret);
   });

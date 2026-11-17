@@ -154,6 +154,19 @@ describe("ConnectaConfig boundary", () => {
     ).toThrow("maxDurationMs must be at most 2,147,483,647 milliseconds");
   });
 
+  it("INV-11: rejects a catalogZeroTtlSeconds outside the catalog TTL bounds at construction", async () => {
+    const build = (discovery: Record<string, number>) => () =>
+      createConnecta({ readOnly: false, connectors: [], executor, discovery });
+    expect(build({ catalogZeroTtlSeconds: -1 })).toThrow("catalogZeroTtlSeconds");
+    expect(build({ catalogZeroTtlSeconds: Number.POSITIVE_INFINITY })).toThrow("catalogZeroTtlSeconds");
+    expect(build({ catalogZeroTtlSeconds: 600, catalogMaxTtlSeconds: 300 })).toThrow(
+      "catalogZeroTtlSeconds <= catalogMaxTtlSeconds",
+    );
+    const accepted = build({ catalogZeroTtlSeconds: 900 })();
+    expect(accepted.describeConfig().limits.discovery.catalogZeroTtlSeconds).toEqual({ value: 900, source: "config" });
+    await accepted.close();
+  });
+
   it("INV-11: rejects an unknown top-level option before reading the config", () => {
     const secret = "must-not-appear";
     let connectorsRead = false;

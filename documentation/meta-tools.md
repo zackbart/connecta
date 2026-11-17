@@ -231,11 +231,15 @@ A tool the downstream has since reclassified as a write is then refused, with
 sent, whether or not the downstream sent `notifications/tools/list_changed`.
 Concurrent calls share one relisting. A downstream's reclassification therefore
 reaches such a call no later than its catalog TTL (`ttlMs`, or
-`discovery.catalogTtlSeconds` for a listing without one).
+`discovery.catalogTtlSeconds` for a listing without one, or
+`discovery.catalogZeroTtlSeconds` for a tool listing sent with `ttlMs: 0`).
 
 Two costs follow, only for those calls. A catalog with a zero TTL, which is the
 MCP SDK server's default, is listed again before every such call after the
-request's first to that connector, one `tools/list` round trip each. A relisting
+request's first to that connector, one `tools/list` round trip each. A
+deployment that sets `discovery.catalogZeroTtlSeconds` reuses such a tool catalog
+for that many seconds instead, so the bound above becomes that floor
+([catalog TTLs](./architecture.md#storage-credentials-and-connectors)). A relisting
 that fails transiently resolves the call through the bounded stale fallback in
 [architecture](./architecture.md#storage-credentials-and-connectors), so while a
 downstream cannot list, the bound extends by at most five minutes.

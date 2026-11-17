@@ -201,6 +201,7 @@ const LIMITS: Record<string, { label: string; short?: string; headline?: number 
   "requests.concurrency": { label: "Concurrent requests", headline: 8 },
   "discovery.concurrency": { label: "Probe concurrency", short: "Concurrency" },
   "discovery.catalogMinTtlSeconds": { label: "Min refresh" },
+  "discovery.catalogZeroTtlSeconds": { label: "Zero-hint refresh" },
   "discovery.catalogMaxTtlSeconds": { label: "Max refresh" },
   "discovery.probeTimeoutMs": { label: "Probe timeout" },
   "results.maxStashBytes": { label: "Stash size" },
