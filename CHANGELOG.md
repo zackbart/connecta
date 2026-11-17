@@ -2,6 +2,22 @@
 
 All notable changes to this package are documented here.
 
+## 0.54.0 — 2026-11-17
+
+Connecta 0.54.0 moves `@zackbart/connecta-eve` to stable Eve. The helper's Eve peer range is now `^1.0.2` instead of an exact `1.0.0-rc.10` pin, so Eve apps can take Eve 1.x patch and minor releases without a new helper release.
+
+This is breaking for Eve apps on a release candidate: update the app to `eve@^1.0.2` together with the helper, then reinstall, rebuild and test before deploying. The helper's own APIs are unchanged. Its README's upgrade notes cover the app-owned Eve changes from rc.11 through 1.0.2, including MCP connections that no longer fall back to `initialize` after a failed `server/discover` request (Connecta answers `server/discover`, so its agent endpoints are unaffected), the Node.js 26 project target and dynamic schedule `auth` returning `null`.
+
+Core `@zackbart/connecta` is unchanged apart from the shared version; deployments that do not run Eve can upgrade without configuration changes. The helper's development audit now ignores GHSA-fc5q-39xc-vjpf, an unpatched picomatch advisory reachable only from development and build tooling, until picomatch ships a fix.
+
+### Changed
+
+- **Breaking:** `@zackbart/connecta-eve` now supports stable Eve 1.x, with peer range `^1.0.2` instead of an exact `1.0.0-rc.10` pin. Update the app to `eve@^1.0.2`, reinstall, rebuild and test before deploying. The helper's APIs are unchanged; see the helper README's upgrade notes for the app-owned changes in Eve rc.11 through 1.0.2, including MCP connections that no longer fall back to `initialize` after a failed `server/discover` request, the Node.js 26 project target and dynamic schedule `auth` returning `null`.
+
+### Security
+
+- The Eve helper's dependency audit ignores GHSA-fc5q-39xc-vjpf (picomatch ReDoS, no patched release) until picomatch ships a fix (#1480). It reaches only the helper's development and build tooling; core's production audit is unchanged and clean.
+
 ## 0.53.0 — 2026-11-17
 
 Connecta 0.53.0 lets a deployment reuse remote MCP tool catalogs whose servers mark every list immediately stale. The MCP TypeScript server SDK sends `ttlMs: 0` on `tools/list` by default, and Connecta honored it by never storing the catalog, so warm deployments relisted every remote MCP connector on nearly every request. The new `discovery.catalogZeroTtlSeconds` option replaces an explicit zero `tools/list` hint with a positive TTL, still bounded by `catalogMinTtlSeconds` and `catalogMaxTtlSeconds`. Resource inventories are never floored, and generation, credential, partition and refusal-fence checks apply to floored catalogs as to any other.
