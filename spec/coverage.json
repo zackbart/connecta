@@ -183,8 +183,12 @@
       "id": "tool-output-schema",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/server/tools",
-      "notes": "Downstream structured output is SDK-validated across every catalog page. The three structured-only meta-tools advertise open output schemas (required keys and top-level types) that successful structured content satisfies, and the server validates each successful result against the full contract before sending it; both SDK edges exempt isError responses, but some hosts validate them too, so an error result either satisfies the advertised schema or carries its JSON in content alone. Direct-call tools omit outputSchema because default-mode successes return native content; value-mode and error envelopes still mirror complete JSON.",
-      "evidence": ["test/remote-mcp-pagination.test.ts", "test/meta-tool-schemas.test.ts"]
+      "notes": "Downstream structured output is SDK-validated across every catalog page. The three structured-only meta-tools advertise open output schemas (required keys and top-level types) that successful structured content satisfies, and the server validates each successful result against the full contract before sending it; both SDK edges exempt isError responses, but some hosts validate them too, so an error result either satisfies the advertised schema or carries its JSON in content alone. Direct-call tools omit outputSchema because default-mode successes return native content; value-mode and error envelopes still mirror complete JSON. A downstream outputSchema is compiled by the SDK's runtime validator: Ajv with fast-uri 3.1.8 on Node, @cfworker/json-schema on Workers. Node refuses to compile a $id or $ref with an invalid URI scheme, which Workers compiles and validates, and a $ref that resolves only through a percent-encoded slash, which Workers compiles but fails when validation reaches the reference. On Node such a call is refused before dispatch as a non-retryable connector_call_failed that names the operator as the one to fix the downstream schema.",
+      "evidence": [
+        "test/remote-mcp-pagination.test.ts",
+        "test/meta-tool-schemas.test.ts",
+        "test/downstream-error-text.test.ts"
+      ]
     },
     {
       "id": "tool-content",

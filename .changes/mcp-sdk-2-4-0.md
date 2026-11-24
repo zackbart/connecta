@@ -1,0 +1,5 @@
+---
+type: changed
+---
+
+The MCP TypeScript SDK (`@modelcontextprotocol/client` and `@modelcontextprotocol/server`) is pinned at 2.4.0. An `x-mcp-header` declaration on a `number` parameter is now invalid, as the 2026-07-28 spec requires. The spec has a client exclude such a tool; Connecta instead refuses the connector's whole listing as a typed, payload-free failure (INV-8), for remote MCP, custom connectors and the tools a native pool serves, so neither SDK edge logs the tool's name, and a static tool (`api()` or a provider) with an invalid declaration fails at construction. On Node, 2.4.0's Ajv (fast-uri 3.1.8) newly refuses to compile some downstream output schemas: a `$id` or `$ref` with an invalid URI scheme (such as `my_tool:output`), which Workers compiles and validates, and a `$ref` that resolves only through a percent-encoded slash (`a%2Fb` for `a/b`), which Workers compiles but fails when validation reaches the reference, in both SDK versions. A call to such a tool is refused before dispatch as a non-retryable `connector_call_failed` that tells the agent the operator must fix the downstream server's `outputSchema`, rather than as `invalid_args`.

@@ -551,21 +551,136 @@ describe("the MCP boundary is an allow-list", () => {
     }
   }
 
-  it.each(modes)("withholds an output schema the SDK cannot compile, still invalid_args (%s)", async (mode) => {
-    const { error, classified } = await liveFailure(
-      (_n, id) => Response.json({ jsonrpc: "2.0", id, result: { content: [], structuredContent: {} } }),
-      mode,
-      undefined,
-      [{ name: "read", inputSchema: { type: "object" }, outputSchema: { type: SECRET } }],
-    );
-    // AJV (Node) refuses to compile the schema; @cfworker/json-schema
-    // (workerd) compiles it and the result then fails it. Either way the
-    // SDK's check is told in connecta's words.
-    expect(error.message).toMatch(
-      /tools\/call with https:\/\/downstream\.example failed \(ProtocolError\): the (tool's declared output schema could not be compiled|result did not match the tool's declared output schema)\./,
-    );
-    expect(classified).toMatchObject({ code: "invalid_args", retryable: false });
-  });
+  it.each(
+    modes.flatMap((mode) =>
+      (
+        [
+          ["an invalid type", { type: SECRET }],
+          ["an invalid-scheme $id", { $id: "my_tool:output", type: "object" }],
+          [
+            "an invalid-scheme local $ref",
+            { type: "object", properties: { x: { $ref: "my_tool:def" } }, $defs: { d: { $id: "my_tool:def" } } },
+          ],
+          [
+            "a $ref resolved only through %2F",
+            {
+              $id: "https://example.test/root",
+              type: "object",
+              properties: { x: { $ref: "https://example.test/a/b" } },
+              $defs: { d: { $id: "https://example.test/a%2Fb" } },
+            },
+          ],
+        ] as const
+      ).map(([label, outputSchema]) => [label, mode, outputSchema] as const),
+    ),
+  )(
+    "INV-6: refuses before dispatch, as the operator's to fix, an output schema the SDK cannot compile: %s (%s)",
+    async (_label, mode, outputSchema) => {
+      let calls = 0;
+      const { error, classified } = await liveFailure(
+        (_n, id) => {
+          calls++;
+          return Response.json({ jsonrpc: "2.0", id, result: { content: [], structuredContent: {} } });
+        },
+        mode,
+        undefined,
+        [{ name: "read", inputSchema: { type: "object" }, outputSchema }],
+      );
+      expect(calls).toBe(0);
+      expect(error.message).toMatch(
+        /tools\/call with https:\/\/downstream\.example failed \(ProtocolError\): the tool's declared output schema could not be compiled, so its results cannot be checked\. Changing the arguments will not help: the operator must fix the downstream server's outputSchema\./,
+      );
+      expect(classified).toMatchObject({ code: "connector_call_failed", retryable: false });
+    },
+  );
+
+  it.each(modes)(
+    "INV-6: a gateway call to a tool whose output schema cannot compile asks nothing of the agent (%s)",
+    async (mode) => {
+      let calls = 0;
+      vi.stubGlobal(
+        "fetch",
+        downstream({
+          live: true,
+          toolCall: (_n, id) => {
+            calls++;
+            return Response.json({ jsonrpc: "2.0", id, result: { content: [], structuredContent: {} } });
+          },
+          tools: [
+            {
+              name: "read",
+              inputSchema: { type: "object" },
+              outputSchema: { $id: "my_tool:output", type: "object" },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+      );
+      const connector = remoteMcp("svc", { url: MCP_URL, versionNegotiation: mode });
+      const { logger, lines } = capturingLogger();
+      const registry = makeRegistry([connector], { logger });
+      const catalog = new CatalogService(registry, "https://connecta.test");
+      const context = registry.contextFor("svc", catalog.baseUrl, catalog.requestScope);
+      try {
+        const outcome = await new InvocationService(registry, catalog).invoke("svc.read", {}, { source: "call_tool" });
+        expect(outcome).toMatchObject({ ok: false, error: { code: "connector_call_failed", retryable: false } });
+        if (outcome.ok) throw new Error("expected a refusal");
+        expect(outcome.error).not.toHaveProperty("nextAction");
+        expect(outcome.error).not.toHaveProperty("validation");
+        expect(outcome.error.message).toContain("the operator must fix the downstream server's outputSchema");
+        expect(calls).toBe(0);
+        expectWithheld(JSON.stringify(outcome), ...lines);
+      } finally {
+        await connector.closeScope!(context);
+      }
+    },
+  );
+
+  it.each(modes)(
+    "keeps a dispatched -32602 that mentions an output schema as invalid_args with its repair action (%s)",
+    async (mode) => {
+      let calls = 0;
+      vi.stubGlobal(
+        "fetch",
+        downstream({
+          live: true,
+          toolCall: (_n, id) => {
+            calls++;
+            return Response.json({
+              jsonrpc: "2.0",
+              id,
+              error: { code: -32602, message: "Tool validate has an invalid outputSchema argument." },
+            });
+          },
+          tools: [
+            {
+              name: "read",
+              inputSchema: { type: "object", properties: { outputSchema: { type: "object" } } },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+      );
+      const connector = remoteMcp("svc", { url: MCP_URL, versionNegotiation: mode });
+      const registry = makeRegistry([connector], { logger: capturingLogger().logger });
+      const catalog = new CatalogService(registry, "https://connecta.test");
+      const context = registry.contextFor("svc", catalog.baseUrl, catalog.requestScope);
+      try {
+        const outcome = await new InvocationService(registry, catalog).invoke(
+          "svc.read",
+          { outputSchema: {} },
+          { source: "call_tool" },
+        );
+        if (outcome.ok) throw new Error("expected a refusal");
+        expect(outcome.error).toMatchObject({ code: "invalid_args", retryable: false });
+        expect(outcome.error).toHaveProperty("nextAction");
+        expect(outcome.error.message).not.toContain("operator must fix");
+        expect(calls).toBe(1);
+      } finally {
+        await connector.closeScope!(context);
+      }
+    },
+  );
 
   it.each(modes)("still relays a 4xx refusal, the settled exception (%s)", async (mode) => {
     vi.stubGlobal(

@@ -1395,8 +1395,11 @@ Discovery registers sent credentials under the same rules, including
 `server/discover`, legacy initialization, and every `tools/list` page on a
 reused transport. Remote MCP sanitizes every list page before SDK aggregation, automatic cache
 writes, derived indexes, or request-local definitions. Invalid `x-mcp-header`
-declarations refuse the entire listing before the SDK can log downstream names
-or silently exclude a tool. Registry intake also sanitizes custom, API and
+declarations, including one on a `number` parameter, refuse the entire listing
+before the SDK can log downstream names or silently exclude a tool; registry
+intake applies the same check to every live connector listing before a native
+pool hands it to the upward SDK, and construction refuses a static tool that
+carries one. Registry intake also sanitizes custom, API and
 provider listings before observation or request-local storage. Failed listings
 are redacted in their own request and are never cached. Successful catalog caches and result
 stashes retain only intake-redacted values; there is no tool-response cache.

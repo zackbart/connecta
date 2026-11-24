@@ -102,6 +102,9 @@ export function requiresAuthorization(error: unknown): boolean {
   );
 }
 
+/** Connecta's own refusal, before dispatch, of a declared outputSchema the SDK's validator cannot compile. */
+export class OutputSchemaCompileError extends ProtocolError {}
+
 /** Classify SDK/runtime facts, dropping every SDK payload and cause chain. */
 export function downstreamCallError(
   error: unknown,
@@ -185,7 +188,7 @@ export function downstreamCallError(
   // ProtocolError.data is server-chosen even when its message is allowed.
   if (error instanceof ProtocolError) {
     return new ConnectorCallError(
-      error.code === -32602 ? "invalid_args" : "connector_call_failed",
+      error.code === -32602 && !(error instanceof OutputSchemaCompileError) ? "invalid_args" : "connector_call_failed",
       boundedEchoText(secrets?.text(error.message) ?? error.message),
     );
   }
@@ -372,7 +375,7 @@ function keepsItsText(err: unknown, transport: Transport | undefined): boolean {
 
 /**
  * The SDK's own checks of a tool's output schema, recognized by how the
- * pinned SDK (2.3.1) begins their messages, and told in connecta's words.
+ * pinned SDK (2.4.0) begins their messages, and told in connecta's words.
  * Recognition reads the SDK's text only to choose connecta's: none of it, nor
  * the validator's account that follows, is repeated.
  */
@@ -390,6 +393,11 @@ const SDK_OUTPUT_SCHEMA_CHECKS: readonly (readonly [RegExp, string])[] = [
 
 function sdkCheckFailed(err: unknown): string {
   if (err instanceof SdkError && err.code === SdkErrorCode.RequestTimeout) return ": the request timed out";
+  if (err instanceof OutputSchemaCompileError)
+    return (
+      ": the tool's declared output schema could not be compiled, so its results cannot be checked. " +
+      "Changing the arguments will not help: the operator must fix the downstream server's outputSchema"
+    );
   if (!(err instanceof ProtocolError)) return "";
   const check = SDK_OUTPUT_SCHEMA_CHECKS.find(([pattern]) => pattern.test(err.message));
   return check ? `: ${check[1]}` : "";
@@ -417,7 +425,7 @@ export function ownAbortReason(err: unknown, signals: readonly (AbortSignal | un
 /**
  * The request's own abort reason as the SDK hands it back: a request it
  * cancels rejects with `new SdkError(RequestTimeout, String(reason))` unless
- * the reason already is one (pinned against client 2.3.1). Its text is the
+ * the reason already is one (pinned against client 2.4.0). Its text is the
  * caller's, so it passes as the SDK wrote it.
  */
 function ownAbortReasonAsSdkReports(err: unknown, signals: readonly (AbortSignal | undefined)[]): boolean {
