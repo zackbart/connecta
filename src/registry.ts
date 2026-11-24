@@ -1188,7 +1188,10 @@ export class Registry implements RegistryView {
           }),
         ),
       );
-      const tools = redactCatalog(ctx, listed).map(({ classification: _ignored, ...fact }) => fact);
+      const stored = catalogFetchedAt(ctx) === undefined;
+      const tools = redactCatalog(ctx, listed, stored ? "store" : "reuse").map(
+        ({ classification: _ignored, ...fact }) => fact,
+      );
       if (
         tools.length > MAX_CATALOG_TOOLS ||
         encoder.encode(JSON.stringify(tools)).byteLength > MAX_SERIALIZED_CATALOG_BYTES
@@ -1202,7 +1205,7 @@ export class Registry implements RegistryView {
       assertListedHeaderDeclarations(tools);
       const facts = frozenFacts(structuredClone(tools));
       const accepted = this.acceptToolNames(facts);
-      if (catalogFetchedAt(ctx) === undefined) {
+      if (stored) {
         for (const observe of [
           authCall<void>(storeCustomCatalogFallback, [ctx, facts, customListing]),
           authCall<void>(observeUncachedCatalogRefresh, [ctx, id, facts]),

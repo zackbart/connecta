@@ -53,7 +53,7 @@ const storeNegotiationNative = /* @__PURE__ */ registerAuth(
     authFlow<void>(function* () {
       if (ctx.signal?.aborted) return;
       assertDownstreamOutputSafe(ctx.requestScope ?? ctx, prior);
-      const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(prior);
+      const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(prior, "store");
       if (clean.kind === "modern" && !isSpecType.DiscoverResult(clean.discover)) return;
       const ttlSeconds = clean.kind === "legacy" ? LEGACY_NEGOTIATION_TTL_SECONDS : NEGOTIATION_TTL_SECONDS;
       try {

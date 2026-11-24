@@ -399,7 +399,7 @@ export function remoteMcpCatalog(
           ? {}
           : ((yield authCall(rt.cachedCatalog, [ctx])) as Preread & { tools?: Tool[] });
       let clean: ListToolsResult["tools"];
-      if (cached.tools) clean = redactCatalog(ctx, cached.tools);
+      if (cached.tools) clean = redactCatalog(ctx, cached.tools, "freeze");
       else {
         const client = (yield authCall(rt.ensureConnected, [ctx, state, cached])) as Client;
         // A credential test must observe the downstream answer itself, never
@@ -411,7 +411,7 @@ export function remoteMcpCatalog(
         listingContexts.set(options, ctx);
         try {
           const result = (yield authInvoke(client, "listTools", [undefined, options])) as ListToolsResult;
-          clean = redactCatalog(ctx, result.tools);
+          clean = redactCatalog(ctx, result.tools, "freeze");
         } catch (err) {
           if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
           const bounded = rt.atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
@@ -436,7 +436,7 @@ export function remoteMcpCatalog(
       const entry = (yield authCall(rt.peekCatalog, [ctx])) as CatalogPeekEntry | undefined;
       if (!entry) return undefined;
       return {
-        tools: toolDefinitions(redactCatalog(ctx, entry.result.tools)),
+        tools: toolDefinitions(redactCatalog(ctx, entry.result.tools, "freeze")),
         fetchedAt: entry.fetchedAt,
         expiresAt: entry.expiresAt,
       };
@@ -445,7 +445,30 @@ export function remoteMcpCatalog(
   return { installCatalogIntake, listingContexts, liveListings, listToolsOperation, peekCatalogOperation };
 }
 
+const definitionsOfFrozenCatalog = new WeakMap<readonly Tool[], ToolDef[]>();
+
 function toolDefinitions(tools: readonly Tool[]): ToolDef[] {
+  const shared = definitionsOfFrozenCatalog.get(tools);
+  if (shared) return shared;
+  const definitions = definitionsOf(tools);
+  const fixed =
+    Object.isFrozen(tools) &&
+    tools.every(
+      (tool) =>
+        Object.isFrozen(tool) &&
+        (!tool.icons || (Object.isFrozen(tool.icons) && tool.icons.every((icon) => Object.isFrozen(icon)))),
+    );
+  if (!fixed) return definitions;
+  for (const definition of definitions) {
+    if (definition.icons) Object.freeze(definition.icons);
+    Object.freeze(definition);
+  }
+  Object.freeze(definitions);
+  definitionsOfFrozenCatalog.set(tools, definitions);
+  return definitions;
+}
+
+function definitionsOf(tools: readonly Tool[]): ToolDef[] {
   return tools.map((t: Tool) => ({
     name: t.name,
     ...(t.title !== undefined ? { title: t.title } : {}),

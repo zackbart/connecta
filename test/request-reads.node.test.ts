@@ -34,6 +34,7 @@ import { createConnecta, type Connecta } from "../src/index.js";
 import { operatorUi } from "../src/ui.js";
 import { Effect } from "effect";
 import { RequestReads, observeStorageWrites } from "../src/runtime/request-reads.js";
+import { SentSecrets } from "../src/sent-secrets.js";
 import { requestOwner, requestReads } from "../src/runtime/request-scope.js";
 import { runEdge } from "../src/runtime/run.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -1616,6 +1617,44 @@ describe("request budgets", () => {
     await d.measure("api credential call, cold isolate", () => d.call(d.build(), "rest.echo"));
   });
 
+  it("pins the redaction walks over warm call, value-mode and program results and three served catalogs", async () => {
+    const d = await production();
+    const app = d.build();
+    await d.call(app, "modern.echo");
+    await d.tool(app, "search_tools", { query: "echo text" });
+    const walks = redactionWalks();
+    const long = (marker: string) => `${marker} ${"Public notes on the weekly schedule. ".repeat(120)}`;
+    const over = async (text: string, run: () => Promise<string>) => {
+      await d.settle();
+      walks.reset();
+      expect(await run()).toContain(text);
+      return walks.over(text);
+    };
+    try {
+      const counts = {
+        call: await over("walked-call-result", () =>
+          d.tool(app, "call_tool", { address: "modern.echo", args: { text: "walked-call-result" } }),
+        ),
+        value: await over("walked-value-result", () =>
+          d.tool(app, "call_tool", {
+            address: "modern.echo",
+            args: { text: long("walked-value-result") },
+            resultMode: "value",
+          }),
+        ),
+        program: await over("walked-program-result", () =>
+          d.tool(app, "execute_code", {
+            code: `async () => (await connecta.call("modern.echo", { text: ${JSON.stringify(long("walked-program-result"))} })).data.slice(0, 40)`,
+          }),
+        ),
+        search: await over("Echo text back", () => d.tool(app, "search_tools", { query: "echo text" })),
+      };
+      expect(counts).toEqual({ call: 7, value: 8, program: 9, search: 20 });
+    } finally {
+      walks.restore();
+    }
+  });
+
   it("an unscoped warm search over three remote MCP connectors and one api()", async () => {
     const d = await production();
     const app = d.build();
@@ -1678,6 +1717,30 @@ describe("request budgets", () => {
 // Before the request read memo (#1184) a warm OAuth
 // call took 21 round trips and a refresh 51 statements without the vault or
 // activity sink.
+/** Every full redaction walk by its root, to count the walks over one result or catalog. */
+function redactionWalks() {
+  type Walker = { project(this: SentSecrets, value: unknown, ...rest: unknown[]): unknown };
+  const prototype = SentSecrets.prototype as unknown as Walker;
+  const project = prototype.project;
+  const roots: unknown[] = [];
+  const spy = vi.spyOn(prototype, "project").mockImplementation(function (this: SentSecrets, value, ...rest) {
+    roots.push(value);
+    return project.call(this, value, ...rest);
+  });
+  const holds = (root: unknown, text: string) => {
+    try {
+      return (typeof root === "string" ? root : (JSON.stringify(root) ?? "")).includes(text);
+    } catch {
+      return false;
+    }
+  };
+  return {
+    over: (text: string) => roots.filter((root) => holds(root, text)).length,
+    reset: () => void (roots.length = 0),
+    restore: () => spy.mockRestore(),
+  };
+}
+
 const BUDGETS = {
   "legacy call, warm": { downstream: 5, roundTrips: 4, statements: 5 },
   "legacy call, cold isolate": { downstream: 5, roundTrips: 8, statements: 11 },

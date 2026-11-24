@@ -651,7 +651,9 @@ Reuse follows the same manifest TTL checks, complete chunk reads, recomputed
 SHA-256 fingerprint and fresh generation/credential acceptance fence as a cold
 read. Its key binds the stored entry, current private owner/deployment partition
 (even for public entries), and chunk fingerprint. Request-specific credential
-redaction and TTL intake still run every time. Eviction affects performance
+redaction and TTL intake still run every time; within one request, a peek and
+the listing that takes what it read share one frozen catalog, so a pass over it
+is not repeated ([Errors and records](#errors-and-records)). Eviction affects performance
 only; SQL remains authoritative.
 
 A warm isolate also remembers, for at most 256 catalog slots, the revision and
@@ -1264,6 +1266,42 @@ are public result state and are not registered. Header values a connector
 adds to token requests are registered under any name, except values equal to
 Connecta's own public ones (`Accept: application/json` and maintained
 providers' media types, in `PUBLIC_TOKEN_REQUEST_HEADERS`).
+
+A pass walks again unless it would read exactly what an earlier walk read. Each
+sent-secrets set privately remembers the objects a walk returned as they stood,
+every container in them frozen, and the last string of at least 4,096 units a
+walk returned unchanged, with the set's revision, the memo writes and minted
+states that walk read, and the modes it ran under. A later pass over the same
+object or string returns it without walking only while all of these match and
+nothing is inherited as `toJSON` from `Object.prototype` or `Array.prototype`:
+a frozen value cannot change, so the skipped walk would return it unchanged. A
+mark under one mode never stands for another. Every registration that lets the
+set match more, a stored form (including one a connector context's set passes
+to its request) or an unregistered value, raises the revision and drops the
+marks, so a value is walked again before it is next served; a walk during
+which the revision, memo writes or minted states changed marks nothing. No
+other set reads
+a mark: not another request's or caller's, and not the credentials-only view,
+which is a set of its own whenever the request holds a private value. A catalog
+retained across requests is marked, if at all, only in one request's set, so
+each request's set walks it. Connecta freezes only values it parsed or built: a
+`remoteMcp()` call result after its connector pass, a remote catalog read from
+its cache or listing, the tool definitions built from it (a peek and the
+listing that takes what it read share both), and a program call's inline
+presentation. A copy such a freezing pass made is frozen unmarked and marked by
+the next walk that finds it unchanged. Other callers' values are never frozen
+or mutated; one that is not already deeply frozen is walked every time.
+`text`, which checks wire text about to be returned, stored or paged, the
+credentials-only passes before a catalog, resource listing, negotiation
+verdict or catalog fallback is stored, and the MCP route's pass over the
+serialized response always walk. Repeats skipped so
+include the invocation's passes over a remote call's raw result and its
+processing input, a program presentation's pass over its call value and the
+host-to-guest pass over that presentation, and a warm search's second passes
+over each remote catalog and its definitions. A changed or restructured value,
+a wrapper around one, or a part of one is walked: a part's text read alone can
+decode differently, as when a neighbour's trailing backslash no longer pairs
+with it.
 
 K = 8 equals the credential floor, so exactly the short private values are
 whole-only. It keeps ordinary words, dates and counts out of the index: a public
@@ -2007,7 +2045,9 @@ Use the existing stateful fixture vendors and published-edge deployment adapters
   send. It distinguishes Stripe's reviewed pre-execution 401 refusal, and checks
   read failure facts, secrecy and recovery through direct and QuickJS calls.
   Existing `test/sent-secrets.test.ts` covers secrecy before projection,
-  truncation, caching, paging and diagnostics.
+  truncation, caching, paging and diagnostics, and which repeated passes may
+  skip their walk; `test/request-reads.node.test.ts` pins the walks over a warm
+  call result and a served catalog.
 - The shared throwaway RSA key in `test/fixtures/rsa.ts` is used by
   write-provenance and unknown-write-advice fixtures.
 - `test/executor-requests.test.ts` runs overlapping `execute_code` programs
