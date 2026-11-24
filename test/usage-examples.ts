@@ -100,7 +100,8 @@ export async function checkUsageExamples(executor: Executor): Promise<void> {
   for (const readOnly of [false, true]) {
     for (const guided of [false, true]) {
       const description = usageDescription(executor, readOnly, guided);
-      expect(description.length).toBeLessThan(3_000);
+      // 85 above 3,000 for the result(id, { all: true }) overload that recovery text names.
+      expect(description.length).toBeLessThan(3_085);
       for (const code of examples(description)) {
         const result = await run({ code });
         expect(result.isError).toBeFalsy();

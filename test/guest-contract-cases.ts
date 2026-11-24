@@ -1893,6 +1893,30 @@ export const CONTRACT_CASES: ContractCase[] = [
       "search result read without .tools",
       `const page = await connecta.search({ query: "read" });\nreturn page.results.length;`,
     ],
+    [
+      "call result bound to a local named data",
+      `const data = await connecta.call("reader.read", { value: "x" });\nreturn data.items.map((item) => item);`,
+    ],
+    [
+      "payload key destructured from a call result and iterated",
+      `const { items } = await connecta.call("reader.read", { value: "x" });\nfor (const item of items) return item;`,
+    ],
+    [
+      "payload key destructured from a call result and read",
+      `const { items: rows } = await connecta.call("reader.read", { value: "x" });\nreturn rows.length;`,
+    ],
+    [
+      "payload member chained off an awaited call",
+      `return (await connecta.call("reader.read", { value: "x" })).items.length;`,
+    ],
+    [
+      "second call result read without .data after a first read with it",
+      `const first = (await connecta.call("reader.read", { value: "x" })).data;\nconst next = await connecta.call("reader.read", { value: first });\nreturn next.items.length;`,
+    ],
+    [
+      "call result read without .data beside data and tools argument keys",
+      `const result = await connecta.call("reader.read", { value: "x", data: { tools: [] } });\nreturn result.items.length;`,
+    ],
   ].map(([label, source]): ContractCase => ({
     clauses: "E6",
     name: `INV-6: program errors name the result shape for a ${label}`,
@@ -1908,13 +1932,27 @@ export const CONTRACT_CASES: ContractCase[] = [
       });
     },
   })),
-  {
+  ...[
+    [
+      "after .data",
+      `const { data } = await connecta.call("reader.read", { value: "x" });\nreturn data.rows.missing.map((row) => row);`,
+    ],
+    [
+      "on an unrelated local after correct calls",
+      `const result = await connecta.call("reader.read", { value: "x" });\nconst page = await connecta.search({ query: "read" });\nconst local = { value: result.data, count: page.tools.length };\nreturn local.items.length;`,
+    ],
+    [
+      "when connecta.call appears only in a string",
+      `const label = "await connecta.call(x)";\nconst result = { label };\nreturn result.items.length;`,
+    ],
+    [
+      "on a callback parameter that shadows a call result",
+      `const result = await connecta.call("reader.read", { value: "x" });\nreturn [{}].map((result) => result.items.length).concat(result.data);`,
+    ],
+  ].map(([label, source]): ContractCase => ({
     clauses: "E6",
-    name: "INV-6: a property read on undefined after .data keeps the generic hint",
-    code: `async () => {
-      const { data } = await connecta.call("reader.read", { value: "x" });
-      return data.rows.missing.map((row) => row);
-    }`,
+    name: `INV-6: a property read on undefined keeps the generic hint ${label}`,
+    code: `async () => {\n${source}\n}`,
     check(outcome) {
       expect(outcome.isError).toBe(true);
       expect(outcome.value.error).toMatchObject({
@@ -1925,7 +1963,7 @@ export const CONTRACT_CASES: ContractCase[] = [
         },
       });
     },
-  },
+  })),
   {
     clauses: "E6",
     name: "INV-6: a bare statement is told to pass one async arrow",

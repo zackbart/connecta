@@ -753,14 +753,27 @@ a per-run flag. The prelude reports the flag through the uncounted `unawaited`
 host function before the program's outcome crosses. A failed program's hint is
 `connecta.* returns a Promise; await it`; a program that still finished carries
 the same words in `note` (`R1`). Awaiting, `then`, `Promise.all`, and
-`Promise.allSettled` never read those fields. In a program that uses
-`connecta.search`, `describe` or `call`, a `TypeError` saying a value is not a
-function or not iterable names the result shape: `search and describe return
-{ tools }; call returns { data, format }.` So does a `TypeError` reading a property
-of undefined or null, in QuickJS (`cannot read property 'x' of undefined`) or V8
-(`Cannot read properties of undefined (reading 'x')`) wording, when the source
-outside comments never names `data` or `tools`; a program that reads either field
-keeps the generic hint, because the missing value is then its own. A syntax error in source that does not start
+`Promise.allSettled` never read those fields. The result-shape hint is
+`search and describe return { tools }; call returns { data, format }.` Before
+either trigger is checked, comments and the contents of string and template
+literals are blanked, so `connecta` named only inside them counts for nothing. A
+`TypeError` saying a value is not a function or not iterable gets the hint when
+the source uses `connecta.search`, `describe` or `call`. A `TypeError` reading a
+property of undefined or null, in QuickJS (`cannot read property 'x' of
+undefined`, including `'Symbol.iterator'` from iteration) or V8 (`Cannot read
+properties of undefined (reading 'x')`) wording, gets it only when the source
+reads a payload field off an awaited search, describe or call result at the
+property the engine reports. That covers three forms: a member that is not one of
+the result's own keys, read from a name every assignment binds to that kind of
+result (`const data = await connecta.call(...); data.items.map(...)`); such a
+member chained off the awaited call (`(await connecta.call(...)).items`); or such
+a key destructured from it (`const { items } = await connecta.call(...)`). The
+own keys are `data`, `format`, `content`, `contentResult` and the paged handle's
+fields for call, and the published search and describe result keys for the other
+two. A name also bound as a parameter, catch binding, loop variable or other
+destructured local is ambiguous and is skipped. Any other failure, including a
+read of undefined on a program's own data after correct wrapper reads, keeps the
+generic hint. A syntax error in source that does not start
 as a program says `Pass one expression: async () => { ...; return answer; }.`
 Hints are fixed text; no program source, field name, or value enters them.
 

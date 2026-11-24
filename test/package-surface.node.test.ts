@@ -354,8 +354,8 @@ describe("Effect behind the published surface", () => {
 // result or block the compact shape cannot take back), every GuestApi result is
 // assignable to its compact shape, and no compact field is absent from GuestApi.
 // call's object overload is GuestApi-only; the compact form shows the first.
-// result's whole read is GuestApi-only too, and a handle's hint states it. GuestApi
-// declares it first, so Parameters reads the paging form these checks compare.
+// result declares both forms: Parameters reads the paging form, and WholeForm
+// extracts the first, { all: true }, for the same checks.
 describe("advertised guest API declaration", () => {
   const file = join(ROOT, "test", "__advertised-guest-api__.ts");
   const options: ts.CompilerOptions = {

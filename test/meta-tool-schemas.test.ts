@@ -265,7 +265,7 @@ describe("meta-tool output schemas", () => {
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
   // Grew for each description's routing first line, the only line some hosts show,
-  // then 86 for the result(id, { all: true }) overload that recovery text names.
+  // then 86 (85 raw plus its escaped newline) for the result(id, { all: true }) overload that recovery text names.
   total: 9_086,
   // A writable endpoint's execute_read_code: description, shared input and output schemas.
   readRouteTotal: 1_560,
@@ -284,8 +284,8 @@ const BUDGETS = {
     authorize_connector: 580,
     // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial,
     // then 97 for connecta.budget(), which lets a program return partial results before a terminal budget stop,
-    // then 86 for the result(id, { all: true }) overload that recovery text names.
-    execute_code: 3_216,
+    // then 85 for the result(id, { all: true }) overload that recovery text names.
+    execute_code: 3_215,
     // Carries the same inventory: a host may load only this tool for read work.
     execute_read_code: 790,
   },
@@ -652,6 +652,25 @@ describe("meta-tool descriptions", () => {
       calls: { defaultTimeoutMs: 654_000 },
       connectors: [calcApi(), ...roster(true)],
     });
+  const fullInventory = (largeLimits: boolean) => () =>
+    makeDeployment({
+      executor: { ...stubExecutor, deadlineMs: largeLimits ? 50_000 : 30_000 },
+      readOnly: false,
+      execute: {
+        readRoute: true,
+        maxHostCalls: largeLimits ? 1_000 : 20,
+        hostCallTimeoutMs: largeLimits ? 123_000 : 15_000,
+        ...(largeLimits ? { maxEmittedBytes: 99_999_999, maxEmittedBlocks: 999 } : {}),
+        maxWrites: largeLimits ? 999 : 10,
+      },
+      ...(largeLimits ? { calls: { defaultTimeoutMs: 654_000 } } : {}),
+      connectors: Array.from({ length: 104 }, (_, index) =>
+        api(`connector-${String(index).padStart(3, "0")}-xxxxxxxx${index === 2 ? "y" : ""}`, {
+          ...(index === 0 ? { usageGuide: { content: "# Guide", required: true } } : {}),
+          tools: [],
+        }),
+      ),
+    });
   const surfaces: Record<string, () => ReturnType<typeof makeDeployment>> = {
     writable: () => budgetFixture(false),
     "read-only": () => budgetFixture(true),
@@ -665,6 +684,8 @@ describe("meta-tool descriptions", () => {
     "without guides": () => makeDeployment({ executor: stubExecutor, readOnly: false, connectors: roster(false) }),
     "at the largest inventory": largest(false),
     "at the largest inventory with the read route": largest(true),
+    "at a full inventory with the read route": fullInventory(false),
+    "at a full inventory with the read route and the largest limits": fullInventory(true),
   };
 
   it.each(Object.keys(surfaces))(

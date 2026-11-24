@@ -1,5 +1,6 @@
 import { GUEST_FUNCTIONS } from "./guest-functions.js";
 import { LEADING_TRIVIA } from "./program-source.js";
+import { misreadsResultShape } from "./result-shape-misread.js";
 
 /** Capture the single-use runner before evaluating the guest expression. */
 export function wrapGuestProgram(code: string): string {
@@ -266,14 +267,6 @@ const ERROR_NAMES = new Set([
   "AggregateError",
 ]);
 
-function misreadsResultShape(message: string, source: string) {
-  if (!/\bconnecta\s*\.\s*(?:search|describe|call)\b/.test(source)) return false;
-  if (/not a function|not iterable/.test(message)) return true;
-  return (
-    /\bcannot read propert(?:y|ies)\b.*\bof (?:undefined|null)\b/i.test(message) && !/\b(?:data|tools)\b/.test(source)
-  );
-}
-
 /** Fixed repair guidance, used only in agent-facing results. */
 export function programError(
   raw: { name?: unknown; message?: unknown; stack?: unknown; baseline?: unknown; line?: unknown; unawaited?: unknown },
@@ -324,7 +317,7 @@ export function programError(
   ) {
     hint =
       'Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill("usage"). Services are addressed by connector.tool, never guest globals.';
-  } else if (name === "TypeError" && misreadsResultShape(message, code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ""))) {
+  } else if (name === "TypeError" && misreadsResultShape(message, code)) {
     hint = "search and describe return { tools }; call returns { data, format }.";
   } else if (name === "SyntaxError" && !/^(?:async\b|\(|function\b)/.test(code.replace(LEADING_TRIVIA, ""))) {
     hint = "Pass one expression: async () => { ...; return answer; }.";
