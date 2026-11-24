@@ -1258,7 +1258,7 @@ export class Registry implements RegistryView {
       const peek = connector.peekCatalog
         ? yield* authInvoke<ConnectorCatalogPeek | undefined>(connector, "peekCatalog", [ctx])
         : yield* authCall<ConnectorCatalogPeek | undefined>(customCatalogPeek, [ctx, id]);
-      if (!peek) return undefined;
+      if (!peek || peek.tools.some((tool) => hasInvalidHeaderDeclaration(tool.inputSchema))) return undefined;
       const facts = redactCatalog(ctx, peek.tools).map(({ classification: _ignored, ...fact }) => fact);
       const overrides = this.classification[id];
       return {

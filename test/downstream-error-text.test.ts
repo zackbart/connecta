@@ -636,6 +636,52 @@ describe("the MCP boundary is an allow-list", () => {
     },
   );
 
+  it.each(modes)(
+    "keeps a dispatched -32602 that mentions an output schema as invalid_args with its repair action (%s)",
+    async (mode) => {
+      let calls = 0;
+      vi.stubGlobal(
+        "fetch",
+        downstream({
+          live: true,
+          toolCall: (_n, id) => {
+            calls++;
+            return Response.json({
+              jsonrpc: "2.0",
+              id,
+              error: { code: -32602, message: "Tool validate has an invalid outputSchema argument." },
+            });
+          },
+          tools: [
+            {
+              name: "read",
+              inputSchema: { type: "object", properties: { outputSchema: { type: "object" } } },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        }),
+      );
+      const connector = remoteMcp("svc", { url: MCP_URL, versionNegotiation: mode });
+      const registry = makeRegistry([connector], { logger: capturingLogger().logger });
+      const catalog = new CatalogService(registry, "https://connecta.test");
+      const context = registry.contextFor("svc", catalog.baseUrl, catalog.requestScope);
+      try {
+        const outcome = await new InvocationService(registry, catalog).invoke(
+          "svc.read",
+          { outputSchema: {} },
+          { source: "call_tool" },
+        );
+        if (outcome.ok) throw new Error("expected a refusal");
+        expect(outcome.error).toMatchObject({ code: "invalid_args", retryable: false });
+        expect(outcome.error).toHaveProperty("nextAction");
+        expect(outcome.error.message).not.toContain("operator must fix");
+        expect(calls).toBe(1);
+      } finally {
+        await connector.closeScope!(context);
+      }
+    },
+  );
+
   it.each(modes)("still relays a 4xx refusal, the settled exception (%s)", async (mode) => {
     vi.stubGlobal(
       "fetch",
