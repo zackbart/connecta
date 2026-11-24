@@ -620,14 +620,14 @@ served. Give the parameter the type `string`, `integer` or `boolean`, or remove
 the declaration: in the deployment's own tools before upgrading, and on the
 downstream server for a remote one.
 
-On Node from 0.55.0, a downstream tool whose `outputSchema` cannot be compiled,
+Starting in 0.55.0, on Node, a downstream tool whose `outputSchema` cannot be compiled,
 such as one whose `$id` or `$ref` has an invalid URI scheme, still appears in
 search, and a call to it fails before dispatch as `connector_call_failed`.
 Correct the schema on the downstream server; changing the call's arguments does
 not help.
 
 A Node deployment that copies the current template's npm scripts starts reading
-`.env`. A variable already set in the process environment still wins; every
+`.env` in `start`, `rotate-token` and `adopt-token`. A variable already set in the process environment still wins; every
 other variable in the file now takes effect, including `CONNECTA_DATABASE`,
 which selects the SQLite file. Before restarting with the new scripts, read the
 `.env` beside the deployment and remove or correct any stale value.
