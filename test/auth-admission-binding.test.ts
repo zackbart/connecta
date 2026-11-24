@@ -105,38 +105,35 @@ const healthOf = async (via: Fetcher): Promise<Authentication> => {
   const response = await via.fetch("https://connecta.test/health");
   return ((await response.json()) as { admission: { authentication: Authentication } }).admission.authentication;
 };
-// Allocation pressure until `satisfied`, or fail: collection timing is never
-// guaranteed, only that enough garbage makes V8 collect.
-async function collectUntil(pressure: () => Promise<string[]>, satisfied: (finalized: string[]) => Promise<boolean>) {
+// Forced full collections (test/fixtures/auth-admission/entry.ts) until
+// `satisfied`. Finalization is still a separate task, so allow a few rounds.
+const COLLECTIONS = 20;
+async function collectUntil(collect: () => Promise<string[]>, satisfied: (finalized: string[]) => Promise<boolean>) {
   let finalized: string[] = [];
-  for (let round = 0; round < 80; round++) if (await satisfied((finalized = await pressure()))) return;
-  throw new Error(`Allocation pressure never produced the expected collection (finalized: ${finalized.join(", ")})`);
+  for (let round = 0; round < COLLECTIONS; round++) if (await satisfied((finalized = await collect()))) return;
+  throw new Error(`Forced collections never finalized the expected sentinels (finalized: ${finalized.join(", ")})`);
 }
-// Four sentinels per check, two of which must be collected: V8 scans
-// workerd's native stack conservatively during allocation-triggered
-// collections, so a recent unreachable object can survive several of them.
 const SENTINELS = 4;
 const sentinelsCollected = (prefix: string) => async (finalized: string[]) =>
-  finalized.filter((name) => name.startsWith(prefix)).length >= 2;
+  finalized.filter((name) => name.startsWith(prefix)).length === SENTINELS;
 // Once workerd cancelled a wave's work, the collector may release any of
 // its charges at any moment, before the first look included. Assert only
-// that the count never grows, then the same allowance as for sentinels: all
-// but one released.
-async function releasedMonotonically(fixture: { via: Fetcher; pressure: () => Promise<string[]> }) {
+// that the count never grows, then that every charge is released.
+async function releasedMonotonically(fixture: { via: Fetcher; collect: () => Promise<string[]> }) {
   let previous = 16;
-  for (let round = 0; round < 80; round++) {
+  for (let round = 0; round < COLLECTIONS; round++) {
     const { active, abandoned } = await healthOf(fixture.via);
     expect(active).toBe(0);
     expect(abandoned).toBeLessThanOrEqual(previous);
-    if ((previous = abandoned) <= 1) return;
-    await fixture.pressure();
+    if ((previous = abandoned) === 0) return;
+    await fixture.collect();
   }
-  throw new Error(`Allocation pressure never released the cancelled charges (${previous} remain)`);
+  throw new Error(`Forced collections never released the cancelled charges (${previous} remain)`);
 }
-// Regression (round 6): collection pressure at once after cancellation,
-// before any look at the counters, may legally release every charge.
-async function collectEarly(pressure: () => Promise<string[]>) {
-  for (let round = 0; round < 4; round++) await pressure();
+// Regression (round 6): collections at once after cancellation, before any
+// look at the counters, may legally release every charge.
+async function collectEarly(collect: () => Promise<string[]>) {
+  for (let round = 0; round < 4; round++) await collect();
 }
 const binding = {
   control: async (path: string) => {
@@ -160,7 +157,7 @@ function entryFixture(key: string) {
     middleware: bindings![`${name}_MIDDLEWARE`]!,
     control,
     health: () => healthOf(via),
-    pressure: async () => (JSON.parse(await control("/pressure")) as { finalized: string[] }).finalized,
+    collect: async () => (JSON.parse(await control("/collect")) as { finalized: string[] }).finalized,
     sentinels: async (prefix: string, ms: number) => {
       for (let i = 0; i < SENTINELS; i++) await control(`/sentinel?name=${prefix}-${i}&ms=${ms}`);
     },
@@ -201,8 +198,8 @@ it.skipIf(!worker)(
       await vi.waitFor(async () => expect(await binding.ids("sentinel-middleware")).toHaveLength(0), {
         timeout: 8_000,
       });
-      await collectUntil(fixture.pressure, sentinelsCollected("middleware"));
-      await fixture.pressure();
+      await collectUntil(fixture.collect, sentinelsCollected("middleware"));
+      await fixture.collect();
       expect(await binding.ids("agent-")).toHaveLength(16);
       expect(await fixture.health()).toMatchObject({ active: 0, abandoned: 16, abandonedSaturated: true });
       // A second wave is refused before any lookup: nothing accumulates.
@@ -252,7 +249,7 @@ it.skipIf(!worker)(
       expect((await binding.status()).calls).toBe(16);
       await fixture.control("/window");
       await vi.waitFor(async () => expect(await binding.ids("agent-")).toHaveLength(0), { timeout: 10_000 });
-      await collectEarly(fixture.pressure);
+      await collectEarly(fixture.collect);
       await releasedMonotonically(fixture);
       const recovered = await fixture.human("fast");
       expect(recovered.status).toBe(401);

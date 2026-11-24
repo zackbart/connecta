@@ -56,6 +56,15 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
   failure after dispatch. Keep deadline assertions deterministic with a
   controllable clock when supported; do not relax correctness or performance
   assertions to hide a failure.
+- **Authentication-admission collections** ([#1493](https://github.com/zackbart/connecta/issues/1493)).
+  `test/auth-admission-binding.test.ts` forces full V8 collections through
+  `--expose-gc`, which `vitest.config.ts` adds to `MINIFLARE_WORKERD_V8_FLAGS`;
+  locally every sentinel finalizes on the first one. `Forced collections never
+  finalized the expected sentinels` or `never released the cancelled charges`
+  is therefore not load: treat it as a real retention regression in
+  `src/auth-admission.ts` or a lost flag, and do not rerun it away. The old
+  `Allocation pressure never produced the expected collection` came from code
+  before the fix; rebase.
 - **pnpm audit.** A new upstream advisory fails `audit` and `check` on
   every PR and main push. The nightly run also
   audits main without a new commit. Fix it in its own PR that moves the
