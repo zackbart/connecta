@@ -598,7 +598,7 @@ export function catalogIntake(
     cacheScope: result.cacheScope === "public" ? "public" : "private",
   };
 }
-/** Refuse before SDK 2.3.1's header exclusion path logs downstream names/reasons.
+/** Refuse before SDK 2.4.0's header exclusion path logs downstream names/reasons.
  * Match its schema keyword walk; errors carry no downstream text (INV-6/8). */
 function assertHeaderDeclarations(schema: unknown): void {
   const names = new Set<string>();
@@ -635,7 +635,7 @@ function assertHeaderDeclarations(schema: unknown): void {
         !property ||
         typeof header !== "string" ||
         !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(header) ||
-        !["string", "integer", "boolean", "number"].includes(value.type as string) ||
+        !["string", "integer", "boolean"].includes(value.type as string) ||
         names.has(header.toLowerCase())
       )
         invalid();

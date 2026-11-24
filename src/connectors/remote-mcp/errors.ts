@@ -372,7 +372,7 @@ function keepsItsText(err: unknown, transport: Transport | undefined): boolean {
 
 /**
  * The SDK's own checks of a tool's output schema, recognized by how the
- * pinned SDK (2.3.1) begins their messages, and told in connecta's words.
+ * pinned SDK (2.4.0) begins their messages, and told in connecta's words.
  * Recognition reads the SDK's text only to choose connecta's: none of it, nor
  * the validator's account that follows, is repeated.
  */
@@ -417,7 +417,7 @@ export function ownAbortReason(err: unknown, signals: readonly (AbortSignal | un
 /**
  * The request's own abort reason as the SDK hands it back: a request it
  * cancels rejects with `new SdkError(RequestTimeout, String(reason))` unless
- * the reason already is one (pinned against client 2.3.1). Its text is the
+ * the reason already is one (pinned against client 2.4.0). Its text is the
  * caller's, so it passes as the SDK wrote it.
  */
 function ownAbortReasonAsSdkReports(err: unknown, signals: readonly (AbortSignal | undefined)[]): boolean {
