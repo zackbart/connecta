@@ -58,6 +58,8 @@ const FEATURES = [
   "io.modelcontextprotocol/tasks",
   "io.modelcontextprotocol/oauth-client-credentials",
   "io.modelcontextprotocol/enterprise-managed-authorization",
+  "io.modelcontextprotocol/events",
+  "io.modelcontextprotocol/server-card",
 ];
 
 describe("MCP specification coverage", () => {

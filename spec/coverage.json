@@ -2,7 +2,8 @@
   "revision": "2026-07-28",
   "sources": [
     "https://modelcontextprotocol.io/specification/2026-07-28",
-    "https://modelcontextprotocol.io/extensions/overview"
+    "https://modelcontextprotocol.io/extensions/overview",
+    "https://modelcontextprotocol.io/specification/draft/changelog"
   ],
   "scope": "Current connecta behavior, not SDK capability alone. Supported means the described scope has tests; partial names its gaps. Planned includes work deferred outside the rework's scope and unimplemented optional core features. #703 decisions may be superseded by a later record.",
   "features": [
@@ -108,7 +109,7 @@
       "id": "client-registration",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration",
-      "notes": "Self-hosted CIMD defaults on configured public HTTPS deployments, with DCR fallback and issuer-bound pre-registered remoteMcp clients. Status reports the selected path.",
+      "notes": "Self-hosted CIMD defaults on configured public HTTPS deployments, with DCR fallback and issuer-bound pre-registered remoteMcp clients. Status reports the selected path. The draft revision's changelog moves the Client ID Metadata Document reference from draft-ietf-oauth-client-id-metadata-document-00 to -03 and requires implementations that support CIMD to follow -03. No regression yet checks the self-hosted document against -03.",
       "evidence": ["test/downstream-auth-best-practice.test.ts"]
     },
     {
@@ -247,7 +248,7 @@
       "id": "subscriptions",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions",
-      "notes": "subscriptions/listen is deferred by #703's Deferred row.",
+      "notes": "subscriptions/listen is deferred by #703's Deferred row. The Events extension carries its optional event-type list-change notifications on this stream through an added filter field; events/poll works without it.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -335,36 +336,50 @@
       "id": "io.modelcontextprotocol/ui",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/apps/overview",
-      "notes": "MCP Apps is deferred by #703's Deferred row.",
+      "notes": "MCP Apps is Stable upstream and deferred here by #703's Deferred row.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
       "id": "io.modelcontextprotocol/skills",
       "status": "supported",
       "spec": "https://modelcontextprotocol.io/extensions/skills/overview",
-      "notes": "Beta under SEP-3392 (SEP-2640); breaking revisions may reuse the extension ID. The released settings define no revision; explicit downstream revisions are refused. Native skills/list and skills/get share one registry with skill-only resources and both text readers. Local manifests, five-entry pages, opt-in downstream proxying, whole-connector grants, byte preservation and the credential-redaction exception are enforced. Directory reading is not declared.",
+      "notes": "Beta under SEP-3392 (SEP-2640); breaking revisions may reuse the extension ID. modelcontextprotocol/ext-skills tagged its first schema, v0.1.0, on 2026-11-20, with the specification under specification/beta/. The released settings define no revision; explicit downstream revisions are refused. Native skills/list and skills/get share one registry with skill-only resources and both text readers. Local manifests, five-entry pages, opt-in downstream proxying, whole-connector grants, byte preservation and the credential-redaction exception are enforced. Directory reading is not declared.",
       "evidence": ["test/skills-extension.test.ts", "test/remote-mcp-skills.test.ts"]
     },
     {
       "id": "io.modelcontextprotocol/tasks",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/tasks/overview",
-      "notes": "Tasks, including downstream task polling, are deferred by #703's Deferred row.",
+      "notes": "Tasks, including downstream task polling, are deferred by #703's Deferred row. Tasks is Beta with Core as its stated destination; draft SEP-3570 targets the September 2027 revision. The extension client matrix now lists host support.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
       "id": "io.modelcontextprotocol/oauth-client-credentials",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/auth/oauth-client-credentials",
-      "notes": "Machine clients are code-declared agents using cta_ access tokens. The OAuth client credentials extension is not implemented or negotiated.",
+      "notes": "Machine clients are code-declared agents using cta_ access tokens or explicitly bound Vercel OIDC workloads. The OAuth client credentials extension is not implemented or negotiated. The extension is Stable.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
       "id": "io.modelcontextprotocol/enterprise-managed-authorization",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/auth/enterprise-managed-authorization",
-      "notes": "Inbound human auth is Clerk or Worker Access. Edge-managed Access is not negotiation of this extension.",
+      "notes": "Inbound human auth is Clerk or Worker Access. Edge-managed Access is not negotiation of this extension. The extension is Stable.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
+    },
+    {
+      "id": "io.modelcontextprotocol/events",
+      "status": "planned",
+      "spec": "https://modelcontextprotocol.io/extensions/events/overview",
+      "notes": "Beta under SEP-3415. Not implemented or negotiated, and no implementation is scheduled; #1483 tracks the evaluation. If adopted, poll delivery (events/poll) is the candidate: it holds no protocol-required server state and fits cursor-backed api() connectors. Push (events/stream) and webhook (events/subscribe) delivery are not planned.",
+      "issue": "https://github.com/zackbart/connecta/issues/1483"
+    },
+    {
+      "id": "io.modelcontextprotocol/server-card",
+      "status": "declined",
+      "spec": "https://modelcontextprotocol.io/seps/2127-mcp-server-cards",
+      "notes": "Beta under SEP-2127. Not implemented and not scheduled: no card or ai-catalog document is published. A card would carry deployment-level identity and connection metadata; server/discover and legacy initialize already serve the configured identity, and SEP-2127 keeps caller-scoped tools and capabilities out of cards. Revisit when a supported host reads cards.",
+      "decision": "https://github.com/zackbart/connecta/issues/1483"
     }
   ]
 }
