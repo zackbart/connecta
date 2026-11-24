@@ -31,14 +31,19 @@ const CREDENTIAL_WINDOW = 8;
 const HEALTH_BYTE_LIMIT = 64 * 1024;
 const CONFIG_BYTE_LIMIT = 4 * 1024 * 1024;
 const MCP_BYTE_LIMIT = 4 * 1024 * 1024;
+const MCP_LIST_MAX_PAGES = 4;
+const DOCTOR_DEADLINE_MS = 60_000;
+const SDK_CONSOLE_METHODS = ["debug", "error", "info", "log", "warn"];
 
 let doctorCredentials = [];
 
 function sharesCredential(text) {
-  return doctorCredentials.some((credential) => {
-    if (text.includes(credential)) return true;
-    for (let start = 0; start + CREDENTIAL_WINDOW <= text.length; start++) {
-      if (credential.includes(text.slice(start, start + CREDENTIAL_WINDOW))) return true;
+  const folded = text.toLowerCase();
+  return doctorCredentials.some((value) => {
+    const credential = value.toLowerCase();
+    if (folded.includes(credential)) return true;
+    for (let start = 0; start + CREDENTIAL_WINDOW <= folded.length; start++) {
+      if (credential.includes(folded.slice(start, start + CREDENTIAL_WINDOW))) return true;
     }
     return false;
   });
@@ -61,16 +66,41 @@ function redactConfig(value) {
   return value;
 }
 
-function withoutCredentials(text) {
-  let result = text;
-  for (const credential of doctorCredentials) {
-    result = result.split(`Bearer ${credential}`).join(`Bearer ${REDACTED}`).split(credential).join(REDACTED);
-  }
-  return result;
+function containsCredential(text) {
+  return doctorCredentials.some((credential) => text.includes(credential));
 }
+
+function withoutCredentials(text) {
+  const ranges = [];
+  for (const credential of doctorCredentials) {
+    for (const form of [`Bearer ${credential}`, credential]) {
+      for (let index = text.indexOf(form); index !== -1; index = text.indexOf(form, index + 1)) {
+        ranges.push([index, index + form.length]);
+      }
+    }
+  }
+  if (ranges.length === 0) return text;
+  ranges.sort((a, b) => a[0] - b[0]);
+  let result = "";
+  let cursor = 0;
+  let [start, end] = ranges[0];
+  for (const [nextStart, nextEnd] of ranges.slice(1)) {
+    if (nextStart <= end) {
+      end = Math.max(end, nextEnd);
+      continue;
+    }
+    result += text.slice(cursor, start) + REDACTED;
+    cursor = end;
+    [start, end] = [nextStart, nextEnd];
+  }
+  return result + text.slice(cursor, start) + REDACTED + text.slice(end);
+}
+
+const unfilteredWrites = new Map();
 
 function filterStream(stream) {
   const write = stream.write.bind(stream);
+  unfilteredWrites.set(stream, write);
   stream.write = (chunk, ...rest) => {
     if (typeof chunk === "string") return write(withoutCredentials(chunk), ...rest);
     if (chunk instanceof Uint8Array) return write(withoutCredentials(Buffer.from(chunk).toString("utf8")), ...rest);
@@ -78,24 +108,31 @@ function filterStream(stream) {
   };
 }
 
+function silenceConsole() {
+  const saved = SDK_CONSOLE_METHODS.map((method) => [method, console[method]]);
+  const sink = { lines: 0 };
+  for (const method of SDK_CONSOLE_METHODS) {
+    console[method] = () => {
+      sink.lines++;
+    };
+  }
+  return {
+    sink,
+    restore() {
+      for (const [method, original] of saved) console[method] = original;
+    },
+  };
+}
+
 class DoctorFailure extends Error {}
 
 function printFailure(error) {
-  console.error(`[connecta] ${error instanceof Error ? error.message : String(error)}`);
+  process.stderr.write(`[connecta] ${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
 }
 
 function printUnexpectedFailure(error) {
   printFailure(new DoctorFailure(`Doctor stopped on an unexpected ${printable(error?.name)}.`));
-}
-
-function terminalLabel(value) {
-  return value
-    .replace(/[^\w .+-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 40)
-    .trim();
 }
 
 async function readCapped(response, limit, route) {
@@ -104,7 +141,16 @@ async function readCapped(response, limit, route) {
   const chunks = [];
   let size = 0;
   for (;;) {
-    const { done, value } = await reader.read();
+    let next;
+    try {
+      next = await reader.read();
+    } catch (error) {
+      if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
+        throw new DoctorFailure(`Timed out after ${DOCTOR_TIMEOUT_MS}ms reading ${route}.`);
+      }
+      throw error;
+    }
+    const { done, value } = next;
     if (done) break;
     size += value.byteLength;
     if (size > limit) {
@@ -289,8 +335,8 @@ function mcpFailure(error, endpoint, failedPostStatus, overflowed) {
       `MCP tools/list at ${endpoint} refused: ${Number(cap[1])} tools exceed the ${Number(cap[2])}-tool native listing cap. Narrow the pool or use the meta surface.`,
     );
   }
-  const code =
-    typeof error?.code === "number" || typeof error?.code === "string" ? ` ${printable(String(error.code))}` : "";
+  const rawCode = error?.code ?? error?.cause?.code;
+  const code = typeof rawCode === "number" || typeof rawCode === "string" ? ` ${printable(String(rawCode))}` : "";
   return new DoctorFailure(`MCP request to ${endpoint} failed: ${printable(error?.name)}${code}.`);
 }
 
@@ -303,13 +349,37 @@ function parseJson(text) {
 }
 
 const DOCTOR_TIMEOUT_MS = 10_000;
+const doctorDeadline = new AbortController();
+
+function deadlineFailure() {
+  return new DoctorFailure(`Doctor did not finish within ${DOCTOR_DEADLINE_MS}ms.`);
+}
+
+async function withDeadline(run) {
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      doctorDeadline.abort();
+      reject(deadlineFailure());
+    }, DOCTOR_DEADLINE_MS);
+  });
+  try {
+    return await Promise.race([run(), expired]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function doctorFetch(url, init = {}) {
   try {
     const response = await fetch(url, {
       ...init,
       redirect: "manual",
-      signal: AbortSignal.any([AbortSignal.timeout(DOCTOR_TIMEOUT_MS), ...(init.signal ? [init.signal] : [])]),
+      signal: AbortSignal.any([
+        AbortSignal.timeout(DOCTOR_TIMEOUT_MS),
+        doctorDeadline.signal,
+        ...(init.signal ? [init.signal] : []),
+      ]),
     });
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       await response.body?.cancel().catch(() => {});
@@ -319,6 +389,7 @@ async function doctorFetch(url, init = {}) {
     }
     return response;
   } catch (error) {
+    if (doctorDeadline.signal.aborted) throw deadlineFailure();
     if (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")) {
       throw new DoctorFailure(`Timed out after ${DOCTOR_TIMEOUT_MS}ms contacting ${url}`);
     }
@@ -408,7 +479,11 @@ async function doctor() {
     }
     // The server builds this with describeConfig's allowlist; do not print
     // the overlay, identity, health deploymentInfo, or a raw error body.
-    console.log(JSON.stringify(redactConfig(contract.config), null, 2));
+    const snapshot = JSON.stringify(redactConfig(contract.config), null, 2);
+    if (containsCredential(snapshot)) {
+      throw new DoctorFailure("The config snapshot cannot be printed without a credential and is withheld.");
+    }
+    (unfilteredWrites.get(process.stdout) ?? process.stdout.write.bind(process.stdout))(`${snapshot}\n`);
     return;
   }
 
@@ -421,12 +496,26 @@ async function doctor() {
   // line — anything else is doctor asserting a sandbox it never saw (#368).
   // The string arrives from a server and lands in a terminal, so it is
   // sanitized here too rather than trusted twice.
-  const executorLabel = typeof health.executor?.name === "string" ? terminalLabel(health.executor.name) : "";
-  const executorName = sharesCredential(executorLabel) ? "" : executorLabel;
+  const executorLabel = printable(health.executor?.name);
+  const executorName = executorLabel === UNPRINTABLE ? "" : executorLabel;
+  const sdkConsole = silenceConsole();
+  let passed;
+  try {
+    passed = await checkMcp({ health, executorName, agent, pool, token, authHeaders, baseUrl, sdkConsole });
+  } finally {
+    sdkConsole.restore();
+  }
+  console.log(passed);
+}
+
+async function checkMcp({ health, executorName, agent, pool, token, authHeaders, baseUrl, sdkConsole }) {
   const { Client, StreamableHTTPClientTransport } = await import("@modelcontextprotocol/client");
   const client = new Client(
     { name: "connecta-doctor", version: CONNECTA_VERSION },
-    { versionNegotiation: { mode: "auto", probe: { timeoutMs: DOCTOR_TIMEOUT_MS } } },
+    {
+      versionNegotiation: { mode: "auto", probe: { timeoutMs: DOCTOR_TIMEOUT_MS } },
+      listMaxPages: MCP_LIST_MAX_PAGES,
+    },
   );
   // Agent endpoints bypass Access at the edge and read only the cta_ token.
   const endpoint = agent ? `/agent/${pool}` : "/mcp";
@@ -435,6 +524,7 @@ async function doctor() {
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}${endpoint}`), {
     requestInit: { headers: agent ? { Authorization: `Bearer ${token}` } : authHeaders },
     fetch: async (url, init) => {
+      if (init?.method === "POST") failedPostStatus = undefined;
       const response = await doctorFetch(url, init);
       if (init?.method === "POST") failedPostStatus = response.ok ? undefined : response.status;
       return cappedResponse(response, MCP_BYTE_LIMIT, endpoint, () => {
@@ -448,9 +538,14 @@ async function doctor() {
   let toolCount = META_TOOL_NAMES.length;
   let readRoute = false;
   try {
-    await client.connect(transport);
+    await client.connect(transport, { timeout: DOCTOR_TIMEOUT_MS });
     negotiatedVersion = client.getNegotiatedProtocolVersion();
     const listed = await client.listTools({}, { timeout: DOCTOR_TIMEOUT_MS });
+    if (sdkConsole.sink.lines > 0) {
+      throw new DoctorFailure(
+        `The MCP client excluded or flagged part of the tools/list reply from ${endpoint} (${sdkConsole.sink.lines} message(s), not printed).`,
+      );
+    }
     const actual = listed.tools.map((tool) => tool.name).sort();
     const surface = listed.tools.find((tool) => tool.name === "skills")?._meta?.["dev.connecta/surface"];
     native = surface?.surface === "native";
@@ -504,11 +599,16 @@ async function doctor() {
   } finally {
     await client.close();
   }
+  if (sdkConsole.sink.lines > 0) {
+    throw new DoctorFailure(
+      `The MCP client reported ${sdkConsole.sink.lines} message(s) while checking ${endpoint}, not printed.`,
+    );
+  }
 
-  console.log(
+  return (
     `Connecta doctor passed: ${Number.isSafeInteger(health.connectors) ? health.connectors : UNPRINTABLE} connector(s), ` +
-      `${executeCode ? (executorName ? `${executorName} executed` : "code executed") : "code disabled"}, ` +
-      `${native ? "native tool surface" : `prescribed ${toolCount}-tool surface`}, MCP ${printable(negotiatedVersion)}, package ${CONNECTA_VERSION}.`,
+    `${executeCode ? (executorName ? `${executorName} executed` : "code executed") : "code disabled"}, ` +
+    `${native ? "native tool surface" : `prescribed ${toolCount}-tool surface`}, MCP ${printable(negotiatedVersion)}, package ${CONNECTA_VERSION}.`
   );
 }
 
@@ -520,11 +620,12 @@ try {
     filterStream(process.stderr);
     process.on("uncaughtException", printUnexpectedFailure);
     process.on("unhandledRejection", printUnexpectedFailure);
-    await doctor();
+    await withDeadline(doctor);
   } else {
     usage();
     process.exitCode = 1;
   }
 } catch (error) {
   printFailure(error);
+  if (doctorDeadline.signal.aborted) process.exit();
 }

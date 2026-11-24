@@ -104,18 +104,19 @@ describe("connecta doctor's executor line", () => {
     expect(line).toContain("Connecta doctor passed");
   });
 
-  it("bounds and sanitizes the name before it reaches a terminal", async () => {
+  it("names the executor only when its name is a plain identifier", async () => {
+    const named = await doctorAgainst({ name: "Custom.Sandbox-1", execute: async () => ({ result: 42 }) });
+    expect(named).toBe(
+      `Connecta doctor passed: 1 connector(s), Custom.Sandbox-1 executed, prescribed 7-tool surface, MCP 2026-07-28, package ${CONNECTA_VERSION}.`,
+    );
     const hostile: Executor = {
       name: "\u001b[31mEvil\nSandbox " + "x".repeat(80),
       execute: async () => ({ result: 42 }),
     };
     const line = await doctorAgainst(hostile);
-    expect(line).toMatch(
-      /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed 7-tool surface, MCP 2026-07-28, package /,
+    expect(line).toBe(
+      `Connecta doctor passed: 1 connector(s), code executed, prescribed 7-tool surface, MCP 2026-07-28, package ${CONNECTA_VERSION}.`,
     );
-    expect(line.endsWith(`package ${CONNECTA_VERSION}.`)).toBe(true);
-    expect(line).not.toContain("\u001b");
-    expect(line).not.toContain("x".repeat(41));
   });
 
   it("accepts the read program route at an agent endpoint and refuses any other extra tool", async () => {
@@ -779,6 +780,15 @@ describe("connecta doctor prints facts, not server text", () => {
     }
   }
 
+  it.each([
+    ["a partial credential run", (auth: string) => auth.slice(11, 23)],
+    ["an uppercased credential", (auth: string) => auth.slice("Bearer ".length).toUpperCase()],
+  ])("INV-5: refuses an identifier carrying %s", async (_label, status) => {
+    const output = await doctorAgainstFake({ health: (auth) => ({ status: status(auth) }) });
+    expect(output.stderr).toContain("Unexpected health status from /health: <unprintable>.");
+    expect(output.stderr.toLowerCase()).not.toContain(token.slice(4, 16).toLowerCase());
+  });
+
   it("INV-5: names an unexpected health status only when it is a plain identifier", async () => {
     const output = await doctorAgainstFake({ health: (auth) => ({ status: auth }) });
     expect(output.stderr).toContain("Unexpected health status from /health: <unprintable>.");
@@ -815,7 +825,7 @@ describe("connecta doctor prints facts, not server text", () => {
                   "dev.connecta/surface": {
                     surface: "native",
                     executeCode: true,
-                    catalogErrors: ["crm", auth, `SERVER-TEXT ${auth}`],
+                    catalogErrors: ["crm", auth.slice("Bearer ".length), auth.slice(11, 23)],
                     staleCatalogs: [],
                   },
                 },
@@ -850,6 +860,178 @@ describe("connecta doctor prints facts, not server text", () => {
   it("refuses a /health body over the byte cap", async () => {
     const output = await doctorAgainstFake({ health: () => ({ status: "ok", padding: "x".repeat(70 * 1024) }) });
     expect(output.stderr).toContain(`Response from /health exceeds ${64 * 1024} bytes.`);
+  });
+
+  it("refuses a --config body over the byte cap", async () => {
+    const server = createServer((_request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ padding: "x".repeat(5 * 1024 * 1024) }));
+    });
+    const url = await listening(server);
+    const output = await run(process.execPath, [CLI, "doctor", "--config", "--url", url], {
+      env: { ...process.env, CONNECTA_TOKEN: token, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+    }).then(
+      () => ({ stdout: "unexpected success", stderr: "" }),
+      (error: { stdout: string; stderr: string }) => error,
+    );
+    expect(output.stdout).toBe("");
+    expect(output.stderr).toContain(`Response from /ui/api/config exceeds ${4 * 1024 * 1024} bytes.`);
+  });
+
+  it("INV-5: fails without printing the SDK's warning when a modern-era server lists a tool it must exclude", async () => {
+    const connecta = createConnecta({
+      readOnly: false,
+      connectors: [],
+      executor: customExecutor({ execute: async () => ({ result: 42 }) }, { lifecycle: "self-managed" }),
+      auth: machineAuth(TOKEN),
+      maintainers: [MACHINE],
+      logger: "silent",
+    });
+    const upstream = listen(connecta, { port: 0, host: "127.0.0.1", gracefulShutdown: false });
+    teardown.push(async () => {
+      await new Promise<void>((done) => upstream.close(() => done()));
+      await connecta.close();
+    });
+    await once(upstream, "listening");
+    const upstreamAddress = upstream.address();
+    if (!upstreamAddress || typeof upstreamAddress === "string") throw new Error("Expected TCP address");
+    const origin = `http://127.0.0.1:${upstreamAddress.port}`;
+    const injected = `\u001b[2J\u001b]52;c;SERVER-TEXT\u0007\nINJECTED ${TOKEN}`;
+    const proxy = createServer(async (request, response) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = Buffer.concat(chunks);
+      const headers = Object.fromEntries(
+        Object.entries(request.headers).filter(
+          (entry): entry is [string, string] =>
+            typeof entry[1] === "string" && !["host", "content-length", "connection"].includes(entry[0]),
+        ),
+      );
+      const forwarded = await fetch(`${origin}${request.url}`, {
+        method: request.method ?? "GET",
+        headers,
+        ...(body.length ? { body } : {}),
+      });
+      const text = await forwarded.text();
+      const listing = body.length > 0 && JSON.parse(body.toString()).method === "tools/list";
+      if (!listing || !forwarded.ok) {
+        const passthrough: Record<string, string> = {};
+        forwarded.headers.forEach((value, key) => {
+          if (!["content-length", "content-encoding", "transfer-encoding"].includes(key)) passthrough[key] = value;
+        });
+        response.writeHead(forwarded.status, passthrough);
+        response.end(text);
+        return;
+      }
+      const message = JSON.parse(
+        (forwarded.headers.get("content-type") ?? "").includes("text/event-stream")
+          ? text
+              .split("\n")
+              .filter((line) => line.startsWith("data:"))
+              .pop()!
+              .slice("data:".length)
+          : text,
+      );
+      message.result.tools.push({
+        name: `SERVER-TEXT-${TOKEN}`,
+        inputSchema: {
+          type: "object",
+          properties: { [`SERVER-TEXT ${TOKEN}`]: { type: injected, "x-mcp-header": "Region" } },
+        },
+      });
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(message));
+    });
+    const url = await listening(proxy);
+    const output = await run(process.execPath, [CLI, "doctor", "--url", url], {
+      env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+    }).then(
+      ({ stdout, stderr }) => ({ stdout, stderr, passed: true }),
+      (error: { stdout: string; stderr: string }) => ({ stdout: error.stdout, stderr: error.stderr, passed: false }),
+    );
+    expect(output.passed).toBe(false);
+    expect(output.stdout).toBe("");
+    expect(output.stderr).toBe(
+      "[connecta] The MCP client excluded or flagged part of the tools/list reply from /mcp (1 message(s), not printed).\n",
+    );
+  });
+
+  it("INV-5: withholds a reflection of credentials loaded from --dotenv", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-env-"));
+    teardown.push(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, ".env");
+    const values = {
+      CONNECTA_TOKEN: "reflected-dotenv-token-0123456789",
+      CF_ACCESS_CLIENT_ID: "reflected-dotenv-id.access",
+      CF_ACCESS_CLIENT_SECRET: "reflected-dotenv-secret-abcdef",
+    };
+    await writeFile(
+      path,
+      Object.entries(values)
+        .map(([name, value]) => `${name}=${value}\n`)
+        .join(""),
+    );
+    const server = createServer((request, response) => {
+      response.writeHead(request.url === "/health" ? 200 : 431, { "Content-Type": "application/json" });
+      response.end(
+        request.url === "/health"
+          ? JSON.stringify({ status: "ok", connectors: 0 })
+          : JSON.stringify({ quoted: request.headers }),
+      );
+    });
+    const url = await listening(server);
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    for (const name of Object.keys(values)) delete env[name];
+    const output = await run(process.execPath, [CLI, "doctor", "--url", url, "--dotenv", path], { env }).then(
+      () => ({ stdout: "unexpected success", stderr: "" }),
+      (error: { stdout: string; stderr: string }) => error,
+    );
+    expect(output.stderr).toContain("MCP 431 from /mcp.");
+    expect(`${output.stdout}${output.stderr}`).not.toMatch(/reflected/);
+  });
+
+  it("does not blame a reset initialize on the probe's earlier 404", async () => {
+    const server = createServer(async (request, response) => {
+      if (request.url === "/health") {
+        response.setHeader("Content-Type", "application/json");
+        response.end(JSON.stringify({ status: "ok", connectors: 0 }));
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString() || "{}");
+      if (body.method === "server/discover") {
+        response.writeHead(404, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32601, message: "Not found" } }));
+        return;
+      }
+      request.socket.destroy();
+    });
+    const url = await listening(server);
+    const output = await run(process.execPath, [CLI, "doctor", "--url", url], {
+      env: { ...process.env, CONNECTA_TOKEN: TOKEN, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+    }).then(
+      () => ({ stdout: "unexpected success", stderr: "" }),
+      (error: { stdout: string; stderr: string }) => error,
+    );
+    expect(output.stderr).toMatch(/MCP request to \/mcp failed: /);
+    expect(output.stderr).not.toContain("MCP 404");
+  });
+
+  it("refuses a too-short credential from --dotenv by name", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-env-"));
+    teardown.push(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, ".env");
+    await writeFile(path, "CF_ACCESS_CLIENT_ID=synthetic-access-id\nCF_ACCESS_CLIENT_SECRET=short-secret\n");
+    const env: NodeJS.ProcessEnv = { ...process.env, CONNECTA_TOKEN: TOKEN };
+    delete env.CF_ACCESS_CLIENT_ID;
+    delete env.CF_ACCESS_CLIENT_SECRET;
+    const output = await run(process.execPath, [CLI, "doctor", "--dotenv", path], { env }).then(
+      () => ({ stdout: "unexpected success", stderr: "" }),
+      (error: { stdout: string; stderr: string }) => error,
+    );
+    expect(output.stderr).toContain("CF_ACCESS_CLIENT_SECRET is shorter than 16 characters");
+    expect(`${output.stdout}${output.stderr}`).not.toContain("short-secret");
   });
 
   it("refuses a credential too short to redact soundly, naming only the variable", async () => {
