@@ -645,7 +645,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
       const data = secrets.redact(value);
       const wire = JSON.stringify({ data, format });
       // Count, never encode: an oversized result would be copied whole just to measure it.
-      if (utf8Length(wire, wireBytes) <= wireBytes) return { data, format };
+      if (utf8Length(wire, wireBytes) <= wireBytes) return Object.freeze({ data, format });
       const serialized = format === "text" ? { text: String(data), binary: false } : serializedWithBinary(data);
       const text = secrets.text(serialized.text);
       const bytes = enc.encode(text);

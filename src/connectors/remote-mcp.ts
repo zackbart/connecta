@@ -632,7 +632,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     );
 
   const withActiveSecrets = authMethod(
-    <T>(ctx: ConnectorContext, run: () => Promise<T>, redactResult: boolean = true, preserveInput: boolean = false) =>
+    <T>(
+      ctx: ConnectorContext,
+      run: () => Promise<T>,
+      redactResult: boolean = true,
+      preserveInput: boolean = false,
+      freezeResult: boolean = false,
+    ) =>
       authFlow<T>(function* () {
         wrapViewCredentials(ctx);
         const secrets = sentSecretsFor(ctx);
@@ -650,9 +656,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           const result = (yield authCall(run, [])) as Awaited<T>;
           if (!preserveInput || !isInputRequiredResult(result))
             assertDownstreamOutputSafe(ctx.requestScope ?? ctx, result);
-          return (preserveInput && isInputRequiredResult(result)) || !redactResult
-            ? result
-            : redactSentSecrets(ctx, result);
+          if ((preserveInput && isInputRequiredResult(result)) || !redactResult) return result;
+          return freezeResult ? requestSentSecrets(ctx).redactFrozen(result) : redactSentSecrets(ctx, result);
         } catch (error) {
           assertDownstreamOutputSafe(ctx.requestScope ?? ctx, error);
           throw requestSentSecrets(ctx).redact(error);
@@ -682,6 +687,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       authCall(withActiveSecrets, [
         ctx,
         authMethod(() => authCall(callTool, [name, args, ctx, options]) as Effect.Effect<unknown, unknown>),
+        true,
         true,
         true,
       ]) as Effect.Effect<unknown, unknown>,

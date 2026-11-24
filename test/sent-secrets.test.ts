@@ -172,6 +172,144 @@ describe("call-scoped sent credentials", () => {
     expect(secrets.redact(result)).toBe(result);
   });
 
+  describe("INV-5: a walk repeats unless its object, set, revision and mode are all unchanged", () => {
+    type Walker = { project(...args: unknown[]): unknown };
+    const walks = (secrets: SentSecrets) => vi.spyOn(secrets as unknown as Walker, "project");
+    const frozen = <T>(value: T): T => {
+      const pending: unknown[] = [value];
+      while (pending.length) {
+        const item = pending.pop();
+        if (item !== null && typeof item === "object") pending.push(...Object.values(Object.freeze(item)));
+      }
+      return value;
+    };
+    const LATER = "later-credential-0123456789";
+
+    it("walks a deeply frozen clean object once per mode, and an open or shallow one every time", () => {
+      const secrets = new SentSecrets();
+      secrets.add(SECRET);
+      const walk = walks(secrets);
+      const value = frozen({ rows: [{ text: "ordinary row", count: 3 }] });
+      expect(secrets.redact(value)).toBe(value);
+      expect(secrets.redact(value)).toBe(value);
+      expect(walk).toHaveBeenCalledTimes(1);
+      expect(secrets.redact(value, "envelope")).toBe(value);
+      expect(secrets.redact(value, "envelope")).toBe(value);
+      expect(secrets.redact(value)).toBe(value);
+      expect(walk).toHaveBeenCalledTimes(2);
+      walk.mockClear();
+      const open = { rows: [{ text: "ordinary row" }] };
+      const shallow = Object.freeze({ rows: [{ text: "ordinary row" }] });
+      const sparse: number[] = [];
+      sparse[0] = 1;
+      sparse[2] = 3;
+      Object.freeze(sparse);
+      for (const item of [open, shallow, sparse]) {
+        expect(secrets.redact(item)).toBe(item);
+        expect(secrets.redact(item)).toBe(item);
+      }
+      expect(walk).toHaveBeenCalledTimes(6);
+    });
+
+    it("walks a retained object again after a registration, a memo write or a minted state, and redacts it", () => {
+      const secrets = new SentSecrets();
+      const context = new SentSecrets();
+      secrets.add(SECRET);
+      secrets.include(context);
+      const walk = walks(secrets);
+      const retained = frozen({ notes: [`echo ${LATER}`], state: "minted-relay-state-0001" });
+      const walksOf = () => walk.mock.calls.filter(([root]) => root === retained).length;
+      expect(secrets.redactCredentials(retained)).toBe(retained);
+      expect(secrets.redactCredentials(retained)).toBe(retained);
+      expect(walksOf()).toBe(1);
+      secrets.encode(new TextEncoder().encode("ordinary binary content"), { claims: true });
+      expect(secrets.redactCredentials(retained)).toBe(retained);
+      secrets.mintedState("minted-relay-state-0001");
+      expect(secrets.redactCredentials(retained)).toBe(retained);
+      expect(walksOf()).toBe(3);
+      const revision = secrets.revision;
+      context.add(LATER);
+      expect(secrets.revision).toBeGreaterThan(revision);
+      expect(secrets.redactCredentials(retained)).toEqual({ notes: ["echo [redacted]"], state: retained.state });
+      expect(walksOf()).toBe(4);
+      const text = `${"Ordinary public notes. ".repeat(200)}${LATER}`;
+      const late = new SentSecrets();
+      late.add(SECRET);
+      const textWalk = walks(late);
+      expect(late.redact(text)).toBe(text);
+      expect(late.redact(text)).toBe(text);
+      expect(textWalk).toHaveBeenCalledTimes(1);
+      expect(late.text(text)).toBe(text);
+      expect(textWalk).toHaveBeenCalledTimes(2);
+      late.add(LATER);
+      expect(late.redact(text)).toBe(`${"Ordinary public notes. ".repeat(200)}[redacted]`);
+      expect(textWalk).toHaveBeenCalledTimes(3);
+    });
+
+    it("never lets a mark made under one set, view or mode satisfy another", () => {
+      const first = new SentSecrets();
+      first.add(SECRET);
+      const second = new SentSecrets();
+      second.add(LATER);
+      const value = frozen({ text: `echo ${LATER}`, [LATER]: "keyed" });
+      expect(first.redact(value)).toBe(value);
+      expect(second.redact(value)).toEqual({ text: "echo [redacted]", "[redacted]": "keyed" });
+      const same = new SentSecrets();
+      same.add(SECRET);
+      const walk = walks(same);
+      expect(same.redact(value)).toBe(value);
+      expect(walk).toHaveBeenCalledOnce();
+      expect(second.redact(value, "values")).toEqual({ text: "echo [redacted]", [LATER]: "keyed" });
+      const keyed = frozen({ [LATER]: "kept by values mode only" });
+      expect(second.redact(keyed, "values")).toBe(keyed);
+      expect(second.redact(keyed)).toEqual({ "[redacted]": "kept by values mode only" });
+      const withArguments = new SentSecrets();
+      withArguments.add(SECRET);
+      withArguments.arguments(
+        { note: "private-note-0123" },
+        { type: "object", properties: { note: { type: "string", writeOnly: true } } },
+      );
+      const echo = frozen({ text: "private-note-0123" });
+      expect(withArguments.redactCredentials(echo)).toBe(echo);
+      expect(withArguments.redact(echo)).toEqual({ text: "[redacted]" });
+    });
+
+    it("freezes a value Connecta owns only once a walk finds it clean, and marks a changed copy on its next clean walk", () => {
+      const secrets = new SentSecrets();
+      secrets.add(SECRET);
+      const walk = walks(secrets);
+      const clean = { content: [{ type: "text", text: "ordinary" }] };
+      expect(secrets.redactFrozen(clean)).toBe(clean);
+      expect(Object.isFrozen(clean.content[0])).toBe(true);
+      expect(secrets.redact(clean)).toBe(clean);
+      expect(walk).toHaveBeenCalledTimes(1);
+      const echoed = { content: [{ type: "text", text: `echo ${SECRET}` }], meta: { kept: true } };
+      const copy = secrets.redactFrozen(echoed);
+      expect(copy).toEqual({ content: [{ type: "text", text: "echo [redacted]" }], meta: { kept: true } });
+      expect(Object.isFrozen(echoed)).toBe(false);
+      expect(Object.isFrozen(copy.content[0]) && Object.isFrozen(copy.meta)).toBe(true);
+      expect(secrets.redact(copy)).toBe(copy);
+      expect(secrets.redact(copy)).toBe(copy);
+      expect(walk).toHaveBeenCalledTimes(3);
+    });
+
+    it("walks a marked object again once a prototype it inherits from gains a toJSON", () => {
+      const secrets = new SentSecrets();
+      secrets.add(SECRET);
+      const value = frozen({ text: "ordinary" });
+      expect(secrets.redact(value)).toBe(value);
+      let redacted: unknown;
+      Object.defineProperty(Object.prototype, "toJSON", { value: () => ({ text: SECRET }), configurable: true });
+      try {
+        redacted = secrets.redact(value);
+      } finally {
+        delete (Object.prototype as { toJSON?: unknown }).toJSON;
+      }
+      expect(redacted).not.toBe(value);
+      expect(JSON.stringify(redacted)).not.toContain(SECRET);
+    });
+  });
+
   describe("INV-5: a header or query parameter's name never makes its value public", () => {
     const interior = SECRET.slice(2, 14);
     const expectProtected = (secrets: SentSecrets) => {
