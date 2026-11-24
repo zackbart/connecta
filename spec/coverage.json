@@ -248,7 +248,7 @@
       "id": "subscriptions",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions",
-      "notes": "subscriptions/listen is deferred by #703's Deferred row. The Events extension depends on the subscriptions/listen stream and adds an events list-change field to its notifications filter.",
+      "notes": "subscriptions/listen is deferred by #703's Deferred row. The Events extension carries its optional event-type list-change notifications on this stream through an added filter field; events/poll works without it.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -357,7 +357,7 @@
       "id": "io.modelcontextprotocol/oauth-client-credentials",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/extensions/auth/oauth-client-credentials",
-      "notes": "Machine clients are code-declared agents using cta_ access tokens. The OAuth client credentials extension is not implemented or negotiated. The extension is Stable.",
+      "notes": "Machine clients are code-declared agents using cta_ access tokens or explicitly bound Vercel OIDC workloads. The OAuth client credentials extension is not implemented or negotiated. The extension is Stable.",
       "decision": "https://github.com/zackbart/connecta/issues/703"
     },
     {
@@ -371,14 +371,14 @@
       "id": "io.modelcontextprotocol/events",
       "status": "planned",
       "spec": "https://modelcontextprotocol.io/extensions/events/overview",
-      "notes": "Beta under SEP-3415. Not implemented or negotiated. Poll delivery (events/poll) is the candidate: it holds no protocol-required server state and fits cursor-backed api() connectors. Push (events/stream) and webhook (events/subscribe) delivery are not planned.",
+      "notes": "Beta under SEP-3415. Not implemented or negotiated, and no implementation is scheduled; #1483 tracks the evaluation. If adopted, poll delivery (events/poll) is the candidate: it holds no protocol-required server state and fits cursor-backed api() connectors. Push (events/stream) and webhook (events/subscribe) delivery are not planned.",
       "issue": "https://github.com/zackbart/connecta/issues/1483"
     },
     {
       "id": "io.modelcontextprotocol/server-card",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/seps/2127-mcp-server-cards",
-      "notes": "Beta under SEP-2127. Not implemented and not scheduled: as of 2026-11-24 the extension client matrix lists no host that consumes cards, and a card is a static document while Connecta's endpoint identity is caller-scoped.",
+      "notes": "Beta under SEP-2127. Not implemented and not scheduled: no card or ai-catalog document is published. A card would carry only deployment-level identity, which server/discover and legacy initialize already serve from configuration; SEP-2127 keeps caller-scoped tools and capabilities out of cards. Revisit when a supported host reads cards.",
       "decision": "https://github.com/zackbart/connecta/issues/1483"
     }
   ]
