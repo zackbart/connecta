@@ -27,6 +27,10 @@ import { OPERATIONS, type Cell, type CellLatency, type CellResult, type Counts, 
 
 const AGENT = "perf";
 const QUERY = "search issues";
+/** Below the 60 s agent admission observation window, the shortest clock any counted request reads. */
+const COUNTING_WINDOW_MS = 45_000;
+/** Below the 15 s host-call deadline, the shortest that can end a request without failing it. */
+const REQUEST_LIMIT_MS = 12_000;
 const QUIET = { debug() {}, info() {}, warn() {}, error() {} };
 /** Elapsed-time fields such as `durationMs`, escaped or not; counted as one digit. */
 const TIMING_FIELD = /(\\?"\w*Ms\\?":)\d+(?:\.\d+)?/g;
@@ -118,7 +122,7 @@ async function startFake(index: number, cell: Cell): Promise<Fake> {
       },
       async () => ({ content: [{ type: "text" as const, text: "[]" }] }),
     );
-    const generated = cell.toolsPerConnector - 2;
+    const generated = (index === 0 ? cell.largestCatalog : 8) - 2;
     for (let n = 0; n < generated; n++) {
       const entity = ENTITIES[n % ENTITIES.length]!;
       const write = n % 4 === 3;
@@ -183,7 +187,7 @@ function request(operation: Operation, cell: Cell): { method: string; params: Re
   const found = await connecta.search({ query: ${JSON.stringify(QUERY)} });
   const first = await connecta.call("c01.get_document", { id: "doc-1" });
   const second = await connecta.call("${second}.get_document", { id: "doc-2" });
-  return { tools: found.tools.length, first: typeof first.data, second: typeof second.data };
+  return { catalogErrors: found.catalogErrors.length, first: typeof first.data, second: typeof second.data };
 }`,
           },
         },
@@ -208,9 +212,18 @@ async function runCell(cell: Cell, samples: number): Promise<CellResult> {
   const storageCount: StorageCount = { roundTrips: 0, statements: 0 };
   const storage = d1Storage(countingD1(db, storageCount));
   let connecta: ReturnType<typeof createConnecta> | undefined;
+  const deferred = new Set<Promise<unknown>>();
   const server = listen(
     {
-      fetch: (...args) => connecta!.fetch(...args),
+      fetch: (request, env, ctx) =>
+        connecta!.fetch(request, env, {
+          ...(ctx as object),
+          waitUntil(promise: Promise<unknown>) {
+            deferred.add(promise);
+            void promise.finally(() => deferred.delete(promise)).catch(() => {});
+            (ctx as { waitUntil(promise: Promise<unknown>): void }).waitUntil(promise);
+          },
+        }),
       close: async () => {
         await connecta?.close();
       },
@@ -256,6 +269,7 @@ async function runCell(cell: Cell, samples: number): Promise<CellResult> {
       `${storageCount.roundTrips} ${fakes.map((fake) => `${fake.requests}/${fake.inFlight}`).join(" ")}`;
     const quiet = async () => {
       for (let still = 0, last = activity(); still < 3;) {
+        while (deferred.size) await Promise.allSettled(deferred);
         await new Promise((resolve) => setTimeout(resolve, 1));
         const now = activity();
         still = now === last && fakes.every((fake) => fake.inFlight === 0) ? still + 1 : 0;
@@ -283,11 +297,32 @@ async function runCell(cell: Cell, samples: number): Promise<CellResult> {
       const ms = performance.now() - started;
       const text = new TextDecoder().decode(body);
       const message = JSON.parse(text.startsWith("{") ? text : (/^data: (.*)$/m.exec(text)?.[1] ?? "{}")) as {
-        result?: { isError?: boolean };
+        result?: {
+          isError?: boolean;
+          structuredContent?: {
+            catalogErrors?: unknown[];
+            result?: { catalogErrors?: number };
+            hostCalls?: { attempted: number; succeeded: number };
+          };
+        };
         error?: unknown;
       };
       if (!response.ok || message.error || !message.result || message.result.isError) {
         throw new Error(`${cell.id} ${operation} failed: ${response.status} ${text.slice(0, 400)}`);
+      }
+      const structured = message.result.structuredContent;
+      if (structured?.hostCalls && structured.hostCalls.succeeded !== structured.hostCalls.attempted) {
+        throw new Error(`${cell.id} ${operation}: a host call failed: ${text.slice(0, 400)}`);
+      }
+      if (ms > REQUEST_LIMIT_MS) {
+        throw new Error(
+          `${cell.id} ${operation}: took ${Math.round(ms)} ms, past ${REQUEST_LIMIT_MS} ms; the 15 s host-call and 30 s catalog deadlines would move its counts`,
+        );
+      }
+      if (structured?.catalogErrors?.length || structured?.result?.catalogErrors) {
+        throw new Error(
+          `${cell.id} ${operation}: discovery degraded (a probe deadline, fan-out budget or failure), so its counts would depend on machine speed: ${text.slice(0, 400)}`,
+        );
       }
       for (let wait = 0; traces.length === tracesBefore && wait < 2_000; wait++) {
         await new Promise((resolve) => setTimeout(resolve, 1));
@@ -314,19 +349,31 @@ async function runCell(cell: Cell, samples: number): Promise<CellResult> {
       };
     };
     const counts = {} as CellResult["counts"];
-    const latency: CellLatency[] = [];
+    const measured = new Map<Operation, { firstMs: number; warmMs: number }>();
+    const countingStarted = performance.now();
     for (const operation of OPERATIONS) {
       const first = await send(operation);
       await send(operation);
       const warm = await send(operation);
       counts[operation] = { first: first.counts, warm: warm.counts };
-      const times: number[] = [warm.ms];
+      measured.set(operation, { firstMs: first.ms, warmMs: warm.ms });
+    }
+    const countingMs = performance.now() - countingStarted;
+    if (countingMs > COUNTING_WINDOW_MS) {
+      throw new Error(
+        `${cell.id}: counted requests took ${Math.round(countingMs)} ms, past ${COUNTING_WINDOW_MS} ms; the agent admission observation refreshes after 60 s, which would move a count`,
+      );
+    }
+    const latency: CellLatency[] = [];
+    for (const operation of OPERATIONS) {
+      const { firstMs, warmMs } = measured.get(operation)!;
+      const times: number[] = [warmMs];
       for (let sample = 1; sample < samples; sample++) times.push((await send(operation)).ms);
       times.sort((a, b) => a - b);
       const at = (p: number) => times[Math.min(times.length - 1, Math.floor(p * times.length))]!;
       latency.push({
         operation,
-        firstMs: first.ms,
+        firstMs,
         samples: times.length,
         p50Ms: at(0.5),
         p90Ms: at(0.9),

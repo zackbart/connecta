@@ -293,16 +293,18 @@ in-memory `node:sqlite` binding that counts every call. Each connector is a
 `remoteMcp()` over a stateless MCP SDK server on loopback, which answers
 `tools/list` with the SDK's `ttlMs: 0`. Each cell runs in a fresh process, so
 isolate-wide catalog and index caches start empty, and requests run one at a
-time.
+time. Before the first request the database already holds its schema, the
+agent's token and, with secrets, one vault row per connector.
 
 **Requests**, in this order in every cell: upward `tools/list`; unscoped
 `search_tools` for "search issues"; `call_tool` on `c01.get_document`; and an
 `execute_code` program that searches unscoped and reads `get_document` on two
 connectors. Each runs three times: the first request is `first`, the second
 warms, the third is `warm`. `first` follows the earlier requests in the list, so
-only `tools/list` starts from an empty database and empty isolate caches;
-`search_tools` `first` is the cold discovery. `--samples n` times `n` warm
-requests per operation, the counted one included.
+only `tools/list` starts with no catalog stored and empty isolate caches;
+`search_tools` `first` is the cold discovery. Every counted request runs before
+any latency sample, so `--samples n` cannot move a count; it times the counted
+warm request and `n - 1` more per operation.
 
 **Matrix**: one factor at a time from `base`, plus zero-TTL pairs where relisting
 cost scales. Every cell's other axes are `base`'s.
@@ -315,24 +317,28 @@ cost scales. Every cell's other axes are `base`'s.
 | `connectors-1-zero-ttl`  | 1 connector, zero TTL                               | relisting with one connector                     |
 | `connectors-24`          | 24 connectors                                       | fan-out past discovery concurrency 4             |
 | `connectors-24-zero-ttl` | 24 connectors, zero TTL                             | relisting scales with connectors                 |
-| `tools-400`              | 400 tools per connector                             | chunked catalog storage and indexing             |
-| `tools-400-zero-ttl`     | 400 tools per connector, zero TTL                   | relisting scales with catalog size               |
+| `tools-400`              | `c01` has 400 tools                                 | chunked catalog storage and indexing             |
+| `tools-400-zero-ttl`     | `c01` has 400 tools, zero TTL                       | relisting scales with catalog size               |
 | `result-64k`             | 64 KiB read results                                 | past the inline result cap                       |
 | `result-600k`            | 600 KiB read results                                | a retained result in many chunks                 |
 | `secrets`                | a vault credential per connector                    | vault reads and sent-secret redaction            |
 | `secrets-result-600k`    | secrets and 600 KiB results                         | redaction over a large result                    |
 
-24 connectors × 400 tools is left out: its cold unscoped search took about
-9.5 s on an old 12-core Xeon and reached the 9 s unscoped fan-out deadline, so
-its counts depended on machine speed. Keep every cell's slowest request well
-inside the discovery deadlines.
+Every connector but `c01` has 8 tools. A 400-tool catalog on every connector
+is left out: with 24 connectors the cold unscoped search took about 9.5 s on a
+2013 12-core Xeon and reached the 9 s fan-out deadline, and with six connectors
+the zero-TTL search reached the 5 s probe deadline with every core
+oversubscribed three times. Keep every cell's slowest request well inside the
+discovery deadlines.
 
 **Counts**, per request and phase:
 
 - `storageRoundTrips`, `storageStatements`: D1 `all`, `run` and `batch` calls
   at the binding, and the SQL statements in them (a batch of three is one round
   trip and three statements). Everything the request caused counts, including
-  admission and work after the response until storage and the fakes are idle.
+  admission and work after the response: the cell wraps the runtime context,
+  awaits every promise the request hands to `waitUntil`, then waits until
+  storage and the fakes are idle for three timer turns before the next request.
 - `tracedRoundTrips`: the round trips the request's own timing trace recorded
   (`timingTraceSampleRate: 1`, `d1.read`, `d1.write` and `d1.batch`). The trace
   sees only work inside the request scope, so it misses admission, vault reads
@@ -348,17 +354,55 @@ inside the discovery deadlines.
 A warm unscoped search with reused catalogs makes no downstream request in every
 reused cell; that is checked through the baseline.
 
-**Determinism**: nothing in a cell depends on wall time except the discovery
-deadlines above. `--runs n` repeats the whole matrix and fails when any count
-differs between runs; `--update-baseline` refuses to write in that case.
+**Gated and reported counters**: the baseline holds the gated counters. Each
+cell's `reported` list names counters written to results but left out of the
+gate. In the 600 KiB cells a program's two reads are transferred and then
+reclaimed, and all reclaim in a run shares a one-second wall-clock budget
+(`RECLAIM_BUDGET_MS` in `src/execute.ts`) that may skip or cut short the chunk
+deletes, so that program's `storageRoundTrips`, `storageStatements` and
+`tracedRoundTrips` are reported. Reclaim only deletes stored chunks, so the
+program's other counters stay gated. Even with no reclaim at all, the counted
+requests stash about 5.4 MiB in nine entries, inside the 8 MiB and 64-entry
+stash limits, so a skipped reclaim cannot refuse a later stash.
 
-**Updating the baseline**: every count must equal the baseline, lower or
-higher. A change that moves a count reruns
+**Determinism**: why each gated counter cannot vary with machine speed.
+
+- Wall-clock windows of a minute or more (the 60 s agent admission observation,
+  the 120 s status observation, the 300 s catalog reuse and stale fallback, the
+  15-minute result TTL) cannot expire between counted requests: a cell fails
+  with a timing error when its counted requests take longer than 45 s.
+- Discovery deadlines (5 s per unscoped probe, the 9 s fan-out, the 30 s scoped
+  catalog deadline): a probe that times out, is cut by the budget or answers
+  from a stale catalog appears in `catalogErrors`. The cell fails with
+  "discovery degraded" when a search, or the program's search, returns any, so
+  a deadline becomes a named failure, never a silent count change. A timed-out
+  probe's deferred refresh is the only `waitUntil` work discovery schedules,
+  and it would be awaited and counted with the request that caused it.
+- Program and host-call deadlines: a call or program that runs out of time
+  fails the request, and the cell fails with it.
+- Storage deadlines of 0.5–1 s (admission observation, stale reads, health
+  settlement) race calls on an in-memory, synchronous SQLite binding whose
+  promises settle in the same turn; they can fire only if the process is
+  descheduled for longer than the deadline inside one storage call.
+- Everything else is fixed: requests run one at a time, the fakes answer in
+  connector order, catalogs and results are generated from the cell, the
+  JSON-RPC id is constant, timing fields are normalized, and the cell runs in a
+  fresh process.
+
+`--runs n` repeats the whole matrix and fails when any gated counter differs
+between runs; `--update-baseline` refuses to write in that case. Five runs with
+every core busy (one busy loop per core) gave identical gated counts.
+
+**Updating the baseline**: the baseline and the run must hold exactly the same
+cells, configurations, `reported` lists, requests, phases and counters, with
+equal values; a counter, phase or cell on one side only fails, as does a value
+lower or higher. A change that moves a count reruns
 `pnpm run build && pnpm run eval:perf --update-baseline` in the same PR and says
-in the PR which counts moved and why. A failure prints each differing count as
-`<cell> <request> <phase> <count>: <baseline> -> <now>`. The baseline holds one
-line per phase, so its diff names the request that moved. Changing a cell's
-configuration or adding a cell also needs `--update-baseline`.
+in the PR which counts moved and why. A failure prints each difference as
+`cells <cell> requests <request> <phase> <counter>: <baseline> -> <now>`, or
+names the key present on one side only. The baseline holds one line per phase,
+so its diff names the request that moved. `test/eval-efficiency.test.ts` covers
+the comparison.
 
 **CI**: the `behavior` job runs `eval:perf --samples 1` after `eval:smoke`,
 which has built `dist/`, so the check adds no build. A failure retains

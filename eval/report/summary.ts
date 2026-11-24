@@ -51,7 +51,7 @@ export interface AgentResultFile {
 
 export interface PerfResultFile {
   kind: "connecta-eval/perf";
-  version: 2;
+  version: 1 | 2;
   meta: RunMeta;
   bundle: {
     entry: string;
@@ -61,10 +61,16 @@ export interface PerfResultFile {
     /** Largest inputs by bytes in the minified output. */
     topInputs: { path: string; bytes: number }[];
   };
-  /** Matrix repetitions; counts were identical across them or the run failed. */
-  runs: number;
-  /** The first run's counts and latency for each cell. */
-  cells: ({ cell: Cell } & CellResult)[];
+  /** Version 2: matrix repetitions; gated counts were identical across them or the run failed. */
+  runs?: number;
+  /** Version 2: the first run's counts and latency for each cell. */
+  cells?: ({ cell: Cell } & CellResult)[];
+  /** Version 1 files, such as historical snapshots: four operations on six fakes, no counts. */
+  latency?: {
+    deployment: string;
+    samples: number;
+    operations: { name: string; p50Ms: number; p90Ms: number; minMs: number; maxMs: number }[];
+  };
 }
 
 export interface SmokeCheck {

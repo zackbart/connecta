@@ -9,8 +9,8 @@ export interface Cell {
   /** `discovery.catalogZeroTtlSeconds`: 0 relists every request, 300 reuses. */
   catalogZeroTtlSeconds: 0 | 300;
   connectors: 1 | 6 | 24;
-  /** Tools on every connector. */
-  toolsPerConnector: 8 | 400;
+  /** Tools on connector `c01`; every other connector has 8. */
+  largestCatalog: 8 | 400;
   /** UTF-8 bytes of the read tool's JSON result. */
   resultBytes: 1_024 | 65_536 | 614_400;
   /** Each connector declares a credential slot, saved in the vault. */
@@ -21,7 +21,7 @@ export interface Cell {
 const base = {
   catalogZeroTtlSeconds: 300,
   connectors: 6,
-  toolsPerConnector: 8,
+  largestCatalog: 8,
   resultBytes: 1_024,
   secrets: false,
 } as const;
@@ -39,11 +39,16 @@ export const CELLS: Cell[] = [
     catalogZeroTtlSeconds: 0,
     why: "the relisting cost scales with connectors",
   },
-  { id: "tools-400", ...base, toolsPerConnector: 400, why: "catalog size: chunked catalog storage and indexing" },
+  {
+    id: "tools-400",
+    ...base,
+    largestCatalog: 400,
+    why: "catalog size: one 400-tool connector, chunked catalog storage and indexing",
+  },
   {
     id: "tools-400-zero-ttl",
     ...base,
-    toolsPerConnector: 400,
+    largestCatalog: 400,
     catalogZeroTtlSeconds: 0,
     why: "the relisting cost scales with catalog size",
   },
@@ -62,7 +67,7 @@ export const CELLS: Cell[] = [
 export const OPERATIONS = ["tools/list", "search_tools", "call_tool", "execute_code"] as const;
 export type Operation = (typeof OPERATIONS)[number];
 
-/** Deterministic facts about one upward request. Committed to the baseline. */
+/** Facts about one upward request; see `reportedCounters` for which are gated. */
 export interface Counts {
   /** D1 `all`, `run` and `batch` calls, counted at the binding. */
   storageRoundTrips: number;
@@ -81,6 +86,34 @@ export interface Counts {
   catalogStores: number;
   /** UTF-8 bytes of the upward HTTP response body. */
   responseBytes: number;
+}
+
+export const COUNTERS = [
+  "storageRoundTrips",
+  "storageStatements",
+  "tracedRoundTrips",
+  "downstreamRequests",
+  "downstreamListings",
+  "catalogLookups",
+  "catalogHits",
+  "catalogStores",
+  "responseBytes",
+] as const satisfies readonly (keyof Counts)[];
+
+export const PHASES = ["first", "warm"] as const;
+
+/**
+ * Counters written to results but left out of the gate, as `<operation>.<counter>`.
+ * A program read of a 600 KiB result is transferred and then reclaimed, and
+ * every reclaim in a run shares a one-second wall-clock budget
+ * (`RECLAIM_BUDGET_MS` in src/execute.ts) that may skip or cut short the
+ * chunk deletes. That program's storage counts depend on machine speed; its
+ * other counts do not, because reclaim only deletes stored chunks.
+ */
+export function reportedCounters(cell: Cell): string[] {
+  return cell.resultBytes > 65_536
+    ? ["storageRoundTrips", "storageStatements", "tracedRoundTrips"].map((counter) => `execute_code.${counter}`)
+    : [];
 }
 
 /** A request's counts the first time it runs in its cell, and once warm. */

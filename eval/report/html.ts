@@ -290,6 +290,13 @@ function perfSection(file: PerfResultFile, base: PerfResultFile | undefined): st
   const baseCells = new Map(base?.cells?.map((entry) => [entry.cell.id, entry]) ?? []);
   const bundleRows = `<tr><td>root entry, minified (${esc(bundle.platform)})</td><td>${fmtBytes(bundle.minifiedBytes)}</td>${base ? `<td>${fmtBytes(base.bundle.minifiedBytes)}</td><td>${delta(bundle.minifiedBytes, base.bundle.minifiedBytes, fmtBytes)}</td>` : ""}</tr>
     <tr><td>root entry, minified + gzip</td><td><b>${fmtBytes(bundle.gzipBytes)}</b></td>${base ? `<td>${fmtBytes(base.bundle.gzipBytes)}</td><td>${delta(bundle.gzipBytes, base.bundle.gzipBytes, fmtBytes)}</td>` : ""}</tr>`;
+  const baseLegacy = new Map(base?.latency?.operations.map((op) => [op.name, op]) ?? []);
+  const legacyRows = (file.latency?.operations ?? [])
+    .map((op) => {
+      const old = baseLegacy.get(op.name);
+      return `<tr><td>${esc(op.name)} p50 (p90, min–max; n=${file.latency!.samples})</td><td>${op.p50Ms.toFixed(1)}ms (${op.p90Ms.toFixed(1)}, ${op.minMs.toFixed(1)}–${op.maxMs.toFixed(1)})</td>${base ? `<td>${old ? `${old.p50Ms.toFixed(1)}ms` : "–"}</td><td>${old ? delta(op.p50Ms, old.p50Ms, (value) => `${value.toFixed(1)}ms`) : "–"}</td>` : ""}</tr>`;
+    })
+    .join("");
   const requestRows = (file.cells ?? [])
     .flatMap(({ cell, counts, latency }) =>
       latency.map((op) => {
@@ -300,8 +307,9 @@ function perfSection(file: PerfResultFile, base: PerfResultFile | undefined): st
     )
     .join("");
   return `<h2>Bundle and requests</h2>
-  <table class="compare"><thead><tr><th>measure</th><th>current</th>${base ? "<th>baseline</th><th>delta</th>" : ""}</tr></thead><tbody>${bundleRows}</tbody></table>
-  <table class="compare"><thead><tr><th>cell</th><th>request</th><th>storage trips/statements</th><th>downstream requests/listings</th><th>response</th><th>p50 (p90)</th>${base ? "<th>p50 delta</th>" : ""}</tr></thead><tbody>${requestRows}</tbody></table>
+  <table class="compare"><thead><tr><th>measure</th><th>current</th>${base ? "<th>baseline</th><th>delta</th>" : ""}</tr></thead><tbody>${bundleRows}${legacyRows}</tbody></table>
+  ${file.latency ? `<p class="note">Version 1 perf file: latency on ${esc(file.latency.deployment)}, with no request counts.</p>` : ""}
+  ${file.cells ? `<table class="compare"><thead><tr><th>cell</th><th>request</th><th>storage trips/statements</th><th>downstream requests/listings</th><th>response</th><th>p50 (p90)</th>${base ? "<th>p50 delta</th>" : ""}</tr></thead><tbody>${requestRows}</tbody></table>` : ""}
   <p class="note">Bundle: esbuild, ${esc(bundle.entry)}, platform ${esc(bundle.platform)}, ESM, minified, all dependencies bundled, gzip level 9. Requests: warm counts and latency on the Node shape over loopback, one process per cell; see eval/README.md.</p>
   <details><summary>Largest bundle inputs</summary><table class="kv">${bundle.topInputs.map((input) => `<tr><td>${esc(input.path)}</td><td>${fmtBytes(input.bytes)}</td></tr>`).join("")}</table></details>`;
 }

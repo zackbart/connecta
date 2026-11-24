@@ -11,23 +11,21 @@ import { dirname, join, resolve } from "node:path";
 import { gzipSync } from "node:zlib";
 import { build } from "esbuild";
 import { assertBuiltPackage } from "./perf/built.js";
-import { CELLS, OPERATIONS, type Cell, type CellCounts, type CellResult, type Counts } from "./perf/matrix.js";
+import { baselineDifferences, baselineOf, formatBaseline } from "./perf/compare.js";
+import { CELLS, OPERATIONS, type Cell, type CellResult } from "./perf/matrix.js";
 import type { PerfResultFile } from "./report/summary.js";
 import { flags, ROOT, runMeta, stamp } from "./support/meta.js";
 
 const BASELINE = join(ROOT, "eval", "baselines", "perf.json");
 const CELL_SCRIPT = join(ROOT, "eval", "perf", "cell.ts");
 const CELL_TIMEOUT_MS = 180_000;
+const RESULT_MARKER = "PERF_RESULT ";
 
 const args = flags(process.argv.slice(2));
 const runs = Number(args.get("runs") ?? 1);
 const samples = Number(args.get("samples") ?? 5);
 if (!Number.isInteger(runs) || runs < 1) throw new Error("--runs must be a positive integer");
 if (!Number.isInteger(samples) || samples < 1) throw new Error("--samples must be a positive integer");
-
-interface Baseline {
-  cells: Record<string, { config: Omit<Cell, "id" | "why">; counts: CellCounts }>;
-}
 
 async function bundleSize(): Promise<PerfResultFile["bundle"]> {
   const entry = "dist/index.js";
@@ -80,57 +78,24 @@ function runCell(cell: Cell): Promise<CellResult> {
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
     const timer = setTimeout(() => child.kill("SIGKILL"), CELL_TIMEOUT_MS);
     child.once("error", reject);
-    child.once("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       clearTimeout(timer);
-      const line = stdout.split("\n").find((entry) => entry.startsWith("PERF_RESULT "));
-      if (code !== 0 || !line) {
-        reject(new Error(`cell ${cell.id} exited ${signal ?? code}${line ? "" : " without a result"}`));
+      if (code !== 0) {
+        reject(new Error(`cell ${cell.id} exited ${signal ?? code}`));
         return;
       }
-      resolvePromise(JSON.parse(line.slice("PERF_RESULT ".length)) as CellResult);
+      const line = stdout.split("\n").find((entry) => entry.startsWith(RESULT_MARKER));
+      if (!line) {
+        reject(new Error(`cell ${cell.id} exited 0 without a ${RESULT_MARKER.trim()} line`));
+        return;
+      }
+      try {
+        resolvePromise(JSON.parse(line.slice(RESULT_MARKER.length)) as CellResult);
+      } catch (error) {
+        reject(new Error(`cell ${cell.id} wrote a truncated or invalid result: ${String(error)}`));
+      }
     });
   });
-}
-
-const config = ({ id: _id, why: _why, ...rest }: Cell) => rest;
-
-function differences(label: string, was: CellCounts, now: CellCounts): string[] {
-  return OPERATIONS.flatMap((operation) =>
-    (["first", "warm"] as const).flatMap((phase) =>
-      (Object.keys(now[operation][phase]) as (keyof Counts)[]).flatMap((key) => {
-        const before = was[operation]?.[phase]?.[key];
-        const after = now[operation][phase][key];
-        return before === after ? [] : [`${label} ${operation} ${phase} ${key}: ${before ?? "absent"} -> ${after}`];
-      }),
-    ),
-  );
-}
-
-/** One line per phase, so a baseline diff names the request that moved. */
-function formatBaseline(baseline: Baseline): string {
-  const cells = Object.entries(baseline.cells).map(([id, cell]) => {
-    const operations = OPERATIONS.map(
-      (operation) =>
-        `      ${JSON.stringify(operation)}: {\n` +
-        (["first", "warm"] as const)
-          .map((phase) => `        "${phase}": ${JSON.stringify(cell.counts[operation][phase])}`)
-          .join(",\n") +
-        "\n      }",
-    );
-    return `    ${JSON.stringify(id)}: {\n      "config": ${JSON.stringify(cell.config)},\n${operations.join(",\n")}\n    }`;
-  });
-  return `{\n  "cells": {\n${cells.join(",\n")}\n  }\n}\n`;
-}
-
-function readBaselineCounts(raw: Record<string, Record<string, unknown>>): Baseline {
-  return {
-    cells: Object.fromEntries(
-      Object.entries(raw).map(([id, { config: cellConfig, ...counts }]) => [
-        id,
-        { config: cellConfig as Baseline["cells"][string]["config"], counts: counts as unknown as CellCounts },
-      ]),
-    ),
-  };
 }
 
 async function main() {
@@ -152,21 +117,17 @@ async function main() {
     }
   }
 
+  const runBaseline = (run: number) =>
+    baselineOf(CELLS.map((cell) => ({ cell, counts: results.get(cell.id)![run]!.counts })));
+  const current = runBaseline(0);
   const failures: string[] = [];
-  for (const cell of CELLS) {
-    const [first, ...rest] = results.get(cell.id)!;
-    rest.forEach((other, index) =>
-      failures.push(
-        ...differences(`nondeterministic: run ${index + 2} vs run 1: ${cell.id}`, first!.counts, other.counts),
+  for (let run = 1; run < runs; run++) {
+    failures.push(
+      ...baselineDifferences(current, runBaseline(run)).map(
+        (difference) => `nondeterministic: run ${run + 1} vs run 1: ${difference}`,
       ),
     );
   }
-
-  const current: Baseline = {
-    cells: Object.fromEntries(
-      CELLS.map((cell) => [cell.id, { config: config(cell), counts: results.get(cell.id)![0]!.counts }]),
-    ),
-  };
 
   console.log(
     "\nwarm counts: storage round trips/statements (traced trips), downstream requests/listings, response bytes; p50",
@@ -182,10 +143,9 @@ async function main() {
     }
   }
 
-  let baseline: Baseline | undefined;
+  let baseline: unknown;
   try {
-    const raw = JSON.parse(await readFile(BASELINE, "utf8")) as { cells: Record<string, Record<string, unknown>> };
-    baseline = readBaselineCounts(raw.cells);
+    baseline = JSON.parse(await readFile(BASELINE, "utf8"));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
@@ -210,21 +170,12 @@ async function main() {
     }
     await writeFile(BASELINE, formatBaseline(current));
     console.log(`Wrote ${BASELINE}`);
-  } else if (!baseline) {
+  } else if (baseline === undefined) {
     failures.push(`no baseline at ${BASELINE}; run with --update-baseline`);
   } else {
-    for (const id of Object.keys(baseline.cells))
-      if (!current.cells[id]) failures.push(`baseline cell ${id} is no longer in the matrix`);
-    for (const cell of CELLS) {
-      const was = baseline.cells[cell.id];
-      if (!was) failures.push(`cell ${cell.id} has no baseline`);
-      else if (JSON.stringify(was.config) !== JSON.stringify(config(cell)))
-        failures.push(`cell ${cell.id} configuration differs from its baseline`);
-      else
-        failures.push(
-          ...differences(`count differs from baseline: ${cell.id}`, was.counts, current.cells[cell.id]!.counts),
-        );
-    }
+    failures.push(
+      ...baselineDifferences(baseline, current).map((difference) => `differs from baseline: ${difference}`),
+    );
     if (failures.length)
       console.log(
         "\nA change that moves a count reruns `pnpm run eval:perf --update-baseline` in the same PR and explains the change.",
