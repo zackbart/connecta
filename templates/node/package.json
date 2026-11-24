@@ -10,10 +10,10 @@
     "esbuild@0.28.2": true
   },
   "scripts": {
-    "adopt-token": "tsx src/adopt-token.ts",
-    "doctor": "connecta doctor --pool local-machine",
-    "rotate-token": "tsx src/rotate-token.ts",
-    "start": "tsx src/index.ts",
+    "adopt-token": "tsx --env-file-if-exists=.env src/adopt-token.ts",
+    "doctor": "node --env-file-if-exists=.env node_modules/@zackbart/connecta/bin/connecta.mjs doctor --pool local-machine",
+    "rotate-token": "tsx --env-file-if-exists=.env src/rotate-token.ts",
+    "start": "tsx --env-file-if-exists=.env src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

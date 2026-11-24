@@ -458,7 +458,12 @@ const connectaConfig = {
       }),
     ),
   ),
-  /** Inbound auth adapters, such as clerkAuth(...); omit for open (dev). */
+  /**
+   * Inbound auth adapters, such as clerkAuth(...) and accessTokens(storage).
+   * Omitted or empty, the deployment authenticates nobody: plain /mcp admits
+   * every caller anonymously with the whole catalog, `maintainers` must stay
+   * empty, and construction logs a warning when any connector is configured.
+   */
   auth: opaque<InboundAuth | InboundAuth[], readonly InboundAuth[]>({
     check: (value, path) => {
       const list = Array.isArray(value) ? value : [value];

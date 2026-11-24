@@ -201,10 +201,11 @@ Typecheck and restart/redeploy, then use either procedure:
   changed, reload and decide again.
 - **Trusted local provisioning:** the Node template's
   `npm run --silent rotate-token -- assistant` both issues and rotates.
-  Run it with the same environment and database path as the server; local
-  commands do not load `.env`. Store stdout privately. For revocation, add a
+  Run it with the same environment and database path as the server; the
+  template's npm scripts read `.env` when present, and a variable set in the
+  process environment wins over the file. Store stdout privately. For revocation, add a
   small trusted script such as the following to `src/revoke-token.ts` and
-  run `npx tsx src/revoke-token.ts` with that same environment. Workers use
+  run `npx tsx --env-file-if-exists=.env src/revoke-token.ts` with that same environment. Workers use
   the maintainer UI or trusted tooling bound to the same D1 database;
   a local SQLite script cannot manage a Worker's slots.
 

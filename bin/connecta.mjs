@@ -310,12 +310,15 @@ async function doctor() {
   );
 }
 
+const helpRequested = [command, ...args].some((arg) => arg === "--help" || arg === "-h");
+
 try {
-  if (command === "init") await init();
+  if (helpRequested) usage();
+  else if (command === "init") await init();
   else if (command === "doctor") await doctor();
   else {
     usage();
-    process.exitCode = command === "--help" || command === "-h" ? 0 : 1;
+    process.exitCode = 1;
   }
 } catch (error) {
   console.error(`[connecta] ${error instanceof Error ? error.message : String(error)}`);

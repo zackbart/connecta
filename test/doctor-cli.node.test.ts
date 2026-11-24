@@ -1,8 +1,10 @@
 // Node-only: spawns the CLI against a Node HTTP deployment over real sockets.
 import { execFile } from "node:child_process";
 import { once } from "node:events";
+import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
@@ -552,4 +554,20 @@ describe("connecta doctor --config", () => {
       }
     }
   });
+});
+
+describe("connecta --help", () => {
+  it.each(["--help", "-h", "doctor --help", "doctor --url http://localhost:1 -h", "init --help"])(
+    "prints usage and exits 0 for `connecta %s`",
+    async (line) => {
+      const cwd = await mkdtemp(join(tmpdir(), "connecta-help-"));
+      teardown.push(() => rm(cwd, { recursive: true, force: true }));
+      const { stdout } = await run(process.execPath, [CLI, ...line.split(" ")], {
+        cwd,
+        env: { ...process.env, CONNECTA_TOKEN: "" },
+      });
+      expect(stdout).toContain("Usage:");
+      expect(await readdir(cwd)).toEqual([]);
+    },
+  );
 });

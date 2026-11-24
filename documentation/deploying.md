@@ -42,8 +42,11 @@ declared in `agents` in `src/connecta.config.ts`; the generated project declares
 `local-machine` and always installs `accessTokens(storage)`. An agent with no
 issued token admits no MCP caller even though `/health` works. Rotating with the
 same command replaces the token immediately. `CONNECTA_TOKEN` is only a client/doctor variable;
-it never configures server authentication. The local commands read the process
-environment and do not load `.env`; Docker Compose does.
+it never configures server authentication. The generated `npm start`,
+`rotate-token`, `adopt-token` and `doctor` scripts read `.env` from the project
+directory when it exists (Node's `--env-file-if-exists`); a variable already set
+in the process environment wins over the file. Docker Compose reads `.env`
+itself and passes values to the container, where no `.env` is copied.
 
 Edit `src/connecta.config.ts` for connectors, public URL, auth, maintainers,
 agents, pools, and optional modules. Lay out each agent's pools by

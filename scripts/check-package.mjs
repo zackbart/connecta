@@ -255,12 +255,13 @@ async function waitForContainerHealth(url, timeoutMs, describe) {
   throw new Error(`Generated container did not become healthy within ${timeoutMs}ms:\n` + describe());
 }
 
-async function stopChild(child) {
+async function stopChild(child, { group = false } = {}) {
   if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
+  const signal = (name) => (group ? process.kill(-child.pid, name) : child.kill(name));
+  signal("SIGTERM");
   await new Promise((resolvePromise) => {
     const timer = setTimeout(() => {
-      child.kill("SIGKILL");
+      signal("SIGKILL");
       resolvePromise();
     }, 5_000);
     void once(child, "exit").then(() => {
@@ -923,13 +924,22 @@ try {
       }
     }
   };
+  const generatedEnvFile = join(generatedRoot, ".env");
+  await writeFile(
+    generatedEnvFile,
+    `PORT=${port}\nCONNECTA_DATABASE=${generatedDatabase}\nCONNECTA_TOKEN=cta_${"B".repeat(43)}\n`,
+  );
+  const envFromFile = (overrides) => {
+    const env = { ...process.env, ...serverEnv, ...overrides };
+    delete env.PORT;
+    delete env.CONNECTA_DATABASE;
+    return env;
+  };
   let serverOutput = "";
-  const deployment = spawn(generatedTsx, ["src/index.ts"], {
+  const deployment = spawn(npm, ["start"], {
     cwd: generatedRoot,
-    env: {
-      ...process.env,
-      ...serverEnv,
-    },
+    env: envFromFile(),
+    detached: process.platform !== "win32",
     stdio: ["ignore", "pipe", "pipe"],
   });
   const retainOutput = (chunk) => {
@@ -968,7 +978,12 @@ try {
     );
     await assertClosed(`http://127.0.0.1:${port}`);
     const smokeToken = provisionedToken(
-      run(generatedTsx, ["src/rotate-token.ts", "local-machine"], generatedRoot, serverEnv),
+      execFileSync(npm, ["run", "--silent", "rotate-token", "--", "local-machine"], {
+        cwd: generatedRoot,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "inherit"],
+        env: envFromFile(),
+      }),
     );
     expectFailure(
       generatedTsx,
@@ -988,8 +1003,18 @@ try {
     if (!doctorOutput.includes("QuickJS executed")) {
       throw new Error(`Doctor did not prove execution: ${doctorOutput}`);
     }
+    const scriptDoctorOutput = run(
+      npm,
+      ["run", "--silent", "doctor", "--", "--url", `http://127.0.0.1:${port}`],
+      generatedRoot,
+      { CONNECTA_TOKEN: smokeToken },
+    );
+    if (!scriptDoctorOutput.includes("QuickJS executed")) {
+      throw new Error(`npm run doctor did not prefer the process CONNECTA_TOKEN over .env: ${scriptDoctorOutput}`);
+    }
   } finally {
-    await stopChild(deployment);
+    await stopChild(deployment, { group: process.platform !== "win32" });
+    await rm(generatedEnvFile, { force: true });
   }
 
   // Exercise the installed package and real QuickJS with an original v0.23
