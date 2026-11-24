@@ -516,7 +516,8 @@ Doctor prints only its own text, HTTP status codes, counts, and identifiers
 that pass its check, so a server or proxy that echoes a request cannot put a
 credential in doctor's output. A failed request reports its route and status
 (`HTTP 403 from /health`, `MCP 401 from /agent/assistant`); a network failure
-on the MCP route adds Node's error code (`ECONNREFUSED`); a JSON-RPC error
+on the MCP route adds Node's error code when one exists (for example
+`UND_ERR_SOCKET` for a reset connection); a JSON-RPC error
 reports only its code; an execution check reports only whether the tool
 returned an error or a wrong result. The health status, executor name,
 connector ids, tool names and protocol version appear only when they are plain
