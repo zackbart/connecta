@@ -43,7 +43,7 @@ export const GUEST_FUNCTIONS = [
     wrapped: true,
     deadline: "result storage",
     declaration:
-      "result(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;",
+      "result(id: string | Paged, options: { all: true }): Promise<Exclude<Result, Paged>>;\nresult(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;",
   },
   /** Fetches a skill's text by exact name. */
   {

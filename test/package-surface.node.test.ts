@@ -385,6 +385,11 @@ declare const ${method}Args: ${method === "result" ? `Parameters<GuestApi["resul
 export const ${method}: Parameters<Compact["${method}"]> = ${method}Args;`,
   )
   .join("\n")}
+type WholeForm<F> = F extends { (...args: infer A): infer R; (...args: infer _B): unknown } ? (...args: A) => R : never;
+declare const compactWhole: WholeForm<Compact["result"]>;
+declare const realWhole: WholeForm<GuestApi["result"]>;
+accepts(compactWhole)(realWhole);
+export const resultWhole: Parameters<typeof compactWhole> = [] as unknown as Parameters<typeof realWhole>;
 type Keys<T> = T extends unknown ? keyof T : never;
 type At<T, K> = T extends unknown ? (K extends keyof T ? T[K] : never) : never;
 type Invented<C, R> = C extends readonly (infer CE)[]
@@ -396,6 +401,10 @@ type Drift = {
     | Invented<Awaited<ReturnType<Compact[M]>>, Awaited<ReturnType<GuestApi[M]>>>;
 }[keyof Compact];
 export const invented: [Drift] extends [never] ? true : Drift = true;
+type WholeDrift =
+  | Invented<Parameters<typeof compactWhole>, Parameters<typeof realWhole>>
+  | Invented<Awaited<ReturnType<typeof compactWhole>>, Awaited<ReturnType<typeof realWhole>>>;
+export const inventedWhole: [WholeDrift] extends [never] ? true : WholeDrift = true;
 export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ? true : Exclude<keyof GuestApi, keyof Compact> = true;
 `;
     const host = ts.createCompilerHost(options);
@@ -427,7 +436,18 @@ export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ?
     ["a native block it cannot take back", '| { type: "resource_link"; uri: string; name: string }', ""],
     ["a handle it cannot take back", "truncated: true; hint: string }", "truncated: true }"],
     ["an emit that refuses forwarded blocks", "emit(block: Block | Native |", "emit(block: Block |"],
-    ["a result that refuses its handle", "result(id: string | Paged,", "result(id: string,"],
+    ["a result that refuses its handle", "result(id: string | Paged, options?:", "result(id: string, options?:"],
+    [
+      "a whole result that refuses its handle",
+      "result(id: string | Paged, options: {",
+      "result(id: string, options: {",
+    ],
+    [
+      "a whole result read as a page",
+      "{ all: true }): Promise<Exclude<Result, Paged>>;",
+      "{ all: true }): Promise<{ text: string }>;",
+    ],
+    ["a whole result with an invented option", "options: { all: true })", "options: { all: true; page?: number })"],
   ])(
     "rejects %s",
     (_name, from, to) => {

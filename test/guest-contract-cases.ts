@@ -1885,6 +1885,14 @@ export const CONTRACT_CASES: ContractCase[] = [
       "describe result iterated",
       `const page = await connecta.describe({ address: "reader.read" });\nfor (const tool of page) return tool;`,
     ],
+    [
+      "call result read without .data",
+      `const result = await connecta.call("reader.read", { value: "x" });\nreturn result.rows.map((row) => row);`,
+    ],
+    [
+      "search result read without .tools",
+      `const page = await connecta.search({ query: "read" });\nreturn page.results.length;`,
+    ],
   ].map(([label, source]): ContractCase => ({
     clauses: "E6",
     name: `INV-6: program errors name the result shape for a ${label}`,
@@ -1900,6 +1908,24 @@ export const CONTRACT_CASES: ContractCase[] = [
       });
     },
   })),
+  {
+    clauses: "E6",
+    name: "INV-6: a property read on undefined after .data keeps the generic hint",
+    code: `async () => {
+      const { data } = await connecta.call("reader.read", { value: "x" });
+      return data.rows.missing.map((row) => row);
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "TypeError",
+          hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+        },
+      });
+    },
+  },
   {
     clauses: "E6",
     name: "INV-6: a bare statement is told to pass one async arrow",
