@@ -3557,7 +3557,7 @@ it("never accepts warm facts when the generation rotates during the chunk read",
   expect(JSON.parse(current!.value).tools[0].annotations).toEqual({ destructiveHint: true });
 });
 
-it("bounds warm partitions and does not reuse public facts across owners", async () => {
+async function publicCatalogReader(description: string) {
   const store = await storage();
   const id = `bounded_${crypto.randomUUID().replaceAll("-", "")}`;
   const open = (owner: string) => {
@@ -3576,21 +3576,39 @@ it("bounds warm partitions and does not reuse public facts across owners", async
   const key = { method: "tools/list", params: "", partition: JSON.stringify(["server", ""]) };
   await writer.responseCacheStore!.set(key, {
     value: JSON.stringify({
-      tools: [{ name: "read", inputSchema: { type: "object" } }],
+      tools: [{ name: "read", description, inputSchema: { type: "object" } }],
       ttlMs: 60_000,
       cacheScope: "public",
     }),
     expiresAt: Date.now() + 60_000,
     scope: "public",
   });
+  return async (owner: string) => (await open(owner)).responseCacheStore!.get(key);
+}
+
+it("reuses warm partitions in rotation past four owners and does not reuse public facts across owners", async () => {
+  const read = await publicCatalogReader("Read a record");
   const validate = vi.spyOn(specTypeSchemas.ListToolsResult["~standard"], "validate");
-  const read = async (owner: string) => (await open(owner)).responseCacheStore!.get(key);
-  for (const owner of ["alice", "bob", "carol", "dave", "erin"]) {
+  const owners = ["alice", "bob", "carol", "dave", "erin", "frank"];
+  for (const owner of owners) expect(await read(owner)).toBeDefined();
+  expect(validate).toHaveBeenCalledTimes(owners.length);
+  for (const owner of owners) expect(await read(owner)).toBeDefined();
+  expect(validate).toHaveBeenCalledTimes(owners.length);
+});
+
+it("evicts the least recently used validated catalog at the byte budget", async () => {
+  const read = await publicCatalogReader("x".repeat(1400 * 1024));
+  const validate = vi.spyOn(specTypeSchemas.ListToolsResult["~standard"], "validate");
+  const validates = async (owner: string) => {
+    const before = validate.mock.calls.length;
     expect(await read(owner)).toBeDefined();
-    expect(await read(owner)).toBeDefined();
-  }
-  expect(validate).toHaveBeenCalledTimes(5);
-  // The fifth partition evicted the first; SQL still supplies a valid catalog.
-  expect(await read("alice")).toBeDefined();
-  expect(validate).toHaveBeenCalledTimes(6);
+    return validate.mock.calls.length > before;
+  };
+  expect(await validates("alice")).toBe(true);
+  expect(await validates("bob")).toBe(true);
+  expect(await validates("alice")).toBe(false);
+  expect(await validates("carol")).toBe(true);
+  expect(await validates("alice")).toBe(false);
+  // Bob was least recently used; SQL still supplies a valid catalog.
+  expect(await validates("bob")).toBe(true);
 });

@@ -638,9 +638,12 @@ Only complete, intake-redacted tools/list, resources/list and
 resources/templates/list successes are stored. Resource payloads are not cached. SDK default
 in-memory caching is replaced, so raw catalogs never enter it.
 
-A warm isolate retains at most four validated stored JSON catalogs, with a
-combined accounting budget of 8 MiB (twice serialized input bytes, key bytes and
-64 bytes per object property/array slot; larger entries bypass reuse).
+A warm isolate retains validated stored JSON catalogs within a combined
+accounting budget of 8 MiB (twice serialized input bytes, key bytes, 128 bytes
+per entry and 64 bytes per object property/array slot; larger entries bypass
+reuse). A reuse makes an entry the most recently used, and the least recently
+used entries are evicted first, so a search across many connectors keeps every
+catalog that fits the budget. The byte budget is the only bound.
 These deeply frozen facts contain no request context, transport, signal,
 callback or promise, and require neither weak references nor cleanup timers.
 Reuse follows the same manifest TTL checks, complete chunk reads, recomputed
@@ -4212,8 +4215,10 @@ never answers token admission; every request still checks current credentials.
 
 ### Lexical token reuse (contributor)
 
-Search may retain four complete accepted catalog token indexes, bounded by an
-8 MiB estimate including key text, token strings, postings and structural slots.
+Search retains complete accepted catalog token indexes within an 8 MiB estimate
+including key text, token strings, postings and structural slots. A reuse makes
+an index the most recently used; the least recently used indexes are evicted
+first, and no entry count applies beyond the byte budget.
 Identity includes complete served content (including schemas, classification and
 order), connector, physical store, owner partition/revisions and the downstream catalog
 generation observed by the current successful listing. The generation marker

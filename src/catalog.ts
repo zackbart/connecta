@@ -317,6 +317,8 @@ export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void
   ]);
   const retained = retainedIndexes.get(key);
   if (retained) {
+    retainedIndexes.delete(key);
+    retainedIndexes.set(key, retained);
     bindIndex(tools, retained.index);
     return;
   }
@@ -330,7 +332,7 @@ export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void
   for (const map of index.postings)
     for (const [token, positions] of map) bytes += 96 + token.length * 2 + positions.length * 8;
   if (bytes > INDEX_BYTES) return;
-  while (retainedIndexes.size >= 4 || retainedBytes + bytes > INDEX_BYTES) {
+  while (retainedBytes + bytes > INDEX_BYTES) {
     const oldest = retainedIndexes.keys().next().value!;
     retainedBytes -= retainedIndexes.get(oldest)!.bytes;
     retainedIndexes.delete(oldest);
