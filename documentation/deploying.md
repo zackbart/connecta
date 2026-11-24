@@ -506,8 +506,38 @@ agent tokens only: with a person's credential doctor always checks plain
 `/mcp` and refuses `--pool`.
 `--dotenv <path>` reads `CONNECTA_TOKEN`, `CF_ACCESS_CLIENT_ID` and
 `CF_ACCESS_CLIENT_SECRET` from that file when it exists; a variable already set
-in the process environment wins, and a missing file changes nothing. The Node
+in the process environment wins, and a missing file changes nothing. An
+unreadable file fails with its error code only. The Node
 template's `npm run doctor` passes `--dotenv .env`.
+Each of the three credentials must be at least 16 characters; doctor refuses a
+shorter value by variable name.
+
+Doctor prints only its own text, HTTP status codes, counts, and identifiers
+that pass its check, so a server or proxy that echoes a request cannot put a
+credential in doctor's output. A failed request reports its route and status
+(`HTTP 403 from /health`, `MCP 401 from /agent/assistant`); a network failure
+on the MCP route adds Node's error code when one exists (for example
+`UND_ERR_SOCKET` for a reset connection); a JSON-RPC error
+reports only its code; an execution check reports only whether the tool
+returned an error or a wrong result. The health status, executor name,
+connector ids, tool names and protocol version appear only when they are plain
+identifiers (letters, digits, `_`, `.`, `:`, `-`, at most 64 characters) that
+share no 8-character run with a credential, compared case-insensitively;
+anything else prints as `<unprintable>`, or drops the executor name. Doctor
+does not print the MCP client library's console messages: if the library
+excludes or flags anything while doctor runs, doctor fails and reports only how
+many messages it withheld. Each response is capped (64 KiB from `/health`,
+4 MiB from the config endpoint and each MCP reply), tools/list is read for at
+most 4 pages, each request times out after 10 seconds, and the whole run stops
+after 60 seconds. The `--config` snapshot is the one server output doctor
+prints: every key or value containing a credential becomes `[redacted]` before
+the JSON is written, and doctor withholds the snapshot if its serialized form
+still contains one. Last, doctor replaces an exact credential value, or its
+`Bearer` form, in any other text that reaches stdout or stderr; this covers
+only the raw value. A server that deliberately re-encodes a credential it was
+sent into short identifier-shaped pieces is out of scope, because it already
+holds the credential. To see a failing response body or tool result,
+reproduce the request with a client you control.
 For a Worker protected by Access, `/health` still needs edge admission even
 though `/agent/*` bypasses Access. Use an Access service token admitted by the
 Worker-level policy for that check, alongside the agent token:

@@ -152,6 +152,13 @@ const replacement = (kind: number | undefined) => (kind === BINARY || kind === E
 /** Payload scans also match short private values; envelope scans leave Connecta's own
  * identifiers, counts and addresses to them. */
 type Scan = { budget: { work: number; nodes: number }; payload: boolean };
+type RedactMode = "payload" | "envelope" | "values";
+/** How a credentials-only pass uses marks: reuse them, freeze a value Connecta owns, or ignore
+ * them for a value about to be stored. */
+type CredentialPass = "reuse" | "freeze" | "store";
+/** What a walk that changed nothing read: the set's revision, memo writes and minted states, and
+ * the modes it ran under. */
+type WalkMark = { revision: number; memo: number; minted: number; modes: Set<RedactMode> };
 type Found = { spans: number[] };
 /** Source spans to replace. `deep` text still held escapes after MAX_DECODE_LEVELS layers. */
 type Matches = { spans: number[]; deep: boolean };
@@ -1160,6 +1167,14 @@ export class SentSecrets {
   /** Encoded content this set already found clean, and whether under payload rules, which
    * cover envelope ones. Cleared whenever the set changes. */
   private memo = new Map<string, boolean>();
+  /** Writes to {@link memo}, which change what a walk reads without changing the set. */
+  private memoWrites = 0;
+  /** Objects a walk returned as they stood, every container deeply frozen, and the last string of
+   * at least MEMO_UNITS a walk returned unchanged. Walking one again reads exactly what its marking
+   * walk read, so it returns the same value. Cleared whenever the set changes; no other set reads
+   * them. */
+  private walked = new WeakMap<object, WalkMark>();
+  private walkedText: { text: string; mark: WalkMark } | undefined;
   private privateChars = 0;
   /** The longest form; whether any comes from a value shorter than K; whether any is not ASCII. */
   private widestForm = 0;
@@ -1195,6 +1210,8 @@ export class SentSecrets {
     this.revision++;
     this.views = {};
     this.memo = new Map();
+    this.walked = new WeakMap();
+    this.walkedText = undefined;
     for (const recipient of this.recipients) recipient.store(form, kind, frame);
   }
 
@@ -1204,6 +1221,8 @@ export class SentSecrets {
     this.revision++;
     this.views = {};
     this.memo = new Map();
+    this.walked = new WeakMap();
+    this.walkedText = undefined;
     for (const recipient of this.recipients) recipient.unregistered(length);
   }
 
@@ -1369,26 +1388,28 @@ export class SentSecrets {
     }
   }
 
-  /** Serialized wire text about to be returned, stored, or paged, under payload rules. */
+  /** Serialized wire text about to be returned, stored, or paged, under payload rules. Always a
+   * full walk. */
   text(value: string): string {
     return this.idle() ? value : (this.project(value, this.scan(true)).value as string);
   }
 
   /** An SDK response body, checked after it has been fully read so late registrations
-   * still apply. An idle set leaves the original serialization untouched. */
+   * still apply. An idle set leaves the original serialization untouched. The last pass before
+   * the bytes leave, so always a full walk, whatever earlier passes marked. */
   serializedAgentOutput(body: string, json: boolean): string {
     if (this.idle()) return body;
     if (json) {
       // Structured redaction joins text blocks, including secrets split across them.
       try {
-        return JSON.stringify(redactAgentOutput(this, JSON.parse(body)));
+        return JSON.stringify(this.project(JSON.parse(body), this.scan(false)).value);
       } catch {
         /* Non-JSON diagnostics still pass through the text boundary. */
       }
     }
     // A second serialized pass over parsed JSON would mistake a blob's encoding
     // for credential bytes. Only non-JSON bodies take this text path.
-    return redactAgentOutput(this, body);
+    return this.project(body, this.scan(false)).value as string;
   }
 
   /** A plain-data snapshot of `value` with every match removed: own enumerable data properties
@@ -1402,9 +1423,17 @@ export class SentSecrets {
    * match by name: a renamed key would hide a field from the rule that withholds it. JSON inside
    * a string is a value, so its keys are still checked. The connector's result and failures are
    * checked again under payload rules, keys included, at the `api()` boundary and the invocation. */
-  redact<T>(value: T, mode: "payload" | "envelope" | "values" = "payload"): T {
-    if (this.idle()) return value;
-    return this.project(value, this.scan(mode !== "envelope"), mode === "values").value as T;
+  redact<T>(value: T, mode: RedactMode = "payload"): T {
+    return this.redactValue(value, mode, false);
+  }
+
+  /** {@link redact} for a value Connecta built or parsed itself and never mutates afterwards, never
+   * one a connector or deployment supplied. When
+   * the walk returns it as it stood, every container it read is frozen, so a later pass over the
+   * same object, at this revision and mode, returns it without walking it again. A copy the walk
+   * returns instead is frozen unmarked: the next pass that finds it unchanged marks it. */
+  redactFrozen<T>(value: T, mode: RedactMode = "payload"): T {
+    return this.redactValue(value, mode, true);
   }
 
   /** Whether payload redaction would change anything in `value`, for fields that must be
@@ -1444,7 +1473,7 @@ export class SentSecrets {
       ? this.claimsClean(binary, encoded)
       : this.checked([encoded], [BINARY], this.scan(true))[0] === encoded;
     if (!clean) return finish(REDACTED);
-    if (claims || encoded.length >= MEMO_UNITS) this.memo.set(encoded, true);
+    if (claims || encoded.length >= MEMO_UNITS) this.remember(encoded, true);
     return encoded;
   }
 
@@ -1469,9 +1498,12 @@ export class SentSecrets {
   }
 
   /** Credentials alone: later calls keep the private arguments they submit, and cached
-   * catalogs never depend on one request's arguments. */
-  redactCredentials<T>(value: T): T {
-    return this.credentials().redact(value, "envelope");
+   * catalogs never depend on one request's arguments. A value about to be stored is always walked
+   * in full. */
+  redactCredentials<T>(value: T, use: CredentialPass = "reuse"): T {
+    const view = this.credentials();
+    if (use === "store") return view.idle() ? value : (view.project(value, view.scan(false)).value as T);
+    return view.redactValue(value, "envelope", use === "freeze");
   }
 
   /** A program's outbound arguments, with what the {@link outbound} check matched replaced,
@@ -1486,6 +1518,75 @@ export class SentSecrets {
 
   private idle(): boolean {
     return !this.forms.size && this.unmatched === Infinity;
+  }
+
+  private remember(text: string, payload: boolean): void {
+    this.memo.set(text, payload);
+    this.memoWrites++;
+  }
+
+  /** A walk that returns `value` as it stood marks it: a long string as it is, an object when
+   * every container it read was frozen or, with `freeze`, once they are. A registration, memo
+   * write or minted state during the walk, or an array hole, which reads through Array.prototype,
+   * leaves it unmarked. */
+  private redactValue<T>(value: T, mode: RedactMode, freeze: boolean): T {
+    if (this.idle() || this.settled(value, mode)) return value;
+    const revision = this.revision;
+    const memo = this.memoWrites;
+    const minted = this.mintedStates.size;
+    const reached: object[] | undefined = freeze ? [] : undefined;
+    const result = this.project(value, this.scan(mode !== "envelope"), mode === "values", reached);
+    if (result.value !== value) {
+      if (freeze) frozenData(result.value);
+    } else if (this.revision === revision && this.memoWrites === memo && this.mintedStates.size === minted) {
+      if (typeof value === "string") {
+        if (value.length >= MEMO_UNITS) this.mark(value, mode, memo, minted);
+      } else if (
+        value !== null &&
+        typeof value === "object" &&
+        result.dense &&
+        (reached !== undefined || result.frozen)
+      ) {
+        try {
+          if (reached) for (const item of reached) Object.freeze(item);
+          this.mark(value, mode, memo, minted);
+        } catch {
+          /* A proxy's trap refused; the value stays unmarked. */
+        }
+      }
+    }
+    return result.value as T;
+  }
+
+  private markOf(value: unknown): WalkMark | undefined {
+    if (typeof value === "string") return this.walkedText?.text === value ? this.walkedText.mark : undefined;
+    return value !== null && typeof value === "object" ? this.walked.get(value) : undefined;
+  }
+
+  private mark(value: string | object, mode: RedactMode, memo: number, minted: number): void {
+    const prior = this.markOf(value);
+    if (prior && prior.revision === this.revision && prior.memo === memo && prior.minted === minted) {
+      prior.modes.add(mode);
+      return;
+    }
+    const mark = { revision: this.revision, memo, minted, modes: new Set([mode]) };
+    if (typeof value === "string") this.walkedText = { text: value, mark };
+    else this.walked.set(value, mark);
+  }
+
+  /** Whether a walk of `value` now would read exactly what its marking walk read. A string and a
+   * frozen container cannot change; a toJSON added to the prototypes a container inherits from
+   * could. */
+  private settled(value: unknown, mode: RedactMode): boolean {
+    const mark = this.markOf(value);
+    return (
+      mark !== undefined &&
+      mark.revision === this.revision &&
+      mark.modes.has(mode) &&
+      mark.memo === this.memoWrites &&
+      mark.minted === this.mintedStates.size &&
+      (typeof value === "string" || !("toJSON" in Object.prototype || "toJSON" in Array.prototype))
+    );
   }
 
   private scan(payload: boolean): Scan {
@@ -2094,7 +2195,12 @@ export class SentSecrets {
    * write, so no caller's value is ever mutated, and a container past the node budget is
    * withheld whole. Copies hold writable, configurable data properties and keep the identity
    * facts registered in redaction-identity. */
-  private project(value: unknown, scan: Scan, keepKeys = false): { value: unknown; changed: boolean } {
+  private project(
+    value: unknown,
+    scan: Scan,
+    keepKeys = false,
+    reached?: object[],
+  ): { value: unknown; changed: boolean; frozen: boolean; dense: boolean } {
     type Holder = Record<PropertyKey, unknown>;
     /** Where values are written: `target` itself when this walk made it, or for a caller's
      * container (`shared`) a copy made on its first write and put in place of it in `parent`.
@@ -2129,6 +2235,8 @@ export class SentSecrets {
     // The accessors each prototype's chain defines, found once per call.
     const chains = new Map<object, string[]>();
     let changed = false;
+    let frozen = true;
+    let dense = true;
     const touch = (owner: number) => {
       changed = true;
       if (owner >= 0) nested[owner]!.dirty = true;
@@ -2333,6 +2441,15 @@ export class SentSecrets {
       owner: number,
       owned: boolean,
     ): unknown => {
+      if (!owned) {
+        reached?.push(item);
+        if (frozen && !reached)
+          try {
+            frozen = Object.isFrozen(item);
+          } catch {
+            frozen = false;
+          }
+      }
       const error = item instanceof Error;
       if (!error && !owned) {
         const held = binaryOf(item);
@@ -2369,6 +2486,7 @@ export class SentSecrets {
       for (let index = 0; index < length; index++) {
         const descriptor = Object.getOwnPropertyDescriptor(item, index);
         if (!descriptor) {
+          if (!owned) dense = false;
           // A hole serializes as what its prototypes hold at its index: a data field is checked
           // and copied in, an accessor is withheld unread, and nothing leaves the hole as it is.
           const found = owned ? undefined : inherited(item, String(index), WITHHELD_ACCESSOR);
@@ -2552,7 +2670,7 @@ export class SentSecrets {
       const next = safe[index]!;
       const kind = kinds[index]!;
       if (next === parts[index]) {
-        if (kind === BINARY && next.length >= MEMO_UNITS) this.memo.set(next, scan.payload);
+        if (kind === BINARY && next.length >= MEMO_UNITS) this.remember(next, scan.payload);
         continue;
       }
       const holder = writable(frames[index]!);
@@ -2567,12 +2685,28 @@ export class SentSecrets {
       touch(entry.owner);
     }
     for (const entry of named) if (entry.withheld) put(entry.copy, entry.slot, REDACTED);
-    return { value: (root.target as Holder)["value"], changed };
+    return { value: (root.target as Holder)["value"], changed, frozen, dense };
   }
 }
 
 export function sentSecretsFor(ctx: ConnectorContext): SentSecrets {
   return viewSecrets(ctx);
+}
+
+/** Freezes plain data and error copies a walk returned. Binary cannot be frozen and stays as it is,
+ * so no later walk finds the value wholly frozen. */
+function frozenData(value: unknown): void {
+  const pending = [value];
+  try {
+    while (pending.length) {
+      const item = pending.pop();
+      if (item === null || typeof item !== "object" || ArrayBuffer.isView(item) || Object.isFrozen(item)) continue;
+      Object.freeze(item);
+      for (const child of Object.values(item)) pending.push(child);
+    }
+  } catch {
+    /* A copy that cannot be frozen stays unmarked. */
+  }
 }
 
 /** One identity per upstream request, including all discovery and call work. */
@@ -2674,9 +2808,13 @@ export function redactBoundedRead(ctx: ConnectorContext, text: string): string {
 /** Sanitize listing facts before any cache or consumer receives them. A name
  * cannot be rewritten without changing dispatch, and dropping one entry would
  * publish a partial catalog, so refuse the complete listing instead. */
-export function redactCatalog<T extends { name: string }>(ctx: ConnectorContext, tools: T[]): T[] {
+export function redactCatalog<T extends { name: string }>(
+  ctx: ConnectorContext,
+  tools: T[],
+  use: CredentialPass = "reuse",
+): T[] {
   sentSecretsFor(ctx);
-  const redacted = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(tools);
+  const redacted = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(tools, use);
   assertToolNamesKept(tools, redacted);
   return redacted;
 }
