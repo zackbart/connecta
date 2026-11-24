@@ -5,6 +5,7 @@ import { CONNECTA_VERSION } from "./version.mjs";
 import { META_TOOL_NAMES, READ_PROGRAM_TOOL } from "./meta-tool-names.mjs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseEnv } from "node:util";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const [command, ...args] = process.argv.slice(2);
@@ -16,14 +17,52 @@ function shellCd(path) {
   return `cd '${path.replaceAll("'", "'\\''")}'`;
 }
 
+const DOCTOR_CREDENTIALS = ["CONNECTA_TOKEN", "CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET"];
+
+function isHelp(arg) {
+  return arg === "--help" || arg === "-h";
+}
+
+async function loadEnvFile(path) {
+  let text;
+  try {
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
+    throw error;
+  }
+  const parsed = parseEnv(text);
+  for (const name of DOCTOR_CREDENTIALS) {
+    if (!Object.hasOwn(parsed, name) || process.env[name] !== undefined) continue;
+    process.env[name] = headerValue(name, parsed[name]) ?? "";
+  }
+}
+
+function headerValue(name, value) {
+  if (value !== undefined && value !== "" && !/^[\x21-\x7e]+$/.test(value)) {
+    throw new Error(
+      `${name} holds characters that cannot be sent in a request header. Check its value for quotes, spaces or line breaks.`,
+    );
+  }
+  return value;
+}
+
+function headerCredential(name) {
+  return headerValue(name, process.env[name]);
+}
+
 function usage() {
   console.log(`Usage:
   connecta init [directory]
-  CONNECTA_TOKEN=<bearer> connecta doctor [--config] [--url http://localhost:8787] [--pool <name>]
+  CONNECTA_TOKEN=<bearer> connecta doctor [--config] [--url http://localhost:8787] [--pool <name>] [--dotenv <path>]
   CF_ACCESS_CLIENT_ID=<id> CF_ACCESS_CLIENT_SECRET=<secret> connecta doctor --url https://worker.example`);
 }
 
 async function init() {
+  if (args.some(isHelp)) {
+    usage();
+    return;
+  }
   if (args.length > 1) {
     usage();
     process.exitCode = 1;
@@ -136,13 +175,19 @@ async function doctorFetch(url, init = {}) {
 
 async function doctor() {
   for (let index = 0; index < args.length; index++) {
+    if (isHelp(args[index])) {
+      usage();
+      return;
+    }
     if (args[index] === "--config") continue;
-    if (!["--url", "--pool"].includes(args[index]) || !args[++index] || args[index].startsWith("--")) {
+    if (!["--url", "--pool", "--dotenv"].includes(args[index]) || !args[++index] || args[index].startsWith("--")) {
       usage();
       process.exitCode = 1;
       return;
     }
   }
+  const envFile = option("--dotenv", undefined);
+  if (envFile !== undefined) await loadEnvFile(envFile);
   const requestedUrl = option("--url", "http://localhost:8787");
   const pool = option("--pool", undefined);
   if (pool !== undefined && !/^[a-z0-9_-]+$/.test(pool)) {
@@ -160,9 +205,7 @@ async function doctor() {
     throw new Error("Refusing to send authentication credentials over remote plaintext HTTP. Use HTTPS.");
   }
   const baseUrl = requestedUrl.replace(/\/+$/, "");
-  const token = process.env.CONNECTA_TOKEN;
-  const accessClientId = process.env.CF_ACCESS_CLIENT_ID;
-  const accessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+  const [token, accessClientId, accessClientSecret] = DOCTOR_CREDENTIALS.map(headerCredential);
   if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
     throw new Error("Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET.");
   }
@@ -311,11 +354,12 @@ async function doctor() {
 }
 
 try {
-  if (command === "init") await init();
+  if (isHelp(command)) usage();
+  else if (command === "init") await init();
   else if (command === "doctor") await doctor();
   else {
     usage();
-    process.exitCode = command === "--help" || command === "-h" ? 0 : 1;
+    process.exitCode = 1;
   }
 } catch (error) {
   console.error(`[connecta] ${error instanceof Error ? error.message : String(error)}`);

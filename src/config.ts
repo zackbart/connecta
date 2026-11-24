@@ -458,7 +458,13 @@ const connectaConfig = {
       }),
     ),
   ),
-  /** Inbound auth adapters, such as clerkAuth(...); omit for open (dev). */
+  /**
+   * Inbound auth adapters, such as clerkAuth(...). `accessTokens` and agents
+   * with `vercel` bindings add their own adapters. When none results, plain
+   * /mcp admits a request with no Authorization header as an anonymous caller,
+   * `maintainers` must be empty, and construction warns if any connector is
+   * configured.
+   */
   auth: opaque<InboundAuth | InboundAuth[], readonly InboundAuth[]>({
     check: (value, path) => {
       const list = Array.isArray(value) ? value : [value];

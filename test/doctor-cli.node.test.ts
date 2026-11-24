@@ -1,8 +1,10 @@
 // Node-only: spawns the CLI against a Node HTTP deployment over real sockets.
 import { execFile } from "node:child_process";
 import { once } from "node:events";
+import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
-import { dirname, resolve } from "node:path";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
@@ -41,6 +43,7 @@ async function doctorAgainst(
     env?: Record<string, string>;
     storage?: KVStorage;
     member?: boolean;
+    args?: string[];
   } = {},
 ): Promise<string> {
   const connecta = createConnecta({
@@ -85,12 +88,13 @@ async function doctorAgainst(
   if (!address || typeof address === "string") {
     throw new Error("Expected a TCP listen address.");
   }
-  const { stdout } = await run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`], {
-    env: {
-      ...process.env,
-      ...(options.env ?? { CONNECTA_TOKEN: TOKEN }),
-    },
-  });
+  const env: NodeJS.ProcessEnv = { ...process.env, ...(options.env ?? { CONNECTA_TOKEN: TOKEN }) };
+  if (options.env && !("CONNECTA_TOKEN" in options.env)) delete env.CONNECTA_TOKEN;
+  const { stdout } = await run(
+    process.execPath,
+    [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`, ...(options.args ?? [])],
+    { env },
+  );
   return stdout.trim();
 }
 
@@ -551,5 +555,101 @@ describe("connecta doctor --config", () => {
         expect(result.stderr).not.toContain("SENTINEL");
       }
     }
+  });
+});
+
+describe("connecta --help", () => {
+  async function cli(line: string[]) {
+    const cwd = await mkdtemp(join(tmpdir(), "connecta-help-"));
+    teardown.push(() => rm(cwd, { recursive: true, force: true }));
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    delete env.CONNECTA_TOKEN;
+    const result = await run(process.execPath, [CLI, ...line], { cwd, env }).then(
+      ({ stdout, stderr }) => ({ code: 0, stdout, stderr }),
+      (error: { code: number; stdout: string; stderr: string }) => error,
+    );
+    return { ...result, entries: await readdir(cwd) };
+  }
+
+  it.each(["--help", "-h", "doctor --help", "doctor --url http://localhost:1 -h", "init --help", "init -h"])(
+    "prints usage and exits 0 for `connecta %s`",
+    async (line) => {
+      const result = await cli(line.split(" "));
+      expect(result.code).toBe(0);
+      expect(result.stdout).toContain("Usage:");
+      expect(result.entries).toEqual([]);
+    },
+  );
+
+  it("reads -h as the value of --pool, not as a help request", async () => {
+    const result = await cli(["doctor", "--pool", "-h"]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).not.toContain("Usage:");
+    expect(result.stderr).toContain("Set CONNECTA_TOKEN");
+  });
+
+  it("fails an unknown command whatever follows it", async () => {
+    const result = await cli(["nonsense", "--help"]);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toContain("Usage:");
+  });
+
+  it("creates a directory literally named -h when given as a path", async () => {
+    const result = await cli(["init", "./-h"]);
+    expect(result.code).toBe(0);
+    expect(result.entries).toEqual(["-h"]);
+  });
+});
+
+describe("connecta doctor --dotenv", () => {
+  async function envFile(contents: string) {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-env-"));
+    teardown.push(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, ".env");
+    await writeFile(path, contents);
+    return path;
+  }
+  const executor: Executor = { execute: async () => ({ result: 42 }) };
+
+  it("reads the token from the file when the environment has none", async () => {
+    const path = await envFile(`CONNECTA_TOKEN=${TOKEN}\n`);
+    await expect(doctorAgainst(executor, { env: {}, args: ["--dotenv", path] })).resolves.toContain(
+      "Connecta doctor passed",
+    );
+  });
+
+  it("keeps a token already in the environment over the file's", async () => {
+    const path = await envFile("CONNECTA_TOKEN=wrong-token\n");
+    await expect(
+      doctorAgainst(executor, { env: { CONNECTA_TOKEN: TOKEN }, args: ["--dotenv", path] }),
+    ).resolves.toContain("Connecta doctor passed");
+  });
+
+  it("refuses a credential that cannot be a header value without printing it", async () => {
+    const path = await envFile('CONNECTA_TOKEN="cta_secret-first-line\nsecret-second-line"\n');
+    const failure = await doctorAgainst(executor, { env: {}, args: ["--dotenv", path] }).then(
+      () => undefined,
+      (error: { stderr: string; stdout?: string }) => error,
+    );
+    expect(failure?.stderr).toContain("CONNECTA_TOKEN holds characters that cannot be sent in a request header");
+    expect(`${failure?.stderr}${failure?.stdout ?? ""}`).not.toMatch(/secret-first-line|secret-second-line/);
+  });
+
+  it("refuses a file credential holding a NUL byte instead of sending its prefix", async () => {
+    const path = await envFile('CONNECTA_TOKEN="cta_secret-prefix\0secret-suffix"\n');
+    const failure = await doctorAgainst(executor, { env: {}, args: ["--dotenv", path] }).then(
+      () => undefined,
+      (error: { stderr: string; stdout?: string }) => error,
+    );
+    expect(failure?.stderr).toContain("CONNECTA_TOKEN holds characters that cannot be sent in a request header");
+    expect(`${failure?.stderr}${failure?.stdout ?? ""}`).not.toMatch(/secret-prefix|secret-suffix/);
+  });
+
+  it("changes nothing when the file is absent", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-env-"));
+    teardown.push(() => rm(directory, { recursive: true, force: true }));
+    await expect(
+      doctorAgainst(executor, { env: {}, args: ["--dotenv", join(directory, ".env")] }),
+    ).rejects.toMatchObject({ stderr: expect.stringContaining("Set CONNECTA_TOKEN") });
   });
 });
