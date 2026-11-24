@@ -37,18 +37,21 @@ function enforceWindow(ctx: ExecutionContext) {
 // Collection evidence. A sentinel is reachable only through the continuation
 // of a fetch that workerd cancels when its invocation ends (after `ms`), as a
 // stalled charge's token is; once sentinels as old as the tokens under test
-// are finalized, a collection that could have freed those tokens has run. Pressure allocates large garbage arrays, which drives
-// V8 to collect; workerd exposes no gc() here. Without enable_weak_ref the
-// twin Worker has no FinalizationRegistry at all.
+// are finalized, a collection that could have freed those tokens has run.
+// The workers project starts workerd with V8's --expose-gc (vitest.config.ts),
+// so each `/collect` forces a full collection rather than hoping allocation
+// pressure triggers one. Without enable_weak_ref the twin Worker has no
+// FinalizationRegistry at all.
 const finalized = new Set<string>();
 const sentinels =
   typeof FinalizationRegistry === "function"
     ? new FinalizationRegistry<string>((name) => finalized.add(name))
     : undefined;
-function pressure(megabytes: number) {
-  let allocated = 0;
-  for (let i = 0; i < megabytes; i++) allocated += Array.from({ length: 131_072 }).fill(i).length;
-  return allocated;
+function collect() {
+  const gc = (globalThis as { gc?: () => void }).gc;
+  if (typeof gc !== "function") throw new Error("workerd runs without --expose-gc");
+  // From a timer task, so the conservatively scanned native stack is shallow.
+  return new Promise<void>((resolve) => setTimeout(() => resolve(gc()), 0));
 }
 
 // Agent-token reads deliberately take no signal, as with a native D1 or KV
@@ -151,11 +154,11 @@ export const control = {
         .then((response) => response.text())
         .then(() => sentinel);
       ctx.waitUntil(Promise.race([held, new Promise((resolve) => setTimeout(resolve, Number(url.searchParams.get("ms") ?? 500)))]));
-    } else if (url.pathname === "/pressure") {
-      const allocated = pressure(Number(url.searchParams.get("mb") ?? 32));
+    } else if (url.pathname === "/collect") {
+      await collect();
       // Finalizers run as their own tasks after a collection.
       await new Promise((resolve) => setTimeout(resolve, 10));
-      return Response.json({ finalized: [...finalized], allocated });
+      return Response.json({ finalized: [...finalized] });
     } else if (url.pathname === "/scheduled") {
       scheduled = {};
       ctx.waitUntil(env.SELF.scheduled({ cron: "* * * * *" }));
