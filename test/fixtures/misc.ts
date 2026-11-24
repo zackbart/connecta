@@ -1,5 +1,6 @@
 import { InvocationFailure } from "../../src/invocation.js";
-import { vi } from "vitest";
+import { onTestFinished, vi } from "vitest";
+import { TransferMemory } from "../../src/program-result.js";
 import { memoryStorage } from "../../src/storage/memory.js";
 import type {
   ConnectorContext,
@@ -119,4 +120,29 @@ export function guestErrorText(error: unknown): string {
 export function guestFailureFacts(error: unknown) {
   const failure = error instanceof InvocationFailure ? error : error instanceof Error ? guestFailures.get(error) : undefined;
   return { name: error instanceof Error ? error.name : "Error", ...(failure ? { call: failure.details } : {}) };
+}
+
+/** Counts successful `TransferMemory` holds and keeps every instance that was asked, until the test ends. */
+export function watchTransferMemory() {
+  const hold = TransferMemory.prototype.hold;
+  const memories = new Set<TransferMemory>();
+  let holds = 0;
+  const spy = vi
+    .spyOn(TransferMemory.prototype, "hold")
+    .mockImplementation(function (this: TransferMemory, bytes: Uint8Array) {
+      memories.add(this);
+      const held = hold.call(this, bytes);
+      if (held) holds++;
+      return held;
+    });
+  onTestFinished(() => spy.mockRestore());
+  return {
+    memories,
+    get holds() {
+      return holds;
+    },
+    get heldBytes() {
+      return [...memories].reduce((sum, memory) => sum + memory.heldBytes, 0);
+    },
+  };
 }

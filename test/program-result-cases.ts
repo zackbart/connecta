@@ -15,7 +15,7 @@ import { Registry, type RegistryView } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resultKeys, scopes } from "../src/storage/keys.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { scriptedExecutor } from "./fixtures/misc.js";
+import { scriptedExecutor, watchTransferMemory } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { activitySink, silentLogger } from "./helpers.js";
@@ -1608,7 +1608,10 @@ export async function checkRetainedResultsUnreadableWhileSealing(executor: Execu
   for (const step of observed) expectNoForms(step.text);
 }
 
-/** A finished read's stash is reclaimed; a write's and a disclosed handle's stay until they expire. */
+/**
+ * Past the run's transfer memory, a finished read's stash is reclaimed; a write's and a
+ * disclosed handle's stay until they expire.
+ */
 export async function checkTransferReclaim(executor: Executor): Promise<void> {
   const storage = memoryStorage();
   const bytes = 600_000;
@@ -1630,7 +1633,10 @@ export async function checkTransferReclaim(executor: Executor): Promise<void> {
     ],
     { storage, logger: silentLogger },
   );
-  const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false });
+  const execute = createExecuteTool(registry, BASE, executor, silentLogger, undefined, {
+    readOnly: false,
+    transferMemoryBytes: 0,
+  });
   const charges = async () => {
     const raw = await storage.get("result-stash:v1:ledger");
     return raw === null ? 0 : (JSON.parse(raw) as { entries: unknown[] }).entries.length;
@@ -1674,6 +1680,240 @@ export async function checkTransferReclaim(executor: Executor): Promise<void> {
   // The two writes, the oversized return, and the handle.
   expect(await charges()).toBe(4);
 }
+
+/** Reads past the run's transfer memory, which stash, page and are reclaimed. */
+const STASHED_TRANSFERS = { readOnly: false, transferMemoryBytes: 0 } as const;
+
+const LEDGER = "result-stash:v1:ledger";
+
+/** Memory storage that logs each call as `<method> <key>`. */
+function loggedStorage() {
+  const inner = memoryStorage();
+  const calls: string[] = [];
+  const storage = new Proxy(inner, {
+    get(target, name, receiver) {
+      const member = Reflect.get(target, name, receiver) as unknown;
+      if (typeof member !== "function") return member;
+      return (...args: unknown[]) => {
+        calls.push(`${String(name)} ${typeof args[0] === "string" ? args[0] : ""}`);
+        return Reflect.apply(member, target, args) as unknown;
+      };
+    },
+  });
+  const results = () => calls.filter((call) => call.includes(RESULT_PREFIX) || call.endsWith(LEDGER));
+  return { inner, storage, calls, results };
+}
+
+/** `store.read` and `store.write` answer `bytes` of text; `store.json` answers rows of `bytes`. */
+function transferRegistry(storage: KVStorage, bytes: number) {
+  return new Registry(
+    [
+      {
+        id: "store",
+        kind: "api",
+        async listTools() {
+          return [
+            ...["read", "json", "check"].map((name) => ({ name, annotations: { readOnlyHint: true } })),
+            { name: "write", annotations: { readOnlyHint: false, destructiveHint: true } },
+            { name: "silent" },
+            { name: "declared", annotations: { readOnlyHint: false, destructiveHint: true } },
+          ];
+        },
+        async callTool(name, args) {
+          const size = (args as { bytes?: number }).bytes ?? bytes;
+          if (name === "json")
+            return { rows: Array.from({ length: Math.ceil(size / 40) }, (_, id) => ({ id, name: '雪\uFEFF"row' })) };
+          if (name === "check") {
+            const raw = await storage.get(LEDGER);
+            return {
+              charges: raw === null ? 0 : (JSON.parse(raw) as { entries: unknown[] }).entries.length,
+              chunks: (await storage.list(RESULT_PREFIX)).length,
+            };
+          }
+          return "\uFEFF" + "a".repeat(32_765) + "\uFEFF" + "雪".repeat(Math.ceil((size - 32_771) / 3));
+        },
+      },
+    ],
+    { storage, logger: silentLogger, classification: { store: { silent: "read", declared: "read-repeatable" } } },
+  );
+}
+
+const TRANSFER_READS = `async () => {
+  const text = await connecta.call("store.read");
+  const json = await connecta.call("store.json");
+  const expected = "\\uFEFF" + "a".repeat(32765) + "\\uFEFF";
+  return {
+    formats: [text.format, json.format],
+    head: text.data.slice(0, 32767) === expected,
+    tail: text.data.slice(32767).replace(/雪/g, "").length,
+    length: text.data.length,
+    rows: json.data.rows.length,
+    row: json.data.rows.at(-1).name,
+  };
+}`;
+
+/** A run that ends while a read sits held and unpaged releases it, and still retains the read (R9). */
+export async function checkEndedRunReleasesHeldRead(executor: Executor): Promise<void> {
+  const memory = watchTransferMemory();
+  const outcome = await createExecuteTool(
+    transferRegistry(memoryStorage(), 600_000),
+    BASE,
+    executor,
+    silentLogger,
+  )({
+    code: `async () => {
+      connecta.call("store.read");
+      const started = Date.now();
+      while (Date.now() - started < 20000) {}
+      return "unreachable";
+    }`,
+  });
+  expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBe(true);
+  expect([memory.holds, memory.heldBytes]).toEqual([1, 0]);
+  const [call] = outcome.structuredContent!.calls as [{ outcome: string; resultId?: string }];
+  expect(call).toMatchObject({ outcome: "success", resultId: expect.any(String) });
+}
+
+/** A read whose value the guest reconstructs in its own run never reaches result storage. */
+export const memoryTransferCases: Record<string, (executor: Executor) => Promise<void>> = {
+  "[L6] a same-run read under the transfer limit arrives whole without touching result storage": async (executor) => {
+    const run = async (bytes: number) => {
+      const logged = loggedStorage();
+      const outcome = await createExecuteTool(
+        transferRegistry(logged.storage, bytes),
+        BASE,
+        executor,
+        silentLogger,
+      )({ code: TRANSFER_READS });
+      expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBeUndefined();
+      return { outcome, logged };
+    };
+    const large = await run(600_000);
+    expect(large.outcome.structuredContent).toMatchObject({
+      result: { formats: ["text", "json"], head: true, tail: 0, rows: 15_000, row: '雪\uFEFF"row' },
+      hostCalls: { attempted: 2, admitted: 2, succeeded: 2, failed: 0 },
+    });
+    expect((large.outcome.structuredContent!.result as { length: number }).length).toBe(32_767 + 189_077);
+    expect(large.logged.results()).toEqual([]);
+    const small = await run(33_000);
+    expect(large.logged.calls).toEqual(small.logged.calls);
+  },
+  "[L6] past the run's transfer memory a read stashes and is reclaimed, and finished transfers free it": async (
+    executor,
+  ) => {
+    const reads = (count: number) => `async () => {
+      let total = 0;
+      for (let i = 0; i < ${count}; i++) total += (await connecta.call("store.read")).data.length;
+      return total;
+    }`;
+    const run = async (transferMemoryBytes: number, count: number) => {
+      const logged = loggedStorage();
+      const outcome = await createExecuteTool(
+        transferRegistry(logged.storage, 600_000),
+        BASE,
+        executor,
+        silentLogger,
+        undefined,
+        { transferMemoryBytes },
+      )({ code: reads(count) });
+      expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe(count * 221_844);
+      return logged;
+    };
+    expect((await run(700_000, 3)).results()).toEqual([]);
+    const over = await run(500_000, 1);
+    expect(over.results().some((call) => call.startsWith("compareAndSet"))).toBe(true);
+    expect(over.results().some((call) => call.startsWith("delete"))).toBe(true);
+    expect(await over.inner.list(RESULT_PREFIX)).toEqual([]);
+    expect(await over.inner.get(LEDGER)).toBeNull();
+  },
+  "[R9] a failed run retains its completed read once, and a later run reads it whole until its expiry": async (
+    executor,
+  ) => {
+    const logged = loggedStorage();
+    const registry = transferRegistry(logged.storage, 600_000);
+    const execute = createExecuteTool(registry, BASE, executor, silentLogger);
+    const stored = new Map<string, number>();
+    const set = logged.inner.set.bind(logged.inner);
+    logged.inner.set = async (key, value, opts) => {
+      if (key.startsWith(RESULT_PREFIX) && opts?.expiresAtMs !== undefined) stored.set(key, opts.expiresAtMs);
+      return set(key, value, opts);
+    };
+    const started = Date.now();
+    const failed = await execute({
+      code: `async () => { await connecta.call("store.read"); throw new Error("after the read"); }`,
+    });
+    const ended = Date.now();
+    expect(failed.isError).toBe(true);
+    const [{ resultId: id }] = failed.structuredContent!.calls as [{ resultId: string }];
+    expect(id).toEqual(expect.any(String));
+    expect(failed.structuredContent!.note).toContain("calls[].resultId");
+    const ids = new Set([...stored.keys()].map((key) => key.slice(RESULT_PREFIX.length).split("#")[0]));
+    expect([...ids]).toEqual([id]);
+    for (const expiresAtMs of stored.values()) {
+      expect(expiresAtMs).toBeGreaterThanOrEqual(started + 15 * 60_000);
+      expect(expiresAtMs).toBeLessThanOrEqual(ended + 15 * 60_000);
+    }
+    const later = await execute({
+      code: `async () => (await connecta.result(${JSON.stringify(id)}, { all: true })).data.length`,
+    });
+    expect(later.structuredContent!.result, JSON.stringify(later.structuredContent)).toBe(221_844);
+  },
+  "[L6] INV-1 INV-9: a write-like tool served as a read is stashed, never held, and reclaimed before the program continues":
+    async (executor) => {
+      const memory = watchTransferMemory();
+      for (const tool of ["silent", "declared", "read"]) {
+        const logged = loggedStorage();
+        const holdsBefore = memory.holds;
+        const outcome = await createExecuteTool(
+          transferRegistry(logged.storage, 600_000),
+          BASE,
+          executor,
+          silentLogger,
+          undefined,
+          { readOnly: false },
+        )({
+          code: `async () => {
+            const read = await connecta.call("store.${tool}");
+            return { length: read.data.length, after: (await connecta.call("store.check")).data };
+          }`,
+        });
+        expect(outcome.structuredContent!.result, `${tool}: ${JSON.stringify(outcome.structuredContent)}`).toEqual({
+          length: 221_844,
+          after: { charges: 0, chunks: 0 },
+        });
+        const stashed = logged.results().filter((call) => call.startsWith(`set ${RESULT_PREFIX}`)).length;
+        expect([tool, memory.holds - holdsBefore, stashed]).toEqual(
+          tool === "read" ? [tool, 1, 0] : [tool, 0, Math.ceil(600_000 / 49_152) - 1],
+        );
+      }
+    },
+  "[L6] INV-9: a write's stash is stored before its program continues": async (executor) => {
+    const storage = memoryStorage();
+    const outcome = await createExecuteTool(
+      transferRegistry(storage, 600_000),
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      {
+        readOnly: false,
+      },
+    )({
+      code: `async () => {
+        const written = await connecta.call("store.write");
+        return { length: written.data.length, after: (await connecta.call("store.check")).data };
+      }`,
+    });
+    expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toEqual({
+      length: 221_844,
+      after: { charges: 1, chunks: Math.ceil(600_000 / 49_152) - 1 },
+    });
+    expect(outcome.structuredContent!.calls).toMatchObject([
+      { address: "store.write", outcome: "success" },
+      { address: "store.check", outcome: "success" },
+    ]);
+  },
+};
 
 /** A whole read is paging repeated: it sees exactly what a page may, and never more. */
 export const wholeReadSealingCases: Record<string, (executor: Executor) => Promise<void>> = {
@@ -1798,7 +2038,14 @@ export const wholeReadSealingCases: Record<string, (executor: Executor) => Promi
     // Under 1 MiB, inlined with no handle shown, and given back before the set grows.
     const inner = memoryStorage();
     const { registry } = retainedRegistry(inner, { echoed: () => ({ keep: "kept", pad: "x".repeat(300_000) }) });
-    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+    const outcome = await createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      STASHED_TRANSFERS,
+    )({
       code: `async () => {
         const inlined = await connecta.call("vault.read");
         await connecta.call("vault.use");
@@ -1824,7 +2071,14 @@ export const wholeReadSealingCases: Record<string, (executor: Executor) => Promi
       },
     });
     const { registry } = retainedRegistry(counted, { echoed: () => ({ keep: "kept", pad: "x".repeat(950_000) }) });
-    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+    const outcome = await createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      STASHED_TRANSFERS,
+    )({
       code: `async () => {
         let inlined = 0;
         for (let i = 0; i < 20; i++) if ((await connecta.call("vault.read")).format === "json") inlined++;
@@ -1892,7 +2146,14 @@ export const wholeReadSealingCases: Record<string, (executor: Executor) => Promi
     };
     const { registry } = retainedRegistry(stalled, { echoed: () => ({ keep: "kept", pad: "x".repeat(300_000) }) });
     const started = Date.now();
-    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+    const outcome = await createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      STASHED_TRANSFERS,
+    )({
       code: `async () => {
         let kept = 0;
         for (let i = 0; i < 4; i++) if ((await connecta.call("vault.read")).data.keep === "kept") kept++;
@@ -1923,7 +2184,14 @@ export const wholeReadSealingCases: Record<string, (executor: Executor) => Promi
       };
       const { registry } = retainedRegistry(slow, { echoed: () => ({ keep: "kept", pad: "x".repeat(950_000) }) });
       const started = Date.now();
-      const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+      const outcome = await createExecuteTool(
+        registry,
+        BASE,
+        executor,
+        silentLogger,
+        undefined,
+        STASHED_TRANSFERS,
+      )({
         code: `async () => {
           let kept = 0;
           for (let i = 0; i < 4; i++) if ((await connecta.call("vault.read")).data.keep === "kept") kept++;
@@ -1953,7 +2221,14 @@ export const wholeReadSealingCases: Record<string, (executor: Executor) => Promi
       },
     };
     const { registry } = retainedRegistry(slow, { echoed: () => ({ keep: "kept", pad: "x".repeat(950_000) }) });
-    const outcome = await createExecuteTool(registry, BASE, executor, silentLogger, undefined, { readOnly: false })({
+    const outcome = await createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      STASHED_TRANSFERS,
+    )({
       code: `async () => (await connecta.call("vault.read")).data.keep`,
     });
     expect(outcome.structuredContent!.result, JSON.stringify(outcome.structuredContent)).toBe("kept");

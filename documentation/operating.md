@@ -118,7 +118,12 @@ Direct calls may return a preview and a result handle. Page the handle through
 reduce the data in the original program. Handles are short-lived and bound to
 the admitted caller, endpoint/pool, and current grants. Never invent one or pass
 it between identities. [Paging](./meta-tools.md#paging-with-connectaresult)
-owns the envelope and expiry rules.
+owns the envelope and expiry rules. Inside a program, a read up to 1 MiB arrives
+whole. A run passes up to 4 MiB of such reads at once from its own memory, with no
+result storage; operation history, when on, still records a row per page. Past that
+bound, a read pages through the stash, as does a write's output too large to arrive
+inline. Each process or isolate holds up to 4 MiB for every run its executor admits
+at once ([`L6`](./code-mode.md#cancellation-and-limits)).
 
 For resources, use the exposed resource inventory and `connecta.read`; do not
 fetch an arbitrary URL. [Resource reads](./code-mode.md#connectaread) describe

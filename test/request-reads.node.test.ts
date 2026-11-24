@@ -962,7 +962,8 @@ describe("request budgets", () => {
         return response;
       }
       if (url.origin === origins.modern) return modern.fetch(request.url, request);
-      if (url.origin === origins.rest) return Response.json({ text: "hi" });
+      if (url.origin === origins.rest)
+        return Response.json({ text: url.searchParams.has("large") ? "x".repeat(600_000) : "hi" });
       return new Response("unknown host", { status: 404 });
     };
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -1038,10 +1039,11 @@ describe("request budgets", () => {
                 name: "echo",
                 description: "Echo text back",
                 annotations: { readOnlyHint: true },
-                handler: async (_args, ctx) => {
+                handler: async (args, ctx) => {
                   const key = await ctx.credential!.get();
+                  const query = (args as { text?: string }).text === "large" ? "?large" : "";
                   return (
-                    await ctx.fetch(`${origins.rest}/echo`, { headers: { authorization: `Bearer ${key}` } })
+                    await ctx.fetch(`${origins.rest}/echo${query}`, { headers: { authorization: `Bearer ${key}` } })
                   ).json();
                 },
               },
@@ -1680,6 +1682,21 @@ describe("request budgets", () => {
     );
   });
 
+  it("a program's 600 KB read costs no more storage than a small one", async () => {
+    const d = await production();
+    const app = d.build();
+    await d.call(app, "rest.echo");
+    const program = (text: string) =>
+      `async () => (await connecta.call("rest.echo", { text: "${text}" })).data.text.length`;
+    const small = await d.measure("execute_code, one read", async () =>
+      expect(await d.tool(app, "execute_code", { code: program("hi") })).toContain('"result":2'),
+    );
+    const large = await d.measure("execute_code, one 600 KB read", async () =>
+      expect(await d.tool(app, "execute_code", { code: program("large") })).toContain('"result":600000'),
+    );
+    expect([large.roundTrips, large.statements]).toEqual([small.roundTrips, small.statements]);
+  });
+
   it("an operator UI connector detail read", async () => {
     const d = await production({ credentialRemote: true });
     const app = d.build();
@@ -1754,6 +1771,8 @@ const BUDGETS = {
   "api credential call, cold isolate": { downstream: 1, roundTrips: 7, statements: 10 },
   "unscoped search, warm": { downstream: 0, roundTrips: 9, statements: 9 },
   "execute_code, 5 calls": { downstream: 9, roundTrips: 8, statements: 14 },
+  "execute_code, one read": { downstream: 1, roundTrips: 4, statements: 5 },
+  "execute_code, one 600 KB read": { downstream: 1, roundTrips: 4, statements: 5 },
   // A live detail records its stored status observation (#1173 item 2.3):
   // one write, batched with the expiry sweep, and, for a static api()
   // catalog whose listing reads no generation, the generation read.

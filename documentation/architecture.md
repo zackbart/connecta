@@ -368,9 +368,12 @@ schemas are resolved when rendering each page rather than retained in the index.
 Program result paging shares `meta-tools.ts`'s direct-call stash envelope and
 reader. `program-result.ts` owns executor-independent byte limits;
 `execute.ts` issues bounded transfer cursors, and `guest-runtime.ts` reconstructs
-values through provider preludes. Cursors hold only an ID and offset for the
-current run. Result bytes, expiry, authority and capacity charges stay in the
-existing storage and ledger; no executor-specific store or storage key is added.
+values through provider preludes. A stash cursor holds only an ID and offset for
+the current run; result bytes, expiry, authority and capacity charges stay in the
+existing storage and ledger, and no executor-specific store or storage key is added.
+A read's cursor instead holds its redacted bytes in the run's `TransferMemory`
+(`program-result.ts`), bounded per run, released when its last page is served and
+all at once when the run's signal aborts ([`L6`](./code-mode.md#cancellation-and-limits)).
 `result-seal.ts` keeps a run's results unreadable to other requests until they pass
 its final secret set ([`R4a`](./code-mode.md#results-and-projection)): chunk 0 waits in a
 request-owned ledger, and absence of chunk 0 is the refusal, so every exit leaves

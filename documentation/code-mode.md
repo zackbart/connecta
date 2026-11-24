@@ -893,9 +893,10 @@ Read-only endpoints cannot page write results. A UUID is a handle, never a grant
 **R4a.** A run's retained results are unreadable from other requests by default.
 One becomes readable only after its bytes pass the run's final secret set, including
 any credential or private argument registered after they were stored. This covers
-every result the run stashes: oversized `connecta.call` reads and writes, those
-transferred without showing a handle, and an oversized return. An id the program
-places in its return value, its error or a later call's arguments is covered alike.
+every result the run stashes: oversized `connecta.call` reads and writes, reads
+transferred through the stash without showing a handle (`L6`), and an oversized
+return. A read transferred from the run's memory is never stored, so it has nothing
+to seal. An id the program places in its return value, its error or a later call's arguments is covered alike.
 Executors do not take part, so QuickJS, Worker and custom executors behave the same.
 
 Each entry's first chunk, which a reader needs, stays in memory until the run ends,
@@ -998,17 +999,19 @@ through the same store and 15-minute expiry as `R4`, and a fixed `note` says to
 read each `calls[].resultId` with `connecta.result(resultId, { all: true })` in a
 new program instead of repeating the read.
 
-These recovery entries share one storage deadline: 1 s, or a quarter of the time
-left before the answer-by time if that is less. Within it they wait for the run's
-host calls to settle, are stored, and are sealed against the run's final secret set
-as `R4a` describes, in a ledger of their own. An entry whose header was not written
-by the deadline gets no `resultId` and stays unreadable, so slow storage costs the
-retention, never the response. At most the first 20 completed reads are kept, and
-a read the stash refuses has no `resultId`. A completed read whose handle the
-program already saw (a value or native presentation over the 1 MiB transfer limit)
-reuses that stash and costs no storage; its entry gets the `resultId` only once the
-run's own sealing publishes it. In every case an id appears in `calls` only after its
-header was written, and the `note` appears only when at least one id did.
+For a read the program received whole from the run's memory (`L6`), this entry is
+the only storage it costs, written once. These recovery entries share one storage
+deadline: 1 s, or a quarter of the time left before the answer-by time if that is
+less. Within it they wait for the run's host calls to settle, are stored, and are
+sealed against the run's final secret set as `R4a` describes, in a ledger of their
+own. An entry whose header was not written by the deadline gets no `resultId` and
+stays unreadable, so slow storage costs the retention, never the response. At most
+the first 20 completed reads are kept, and a read the stash refuses has no
+`resultId`. A completed read whose handle the program already saw (a value or native
+presentation over the 1 MiB transfer limit) reuses that stash and costs no storage;
+its entry gets the `resultId` only once the run's own sealing publishes it. In every
+case an id appears in `calls` only after its header was written, and the `note`
+appears only when at least one id did.
 
 A write never gets a `resultId`: its entry reports the outcome only, and it
 already ran. A successful run returns no `resultId`s, since its return is the
@@ -1321,6 +1324,7 @@ because connecta enforces them above the sandbox:
 | Caller text echoed by `describe` recovery                                                            | ≤ 512 UTF-8 bytes per field, plus `…`                                                                                                                                                                                                                             |
 | Result                                                                                               | 24,000 serialized characters by default, `execute.maxResultChars` (4,000–1,000,000)                                                                                                                                                                               |
 | Logs presented to the model                                                                          | 4,000 serialized characters                                                                                                                                                                                                                                       |
+| Read bytes the run holds in memory for its guest at once (`L6`)                                      | 4 MiB; a read past it is stashed and paged                                                                                                                                                                                                                        |
 
 For any tool whose output declares `page`, continue while `page.hasMore` is true.
 When approaching the program's host-call limit, which `connecta.budget()`
@@ -1363,11 +1367,42 @@ code safe to run at all.
 **L6.** QuickJS bounds each serialized host-call message at 256 KiB. Full guest
 returns cross bounded 65,536-character IPC chunks, with a 64 MiB aggregate
 transport ceiling. The parent retains the completed value until it can apply
-the result stash policy; the 1 MiB per-message IPC ceiling stays in force. Oversized
-`connecta.call` results use the existing direct-call stash before crossing that
-bridge. The trusted guest initializer reconstructs values up to 1 MiB from
-bounded pages, retaining JSON versus text format and every payload code point,
-including U+FEFF at page starts. Larger values return a
+the result stash policy; the 1 MiB per-message IPC ceiling stays in force. A
+`connecta.call` result too large for one host-call message crosses that bridge in
+bounded pages. The trusted guest initializer reconstructs values up to 1 MiB from
+those pages, retaining JSON versus text format and every payload code point,
+including U+FEFF at page starts.
+
+A read's pages come from the run's own memory. A read here is a call whose source
+and served classification are both read, as in `R9`. Its value, up to 1 MiB and
+already redacted, is held until its last page is served, and each page passes the
+run's output redaction like any host reply. No page reads or writes result storage
+or rechecks access; with operation history on (`V4`), each page and the transfer's
+closing call still add a `result` operation row. Access was checked when the run was
+admitted and its call dispatched, so once a run is admitted its reads of up to 1 MiB
+arrive whole for the rest of that run even if access is revoked partway through,
+bounded by the run's deadline and the response ceiling, `execute.watchdogMs` (`L3`).
+Every read small enough for one message has always behaved this way; a stored
+result keeps its per-page recheck. No id names held bytes.
+
+A run holds at most 4 MiB of such reads at once (`L4`), four at the 1 MiB maximum,
+and releases all of them when it ends, by an answer, a throw, a timeout,
+cancellation or an executor failure alike. An isolate or Node process therefore
+holds at most 4 MiB for each run its executor admits at once (`L7`): 8 MiB at the
+Dynamic Worker's default of 2 (`workerExecutor({ admission })`), 4 MiB at QuickJS's
+default of 1 (`quickJsExecutor({ concurrency })`), and for an executor without its
+own pool, `admission.code.concurrency` (2 by default). A read past that bound takes
+the stash below, as does a read, JSON or text, whose text redaction changed its
+serialized bytes, and raw text with unpaired surrogates. A write's result, a source
+write served as a read included, is stashed before the program continues.
+
+If a credential the run sends after a held read is redacted from one of its pages
+and that leaves the read's JSON invalid, the program gets a handle with no
+`resultId`, `{ format: "paged", valueFormat, totalBytes, truncated: true, hint }`,
+whose `hint` says the read could not be rebuilt and to repeat it in a new program.
+If the run then fails, `R9` still retains the read.
+
+Larger values return a
 `{ format: "paged", valueFormat, resultId, totalBytes, truncated: true, hint }`
 handle. Within the read ceiling its `hint` says to read it with
 `connecta.result(handle, { all: true })` (`S11`). Past the ceiling, pass the handle or
@@ -1385,8 +1420,8 @@ round-trip losslessly.
 
 Stashes retain their existing bindings, 15-minute expiry, per-connector page
 caps and aggregate capacity charges on memory, SQLite and D1. Capacity exhaustion
-or a storage failure returns a successful notice without a `resultId`. A read's
-value reconstructed through transfer pages gives its stash back once it is whole: the
+or a storage failure returns a successful notice without a `resultId`. A stashed read
+reconstructed through transfer pages gives its stash back once it is whole: the
 guest never saw a handle for it, so nothing can name those bytes. Giving back removes
 the entry from the run's memory ledger first, so sealing (`R4a`) has nothing to publish
 for it; once sealing has begun the entry stays until it expires. A run gives back at
@@ -1842,7 +1877,7 @@ invented, mistyped, and missing members and authored blocks the host refuses.
 | `L3`, `X1`             | `test/guest-api-contract.test.ts` (short-deadline executors, read caps, write exemption, the write gate, the final dispatch gate, a write on the wire at the ceiling and a stall after a write), `test/node.node.test.ts` (upload counts against the ceiling, arrival comes only from the host), `test/program-writes.test.ts` (what makes a failed program retryable), `test/meta-tools-call.test.ts` (direct and native calls at the final gate and under the dispatch floor), `test/execute.test.ts` (calls and reads under the dispatch floor), `test/invocation-pipeline.test.ts` (the physical-send check after a remote MCP reconnect or an `api()` credential refresh, with a wrapper control), `test/remote-mcp-write-once.test.ts` and `test/api-oauth.test.ts` (a read sent once whose replay after a 401 and a refresh is refused stays sent), `test/request-admission.test.ts` (a 65 s downstream behind a 60 s client on a fake clock, with the old ceiling as its control), `test/execute.test.ts` (the watchdog ends a never-settling executor, frees the default pool, spares a slow run, and falls back from an unusable value) |
 | `L4`, `L8`, `L9`       | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (shared discovery/call budgets and terminal catch-and-continue loops and queued-write cancellation on both executors; `budget()` counters, read-only and read-program writes, writes admitted then unsent, the out-of-time zero, and the deadline under polling)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `L5`, `L7`, `X2`       | `test/quickjs-executor.node.test.ts` (CPU, heap), `test/execute.test.ts` and `test/executor-admission.test.ts` (bounded admission and queue), `test/executor-requests.test.ts` (queued handoffs and refusal shape across separate workerd requests), `test/request-context.node.test.ts` (queued and QuickJS host-call request context)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles), `test/sqlite-storage.node.test.ts` and `test/storage-sql-d1.test.ts` (SQL stash and native D1 fault probes), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `L6`, `X10`            | `test/guest-api-contract-quickjs.node.test.ts` and `test/guest-api-contract.test.ts` (whole oversized reads and one-write pageable handles; reads from run memory with no result storage, the memory bound's stash fallback, a failed run's single retained copy, a write stashed before its program continues), `test/execute.test.ts` (run end releases held reads), `test/request-reads.node.test.ts` (a 600 KB program read's D1 count), `test/sqlite-storage.node.test.ts` and `test/storage-sql-d1.test.ts` (SQL stash and native D1 fault probes), `test/quickjs-executor.node.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `V1`–`V4`              | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no execution event by default), `test/identity-write-journey.node.test.ts` (opt-in real-program utility/program rows, payload exclusion and detached writes), `test/activity.test.ts` (the shared code → friction table, the identity clamp, the one-attempt floor), `test/browser/operator-ui.spec.ts` (identity changes), `test/sql-storage-contract.ts`, run by `test/sqlite-storage.node.test.ts` (historical activity rows still round-trip)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `V5`, `W9`             | `test/program-writes.test.ts` (unawaited program drain, failed-program accounting), `test/identity-write-journey.node.test.ts` (committed ambiguity, reconciliation and physical writes), `test/invocation-pipeline.test.ts` (the gate after validation, an unrecorded refusal)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | `W10`, `W12`           | `test/identity-write-journey.node.test.ts` (real HTTP/MCP and QuickJS: write budget, read-only discovery and refusal, named guide, pool inheritance/reopening and connector policy), `test/program-writes.test.ts` (construction refusals and classification drift), `test/browser/operator-ui.spec.ts` (the badge)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |

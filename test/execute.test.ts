@@ -23,7 +23,7 @@ import type {
 } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import { deferred, scriptedExecutor } from "./fixtures/misc.js";
+import { deferred, scriptedExecutor, watchTransferMemory } from "./fixtures/misc.js";
 import { activitySink, calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -75,6 +75,56 @@ describe("execute_code intake", () => {
     expect(JSON.stringify(result)).toContain("65536");
     expect(JSON.stringify(result)).not.toContain("éééé");
     expect(executor.seen).toEqual([]);
+  });
+});
+
+describe("a run's held reads", () => {
+  const reader: Connector = connectorWith({
+    id: "reader",
+    kind: "api",
+    tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+    call: async () => "x".repeat(600_000),
+  });
+
+  it("[L6] INV-7: a caller's abort after the first of several pages releases the read, and the next page fails", async () => {
+    const memory = watchTransferMemory();
+    const caller = new AbortController();
+    const seen: { first?: unknown; held?: number; next?: string } = {};
+    const out = await createExecuteTool(
+      makeRegistry([reader]),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        const reply = (await required(fns.call)("reader.read", {})) as { transfer: string };
+        seen.first = ((await required(fns.result)(reply.transfer)) as { hasMore: boolean }).hasMore;
+        caller.abort();
+        seen.held = memory.heldBytes;
+        seen.next = await required(fns.result)(reply.transfer).then(
+          () => "served",
+          (error: unknown) => (error as Error).message,
+        );
+        return "done";
+      }),
+      silentLogger,
+    )({ code: "async () => 1" }, { signal: caller.signal });
+    expect(out.isError).toBe(true);
+    expect(memory.holds).toBe(1);
+    expect(seen).toEqual({ first: true, held: 0, next: expect.stringMatching(/run ended/) });
+    expect(memory.heldBytes).toBe(0);
+  });
+
+  it("[L6] INV-7: a read the guest never pages is released when the run ends", async () => {
+    const memory = watchTransferMemory();
+    const out = await createExecuteTool(
+      makeRegistry([reader]),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        await required(fns.call)("reader.read", {});
+        return "done";
+      }),
+      silentLogger,
+    )({ code: "async () => 1" });
+    expect(out.structuredContent?.result, JSON.stringify(out.structuredContent)).toBe("done");
+    expect([memory.holds, memory.heldBytes]).toEqual([1, 0]);
   });
 });
 

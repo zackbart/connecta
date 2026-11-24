@@ -354,16 +354,12 @@ discovery deadlines.
 A warm unscoped search with reused catalogs makes no downstream request in every
 reused cell; that is checked through the baseline.
 
-**Gated and reported counters**: the baseline holds the gated counters. Each
-cell's `reported` list names counters written to results but left out of the
-gate. In the 600 KiB cells a program's two reads are transferred and then
-reclaimed, and all reclaim in a run shares a one-second wall-clock budget
-(`RECLAIM_BUDGET_MS` in `src/execute.ts`) that may skip or cut short the chunk
-deletes, so that program's `storageRoundTrips`, `storageStatements` and
-`tracedRoundTrips` are reported. Reclaim only deletes stored chunks, so the
-program's other counters stay gated. Even with no reclaim at all, the counted
-requests stash about 5.4 MiB in nine entries, inside the 8 MiB and 64-entry
-stash limits, so a skipped reclaim cannot refuse a later stash.
+**Gated counters**: the baseline holds every counter of every cell. In the
+600 KiB cells a program's two reads reach the guest from the run's memory
+([`L6`](../documentation/code-mode.md#cancellation-and-limits)), so they store no
+result and no wall-clock reclaim budget enters the program's counts. The only
+stash the counted requests make is each `call_tool`'s 600 KiB result, about
+1.8 MiB in three entries per cell, inside the 8 MiB and 64-entry stash limits.
 
 **Determinism**: why each gated counter cannot vary with machine speed.
 
@@ -394,7 +390,7 @@ between runs; `--update-baseline` refuses to write in that case. Five runs with
 every core busy (one busy loop per core) gave identical gated counts.
 
 **Updating the baseline**: the baseline and the run must hold exactly the same
-cells, configurations, `reported` lists, requests, phases and counters, with
+cells, configurations, requests, phases and counters, with
 equal values; a counter, phase or cell on one side only fails, as does a value
 lower or higher. A change that moves a count reruns
 `pnpm run build && pnpm run eval:perf --update-baseline` in the same PR and says

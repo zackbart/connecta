@@ -36,6 +36,7 @@ import {
   jsonResult,
   pageProgramResult,
   releaseStashedResult,
+  type KeepTransfer,
   type ProgramResultDependency,
   type ResultReadStage,
   type ToolResult,
@@ -45,6 +46,8 @@ import {
   PROGRAM_RESULT_PAGE_BYTES,
   PROGRAM_RESULT_READ_BYTES,
   PROGRAM_RESULT_WIRE_BYTES,
+  TransferMemory,
+  type MemoryTransfer,
   type ProgramResultHandle,
 } from "./program-result.js";
 import { MAX_EXECUTE_LOG_CHARS, MAX_EXECUTE_RESULT_CHARS, truncateExecuteText } from "./executor-result.js";
@@ -569,16 +572,22 @@ function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
 
 /**
  * Expose one host provider and typed guest errors. Catalogs load only when
- * the program calls a tool or asks search/describe.
+ * the program calls a tool or asks search/describe. Without a `transferMemory`
+ * every oversized read takes the stash.
  */
 export async function buildSandboxProviders(
   registry: RegistryView,
   baseUrl: string,
   _logger: Logger,
   activity?: ActivityRequestContext,
-  limits: SandboxLimits = {},
+  limits: Partial<SandboxLimits> = {},
 ): Promise<ExecutorProvider[]> {
-  return [sandboxProvider(registry, baseUrl, activity, limits)];
+  return [
+    sandboxProvider(registry, baseUrl, activity, {
+      ...limits,
+      transferMemory: limits.transferMemory ?? new TransferMemory(0),
+    }),
+  ];
 }
 
 interface SandboxLimits {
@@ -622,6 +631,8 @@ interface SandboxLimits {
   programWrites?: ProgramWrites | undefined;
   /** What `connecta.result(id, { all: true })` delivers. */
   readBytes?: number | undefined;
+  /** The run's read bytes held for transfer, closed with the run; past its limit reads stash. */
+  transferMemory: TransferMemory;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
   /** Set when a program read a result field off an unawaited host call. */
@@ -659,6 +670,16 @@ interface HostCalls {
 }
 
 type SettleWrite = (state: ReturnType<typeof writeStateOf>) => void;
+
+interface StashTransfer {
+  kind: "stash";
+  id: string;
+  offset: number;
+  reclaim?: { totalBytes: number };
+  finished?: boolean;
+}
+
+const transferDecoder = new TextDecoder("utf-8", { ignoreBOM: true, fatal: false });
 
 interface Sending {
   settle?: SettleWrite;
@@ -750,21 +771,60 @@ function sandboxProvider(
   stopped.catch(() => {});
   const maxWrites = resolveBudget(limits.maxWrites, DEFAULT_MAX_WRITES);
   let writes = 0;
-  // These are transfer cursors only. All result bytes live in the existing stash.
   // `reclaim` marks a read's stash only this transfer can name, because the guest never saw
   // its handle. A guest-supplied id stays readable until it expires; a write's stash expires too.
   const readBytes = limits.readBytes ?? PROGRAM_RESULT_READ_BYTES;
-  const transfers = new Map<
-    string,
-    { id: string; offset: number; reclaim?: { totalBytes: number }; finished?: boolean }
-  >();
+  const transfers = new Map<string, StashTransfer | MemoryTransfer>();
+  const memoryHandles = new WeakMap<ProgramResultHandle, string>();
+  const { transferMemory } = limits;
+  const keepTransfer: KeepTransfer = (bytes, format) => {
+    const held = transferMemory.hold(bytes);
+    if (!held) return undefined;
+    const transfer = `transfer:${crypto.randomUUID()}`;
+    transfers.set(transfer, held);
+    const handle: ProgramResultHandle = {
+      format: "paged",
+      valueFormat: format,
+      totalBytes: bytes.length,
+      truncated: true,
+      hint: "This read could not be rebuilt here: its transfer ended early, or redacting a credential this run sent after the read left its JSON invalid. It is a read, so repeat it in a new program.",
+    };
+    memoryHandles.set(handle, transfer);
+    return handle;
+  };
+  const memoryPage = (transfer: MemoryTransfer) =>
+    Effect.suspend(() => {
+      const { bytes, offset } = transfer;
+      if (!bytes) return Effect.fail(guestFailure("cancelled", "connecta.result was cancelled because the run ended."));
+      let end = Math.min(bytes.length, offset + PROGRAM_RESULT_PAGE_BYTES);
+      while (end < bytes.length && (bytes[end]! & 0xc0) === 0x80) end--;
+      const hasMore = end < bytes.length;
+      const text = transferDecoder.decode(bytes.subarray(offset, end));
+      if (hasMore) transfer.offset = end;
+      else {
+        transferMemory.release(transfer);
+        transfer.finished = true;
+      }
+      return Effect.succeed({
+        offset,
+        bytes: end - offset,
+        totalBytes: bytes.length,
+        hasMore,
+        ...(hasMore ? { nextOffset: end } : {}),
+        format: "text",
+        text,
+      });
+    });
   const nativeResults = new Map<string, GuestNativeBlock[]>();
   const transportResult = (value: { format: string }, write: boolean) => {
     if (value.format === "paged") {
       const handle = value as ProgramResultHandle;
+      const kept = memoryHandles.get(handle);
+      if (kept !== undefined) return { transfer: kept, handle, reclaim: true };
       if (handle.resultId && handle.totalBytes <= PROGRAM_RESULT_INLINE_BYTES) {
         const transfer = `transfer:${crypto.randomUUID()}`;
         transfers.set(transfer, {
+          kind: "stash",
           id: handle.resultId,
           offset: 0,
           ...(write ? {} : { reclaim: { totalBytes: handle.totalBytes } }),
@@ -828,7 +888,7 @@ function sandboxProvider(
           // cannot turn this completed write into an unknown or failed write.
           sending.settle?.("ok");
           const write = resolved.definition.classification !== "read";
-          const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number) =>
+          const page = (data: unknown, valueFormat: "json" | "text", wireBytes?: number, keep?: KeepTransfer) =>
             authCall<Awaited<ReturnType<typeof pageProgramResult>>>(pageProgramResult, [
               registry,
               baseUrl,
@@ -842,10 +902,12 @@ function sandboxProvider(
               limits.followUpRoutes,
               limits.heldResults,
               readBytes,
+              keep,
             ]);
           type Presented = Awaited<ReturnType<typeof pageProgramResult>>;
           const stashedId = (presented: Presented) => (presented.format === "paged" ? presented.resultId : undefined);
           const retainable = !isWriteLike(resolved.definition);
+          const keep = retainable ? keepTransfer : undefined;
           if (retainable)
             sending.retain = (held) =>
               authCall<Presented>(pageProgramResult, [
@@ -897,7 +959,7 @@ function sandboxProvider(
             !Array.isArray(content) ||
             !content.some((block) => block && ["image", "audio", "resource", "resource_link"].includes(block.type))
           ) {
-            return transportResult(shown(yield* page(value, format)), write);
+            return transportResult(shown(yield* page(value, format, undefined, keep)), write);
           }
           const unavailablePresentation = (): ProgramResultHandle => ({
             format: "paged",
@@ -924,7 +986,8 @@ function sandboxProvider(
             }
           } catch (error) {
             if (!(error instanceof NativePresentationLimit)) throw error;
-            const result = dataKey === undefined ? undefined : transportResult(yield* page(value, format), write);
+            const result =
+              dataKey === undefined ? undefined : transportResult(yield* page(value, format, undefined, keep), write);
             const notice = unavailablePresentation();
             return result ? { value: result, native: { value: notice } } : notice;
           }
@@ -1204,17 +1267,18 @@ function sandboxProvider(
         })),
       ),
     result: (id, options, signal, onStage) => {
-      const finished = typeof id === "string" ? transfers.get(id) : undefined;
-      if (finished?.finished) {
+      const current = typeof id === "string" ? transfers.get(id) : undefined;
+      if (current?.finished) {
         // The prelude has the whole value, so a read gives its bytes back.
         transfers.delete(id as string);
-        return finished.reclaim
-          ? reclaim(finished.id, finished.reclaim.totalBytes).pipe(Effect.as({}))
+        return current.kind === "stash" && current.reclaim
+          ? reclaim(current.id, current.reclaim.totalBytes).pipe(Effect.as({}))
           : Effect.succeed({});
       }
+      if (current?.kind === "memory") return memoryPage(current);
       return Effect.tryPromise({
         try: async () => {
-          const transfer = typeof id === "string" ? transfers.get(id) : undefined;
+          const transfer = current;
           const transferId = id;
           if (transfer) {
             id = transfer.id;
@@ -1294,7 +1358,7 @@ function sandboxProvider(
             }
             if (!page.structuredContent?.hasMore) return page.structuredContent;
             const started = `transfer:${crypto.randomUUID()}`;
-            transfers.set(started, { id, offset: page.structuredContent.nextOffset as number });
+            transfers.set(started, { kind: "stash", id, offset: page.structuredContent.nextOffset as number });
             return { ...page.structuredContent, transfer: started };
           }
           return page.structuredContent;
@@ -1794,6 +1858,8 @@ interface RunnerConfig {
   readProgram?: boolean | undefined;
   /** Where the endpoint lists `execute_read_code`: paging a result needs no write approval. */
   followUpRoutes?: AgentRouteNames | undefined;
+  /** Read bytes a run holds in memory for transfer at once. Default 4 MiB. */
+  transferMemoryBytes?: number | undefined;
 }
 
 /** Runs one `execute_code` program and answers as the tool does. */
@@ -1917,6 +1983,7 @@ export function createExecuteTool(
                 followUpRoutes: config.followUpRoutes,
                 programWrites,
                 readBytes,
+                transferMemory: new TransferMemory(config.transferMemoryBytes, signal),
                 resultDependencies,
                 dispatchController,
                 unawaited,

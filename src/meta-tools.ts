@@ -65,7 +65,12 @@ import { agentOutputOperations, sentSecretsForRequest, type SentSecrets } from "
 import { captureDownstreamInput } from "./downstream-input.js";
 import type { ResolvedCatalogTool } from "./catalog-service.js";
 import type { Logger, ToolDef } from "./types.js";
-import { PROGRAM_RESULT_PAGE_BYTES, PROGRAM_RESULT_WIRE_BYTES, type ProgramResultHandle } from "./program-result.js";
+import {
+  PROGRAM_RESULT_INLINE_BYTES,
+  PROGRAM_RESULT_PAGE_BYTES,
+  PROGRAM_RESULT_WIRE_BYTES,
+  type ProgramResultHandle,
+} from "./program-result.js";
 import { previewResult, type ResultPreview } from "./result-preview.js";
 import type { NativeCallRoute } from "./native-tools.js";
 
@@ -592,6 +597,12 @@ const stashResult = function (bytes: Uint8Array, results: ResultStash, preview: 
   });
 };
 
+/**
+ * Takes the redacted bytes of a value the guest will reconstruct whole in this request,
+ * and returns the handle to present for them; undefined stashes them instead.
+ */
+export type KeepTransfer = (bytes: Uint8Array, format: "json" | "text") => ProgramResultHandle | undefined;
+
 /** Program calls use the direct-call envelope, ledger, expiry and authority. */
 export function pageProgramResult(
   registry: RegistryView,
@@ -606,6 +617,7 @@ export function pageProgramResult(
   routes: AgentRouteNames = META_ROUTES,
   held?: HeldResults,
   readBytes?: number,
+  keep?: KeepTransfer,
 ): Promise<{ data: unknown; format: "json" | "text" } | ProgramResultHandle> {
   return runEdge(
     pageProgramResultNative(
@@ -621,6 +633,7 @@ export function pageProgramResult(
       routes,
       held,
       readBytes,
+      keep,
     ),
   );
 }
@@ -639,6 +652,7 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
     routes: AgentRouteNames = META_ROUTES,
     held?: HeldResults,
     readBytes?: number,
+    keep?: KeepTransfer,
   ) {
     return authFlow<{ data: unknown; format: "json" | "text" } | ProgramResultHandle>(function* () {
       const passed = held?.secrets.revision ?? 0;
@@ -649,6 +663,9 @@ const pageProgramResultNative = /* @__PURE__ */ registerAuth(
       const serialized = format === "text" ? { text: String(data), binary: false } : serializedWithBinary(data);
       const text = secrets.text(serialized.text);
       const bytes = enc.encode(text);
+      const rebuildable = text === serialized.text && (format === "json" || isWellFormedText(text));
+      const kept = keep && rebuildable && bytes.length <= PROGRAM_RESULT_INLINE_BYTES ? keep(bytes, format) : undefined;
+      if (kept) return kept;
       const write = resolved.definition.classification !== "read";
       const cap = resolveMaxResultBytes(resolved.connector.maxResultBytes, registry.maxResultBytes);
       const notice = yield* upwardStep(
