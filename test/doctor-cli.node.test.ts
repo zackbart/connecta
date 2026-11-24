@@ -558,6 +558,95 @@ describe("connecta doctor --config", () => {
   });
 });
 
+describe("connecta doctor against a server that reflects its credentials", () => {
+  const credentials = {
+    CONNECTA_TOKEN: `reflected"token\\<&>%/'`,
+    CF_ACCESS_CLIENT_ID: "reflected-access-id.example",
+    CF_ACCESS_CLIENT_SECRET: "reflected+access&secret=",
+  };
+
+  function reflection(headers: Record<string, string | string[] | undefined>): string {
+    const values = [headers.authorization, headers["cf-access-client-id"], headers["cf-access-client-secret"]].map(
+      String,
+    );
+    return [
+      ...values,
+      JSON.stringify(headers),
+      JSON.stringify(JSON.stringify(headers)),
+      ...values.map(encodeURIComponent),
+      ...values.map((value) => value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`)),
+    ].join("\n");
+  }
+
+  async function reflectingDoctor(
+    route: "/health" | "/mcp" | "/ui/api/config",
+    args: string[] = [],
+  ): Promise<{ stdout: string; stderr: string }> {
+    const server = createServer((request, response) => {
+      if (request.url === route && route === "/ui/api/config") {
+        response.setHeader("Content-Type", "application/json");
+        response.end(
+          JSON.stringify({
+            schemaVersion: 2,
+            role: "maintainer",
+            config: { schemaVersion: 1, echoed: request.headers, quoted: reflection(request.headers) },
+          }),
+        );
+        return;
+      }
+      if (request.url === route) {
+        response.writeHead(431, { "Content-Type": "text/plain" });
+        response.end(reflection(request.headers));
+        return;
+      }
+      response.setHeader("Content-Type", "application/json");
+      response.end(JSON.stringify({ status: "ok", connectors: 0 }));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    teardown.push(() => new Promise<void>((done) => server.close(() => done())));
+    const address = server.address();
+    if (!address || typeof address === "string") throw new Error("Expected TCP address");
+    return run(process.execPath, [CLI, "doctor", "--url", `http://127.0.0.1:${address.port}`, ...args], {
+      env: { ...process.env, ...credentials },
+    }).then(
+      ({ stdout, stderr }) => ({ stdout, stderr }),
+      (error: { stdout: string; stderr: string }) => ({ stdout: error.stdout, stderr: error.stderr }),
+    );
+  }
+
+  function expectNoCredential(output: { stdout: string; stderr: string }) {
+    for (const value of Object.values(credentials)) {
+      for (const form of [value, `Bearer ${value}`, JSON.stringify(value).slice(1, -1), encodeURIComponent(value)]) {
+        expect(output.stdout).not.toContain(form);
+        expect(output.stderr).not.toContain(form);
+      }
+    }
+    expect(`${output.stdout}${output.stderr}`).not.toMatch(/reflected/);
+  }
+
+  it("INV-5: withholds a /health error body that quotes the request headers", async () => {
+    const output = await reflectingDoctor("/health");
+    expect(output.stderr).toContain("HTTP 431 from /health");
+    expectNoCredential(output);
+  });
+
+  it("INV-5: withholds an MCP error body that quotes the request headers", async () => {
+    const output = await reflectingDoctor("/mcp");
+    expect(output.stdout).toBe("");
+    expect(output.stderr).toContain("MCP 431 from /mcp");
+    expectNoCredential(output);
+  });
+
+  it("INV-5: redacts credentials a --config snapshot reflects", async () => {
+    const output = await reflectingDoctor("/ui/api/config", ["--config"]);
+    expect(output.stderr).toBe("");
+    expect(JSON.parse(output.stdout)).toMatchObject({ schemaVersion: 1, echoed: { host: expect.any(String) } });
+    expect(output.stdout).toContain("[redacted]");
+    expectNoCredential(output);
+  });
+});
+
 describe("connecta --help", () => {
   async function cli(line: string[]) {
     const cwd = await mkdtemp(join(tmpdir(), "connecta-help-"));

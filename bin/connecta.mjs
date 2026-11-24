@@ -23,13 +23,90 @@ function isHelp(arg) {
   return arg === "--help" || arg === "-h";
 }
 
+const REDACTED = "[redacted]";
+const HTML_ENTITY_NAMES = { '"': "|quot", "&": "|amp", "<": "|lt", ">": "|gt", "'": "|apos" };
+
+function escapeRegExp(text) {
+  return text.replace(/[\\^$.*+?()[\]{}|/-]/g, "\\$&");
+}
+
+function hexPattern(code) {
+  return [...code.toString(16).padStart(2, "0")]
+    .map((digit) => (/[a-f]/.test(digit) ? `[${digit}${digit.toUpperCase()}]` : digit))
+    .join("");
+}
+
+function encodedCharacterPattern(character) {
+  const code = character.charCodeAt(0);
+  const hex = hexPattern(code);
+  const backslashes = "\\\\{1,16}";
+  const backslashed =
+    character === "\\"
+      ? [`${backslashes}(?!\\\\)`, `${backslashes}u00${hex}`]
+      : [
+          `${backslashes}(?:u00${hex}${'"/'.includes(character) ? `|${escapeRegExp(character)}` : ""})`,
+          escapeRegExp(character),
+        ];
+  return `(?:${[
+    ...backslashed,
+    `%(?:25){0,4}${hex}`,
+    `&(?:amp;){0,4}(?:#0{0,4}${code}|#[xX]0{0,4}${hex}${HTML_ENTITY_NAMES[character] ?? ""});`,
+  ].join("|")})`;
+}
+
+function credentialPattern(value) {
+  if (!/^[\x21-\x7e]+$/.test(value)) return escapeRegExp(value);
+  return [...value].map(encodedCharacterPattern).join("");
+}
+
+let redactor = { key: "", pattern: undefined };
+
+function redactCredentials(text) {
+  const values = [
+    ...new Set(
+      DOCTOR_CREDENTIALS.map((name) => process.env[name]).filter((value) => typeof value === "string" && value),
+    ),
+  ].sort((a, b) => b.length - a.length);
+  const key = JSON.stringify(values);
+  if (redactor.key !== key) {
+    redactor = { key, pattern: values.length ? new RegExp(values.map(credentialPattern).join("|"), "g") : undefined };
+  }
+  return redactor.pattern ? text.replace(redactor.pattern, REDACTED) : text;
+}
+
+function redactStream(stream) {
+  const write = stream.write.bind(stream);
+  stream.write = (chunk, ...rest) => {
+    if (typeof chunk === "string") return write(redactCredentials(chunk), ...rest);
+    if (chunk instanceof Uint8Array) return write(redactCredentials(Buffer.from(chunk).toString("utf8")), ...rest);
+    return write(chunk, ...rest);
+  };
+}
+
+function printFailure(error) {
+  console.error(`[connecta] ${error instanceof Error ? error.message : String(error)}`);
+  process.exitCode = 1;
+}
+
+class DoctorFailure extends Error {}
+
+function terminalLabel(value) {
+  return value
+    .replace(/[^\w .+-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40)
+    .trim();
+}
+
 async function loadEnvFile(path) {
   let text;
   try {
     text = await readFile(path, "utf8");
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
-    throw error;
+    const code = error && typeof error === "object" && "code" in error ? String(error.code) : "";
+    if (code === "ENOENT") return;
+    throw new Error(`--dotenv file could not be read${code ? ` (${code})` : ""}.`);
   }
   const parsed = parseEnv(text);
   for (const name of DOCTOR_CREDENTIALS) {
@@ -133,20 +210,35 @@ function option(name, fallback) {
   return value;
 }
 
-async function jsonResponse(response) {
-  const text = await response.text();
+async function healthResponse(response) {
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}: ${text.slice(0, 500)}`);
+    await response.body?.cancel().catch(() => {});
+    throw new Error(`HTTP ${response.status} from /health (response body withheld).`);
   }
-  if ((response.headers.get("content-type") ?? "").includes("text/event-stream")) {
-    const line = text
-      .split("\n")
-      .filter((candidate) => candidate.startsWith("data:"))
-      .pop();
-    if (!line) throw new Error("MCP response contained no SSE data");
-    return JSON.parse(line.slice("data:".length).trim());
+  const text = await response.text();
+  const sse = (response.headers.get("content-type") ?? "").includes("text/event-stream");
+  const json = sse
+    ? text
+        .split("\n")
+        .filter((candidate) => candidate.startsWith("data:"))
+        .pop()
+        ?.slice("data:".length)
+        .trim()
+    : text;
+  if (json === undefined) throw new Error("/health response contained no SSE data.");
+  try {
+    return JSON.parse(json);
+  } catch {
+    throw new Error("/health returned a response that is not JSON.");
   }
-  return JSON.parse(text);
+}
+
+function parseJson(text) {
+  try {
+    return JSON.parse(text ?? "null");
+  } catch {
+    return undefined;
+  }
 }
 
 const DOCTOR_TIMEOUT_MS = 10_000;
@@ -257,24 +349,16 @@ async function doctor() {
     return;
   }
 
-  const health = await jsonResponse(await doctorFetch(`${baseUrl}/health`, { headers: authHeaders }));
-  if (health.status !== "ok") {
-    throw new Error(`Unexpected health status: ${String(health.status)}`);
+  const health = await healthResponse(await doctorFetch(`${baseUrl}/health`, { headers: authHeaders }));
+  if (health?.status !== "ok") {
+    throw new Error(`Unexpected health status: ${terminalLabel(String(health?.status))}`);
   }
   // Whatever ran the program is what doctor names. The deployment reports its
   // own sandbox and a deployment that reports none gets an executor-neutral
   // line — anything else is doctor asserting a sandbox it never saw (#368).
   // The string arrives from a server and lands in a terminal, so it is
   // sanitized here too rather than trusted twice.
-  const executorName =
-    typeof health.executor?.name === "string"
-      ? health.executor.name
-          .replace(/[^\w .+-]+/g, " ")
-          .replace(/\s+/g, " ")
-          .trim()
-          .slice(0, 40)
-          .trim()
-      : "";
+  const executorName = typeof health.executor?.name === "string" ? terminalLabel(health.executor.name) : "";
   const { Client, StreamableHTTPClientTransport } = await import("@modelcontextprotocol/client");
   const client = new Client(
     { name: "connecta-doctor", version: CONNECTA_VERSION },
@@ -282,9 +366,14 @@ async function doctor() {
   );
   // Agent endpoints bypass Access at the edge and read only the cta_ token.
   const endpoint = agent ? `/agent/${pool}` : "/mcp";
+  let failedPostStatus;
   const transport = new StreamableHTTPClientTransport(new URL(`${baseUrl}${endpoint}`), {
     requestInit: { headers: agent ? { Authorization: `Bearer ${token}` } : authHeaders },
-    fetch: doctorFetch,
+    fetch: async (url, init) => {
+      const response = await doctorFetch(url, init);
+      if (init?.method === "POST") failedPostStatus = response.ok ? undefined : response.status;
+      return response;
+    },
   });
   let negotiatedVersion;
   let native = false;
@@ -300,12 +389,12 @@ async function doctor() {
     native = surface?.surface === "native";
     executeCode = !native || surface.executeCode === true;
     if (native && surface.catalogErrors?.length)
-      throw new Error(
+      throw new DoctorFailure(
         `Native catalogs unavailable: ${surface.catalogErrors.join(", ")}. Inspect connector status and authentication.`,
       );
     // Tools are listed, from an older catalog, so nothing above notices that the connector did not answer.
     if (native && surface.staleCatalogs?.length)
-      throw new Error(
+      throw new DoctorFailure(
         `Native discovery degraded: ${surface.staleCatalogs.join(", ")} did not answer and listed from an older catalog. Inspect connector status.`,
       );
     readRoute = !native && actual.includes(READ_PROGRAM_TOOL);
@@ -325,7 +414,7 @@ async function doctor() {
           ].some((name) => actual.includes(name))
         : JSON.stringify(actual) !== JSON.stringify(expected)
     ) {
-      throw new Error(
+      throw new DoctorFailure(
         `Unexpected MCP surface. Expected ${expected.join(", ")}; received ` +
           `${Array.isArray(actual) ? actual.join(", ") : "no tool list"}.`,
       );
@@ -335,13 +424,18 @@ async function doctor() {
       const executed = await client.callTool({ name, arguments: { code: "async () => 42" } }, undefined, {
         timeout: DOCTOR_TIMEOUT_MS,
       });
-      const executionResult = executed.structuredContent ?? JSON.parse(executed.content?.[0]?.text ?? "null");
+      const executionResult = executed.structuredContent ?? parseJson(executed.content?.[0]?.text);
       if (executed.isError || executionResult?.result !== 42) {
-        throw new Error(
+        throw new DoctorFailure(
           `${executorName ? `${executorName} execution` : name} check ` + `failed: ${JSON.stringify(executed)}`,
         );
       }
     }
+  } catch (error) {
+    if (failedPostStatus !== undefined && !(error instanceof DoctorFailure)) {
+      throw new Error(`MCP ${failedPostStatus} from ${endpoint} (response body withheld).`);
+    }
+    throw error;
   } finally {
     await client.close();
   }
@@ -356,12 +450,16 @@ async function doctor() {
 try {
   if (isHelp(command)) usage();
   else if (command === "init") await init();
-  else if (command === "doctor") await doctor();
-  else {
+  else if (command === "doctor") {
+    redactStream(process.stdout);
+    redactStream(process.stderr);
+    process.on("uncaughtException", printFailure);
+    process.on("unhandledRejection", printFailure);
+    await doctor();
+  } else {
     usage();
     process.exitCode = 1;
   }
 } catch (error) {
-  console.error(`[connecta] ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
+  printFailure(error);
 }

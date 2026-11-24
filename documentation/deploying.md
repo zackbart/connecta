@@ -506,8 +506,13 @@ agent tokens only: with a person's credential doctor always checks plain
 `/mcp` and refuses `--pool`.
 `--dotenv <path>` reads `CONNECTA_TOKEN`, `CF_ACCESS_CLIENT_ID` and
 `CF_ACCESS_CLIENT_SECRET` from that file when it exists; a variable already set
-in the process environment wins, and a missing file changes nothing. The Node
+in the process environment wins, and a missing file changes nothing. An
+unreadable file fails with its error code only. The Node
 template's `npm run doctor` passes `--dotenv .env`.
+Doctor never prints these three credentials: a failed `/health` or MCP request
+reports its status without the response body, and any of their values in
+anything else doctor prints, plain, `Bearer`-prefixed, or JSON-, URL- or
+HTML-escaped, is replaced with `[redacted]`.
 For a Worker protected by Access, `/health` still needs edge admission even
 though `/agent/*` bypasses Access. Use an Access service token admitted by the
 Worker-level policy for that check, alongside the agent token:
