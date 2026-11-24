@@ -1442,9 +1442,19 @@ provider listings before observation or request-local storage. Failed listings
 are redacted in their own request and are never cached. Successful catalog caches and result
 stashes retain only intake-redacted values; there is no tool-response cache.
 Every nested string and object key passes through the redactor,
-including titles, descriptions, schemas and annotations. If a tool name would
-change, the complete catalog is refused. Rewriting a name changes dispatch;
-dropping only that tool would publish a partial catalog, against INV-8. Later
+including titles, descriptions, schemas and annotations. Intake redacts a tool
+listing twice: once over the tools as listed, and again over the whole result
+after `_meta` and `data:` icons are stripped, which puts different leaves next
+to each other. If either pass would change a tool name, the complete catalog is
+refused as a typed, payload-free failed listing that names no tool, and nothing
+is stored or served. For a custom connector the second pass runs only when its
+fallback copy is saved: a refusal there stores no fallback, and the live
+listing still answers. Rewriting a name changes dispatch;
+dropping only that tool would publish a partial catalog, against INV-8.
+The request-scoped passes that follow intake (over a listing as one request
+receives it, and over agent output) can still redact a name in that request's
+own view when it collides with a value the same request sent; the stored
+catalog is unaffected, and that name is not callable in that request. Later
 cached reads need no credential set because the stored facts are already clean.
 Echoed sensitive header lines are also withheld. They are read on the text
 before the echo is replaced and merged into its spans, so a private value that
