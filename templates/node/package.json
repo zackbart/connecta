@@ -11,7 +11,7 @@
   },
   "scripts": {
     "adopt-token": "tsx --env-file-if-exists=.env src/adopt-token.ts",
-    "doctor": "node --env-file-if-exists=.env node_modules/@zackbart/connecta/bin/connecta.mjs doctor --pool local-machine",
+    "doctor": "connecta doctor --pool local-machine --dotenv .env",
     "rotate-token": "tsx --env-file-if-exists=.env src/rotate-token.ts",
     "start": "tsx --env-file-if-exists=.env src/index.ts",
     "typecheck": "tsc --noEmit"

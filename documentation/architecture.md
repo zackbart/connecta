@@ -221,7 +221,7 @@ An admitted non-preflight `/mcp` request then takes five steps in
    challenge from the actual protected-resource metadata owner. No providers
    means open development and warns at construction.
 3. **Admit to the endpoint.** Plain `/mcp` admits a principal listed in
-   `maintainers` (or, with no inbound auth, the anonymous caller) and serves the
+   `maintainers` (or, with no resolved inbound adapter, the anonymous caller) and serves the
    whole catalog, or a person listed in one pool's `members`, matched by
    principal, and serves exactly that pool's tools. `/agent/<pool>` admits its
    agent members, matched by `identity.agent`, and serves exactly the pool's

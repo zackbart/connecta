@@ -62,7 +62,8 @@ npm start
 read `.env` from this directory when it exists and run unchanged without it.
 A variable already set in the process environment wins over the same name in
 `.env`, so `CONNECTA_TOKEN=... npm run doctor` overrides a value saved there.
-Running `npx tsx src/...` or `node` directly skips `.env`; use the npm scripts.
+Running `npx tsx src/...` or `node` directly skips `.env`, and so does
+`npx connecta doctor` without `--dotenv .env`; use the npm scripts.
 Compose reads `.env` for the container commands below. Keep the returned
 secret in a client secret store and out of source control and logs. A
 rotation cannot recover an old secret; only the hash persists. An agent has no

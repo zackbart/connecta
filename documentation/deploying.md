@@ -43,9 +43,10 @@ declared in `agents` in `src/connecta.config.ts`; the generated project declares
 issued token admits no MCP caller even though `/health` works. Rotating with the
 same command replaces the token immediately. `CONNECTA_TOKEN` is only a client/doctor variable;
 it never configures server authentication. The generated `npm start`,
-`rotate-token`, `adopt-token` and `doctor` scripts read `.env` from the project
-directory when it exists (Node's `--env-file-if-exists`); a variable already set
-in the process environment wins over the file. Docker Compose reads `.env`
+`rotate-token` and `adopt-token` scripts read `.env` from the project directory
+when it exists (Node's `--env-file-if-exists`), and `npm run doctor` reads it
+through doctor's `--dotenv .env`; in both, a variable already set in the
+process environment wins over the file. Docker Compose reads `.env`
 itself and passes values to the container, where no `.env` is copied.
 
 Edit `src/connecta.config.ts` for connectors, public URL, auth, maintainers,
@@ -488,6 +489,10 @@ Doctor checks health, the required executor, and the current meta-tool set, runn
 `cta_` token is checked at `/agent/<pool>` and needs `--pool`. `--pool` is for
 agent tokens only: with a person's credential doctor always checks plain
 `/mcp` and refuses `--pool`.
+`--dotenv <path>` reads `CONNECTA_TOKEN`, `CF_ACCESS_CLIENT_ID` and
+`CF_ACCESS_CLIENT_SECRET` from that file when it exists; a variable already set
+in the process environment wins, and a missing file changes nothing. The Node
+template's `npm run doctor` passes `--dotenv .env`.
 For a Worker protected by Access, `/health` still needs edge admission even
 though `/agent/*` bypasses Access. Use an Access service token admitted by the
 Worker-level policy for that check, alongside the agent token:

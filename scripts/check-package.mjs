@@ -255,13 +255,12 @@ async function waitForContainerHealth(url, timeoutMs, describe) {
   throw new Error(`Generated container did not become healthy within ${timeoutMs}ms:\n` + describe());
 }
 
-async function stopChild(child, { group = false } = {}) {
+async function stopChild(child) {
   if (child.exitCode !== null) return;
-  const signal = (name) => (group ? process.kill(-child.pid, name) : child.kill(name));
-  signal("SIGTERM");
+  child.kill("SIGTERM");
   await new Promise((resolvePromise) => {
     const timer = setTimeout(() => {
-      signal("SIGKILL");
+      child.kill("SIGKILL");
       resolvePromise();
     }, 5_000);
     void once(child, "exit").then(() => {
@@ -269,6 +268,26 @@ async function stopChild(child, { group = false } = {}) {
       resolvePromise();
     });
   });
+}
+
+function signalGroup(child, name) {
+  try {
+    process.kill(-child.pid, name);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function stopGroup(child) {
+  if (!signalGroup(child, "SIGTERM")) return;
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    if (!signalGroup(child, 0)) return;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  signalGroup(child, "SIGKILL");
 }
 
 try {
@@ -924,22 +943,38 @@ try {
       }
     }
   };
+  // The npm scripts must take PORT, the database path and doctor's token from
+  // .env alone; the default ./.connecta.sqlite must never appear.
   const generatedEnvFile = join(generatedRoot, ".env");
-  await writeFile(
-    generatedEnvFile,
-    `PORT=${port}\nCONNECTA_DATABASE=${generatedDatabase}\nCONNECTA_TOKEN=cta_${"B".repeat(43)}\n`,
-  );
-  const envFromFile = (overrides) => {
+  const defaultDatabase = join(generatedRoot, ".connecta.sqlite");
+  const envFileDatabase = join(generatedRoot, "env-file-state.sqlite");
+  const writeEnvFile = (values) =>
+    writeFile(
+      generatedEnvFile,
+      Object.entries(values)
+        .map(([name, value]) => `${name}=${value}\n`)
+        .join(""),
+    );
+  const envFromFile = (overrides = {}) => {
     const env = { ...process.env, ...serverEnv, ...overrides };
-    delete env.PORT;
-    delete env.CONNECTA_DATABASE;
+    for (const name of ["PORT", "CONNECTA_DATABASE", "CONNECTA_TOKEN"]) {
+      if (!(name in overrides)) delete env[name];
+    }
     return env;
   };
+  const npmScript = (script, scriptArgs, env) =>
+    execFileSync(npm, ["run", "--silent", script, "--", ...scriptArgs], {
+      cwd: generatedRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "inherit"],
+      env,
+    });
+  await writeEnvFile({ PORT: port, CONNECTA_DATABASE: envFileDatabase });
   let serverOutput = "";
   const deployment = spawn(npm, ["start"], {
     cwd: generatedRoot,
     env: envFromFile(),
-    detached: process.platform !== "win32",
+    detached: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
   const retainOutput = (chunk) => {
@@ -977,14 +1012,10 @@ try {
       process.platform === "win32" ? "connecta.cmd" : "connecta",
     );
     await assertClosed(`http://127.0.0.1:${port}`);
-    const smokeToken = provisionedToken(
-      execFileSync(npm, ["run", "--silent", "rotate-token", "--", "local-machine"], {
-        cwd: generatedRoot,
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "inherit"],
-        env: envFromFile(),
-      }),
-    );
+    const smokeToken = provisionedToken(npmScript("rotate-token", ["local-machine"], envFromFile()));
+    if (!existsSync(envFileDatabase) || existsSync(defaultDatabase)) {
+      throw new Error("npm start and rotate-token did not both use the database path from .env");
+    }
     expectFailure(
       generatedTsx,
       ["src/rotate-token.ts", "undeclared-machine"],
@@ -1003,17 +1034,22 @@ try {
     if (!doctorOutput.includes("QuickJS executed")) {
       throw new Error(`Doctor did not prove execution: ${doctorOutput}`);
     }
-    const scriptDoctorOutput = run(
-      npm,
-      ["run", "--silent", "doctor", "--", "--url", `http://127.0.0.1:${port}`],
-      generatedRoot,
-      { CONNECTA_TOKEN: smokeToken },
+    await writeEnvFile({ PORT: port, CONNECTA_DATABASE: envFileDatabase, CONNECTA_TOKEN: smokeToken });
+    const fileDoctorOutput = npmScript("doctor", ["--url", `http://127.0.0.1:${port}`], envFromFile());
+    if (!fileDoctorOutput.includes("QuickJS executed")) {
+      throw new Error(`npm run doctor did not read CONNECTA_TOKEN from .env: ${fileDoctorOutput}`);
+    }
+    await writeEnvFile({ PORT: port, CONNECTA_DATABASE: envFileDatabase, CONNECTA_TOKEN: `cta_${"B".repeat(43)}` });
+    const precedenceDoctorOutput = npmScript(
+      "doctor",
+      ["--url", `http://127.0.0.1:${port}`],
+      envFromFile({ CONNECTA_TOKEN: smokeToken }),
     );
-    if (!scriptDoctorOutput.includes("QuickJS executed")) {
-      throw new Error(`npm run doctor did not prefer the process CONNECTA_TOKEN over .env: ${scriptDoctorOutput}`);
+    if (!precedenceDoctorOutput.includes("QuickJS executed")) {
+      throw new Error(`npm run doctor did not prefer the process CONNECTA_TOKEN over .env: ${precedenceDoctorOutput}`);
     }
   } finally {
-    await stopChild(deployment, { group: process.platform !== "win32" });
+    await stopGroup(deployment);
     await rm(generatedEnvFile, { force: true });
   }
 
@@ -1067,19 +1103,15 @@ try {
     for (const entry of [legacyTokens.bound, legacyTokens.unbound]) {
       if (legacyDoctor(entry.token).status === 0) throw new Error("A token issued before agents admitted unbound");
     }
-    const adoptable = run(generatedTsx, ["src/adopt-token.ts"], generatedRoot, legacyEnv);
+    await writeEnvFile({ CONNECTA_DATABASE: legacyState });
+    const adoptable = npmScript("adopt-token", [], envFromFile());
     if (
       !adoptable.includes(legacyTokens.unbound.accessToken.id) ||
       adoptable.includes(legacyTokens.bound.accessToken.id)
     ) {
       throw new Error(`adopt-token did not list exactly the adoptable machine token: ${adoptable}`);
     }
-    run(
-      generatedTsx,
-      ["src/adopt-token.ts", legacyTokens.unbound.accessToken.id, "local-machine"],
-      generatedRoot,
-      legacyEnv,
-    );
+    npmScript("adopt-token", [legacyTokens.unbound.accessToken.id, "local-machine"], envFromFile());
     expectFailure(
       generatedTsx,
       ["src/adopt-token.ts", legacyTokens.bound.accessToken.id, "local-machine"],
@@ -1097,6 +1129,7 @@ try {
     console.log("v0.23 token compatibility: doctor passed with the adopted original secret");
   } finally {
     await stopChild(legacyDeployment);
+    await rm(generatedEnvFile, { force: true });
   }
 
   // The generated deployment is also the container: `connecta init` ships the

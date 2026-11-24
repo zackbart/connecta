@@ -850,8 +850,10 @@ provider other than the built-in agent-token adapter), and a non-empty
 `maintainers` on a deployment with no such provider. With agents alone
 (`accessTokens` as the only inbound auth), `maintainers` stays empty, nobody
 can be a maintainer, and plain `/mcp` and every operator API admit nobody; the
-agents reach only `/agent/<pool>` for the pools that list them. With no inbound auth at all, the
-deployment is open (see [pools](#pools)). `describeConfig()` lists
+agents reach only `/agent/<pool>` for the pools that list them. With no resolved inbound adapter at all
+(no `auth` entry, no `accessTokens` module and no agent with a `vercel` binding),
+plain `/mcp` admits a request carrying no credential as an anonymous caller,
+subject to connector `members` (see [pools](#pools)). `describeConfig()` lists
 `maintainers` as `{ namespace, id }` and each pool's resolved `members`,
 trimmed `description` (`null` when unset), and `path`, where its members
 connect: `/mcp` for a people pool, `/agent/<name>` for an agent pool.
@@ -1056,9 +1058,10 @@ createConnecta({
 });
 ```
 
-Without configured `auth`, an open deployment has one anonymous, non-interactive
-identity. It keeps plain `/mcp` with the whole catalog, as the construction
-warning says, no pool admits anyone because nobody can be a member,
+With no resolved inbound adapter, an open deployment has one anonymous,
+non-interactive identity for requests that carry no credential. It keeps plain
+`/mcp` with every connector whose `members` does not exclude it, as the
+construction warning says, no pool admits anyone because nobody can be a member,
 and every agent endpoint answers the machine-only 401 because no agent can be
 admitted.
 

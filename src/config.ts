@@ -459,10 +459,11 @@ const connectaConfig = {
     ),
   ),
   /**
-   * Inbound auth adapters, such as clerkAuth(...) and accessTokens(storage).
-   * Omitted or empty, the deployment authenticates nobody: plain /mcp admits
-   * every caller anonymously with the whole catalog, `maintainers` must stay
-   * empty, and construction logs a warning when any connector is configured.
+   * Inbound auth adapters, such as clerkAuth(...). `accessTokens` and agents
+   * with `vercel` bindings add their own adapters. When none results, plain
+   * /mcp admits a request carrying no credential as an anonymous caller,
+   * `maintainers` must be empty, and construction warns if any connector is
+   * configured.
    */
   auth: opaque<InboundAuth | InboundAuth[], readonly InboundAuth[]>({
     check: (value, path) => {
