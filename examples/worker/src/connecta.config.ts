@@ -88,9 +88,9 @@ export default defineConfig((env: Env) => {
     // Required adapter owns each run's handles; direct upstream construction throws.
     executor: workerExecutor({ loader: env.LOADER }),
     // Remote MCP servers built on the MCP TypeScript SDK mark every tool list
-    // immediately stale (ttlMs: 0). Reuse such a list for this many seconds;
-    // a tool the server reclassifies from read to write is noticed at most
-    // that long afterwards. 0 relists on every request.
+    // immediately stale (ttlMs: 0) by default. Reuse such a list for this many
+    // seconds; a tool the server adds or reclassifies from read to write is
+    // not seen until then. 0 relists on every request.
     discovery: { catalogZeroTtlSeconds: 300 },
     // Access owns edge admission and proves human identity for MCP and the
     // operator pages. Agents use /agent/<pool>, which Access bypasses and

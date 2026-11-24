@@ -288,17 +288,21 @@ guides may still name those tools. A pool serves exactly its `tools` to its
 `members`. See [pools](./auth.md#pools) before changing `readOnly`.
 
 The template and Worker example set `discovery: { catalogZeroTtlSeconds: 300 }`;
-the library default is 0. Remote MCP servers built on the MCP TypeScript SDK
-answer `tools/list` with `ttlMs: 0`, which marks the list stale at once. With
-the default of 0, Connecta lists such a server again on every request. A
-positive value reuses that list for that many seconds, raised to
-`discovery.catalogMinTtlSeconds` and capped at `discovery.catalogMaxTtlSeconds`.
-A tool the downstream adds, or reclassifies from read to write, is then noticed
-at most that long afterwards: the bound already accepted for a server that
-omits `ttlMs`, through `discovery.catalogTtlSeconds` (default 300), plus at
-most five minutes while a relisting fails transiently. Writes stay
-refused on read-only routes once the window lapses. Set it to 0 only when every
-downstream change must be seen on the next request.
+the library default is 0. A remote MCP server built on the MCP TypeScript SDK
+answers `tools/list` with `ttlMs: 0` unless its author sets another value, which
+marks the list stale at once. With the default of 0, Connecta lists such a
+server again on every request. A positive value reuses that list for that many
+seconds, raised to `discovery.catalogMinTtlSeconds`; a value above
+`discovery.catalogMaxTtlSeconds` fails at construction. While a list is reused,
+calls use its tools and classifications, so a tool the downstream adds, or
+reclassifies from read to write, is not seen until the window lapses and a
+listing succeeds; a read-only route then refuses the reclassified tool before
+dispatch. That is the bound already accepted for a server that omits `ttlMs`,
+through `discovery.catalogTtlSeconds` (default 300). When the listing after the
+window fails transiently, calls keep the old list for at most five more minutes
+and then fail, and search and native tool lists may show the old list, marked
+stale, for up to a day while the server does not answer. Set it to 0 only when
+every downstream change must be seen on the next request.
 [Read programs](./meta-tools.md#read-programs) owns the reclassification bound.
 
 ## Connect an MCP host
@@ -565,8 +569,9 @@ The current Node template already declares this dependency.
 For Node upgrades, retain the template's `listen` entrypoint and apply the
 [Node transport and proxy requirements](#start-on-node).
 
-An existing deployment adds `discovery: { catalogZeroTtlSeconds: 300 }` to its
-configuration to match the current template and Worker example. Without it,
+An existing deployment adds `catalogZeroTtlSeconds` to the `discovery` object
+in its configuration; the current template and Worker example use 300. Choose a
+value no greater than the deployment's `catalogMaxTtlSeconds`. Without it,
 every remote MCP connector whose server sends `ttlMs: 0` is listed again on
 every request. The trade-off is the one stated in
 [Compose capabilities and access](#compose-capabilities-and-access).
