@@ -442,11 +442,7 @@ export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ?
       "result(id: string | Paged, options: {",
       "result(id: string, options: {",
     ],
-    [
-      "a whole result read as a page",
-      "{ all: true }): Promise<Exclude<Result, Paged>>;",
-      "{ all: true }): Promise<{ text: string }>;",
-    ],
+    ["a whole result read as a page", "{ all: true }): Promise<Data>;", "{ all: true }): Promise<{ text: string }>;"],
     ["a whole result with an invented option", "options: { all: true })", "options: { all: true; page?: number })"],
   ])(
     "rejects %s",

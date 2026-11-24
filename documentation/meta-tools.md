@@ -148,8 +148,9 @@ answer, so an agent can start without a tool-search hop. Loading `search_tools`
 upfront would still need a second hop to reach a tool that runs the call. The
 read route is the one that needs no write approval; on an endpoint without it,
 `execute_code` is the program route. Its description carries the connector
-inventory and stays under the 4,096 characters such a host keeps of a tool it
-loads upfront. A native pool lists each downstream tool under its own name and
+inventory and stays within the 4,096 characters such a host keeps of a tool it
+loads upfront: the inventory is capped at 1,024 bytes, or less where the
+description would otherwise pass that cut-off. A native pool lists each downstream tool under its own name and
 description, which is what the host's tool search indexes, so no tool there
 loads upfront. The person configuring the server can still override the hint.
 
@@ -366,8 +367,13 @@ Write each description so its first 60 bytes tell the connector apart from its
 neighbours. Purposes stay in this inventory, never in the instructions, which
 some hosts repeat on every tool.
 
-The complete line, legend included, caps at 1,024 UTF-8 bytes, which names every
-connector of a typical deployment. Past the cap, detail degrades before names do:
+The complete line, legend included, is capped at 1,024 UTF-8 bytes, which names
+every connector of a typical deployment, or less where the description would
+otherwise pass the 4,096-character host cut-off. That smaller cap is the room
+the longer of the endpoint's program-tool descriptions leaves once its own
+wording is rendered without the inventory. Both tools carry the same line.
+Because a character is never fewer than one UTF-8 byte, a line within that many
+bytes is within that many characters. Past the cap, detail degrades before names do:
 purposes are dropped first, from the end of registry order, then titles. Only
 when bare ids still exceed it do whole entries give way, in registry order, to an
 exact `+N more` count. The inventory reads only the configured registry: no
@@ -666,7 +672,8 @@ call_destructive_tool. Everything else: execute_code.`). Where
 read-only endpoint `execute_code`'s first line names `call_tool` for one known
 read. Each description
 stays within 4,096 characters, where some hosts cut descriptions and stop
-matching search terms, even at the largest inventory the cap admits. The `usage` skill points to those two sources instead
+matching search terms: the [inventory](#discovery-context) gives way before the
+description would pass that cut-off. The `usage` skill points to those two sources instead
 of repeating them.
 
 Tool descriptions and output schemas carry deployment configuration only: the

@@ -229,6 +229,9 @@ describe("native tool surface", () => {
     const shown = granted.split("; ")[0]!.split(", ").slice(0, -1);
     expect(ids[0]!.length).toBe(60);
     expect(description.length).toBeLessThanOrEqual(4_096);
+    const program = tools.find((tool) => tool.name === "execute_code")!.description;
+    expect(program).toMatch(/^Connectors: .*; \+\d+ more\.$/m);
+    expect(program.length).toBeLessThanOrEqual(4_096);
     expect(new TextEncoder().encode(granted).length).toBeLessThanOrEqual(1_024);
     expect(shown).toEqual(ids.slice(0, shown.length));
     expect(granted).toBe([...shown, `+${ids.length - shown.length} more`].join(", "));

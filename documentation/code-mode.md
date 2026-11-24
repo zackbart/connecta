@@ -402,7 +402,7 @@ The published `GuestApi` type describes the supplied global for editors.
 The `execute_code` description declares a compact subset of it inline: argument
 shapes that match what `GuestApi` accepts, result fields it returns, and no
 others. `result` is declared with both forms: `{ all: true }` returning the
-whole `Exclude<Result, Paged>`, and the paging options returning
+whole non-paged `Data`, and the paging options returning
 `{ text, hasMore, nextOffset? }`. Authored emit blocks are the exact variants `M1` accepts;
 forwarded blocks are the native variants from `result.content`. It also
 states that search and describe return objects rather than arrays, that a row with
