@@ -357,13 +357,33 @@ describe("request-free lexical reuse", () => {
       expect(rankTools(visible, "ticket").map((match) => match.tool)).toEqual([tools[0]]);
     }
   });
-  it("evicts beyond four entries and refuses indexes above the byte budget", () => {
-    prepareLexicalCatalog(catalog(), "eviction:first");
-    for (let i = 0; i < 4; i++) prepareLexicalCatalog(catalog(), `eviction:${i}`);
+  it("reuses more than four catalogs searched in rotation", () => {
+    const partitions = Array.from({ length: 6 }, (_, i) => `rotation:${i}`);
+    for (const partition of partitions) prepareLexicalCatalog(catalog(), partition);
     const tokenize = vi.spyOn(String.prototype, "toLowerCase");
-    prepareLexicalCatalog(catalog(), "eviction:first");
-    expect(tokenize).toHaveBeenCalled();
+    for (const partition of partitions) prepareLexicalCatalog(catalog(), partition);
+    expect(tokenize).not.toHaveBeenCalled();
     tokenize.mockRestore();
+  });
+  it("evicts the least recently used index at the byte budget and refuses oversized indexes", () => {
+    const large = (): ToolDef[] => {
+      const tools = catalog();
+      tools[0]!.description = "x".repeat(480 * 1024);
+      return tools;
+    };
+    const tokenizes = (partition: string) => {
+      const spy = vi.spyOn(String.prototype, "toLowerCase");
+      prepareLexicalCatalog(large(), partition);
+      const called = spy.mock.calls.length > 0;
+      spy.mockRestore();
+      return called;
+    };
+    expect(tokenizes("budget:alice")).toBe(true);
+    expect(tokenizes("budget:bob")).toBe(true);
+    expect(tokenizes("budget:alice")).toBe(false);
+    expect(tokenizes("budget:carol")).toBe(true);
+    expect(tokenizes("budget:alice")).toBe(false);
+    expect(tokenizes("budget:bob")).toBe(true);
     const oversized = catalog();
     oversized[0]!.description = "x".repeat(4 * 1024 * 1024);
     prepareLexicalCatalog(oversized, "oversized");
