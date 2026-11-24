@@ -287,6 +287,21 @@ write tools from search and describe and refuses every write call; provider
 guides may still name those tools. A pool serves exactly its `tools` to its
 `members`. See [pools](./auth.md#pools) before changing `readOnly`.
 
+The template and Worker example set `discovery: { catalogZeroTtlSeconds: 300 }`;
+the library default is 0. A remote MCP server built on the MCP TypeScript SDK
+answers `tools/list` with `ttlMs: 0` unless its author sets another value, which
+marks the list stale at once. With the default of 0, Connecta lists such a
+server again on every request. A value of one second or more reuses that list
+for that long, raised to `discovery.catalogMinTtlSeconds`; a value above
+`discovery.catalogMaxTtlSeconds` fails at construction. While a list is reused,
+calls use its tools and classifications, so a tool the downstream adds, or
+reclassifies from read to write, may go unseen until the window lapses and a
+listing succeeds. That is the bound already accepted for a server that omits
+`ttlMs`, through `discovery.catalogTtlSeconds` (default 300). A server that
+cannot be listed once the window lapses is handled as any expired catalog is.
+Set it to 0 only when every downstream change must be seen on the next request.
+[Read programs](./meta-tools.md#read-programs) owns the reclassification bound.
+
 ## Connect an MCP host
 
 Every host gets the pool's endpoint URL and one credential: an agent token at
@@ -550,6 +565,13 @@ The current Node template already declares this dependency.
 
 For Node upgrades, retain the template's `listen` entrypoint and apply the
 [Node transport and proxy requirements](#start-on-node).
+
+An existing deployment adds `catalogZeroTtlSeconds` to the `discovery` object
+in its configuration; the current template and Worker example use 300. Choose a
+value no greater than the deployment's `catalogMaxTtlSeconds`. Without it,
+every remote MCP connector whose server sends `ttlMs: 0` is listed again on
+every request. The trade-off is the one stated in
+[Compose capabilities and access](#compose-capabilities-and-access).
 
 Authenticated MCP bodies now default to 4 MiB through
 `admission.requests.maxBodyBytes`; Node's separate pre-auth buffer also defaults
