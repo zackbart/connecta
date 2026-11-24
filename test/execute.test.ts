@@ -1040,6 +1040,30 @@ it.each([
   expect(out.structuredContent).toMatchObject({ error: { code: "program_error", message, details: { name } } });
 });
 
+it.each([
+  "TypeError: cannot read property '(' of undefined",
+  "TypeError: Cannot read properties of null (reading '[(*+?')",
+])(
+  "INV-6: gives the conditional shape hint for a property read %j without reading the name as a pattern",
+  async (error) => {
+    const out = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      fakeExecutor({ result: undefined, error }),
+      silentLogger,
+    )({ code: 'async () => (await connecta.call("calc.add", {})).rows["("]' });
+    expect(out.structuredContent).toMatchObject({
+      error: {
+        code: "program_error",
+        details: {
+          name: "TypeError",
+          hint: "If that value came from connecta: search and describe return { tools }; call returns { data, format }.",
+        },
+      },
+    });
+  },
+);
+
 it.each(["", "x", "failed"])("INV-6: does not match short failure prose %j by containment", async (message) => {
   const connector = connectorWith({
     id: "bad",

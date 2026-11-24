@@ -1,6 +1,5 @@
 import { GUEST_FUNCTIONS } from "./guest-functions.js";
 import { LEADING_TRIVIA } from "./program-source.js";
-import { misreadsResultShape } from "./result-shape-misread.js";
 
 /** Capture the single-use runner before evaluating the guest expression. */
 export function wrapGuestProgram(code: string): string {
@@ -317,8 +316,12 @@ export function programError(
   ) {
     hint =
       'Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill("usage"). Services are addressed by connector.tool, never guest globals.';
-  } else if (name === "TypeError" && misreadsResultShape(message, code)) {
-    hint = "search and describe return { tools }; call returns { data, format }.";
+  } else if (
+    name === "TypeError" &&
+    /not a function|not iterable|\bcannot read propert(?:y(?: '.*')?|ies) of (?:undefined|null)\b/i.test(message) &&
+    /\bconnecta\s*\.\s*(?:search|describe|call)\b/.test(code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ""))
+  ) {
+    hint = "If that value came from connecta: search and describe return { tools }; call returns { data, format }.";
   } else if (name === "SyntaxError" && !/^(?:async\b|\(|function\b)/.test(code.replace(LEADING_TRIVIA, ""))) {
     hint = "Pass one expression: async () => { ...; return answer; }.";
   }

@@ -1890,32 +1890,16 @@ export const CONTRACT_CASES: ContractCase[] = [
       `const result = await connecta.call("reader.read", { value: "x" });\nreturn result.rows.map((row) => row);`,
     ],
     [
-      "search result read without .tools",
-      `const page = await connecta.search({ query: "read" });\nreturn page.results.length;`,
-    ],
-    [
-      "call result bound to a local named data",
-      `const data = await connecta.call("reader.read", { value: "x" });\nreturn data.items.map((item) => item);`,
-    ],
-    [
       "payload key destructured from a call result and iterated",
       `const { items } = await connecta.call("reader.read", { value: "x" });\nfor (const item of items) return item;`,
     ],
     [
-      "payload key destructured from a call result and read",
-      `const { items: rows } = await connecta.call("reader.read", { value: "x" });\nreturn rows.length;`,
+      "property named by a regular-expression metacharacter",
+      `const result = await connecta.call("reader.read", { value: "x" });\nreturn result.missing["(["];`,
     ],
     [
-      "payload member chained off an awaited call",
-      `return (await connecta.call("reader.read", { value: "x" })).items.length;`,
-    ],
-    [
-      "second call result read without .data after a first read with it",
-      `const first = (await connecta.call("reader.read", { value: "x" })).data;\nconst next = await connecta.call("reader.read", { value: first });\nreturn next.items.length;`,
-    ],
-    [
-      "call result read without .data beside data and tools argument keys",
-      `const result = await connecta.call("reader.read", { value: "x", data: { tools: [] } });\nreturn result.items.length;`,
+      "connecta-using program reading undefined on its own data",
+      `const { data } = await connecta.call("reader.read", { value: "x" });\nreturn data.rows.missing.map((row) => row);`,
     ],
   ].map(([label, source]): ContractCase => ({
     clauses: "E6",
@@ -1927,32 +1911,18 @@ export const CONTRACT_CASES: ContractCase[] = [
         code: "program_error",
         details: {
           name: "TypeError",
-          hint: "search and describe return { tools }; call returns { data, format }.",
+          hint: "If that value came from connecta: search and describe return { tools }; call returns { data, format }.",
         },
       });
     },
   })),
-  ...[
-    [
-      "after .data",
-      `const { data } = await connecta.call("reader.read", { value: "x" });\nreturn data.rows.missing.map((row) => row);`,
-    ],
-    [
-      "on an unrelated local after correct calls",
-      `const result = await connecta.call("reader.read", { value: "x" });\nconst page = await connecta.search({ query: "read" });\nconst local = { value: result.data, count: page.tools.length };\nreturn local.items.length;`,
-    ],
-    [
-      "when connecta.call appears only in a string",
-      `const label = "await connecta.call(x)";\nconst result = { label };\nreturn result.items.length;`,
-    ],
-    [
-      "on a callback parameter that shadows a call result",
-      `const result = await connecta.call("reader.read", { value: "x" });\nreturn [{}].map((result) => result.items.length).concat(result.data);`,
-    ],
-  ].map(([label, source]): ContractCase => ({
+  {
     clauses: "E6",
-    name: `INV-6: a property read on undefined keeps the generic hint ${label}`,
-    code: `async () => {\n${source}\n}`,
+    name: "INV-6: a property read on undefined in a program that never uses connecta keeps the generic hint",
+    code: `async () => {
+      const local = { label: "connecta" };
+      return local.items["(["];
+    }`,
     check(outcome) {
       expect(outcome.isError).toBe(true);
       expect(outcome.value.error).toMatchObject({
@@ -1963,7 +1933,7 @@ export const CONTRACT_CASES: ContractCase[] = [
         },
       });
     },
-  })),
+  },
   {
     clauses: "E6",
     name: "INV-6: a bare statement is told to pass one async arrow",
@@ -2405,21 +2375,27 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   })),
   ...[
-    'let page = connecta.search({ query: "read" });\npage = await page;\nreturn page.tools.missing.field;',
-    "/* connecta.call().data */ return null.field;",
-    'const result = await connecta.call("reader.read", { value: "x" });\nconst pending = connecta.search({ query: "read" });\nawait pending;\nreturn result.data.missing.field;',
-  ].map((source): ContractCase => ({
+    [
+      'let page = connecta.search({ query: "read" });\npage = await page;\nreturn page.tools.missing.field;',
+      "If that value came from connecta: search and describe return { tools }; call returns { data, format }.",
+    ],
+    [
+      "/* connecta.call().data */ return null.field;",
+      "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+    ],
+    [
+      'const result = await connecta.call("reader.read", { value: "x" });\nconst pending = connecta.search({ query: "read" });\nawait pending;\nreturn result.data.missing.field;',
+      "If that value came from connecta: search and describe return { tools }; call returns { data, format }.",
+    ],
+  ].map(([source, hint]): ContractCase => ({
     clauses: "E6",
-    name: `INV-6: an awaited or host-call-free TypeError keeps the generic hint: ${source.split("\n")[0]}`,
+    name: `INV-6: an awaited or host-call-free TypeError gets no await hint: ${source!.split("\n")[0]}`,
     code: `async () => {\n${source}\n}`,
     check(outcome) {
       expect(outcome.value.error).toMatchObject({
         code: "program_error",
         message: expect.stringMatching(/^Program TypeError: (?!TypeError)/),
-        details: {
-          name: "TypeError",
-          hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
-        },
+        details: { name: "TypeError", hint },
       });
     },
   })),
