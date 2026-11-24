@@ -15,7 +15,7 @@ import { Registry, type RegistryView } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resultKeys, scopes } from "../src/storage/keys.js";
 import { httpDownstream } from "./fixtures/downstream-mcp.js";
-import { scriptedExecutor } from "./fixtures/misc.js";
+import { scriptedExecutor, watchTransferMemory } from "./fixtures/misc.js";
 import { seedGrant } from "./fixtures/oauth.js";
 import { installOwnedTransport } from "./fixtures/owned-transport.js";
 import { activitySink, silentLogger } from "./helpers.js";
@@ -1715,6 +1715,8 @@ function transferRegistry(storage: KVStorage, bytes: number) {
           return [
             ...["read", "json", "check"].map((name) => ({ name, annotations: { readOnlyHint: true } })),
             { name: "write", annotations: { readOnlyHint: false, destructiveHint: true } },
+            { name: "silent" },
+            { name: "declared", annotations: { readOnlyHint: false, destructiveHint: true } },
           ];
         },
         async callTool(name, args) {
@@ -1732,7 +1734,7 @@ function transferRegistry(storage: KVStorage, bytes: number) {
         },
       },
     ],
-    { storage, logger: silentLogger },
+    { storage, logger: silentLogger, classification: { store: { silent: "read", declared: "read-repeatable" } } },
   );
 }
 
@@ -1749,6 +1751,28 @@ const TRANSFER_READS = `async () => {
     row: json.data.rows.at(-1).name,
   };
 }`;
+
+/** A run that ends while a read sits held and unpaged releases it, and still retains the read (R9). */
+export async function checkEndedRunReleasesHeldRead(executor: Executor): Promise<void> {
+  const memory = watchTransferMemory();
+  const outcome = await createExecuteTool(
+    transferRegistry(memoryStorage(), 600_000),
+    BASE,
+    executor,
+    silentLogger,
+  )({
+    code: `async () => {
+      connecta.call("store.read");
+      const started = Date.now();
+      while (Date.now() - started < 20000) {}
+      return "unreachable";
+    }`,
+  });
+  expect(outcome.isError, JSON.stringify(outcome.structuredContent)).toBe(true);
+  expect([memory.holds, memory.heldBytes]).toEqual([1, 0]);
+  const [call] = outcome.structuredContent!.calls as [{ outcome: string; resultId?: string }];
+  expect(call).toMatchObject({ outcome: "success", resultId: expect.any(String) });
+}
 
 /** A read whose value the guest reconstructs in its own run never reaches result storage. */
 export const memoryTransferCases: Record<string, (executor: Executor) => Promise<void>> = {
@@ -1834,6 +1858,35 @@ export const memoryTransferCases: Record<string, (executor: Executor) => Promise
     });
     expect(later.structuredContent!.result, JSON.stringify(later.structuredContent)).toBe(221_844);
   },
+  "[L6] INV-1 INV-9: a write-like tool served as a read is stashed, never held, and reclaimed before the program continues":
+    async (executor) => {
+      const memory = watchTransferMemory();
+      for (const tool of ["silent", "declared", "read"]) {
+        const logged = loggedStorage();
+        const holdsBefore = memory.holds;
+        const outcome = await createExecuteTool(
+          transferRegistry(logged.storage, 600_000),
+          BASE,
+          executor,
+          silentLogger,
+          undefined,
+          { readOnly: false },
+        )({
+          code: `async () => {
+            const read = await connecta.call("store.${tool}");
+            return { length: read.data.length, after: (await connecta.call("store.check")).data };
+          }`,
+        });
+        expect(outcome.structuredContent!.result, `${tool}: ${JSON.stringify(outcome.structuredContent)}`).toEqual({
+          length: 221_844,
+          after: { charges: 0, chunks: 0 },
+        });
+        const stashed = logged.results().filter((call) => call.startsWith(`set ${RESULT_PREFIX}`)).length;
+        expect([tool, memory.holds - holdsBefore, stashed]).toEqual(
+          tool === "read" ? [tool, 1, 0] : [tool, 0, Math.ceil(600_000 / 49_152) - 1],
+        );
+      }
+    },
   "[L6] INV-9: a write's stash is stored before its program continues": async (executor) => {
     const storage = memoryStorage();
     const outcome = await createExecuteTool(

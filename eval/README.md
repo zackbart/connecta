@@ -356,8 +356,8 @@ reused cell; that is checked through the baseline.
 
 **Gated counters**: the baseline holds every counter of every cell. In the
 600 KiB cells a program's two reads reach the guest from the run's memory
-([`L6`](../documentation/code-mode.md#cancellation-and-limits)), so they store
-nothing and no wall-clock reclaim budget enters the program's counts. The only
+([`L6`](../documentation/code-mode.md#cancellation-and-limits)), so they store no
+result and no wall-clock reclaim budget enters the program's counts. The only
 stash the counted requests make is each `call_tool`'s 600 KiB result, about
 1.8 MiB in three entries per cell, inside the 8 MiB and 64-entry stash limits.
 

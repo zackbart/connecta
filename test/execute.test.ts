@@ -12,7 +12,6 @@ import {
 } from "../src/meta-tools.js";
 import { assertExecutor, customExecutor } from "../src/executor-contract.js";
 import type { CallErrorDetails } from "../src/errors.js";
-import { TransferMemory } from "../src/program-result.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   AdmittingExecutor,
@@ -24,7 +23,7 @@ import type {
 } from "../src/types.js";
 import { connectorWith } from "./fixtures/connectors.js";
 import { makeDeployment, mcpRpc, readJsonRpc } from "./fixtures/http.js";
-import { deferred, scriptedExecutor } from "./fixtures/misc.js";
+import { deferred, scriptedExecutor, watchTransferMemory } from "./fixtures/misc.js";
 import { activitySink, calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -79,6 +78,56 @@ describe("execute_code intake", () => {
   });
 });
 
+describe("a run's held reads", () => {
+  const reader: Connector = connectorWith({
+    id: "reader",
+    kind: "api",
+    tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+    call: async () => "x".repeat(600_000),
+  });
+
+  it("[L6] INV-7: a caller's abort after the first of several pages releases the read, and the next page fails", async () => {
+    const memory = watchTransferMemory();
+    const caller = new AbortController();
+    const seen: { first?: unknown; held?: number; next?: string } = {};
+    const out = await createExecuteTool(
+      makeRegistry([reader]),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        const reply = (await required(fns.call)("reader.read", {})) as { transfer: string };
+        seen.first = ((await required(fns.result)(reply.transfer)) as { hasMore: boolean }).hasMore;
+        caller.abort();
+        seen.held = memory.heldBytes;
+        seen.next = await required(fns.result)(reply.transfer).then(
+          () => "served",
+          (error: unknown) => (error as Error).message,
+        );
+        return "done";
+      }),
+      silentLogger,
+    )({ code: "async () => 1" }, { signal: caller.signal });
+    expect(out.isError).toBe(true);
+    expect(memory.holds).toBe(1);
+    expect(seen).toEqual({ first: true, held: 0, next: expect.stringMatching(/run ended/) });
+    expect(memory.heldBytes).toBe(0);
+  });
+
+  it("[L6] INV-7: a read the guest never pages is released when the run ends", async () => {
+    const memory = watchTransferMemory();
+    const out = await createExecuteTool(
+      makeRegistry([reader]),
+      BASE,
+      scriptedExecutor(async (fns) => {
+        await required(fns.call)("reader.read", {});
+        return "done";
+      }),
+      silentLogger,
+    )({ code: "async () => 1" });
+    expect(out.structuredContent?.result, JSON.stringify(out.structuredContent)).toBe("done");
+    expect([memory.holds, memory.heldBytes]).toEqual([1, 0]);
+  });
+});
+
 describe("buildSandboxProviders", () => {
   it("INV-1: fails closed for unannotated and contradictory tool definitions", async () => {
     let calls = 0;
@@ -107,30 +156,6 @@ describe("buildSandboxProviders", () => {
     await expect(required(connecta.fns.call)("ambiguous.missing_annotations", {})).rejects.toThrow("is a write");
     await expect(required(connecta.fns.call)("ambiguous.contradictory", {})).rejects.toThrow("is a write");
     expect(calls).toBe(0);
-  });
-
-  it("[L6] INV-7: a run's end releases a read it was still transferring from memory", async () => {
-    const reader: Connector = connectorWith({
-      id: "reader",
-      kind: "api",
-      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
-      call: async () => "x".repeat(600_000),
-    });
-    const run = new AbortController();
-    const transferMemory = new TransferMemory(undefined, run.signal);
-    const connecta = connectaProvider(
-      await buildSandboxProviders(makeRegistry([reader]), BASE, silentLogger, undefined, {
-        signal: run.signal,
-        transferMemory,
-      }),
-    );
-    const reply = (await required(connecta.fns.call)("reader.read", {})) as { transfer: string };
-    const page = (await required(connecta.fns.result)(reply.transfer)) as { hasMore: boolean; text: string };
-    expect(page).toMatchObject({ hasMore: true, text: "x".repeat(32_768) });
-    expect(transferMemory.heldBytes).toBe(600_000);
-    run.abort();
-    expect(transferMemory.heldBytes).toBe(0);
-    expect(transferMemory.hold(new Uint8Array(1))).toBeUndefined();
   });
 
   it("lets programs discover only calls the sandbox can execute", async () => {

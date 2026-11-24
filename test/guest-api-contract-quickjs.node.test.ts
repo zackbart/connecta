@@ -45,6 +45,7 @@ import {
   checkProgramReturnPaging,
   checkProgramReturnWriteWarning,
   checkReclaimAfterSealingBegan,
+  checkEndedRunReleasesHeldRead,
   checkTransferReclaim,
   memoryTransferCases,
   wholeReadSealingCases,
@@ -145,6 +146,14 @@ describe("guest API contract (QuickJS executor)", () => {
   for (const [title, check] of Object.entries(memoryTransferCases)) {
     it(title, () => check(executor), 60_000);
   }
+  it("[L6, R9] INV-7: a CPU timeout releases a read held unpaged and still retains it", async () => {
+    const limited = quickJsExecutor({ cpuTimeMs: 1_500 });
+    try {
+      await checkEndedRunReleasesHeldRead(limited);
+    } finally {
+      await limited.close?.();
+    }
+  }, 60_000);
   it("[S11] scales the whole-read ceiling with the CPU budget and caps it", async () => {
     const ceiling = (options: Parameters<typeof quickJsExecutor>[0]) => {
       const scaled = quickJsExecutor(options);

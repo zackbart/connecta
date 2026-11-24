@@ -910,9 +910,11 @@ during the page read still refuses the page. For example, a search handle with
 30 tool dependencies requires the same number of authentications as one with
 one dependency. Paging deadlines cover both storage and access validation;
 timeout errors identify the active stage as `result storage` or `access validation`.
-A read a program receives whole from its run's memory is no stored page, so it takes
-neither pass ([`L6`](./code-mode.md#cancellation-and-limits)): its call was admitted in
-that run, and no id names its bytes.
+A read a program receives whole from its run's memory is no stored result and has no
+id, so it takes neither pass: once a run is admitted, its reads of up to 1 MiB
+arrive whole for the rest of that run even if access is revoked partway through,
+bounded by the run's deadline and the response ceiling, as every read small enough
+to cross inline always has ([`L6`](./code-mode.md#cancellation-and-limits)).
 
 New entries store UTF-8 bytes in a base64 envelope split across storage keys,
 48 KiB of result text per chunk — widening past roughly 1.5 MB so no result

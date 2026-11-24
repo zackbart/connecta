@@ -1376,15 +1376,31 @@ including U+FEFF at page starts.
 A read's pages come from the run's own memory. A read here is a call whose source
 and served classification are both read, as in `R9`. Its value, up to 1 MiB and
 already redacted, is held until its last page is served, and each page passes the
-run's output redaction like any host reply. No page touches storage or rechecks
-access: the run just received the value from a call it admitted, as it receives a
-value small enough for one message, and no id names those bytes. A run holds at most
-4 MiB of such reads at once (`L4`), four at the 1 MiB maximum, and releases all of
-them when it ends, by an answer, a throw, a timeout, cancellation or an executor
-failure alike. A read past that bound takes the stash below, as do a JSON read whose
-text redaction changed its serialized bytes and raw text with unpaired surrogates. A
-write's result, a source write served as a read included, is stashed before the
-program continues.
+run's output redaction like any host reply. No page reads or writes result storage
+or rechecks access; with operation history on (`V4`), each page and the transfer's
+closing call still add a `result` operation row. Access was checked when the run was
+admitted and its call dispatched, so once a run is admitted its reads of up to 1 MiB
+arrive whole for the rest of that run even if access is revoked partway through,
+bounded by the run's deadline and the response ceiling, `execute.watchdogMs` (`L3`).
+Every read small enough for one message has always behaved this way; a stored
+result keeps its per-page recheck. No id names held bytes.
+
+A run holds at most 4 MiB of such reads at once (`L4`), four at the 1 MiB maximum,
+and releases all of them when it ends, by an answer, a throw, a timeout,
+cancellation or an executor failure alike. An isolate or Node process therefore
+holds at most 4 MiB for each run its executor admits at once (`L7`): 8 MiB at the
+Dynamic Worker's default of 2 (`workerExecutor({ admission })`), 4 MiB at QuickJS's
+default of 1 (`quickJsExecutor({ concurrency })`), and for an executor without its
+own pool, `admission.code.concurrency` (2 by default). A read past that bound takes
+the stash below, as does a read, JSON or text, whose text redaction changed its
+serialized bytes, and raw text with unpaired surrogates. A write's result, a source
+write served as a read included, is stashed before the program continues.
+
+If a credential the run sends after a held read is redacted from one of its pages
+and that leaves the read's JSON invalid, the program gets a handle with no
+`resultId`, `{ format: "paged", valueFormat, totalBytes, truncated: true, hint }`,
+whose `hint` says the read could not be rebuilt and to repeat it in a new program.
+If the run then fails, `R9` still retains the read.
 
 Larger values return a
 `{ format: "paged", valueFormat, resultId, totalBytes, truncated: true, hint }`

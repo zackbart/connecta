@@ -572,16 +572,22 @@ function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
 
 /**
  * Expose one host provider and typed guest errors. Catalogs load only when
- * the program calls a tool or asks search/describe.
+ * the program calls a tool or asks search/describe. Without a `transferMemory`
+ * every oversized read takes the stash.
  */
 export async function buildSandboxProviders(
   registry: RegistryView,
   baseUrl: string,
   _logger: Logger,
   activity?: ActivityRequestContext,
-  limits: SandboxLimits = {},
+  limits: Partial<SandboxLimits> = {},
 ): Promise<ExecutorProvider[]> {
-  return [sandboxProvider(registry, baseUrl, activity, limits)];
+  return [
+    sandboxProvider(registry, baseUrl, activity, {
+      ...limits,
+      transferMemory: limits.transferMemory ?? new TransferMemory(0),
+    }),
+  ];
 }
 
 interface SandboxLimits {
@@ -625,8 +631,8 @@ interface SandboxLimits {
   programWrites?: ProgramWrites | undefined;
   /** What `connecta.result(id, { all: true })` delivers. */
   readBytes?: number | undefined;
-  /** The run's read bytes held for transfer; past its limit reads stash. */
-  transferMemory?: TransferMemory | undefined;
+  /** The run's read bytes held for transfer, closed with the run; past its limit reads stash. */
+  transferMemory: TransferMemory;
   /** Cancel calls still resolving or waiting for admission at run end. */
   dispatchController?: AbortController | undefined;
   /** Set when a program read a result field off an unawaited host call. */
@@ -770,7 +776,7 @@ function sandboxProvider(
   const readBytes = limits.readBytes ?? PROGRAM_RESULT_READ_BYTES;
   const transfers = new Map<string, StashTransfer | MemoryTransfer>();
   const memoryHandles = new WeakMap<ProgramResultHandle, string>();
-  const transferMemory = limits.transferMemory ?? new TransferMemory(undefined, signal);
+  const { transferMemory } = limits;
   const keepTransfer: KeepTransfer = (bytes, format) => {
     const held = transferMemory.hold(bytes);
     if (!held) return undefined;
@@ -781,7 +787,7 @@ function sandboxProvider(
       valueFormat: format,
       totalBytes: bytes.length,
       truncated: true,
-      hint: "This read's transfer ended before it was whole. Repeat the read in a new program.",
+      hint: "This read could not be rebuilt here: its transfer ended early, or redacting a credential this run sent after the read left its JSON invalid. It is a read, so repeat it in a new program.",
     };
     memoryHandles.set(handle, transfer);
     return handle;
