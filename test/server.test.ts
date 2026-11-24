@@ -516,7 +516,7 @@ describe("server /mcp end-to-end", () => {
     for (const line of [full, untitled, first]) {
       expect(bytes(line)).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
     }
-    expect((await executeDescription(ids)).length).toBeLessThan(3_970);
+    expect((await executeDescription(ids)).length).toBeLessThan(4_037);
     // Codex repeats instructions on every tool, so purposes stay in this inventory alone.
     const purposeApp = createTestConnecta({
       connectors: [connector({ id: "crm", title: "Customer CRM", description: "Current accounts and contracts" })],

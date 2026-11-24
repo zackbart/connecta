@@ -176,6 +176,7 @@ const startable = (ceiling: ResponseCeiling): Effect.Effect<void, InvocationFail
  * entries plus an exact omission count stay inside this byte cap.
  */
 export const CONNECTOR_INVENTORY_MAX_BYTES = 1_024;
+const DESCRIPTION_CUTOFF_CHARS = 4_096;
 /**
  * Default budgets for `connecta.emit`. The byte budget is a transport bound,
  * not a context bound — emitted image/audio blocks reach the model as media,
@@ -2468,13 +2469,15 @@ function inventoryEntry(connector: InventoryConnector): InventoryEntry {
  * Every configured connector, from configuration alone. Detail degrades before
  * names do: purposes go first, from the end of registry order, then titles, and
  * only past the byte cap do whole entries give way to an exact omission count.
+ * The cap is the smaller of CONNECTOR_INVENTORY_MAX_BYTES and the room the
+ * longest program-tool description leaves under the host cut-off.
  * Search and describe name optional guides.
  */
-function connectorInventory(connectors: readonly InventoryConnector[]): string {
+function connectorInventory(connectors: readonly InventoryConnector[], maxBytes: number): string {
   const prefix = "Connectors: ";
   if (connectors.length === 0) return `${prefix}none.`;
   const entries = connectors.map(inventoryEntry);
-  const fits = (line: string) => boundedEchoText(line, CONNECTOR_INVENTORY_MAX_BYTES) === line;
+  const fits = (line: string) => boundedEchoText(line, maxBytes) === line;
   const legend = (shown: readonly InventoryEntry[]) =>
     shown.some((entry) => entry.guideFirst) ? REQUIRED_GUIDE_LEGEND : "";
   const fullLegend = legend(entries);
@@ -2624,8 +2627,34 @@ export function registerExecuteTool(
     hostCallTimeoutMs: resolveBudget(ctx.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS),
   };
   const connectors = registry.listConnectors();
-  const inventory = connectorInventory(connectors);
   const maxWrites = resolveBudget(ctx.maxWrites, DEFAULT_MAX_WRITES);
+  const programDescription = (inventory: string) =>
+    executeDescription(
+      emitBudgets,
+      {
+        ...hostLimits,
+        // connecta.call falls back to calls.defaultTimeoutMs; result, skill and read always use hostCallTimeoutMs.
+        callTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs,
+        ...(ctx.executor.deadlineMs !== undefined
+          ? { runDeadlineMs: Math.min(ctx.executor.deadlineMs, resolveBudget(ctx.watchdogMs, EXECUTE_WATCHDOG_MS)) }
+          : {}),
+      },
+      hasConnectorGuides(connectors),
+      inventory,
+      maxWrites,
+      ctx.readOnly === true,
+      ctx.native === true,
+      ctx.routes,
+      ctx.readRoute === true,
+    );
+  const fixedChars = Math.max(
+    programDescription("").length,
+    ctx.readRoute ? READ_PROGRAM_DESCRIPTION(hostLimits, "").length : 0,
+  );
+  const inventory = connectorInventory(
+    connectors,
+    Math.min(CONNECTOR_INVENTORY_MAX_BYTES, DESCRIPTION_CUTOFF_CHARS - fixedChars),
+  );
   const runnerConfig = {
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
@@ -2687,24 +2716,7 @@ export function registerExecuteTool(
   server.registerTool(
     "execute_code",
     {
-      description: executeDescription(
-        emitBudgets,
-        {
-          ...hostLimits,
-          // connecta.call falls back to calls.defaultTimeoutMs; result, skill and read always use hostCallTimeoutMs.
-          callTimeoutMs: normalizeTimeoutMs(ctx.defaultToolTimeoutMs) ?? hostLimits.hostCallTimeoutMs,
-          ...(ctx.executor.deadlineMs !== undefined
-            ? { runDeadlineMs: Math.min(ctx.executor.deadlineMs, resolveBudget(ctx.watchdogMs, EXECUTE_WATCHDOG_MS)) }
-            : {}),
-        },
-        hasConnectorGuides(connectors),
-        inventory,
-        maxWrites,
-        ctx.readOnly === true,
-        ctx.native === true,
-        ctx.routes,
-        ctx.readRoute === true,
-      ),
+      description: programDescription(inventory),
       inputSchema: EXECUTE_INPUT,
       outputSchema: EXECUTE_OUTPUT,
       ...toolMeta(programResultMeta, ctx.native || ctx.readRoute ? {} : ALWAYS_LOAD_META),

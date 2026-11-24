@@ -401,7 +401,9 @@ says so inside its `Promise<…>`.
 The published `GuestApi` type describes the supplied global for editors.
 The `execute_code` description declares a compact subset of it inline: argument
 shapes that match what `GuestApi` accepts, result fields it returns, and no
-others. Authored emit blocks are the exact variants `M1` accepts;
+others. `result` is declared with both forms: `{ all: true }` returning the
+whole non-paged `Data`, and the paging options returning
+`{ text, hasMore, nextOffset? }`. Authored emit blocks are the exact variants `M1` accepts;
 forwarded blocks are the native variants from `result.content`. It also
 states that search and describe return objects rather than arrays, that a row with
 `guideRequired` needs its connector guide first (only when a visible connector has
@@ -751,10 +753,18 @@ a per-run flag. The prelude reports the flag through the uncounted `unawaited`
 host function before the program's outcome crosses. A failed program's hint is
 `connecta.* returns a Promise; await it`; a program that still finished carries
 the same words in `note` (`R1`). Awaiting, `then`, `Promise.all`, and
-`Promise.allSettled` never read those fields. A `TypeError` saying a value is not a
-function or not iterable, in a program that uses `connecta.search`, `describe` or
-`call`, names the result shape: `search and describe return { tools }; call returns
-{ data, format }.` A syntax error in source that does not start
+`Promise.allSettled` never read those fields. A `TypeError` whose message says a
+value is not a function or not iterable, or reports a property read on undefined
+or null in QuickJS (`cannot read property 'x' of undefined`, `cannot read
+property of undefined`, including `'Symbol.iterator'` from iteration) or V8
+(`Cannot read properties of undefined (reading 'x')`) wording, gets `If that
+value came from connecta: search and describe return { tools }; call returns
+{ data, format }.` when the program's text outside comments uses
+`connecta.search`, `describe` or `call`. The hint is a conditional reminder, not
+a diagnosis: the host does not work out which value was undefined, so a program
+that reads its own data and fails gets the same words. A fixed pattern over the
+message selects it, and nothing from the message or the program enters a
+pattern or the hint. A syntax error in source that does not start
 as a program says `Pass one expression: async () => { ...; return answer; }.`
 Hints are fixed text; no program source, field name, or value enters them.
 

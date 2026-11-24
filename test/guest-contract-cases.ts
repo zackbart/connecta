@@ -1885,6 +1885,22 @@ export const CONTRACT_CASES: ContractCase[] = [
       "describe result iterated",
       `const page = await connecta.describe({ address: "reader.read" });\nfor (const tool of page) return tool;`,
     ],
+    [
+      "call result read without .data",
+      `const result = await connecta.call("reader.read", { value: "x" });\nreturn result.rows.map((row) => row);`,
+    ],
+    [
+      "payload key destructured from a call result and iterated",
+      `const { items } = await connecta.call("reader.read", { value: "x" });\nfor (const item of items) return item;`,
+    ],
+    [
+      "property named by a regular-expression metacharacter",
+      `const result = await connecta.call("reader.read", { value: "x" });\nreturn result.missing["(["];`,
+    ],
+    [
+      "connecta-using program reading undefined on its own data",
+      `const { data } = await connecta.call("reader.read", { value: "x" });\nreturn data.rows.missing.map((row) => row);`,
+    ],
   ].map(([label, source]): ContractCase => ({
     clauses: "E6",
     name: `INV-6: program errors name the result shape for a ${label}`,
@@ -1895,11 +1911,29 @@ export const CONTRACT_CASES: ContractCase[] = [
         code: "program_error",
         details: {
           name: "TypeError",
-          hint: "search and describe return { tools }; call returns { data, format }.",
+          hint: "If that value came from connecta: search and describe return { tools }; call returns { data, format }.",
         },
       });
     },
   })),
+  {
+    clauses: "E6",
+    name: "INV-6: a property read on undefined in a program that never uses connecta keeps the generic hint",
+    code: `async () => {
+      const local = { label: "connecta" };
+      return local.items["(["];
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "program_error",
+        details: {
+          name: "TypeError",
+          hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+        },
+      });
+    },
+  },
   {
     clauses: "E6",
     name: "INV-6: a bare statement is told to pass one async arrow",
@@ -2341,21 +2375,27 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   })),
   ...[
-    'let page = connecta.search({ query: "read" });\npage = await page;\nreturn page.tools.missing.field;',
-    "/* connecta.call().data */ return null.field;",
-    'const result = await connecta.call("reader.read", { value: "x" });\nconst pending = connecta.search({ query: "read" });\nawait pending;\nreturn result.data.missing.field;',
-  ].map((source): ContractCase => ({
+    [
+      'let page = connecta.search({ query: "read" });\npage = await page;\nreturn page.tools.missing.field;',
+      "If that value came from connecta: search and describe return { tools }; call returns { data, format }.",
+    ],
+    [
+      "/* connecta.call().data */ return null.field;",
+      "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
+    ],
+    [
+      'const result = await connecta.call("reader.read", { value: "x" });\nconst pending = connecta.search({ query: "read" });\nawait pending;\nreturn result.data.missing.field;',
+      "If that value came from connecta: search and describe return { tools }; call returns { data, format }.",
+    ],
+  ].map(([source, hint]): ContractCase => ({
     clauses: "E6",
-    name: `INV-6: an awaited or host-call-free TypeError keeps the generic hint: ${source.split("\n")[0]}`,
+    name: `INV-6: an awaited or host-call-free TypeError gets no await hint: ${source!.split("\n")[0]}`,
     code: `async () => {\n${source}\n}`,
     check(outcome) {
       expect(outcome.value.error).toMatchObject({
         code: "program_error",
         message: expect.stringMatching(/^Program TypeError: (?!TypeError)/),
-        details: {
-          name: "TypeError",
-          hint: "Use plain JavaScript in one async () => { ... } expression and the connecta global.",
-        },
+        details: { name: "TypeError", hint },
       });
     },
   })),

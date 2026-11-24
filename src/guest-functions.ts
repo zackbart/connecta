@@ -43,7 +43,7 @@ export const GUEST_FUNCTIONS = [
     wrapped: true,
     deadline: "result storage",
     declaration:
-      "result(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;",
+      "result(id: string | Paged, options: { all: true }): Promise<Data>;\nresult(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;",
   },
   /** Fetches a skill's text by exact name. */
   {
@@ -63,7 +63,7 @@ export const GUEST_FUNCTIONS = [
   {
     name: "emit",
     budget: "emission",
-    declaration: "emit(block: Block | Native | (Exclude<Result, Paged> & { content: Native[] })): PromiseLike<void>;",
+    declaration: "emit(block: Block | Native | (Data & { content: Native[] })): PromiseLike<void>;",
   },
   /** Tells the host a program read a result field off an unawaited call. */
   {
@@ -146,6 +146,7 @@ ${GUEST_FUNCTIONS.flatMap((fn) => ("declaration" in fn ? [fn.declaration] : []))
 type Schemas = "json" | "compact" | "typescript";
 type Tool = { address: string; name?: string; description?: string; inputSchema?: unknown; outputSchema?: unknown; signature?: string; guideRequired?: true };
 type Paged = { format: "paged"; valueFormat: "json" | "text"; resultId?: string; totalBytes: number; truncated: true; hint: string };
-type Result = ({ format: "json"; data: unknown } | { format: "text"; data: string } | Paged) & { content?: Native[] };
+type Data = ({ format: "json"; data: unknown } | { format: "text"; data: string }) & { content?: Native[] };
+type Result = Data | Paged;
 type Block = { type: "text"; text: string } | { type: "image" | "audio"; data: string; mimeType: string };
 type Native = Block | { type: "resource"; resource: { uri: string } & ({ text: string } | { blob: string }) } | { type: "resource_link"; uri: string; name: string };`;

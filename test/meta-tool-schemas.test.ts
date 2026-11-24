@@ -264,8 +264,10 @@ describe("meta-tool output schemas", () => {
 // execute_code description varies with connector count, so the fixture below
 // is pinned: four connectors, one carrying a guide, one known read.
 const BUDGETS = {
-  // Grew for each description's routing first line, the only line some hosts show.
-  total: 9_000,
+  // Grew for each description's routing first line, the only line some hosts show,
+  // then 69 (67 raw plus two escaped newlines) for the result(id, { all: true }) overload that recovery text names
+  // and the Data type it shares with emit.
+  total: 9_069,
   // A writable endpoint's execute_read_code: description, shared input and output schemas.
   readRouteTotal: 1_560,
   readRouteInstructions: 550,
@@ -282,8 +284,9 @@ const BUDGETS = {
     // Grew to say when no call is needed: an auth error that already carries its link.
     authorize_connector: 580,
     // Grew 36 characters for the fixture's connector purposes, which told look-alike connectors apart in a paid trial,
-    // then 97 for connecta.budget(), which lets a program return partial results before a terminal budget stop.
-    execute_code: 3_130,
+    // then 97 for connecta.budget(), which lets a program return partial results before a terminal budget stop,
+    // then 67 for the result(id, { all: true }) overload that recovery text names and the Data type it shares with emit.
+    execute_code: 3_197,
     // Carries the same inventory: a host may load only this tool for read work.
     execute_read_code: 790,
   },
@@ -650,6 +653,27 @@ describe("meta-tool descriptions", () => {
       calls: { defaultTimeoutMs: 654_000 },
       connectors: [calcApi(), ...roster(true)],
     });
+  const fullInventory =
+    (largeLimits: boolean, wording: "read route" | "writable" | "read-only" = "read route") =>
+    () =>
+      makeDeployment({
+        executor: { ...stubExecutor, deadlineMs: largeLimits ? 50_000 : 30_000 },
+        readOnly: wording === "read-only",
+        execute: {
+          readRoute: wording === "read route",
+          maxHostCalls: largeLimits ? 1_000 : 20,
+          hostCallTimeoutMs: largeLimits ? 123_000 : 15_000,
+          ...(largeLimits ? { maxEmittedBytes: 99_999_999, maxEmittedBlocks: 999 } : {}),
+          maxWrites: largeLimits ? 999 : 10,
+        },
+        ...(largeLimits ? { calls: { defaultTimeoutMs: 654_000 } } : {}),
+        connectors: Array.from({ length: 104 }, (_, index) =>
+          api(`connector-${String(index).padStart(3, "0")}-xxxxxxxx${index === 2 ? "y" : ""}`, {
+            ...(index === 0 ? { usageGuide: { content: "# Guide", required: true } } : {}),
+            tools: [],
+          }),
+        ),
+      });
   const surfaces: Record<string, () => ReturnType<typeof makeDeployment>> = {
     writable: () => budgetFixture(false),
     "read-only": () => budgetFixture(true),
@@ -663,6 +687,10 @@ describe("meta-tool descriptions", () => {
     "without guides": () => makeDeployment({ executor: stubExecutor, readOnly: false, connectors: roster(false) }),
     "at the largest inventory": largest(false),
     "at the largest inventory with the read route": largest(true),
+    "at a full inventory with the read route": fullInventory(false),
+    "at a full inventory with the read route and the largest limits": fullInventory(true),
+    "at a full inventory without the read route and the largest limits": fullInventory(true, "writable"),
+    "at a full inventory on a read-only endpoint and the largest limits": fullInventory(true, "read-only"),
   };
 
   it.each(Object.keys(surfaces))(
@@ -684,6 +712,13 @@ describe("meta-tool descriptions", () => {
         if (surface.tools.some((tool) => tool.name === "execute_read_code")) {
           expect(execute).toContain("Read programs: execute_read_code. Programs that write: execute_code.");
           expect(execute).not.toContain("Everything else");
+        }
+        if (name.startsWith("at a full inventory")) {
+          const lines = surface.tools
+            .filter((tool) => tool.name === "execute_code" || tool.name === "execute_read_code")
+            .map((tool) => (tool.description as string).match(/^Connectors: .*$/m)![0]);
+          expect(lines[0]).toMatch(/; \+\d+ more\. \*Read /);
+          expect(new Set(lines).size).toBe(1);
         }
         if (name.startsWith("at the largest")) {
           const inventory = surface.tools

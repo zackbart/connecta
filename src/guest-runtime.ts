@@ -318,10 +318,10 @@ export function programError(
       'Use connecta.call(address, args), connecta.search, connecta.describe, connecta.result, and connecta.skill("usage"). Services are addressed by connector.tool, never guest globals.';
   } else if (
     name === "TypeError" &&
-    /not a function|not iterable/.test(message) &&
+    /not a function|not iterable|\bcannot read propert(?:y(?: '.*')?|ies) of (?:undefined|null)\b/i.test(message) &&
     /\bconnecta\s*\.\s*(?:search|describe|call)\b/.test(code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, ""))
   ) {
-    hint = "search and describe return { tools }; call returns { data, format }.";
+    hint = "If that value came from connecta: search and describe return { tools }; call returns { data, format }.";
   } else if (name === "SyntaxError" && !/^(?:async\b|\(|function\b)/.test(code.replace(LEADING_TRIVIA, ""))) {
     hint = "Pass one expression: async () => { ...; return answer; }.";
   }
