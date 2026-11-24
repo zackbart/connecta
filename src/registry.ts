@@ -87,6 +87,7 @@ import {
   stashLedgerKeys,
 } from "./storage/keys.js";
 import { assertStaticToolNames, hasControlCharacters } from "./tool-name.js";
+import { assertListedHeaderDeclarations, hasInvalidHeaderDeclaration } from "./header-declarations.js";
 import {
   carryToolClassification,
   classifyTool,
@@ -599,6 +600,13 @@ export class Registry implements RegistryView {
     this.maxResultBytes = resolveMaxResultBytes(opts.maxResultBytes, DEFAULT_MAX_RESULT_BYTES);
     for (const c of connectors) {
       assertStaticToolNames(c.staticTools ?? [], `Connector(${JSON.stringify(c.id)}).staticTools`);
+      for (const tool of c.staticTools ?? []) {
+        if (hasInvalidHeaderDeclaration(tool.inputSchema))
+          throw new Error(
+            `Connector "${c.id}" tool "${tool.name}" has an invalid x-mcp-header declaration: ` +
+              "use one per header name, on a string, integer or boolean property of inputSchema.",
+          );
+      }
       if ("handleRequest" in c) {
         throw new Error(
           `Connector "${c.id}" declares removed handleRequest. ` +
@@ -1191,6 +1199,7 @@ export class Registry implements RegistryView {
           { retryable: false },
         );
       }
+      assertListedHeaderDeclarations(tools);
       const facts = frozenFacts(structuredClone(tools));
       const accepted = this.acceptToolNames(facts);
       if (catalogFetchedAt(ctx) === undefined) {

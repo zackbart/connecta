@@ -102,6 +102,8 @@ export function requiresAuthorization(error: unknown): boolean {
   );
 }
 
+const INVALID_OUTPUT_SCHEMA = /^Tool .* has an invalid outputSchema/s;
+
 /** Classify SDK/runtime facts, dropping every SDK payload and cause chain. */
 export function downstreamCallError(
   error: unknown,
@@ -185,7 +187,7 @@ export function downstreamCallError(
   // ProtocolError.data is server-chosen even when its message is allowed.
   if (error instanceof ProtocolError) {
     return new ConnectorCallError(
-      error.code === -32602 ? "invalid_args" : "connector_call_failed",
+      error.code === -32602 && !INVALID_OUTPUT_SCHEMA.test(error.message) ? "invalid_args" : "connector_call_failed",
       boundedEchoText(secrets?.text(error.message) ?? error.message),
     );
   }
@@ -385,7 +387,11 @@ const SDK_OUTPUT_SCHEMA_CHECKS: readonly (readonly [RegExp, string])[] = [
     /^Tool .* has an output schema but did not return structured content/s,
     "the result did not return structured content although the tool declares an output schema",
   ],
-  [/^Tool .* has an invalid outputSchema/s, "the tool's declared output schema could not be compiled"],
+  [
+    INVALID_OUTPUT_SCHEMA,
+    "the tool's declared output schema could not be compiled, so its results cannot be checked. " +
+      "Changing the arguments will not help: the operator must fix the downstream server's outputSchema",
+  ],
 ];
 
 function sdkCheckFailed(err: unknown): string {

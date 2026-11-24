@@ -36,6 +36,7 @@ import { ownerReads, RequestScope } from "./runtime/request-scope.js";
 import type { RequestReads } from "./runtime/request-reads.js";
 import { serviceFor, setViewService, viewServices } from "./runtime/call.js";
 import { ConnectorCallError } from "./errors.js";
+import { assertListedHeaderDeclarations } from "./header-declarations.js";
 import { fingerprintSerializedCatalog } from "./catalog-fingerprint.js";
 import {
   CATALOG_CHUNKS_PER_READ as CHUNKS_PER_READ,
@@ -591,72 +592,13 @@ export function catalogIntake(
   if (tools.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
   const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...result, tools });
   if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) throw catalogCeiling();
-  for (const tool of clean.tools) assertHeaderDeclarations(tool.inputSchema);
+  assertListedHeaderDeclarations(clean.tools);
   return {
     ...clean,
     ttlMs: catalogTtlMs(ctx, result.ttlMs),
     cacheScope: result.cacheScope === "public" ? "public" : "private",
   };
 }
-/** Refuse before SDK 2.4.0's header exclusion path logs downstream names/reasons.
- * Match its schema keyword walk; errors carry no downstream text (INV-6/8). */
-function assertHeaderDeclarations(schema: unknown): void {
-  const names = new Set<string>();
-  const maps = new Set(["patternProperties", "dependentSchemas", "$defs", "definitions"]);
-  const branches = [
-    "items",
-    "prefixItems",
-    "contains",
-    "additionalProperties",
-    "unevaluatedProperties",
-    "unevaluatedItems",
-    "propertyNames",
-    ...maps,
-    "oneOf",
-    "anyOf",
-    "allOf",
-    "not",
-    "if",
-    "then",
-    "else",
-  ];
-  const invalid = () => {
-    throw new ConnectorCallError("connector_call_failed", "Downstream tool has an invalid x-mcp-header declaration.", {
-      retryable: false,
-    });
-  };
-  const visit = (node: unknown, reachable: boolean, property: boolean): void => {
-    if (!node || typeof node !== "object") return;
-    const value = node as Record<string, unknown>;
-    if ("x-mcp-header" in value) {
-      const header = value["x-mcp-header"];
-      if (
-        !reachable ||
-        !property ||
-        typeof header !== "string" ||
-        !/^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/.test(header) ||
-        !["string", "integer", "boolean"].includes(value.type as string) ||
-        names.has(header.toLowerCase())
-      )
-        invalid();
-      names.add((header as string).toLowerCase());
-    }
-    if (value.properties && typeof value.properties === "object") {
-      for (const child of Object.values(value.properties)) visit(child, reachable, true);
-    }
-    for (const keyword of branches) {
-      const sub = value[keyword];
-      const children = Array.isArray(sub)
-        ? sub
-        : sub && typeof sub === "object" && maps.has(keyword)
-          ? Object.values(sub)
-          : [sub];
-      for (const child of children) visit(child, false, false);
-    }
-  };
-  visit(schema, true, false);
-}
-
 function catalogCeiling(): ConnectorCallError {
   return new ConnectorCallError("connector_call_failed", "Downstream catalog exceeds the complete-catalog ceiling.", {
     retryable: false,
