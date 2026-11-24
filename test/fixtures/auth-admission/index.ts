@@ -31,7 +31,6 @@ const app = createConnecta({
 export default {
   async fetch(request: Request, _env: unknown, ctx: ExecutionContext) {
     try {
-      const url = new URL(request.url);
       const kind = request.headers.get("X-Binding-Kind");
       if (kind) {
         // A binding-contract fixture: fetch deliberately receives no signal,
