@@ -50,6 +50,8 @@
         "src/providers/planning-center/fixtures.ts",
         // The eval harness: CLI entries, plus the Worker entries wrangler loads.
         "eval/*.ts",
+        // eval:perf spawns each matrix cell from this file by path.
+        "eval/perf/cell.ts",
         "eval/deploy/worker-*.ts",
         "src/providers/*/eval/worker.ts"
       ],

@@ -4,6 +4,7 @@
  */
 import type { TrialResult } from "../agent/run.js";
 import type { RunMeta } from "../support/meta.js";
+import type { Cell, CellResult } from "../perf/matrix.js";
 import type { PlannedTask } from "../tasks/types.js";
 import { mean, median } from "./efficiency.js";
 
@@ -50,7 +51,7 @@ export interface AgentResultFile {
 
 export interface PerfResultFile {
   kind: "connecta-eval/perf";
-  version: 1;
+  version: 1 | 2;
   meta: RunMeta;
   bundle: {
     entry: string;
@@ -60,7 +61,12 @@ export interface PerfResultFile {
     /** Largest inputs by bytes in the minified output. */
     topInputs: { path: string; bytes: number }[];
   };
-  latency: {
+  /** Version 2: matrix repetitions; gated counts were identical across them or the run failed. */
+  runs?: number;
+  /** Version 2: the first run's counts and latency for each cell. */
+  cells?: ({ cell: Cell } & CellResult)[];
+  /** Version 1 files, such as historical snapshots: four operations on six fakes, no counts. */
+  latency?: {
     deployment: string;
     samples: number;
     operations: { name: string; p50Ms: number; p90Ms: number; minMs: number; maxMs: number }[];

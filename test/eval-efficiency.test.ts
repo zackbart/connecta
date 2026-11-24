@@ -10,6 +10,8 @@ import {
   reliability,
   trialEfficiency,
 } from "../eval/report/efficiency.js";
+import { baselineDifferences, baselineOf, formatBaseline } from "../eval/perf/compare.js";
+import { CELLS, COUNTERS, OPERATIONS, type Cell, type CellCounts, type Counts } from "../eval/perf/matrix.js";
 
 type Use = { tool: string; input?: Record<string, unknown>; resultText?: string; isError?: boolean };
 
@@ -382,4 +384,91 @@ it("treats a rejected or unreachable token at trial end as lost, and a slow or h
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+describe("eval:perf baseline gate", () => {
+  const counts = (value: number) =>
+    Object.fromEntries(COUNTERS.map((counter) => [counter, value])) as unknown as Counts;
+  const measured = (cell: Cell, value = 1) => ({
+    cell,
+    counts: Object.fromEntries(
+      OPERATIONS.map((operation) => [operation, { first: counts(value), warm: counts(value) }]),
+    ) as unknown as CellCounts,
+  });
+  const small = CELLS.find((cell) => cell.id === "base")!;
+  const large = CELLS.find((cell) => cell.id === "result-600k")!;
+  const stored = () => JSON.parse(formatBaseline(baselineOf([measured(small), measured(large)])));
+
+  it("accepts its own formatted baseline and leaves reported counters out of it", () => {
+    const current = baselineOf([measured(small), measured(large)]);
+    expect(baselineDifferences(stored(), current)).toEqual([]);
+    expect(current.cells["result-600k"]!.reported).toEqual([
+      "execute_code.storageRoundTrips",
+      "execute_code.storageStatements",
+      "execute_code.tracedRoundTrips",
+    ]);
+    expect(current.cells["result-600k"]!.requests.execute_code!.warm).not.toHaveProperty("storageRoundTrips");
+    expect(current.cells.base!.requests.execute_code!.warm).toHaveProperty("storageRoundTrips", 1);
+  });
+
+  it("refuses a changed value in either direction", () => {
+    const current = baselineOf([measured(small), measured(large)]);
+    for (const value of [0, 2]) {
+      const baseline = stored();
+      baseline.cells.base.requests.call_tool.warm.downstreamRequests = value;
+      expect(baselineDifferences(baseline, current)).toEqual([
+        `cells base requests call_tool warm downstreamRequests: ${value} -> 1`,
+      ]);
+    }
+  });
+
+  it("refuses a counter, request, phase or cell on one side only", () => {
+    const current = baselineOf([measured(small), measured(large)]);
+    const extra = stored();
+    extra.cells.base.requests.search_tools.first.retiredCounter = 3;
+    expect(baselineDifferences(extra, current)).toEqual([
+      "cells base requests search_tools first retiredCounter: in the baseline but no longer measured",
+    ]);
+    const missing = stored();
+    delete missing.cells.base.requests.search_tools.first.catalogHits;
+    expect(baselineDifferences(missing, current)).toEqual([
+      "cells base requests search_tools first catalogHits: measured but not in the baseline",
+    ]);
+    const phase = stored();
+    delete phase.cells.base.requests["tools/list"].warm;
+    expect(baselineDifferences(phase, current)).toEqual([
+      "cells base requests tools/list warm: measured but not in the baseline",
+    ]);
+    const extraPhase = stored();
+    extraPhase.cells.base.requests["tools/list"].third = {};
+    expect(baselineDifferences(extraPhase, current)).toEqual([
+      "cells base requests tools/list third: in the baseline but no longer measured",
+    ]);
+    const inherited = stored();
+    Object.defineProperty(inherited.cells.base.requests, "__proto__", { value: {}, enumerable: true });
+    expect(baselineDifferences(inherited, current)).toEqual([
+      "cells base requests __proto__: in the baseline but no longer measured",
+    ]);
+    const cell = stored();
+    delete cell.cells["result-600k"];
+    expect(baselineDifferences(cell, baselineOf([measured(small)]))).toEqual([]);
+    expect(baselineDifferences(cell, current)).toEqual(["cells result-600k: measured but not in the baseline"]);
+    expect(baselineDifferences(stored(), baselineOf([measured(small)]))).toEqual([
+      "cells result-600k: in the baseline but no longer measured",
+    ]);
+  });
+
+  it("refuses a gated counter moved to reported, or a changed cell configuration", () => {
+    const current = baselineOf([measured(small), measured(large)]);
+    const reclassified = stored();
+    reclassified.cells.base.reported = ["execute_code.storageRoundTrips"];
+    delete reclassified.cells.base.requests.execute_code.first.storageRoundTrips;
+    expect(baselineDifferences(reclassified, current)).toEqual([
+      'cells base reported: ["execute_code.storageRoundTrips"] -> []',
+      "cells base requests execute_code first storageRoundTrips: measured but not in the baseline",
+    ]);
+    const configured = stored();
+    configured.cells.base.config.connectors = 24;
+    expect(baselineDifferences(configured, current)).toEqual(["cells base config connectors: 24 -> 6"]);
+  });
 });
