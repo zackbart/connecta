@@ -125,8 +125,11 @@ const inventoryNote = (text: string, maxBytes: number) => {
 
 const normalizedLine = (text: string | undefined) => text?.replace(/\s+/g, " ").trim();
 
+/** The configuration an inventory entry and its guide mark are rendered from. */
+export type ConnectorInventoryFacts = Pick<Connector, "id" | "title" | "description" | "readOnly" | "usageGuide">;
+
 /** A connector's bounded title for inventories, or undefined when it adds nothing to the id or cannot fit. */
-export function connectorInventoryTitle(connector: Connector): string | undefined {
+export function connectorInventoryTitle(connector: ConnectorInventoryFacts): string | undefined {
   const title = normalizedLine(connector.title);
   return title && addsInformation(connector.id, title) ? inventoryNote(title, 45) : undefined;
 }
@@ -154,7 +157,7 @@ function withoutRepeatedLead(text: string, lead: string): string {
 }
 
 /** A connector's bounded one-line purpose for inventories, or undefined when it only respells the id and title. */
-export function connectorInventoryPurpose(connector: Connector, maxBytes: number): string | undefined {
+export function connectorInventoryPurpose(connector: ConnectorInventoryFacts, maxBytes: number): string | undefined {
   const purpose = normalizedLine(connector.description)?.replace(/\.$/, "");
   if (!purpose) return undefined;
   const title = normalizedLine(connector.title);
@@ -266,14 +269,14 @@ export function connectorSkillName(connectorId: string): string {
 }
 
 /** The guide as authored, or undefined when the connector declares none (or a blank one). */
-function authoredGuide(connector: Connector): string | undefined {
+function authoredGuide(connector: ConnectorInventoryFacts): string | undefined {
   const guide = connector.usageGuide;
   const content = typeof guide === "string" ? guide : guide?.content;
   return !content || content.trim() === "" ? undefined : content;
 }
 
 /** The connector's guide with its connection's read-only notice, or undefined when it has none. */
-export function connectorGuide(connector: Connector): string | undefined {
+export function connectorGuide(connector: ConnectorInventoryFacts): string | undefined {
   const content = authoredGuide(connector);
   if (content === undefined) return undefined;
   return connector.readOnly === true
@@ -513,7 +516,7 @@ export function connectorGuideSummary(connector: Connector): string | undefined 
 }
 
 /** Whether correct use always depends on conventions outside the tool schema. */
-export function connectorGuideRequired(connector: Connector): boolean {
+export function connectorGuideRequired(connector: ConnectorInventoryFacts): boolean {
   return (
     connectorGuide(connector) !== undefined &&
     typeof connector.usageGuide === "object" &&

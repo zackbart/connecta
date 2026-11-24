@@ -82,6 +82,7 @@ import {
   hasConnectorGuides,
   SkillsRegistry,
 } from "./skills.js";
+import type { ConnectorInventoryFacts } from "./skills.js";
 import type { AdmittingExecutor, ExecuteResult, Executor, ExecutorLease, ExecutorProvider, Logger } from "./types.js";
 
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
@@ -2410,21 +2411,50 @@ const inventoryInputs = (connector: InventoryConnector): readonly unknown[] => {
     connector.title,
     connector.description,
     connector.readOnly,
+    typeof guide === "object",
     typeof guide === "object" ? guide.content : guide,
     typeof guide === "object" ? guide.required : undefined,
   ];
 };
 
+/** The inputs as the connector they were read from, so an entry's text is a function of its key alone. */
+const inventoryFacts = (
+  connector: InventoryConnector,
+): { inputs: readonly unknown[]; facts: ConnectorInventoryFacts } => {
+  const inputs = inventoryInputs(connector);
+  const [id, title, description, readOnly, structured, content, required] = inputs as [
+    string,
+    string | undefined,
+    string | undefined,
+    boolean | undefined,
+    boolean,
+    string | undefined,
+    boolean | undefined,
+  ];
+  const usageGuide =
+    structured && content !== undefined ? { content, ...(required === undefined ? {} : { required }) } : content;
+  return {
+    inputs,
+    facts: {
+      id,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      ...(readOnly === undefined ? {} : { readOnly }),
+      ...(usageGuide === undefined ? {} : { usageGuide }),
+    },
+  };
+};
+
 const inventoryEntries = new WeakMap<InventoryConnector, InventoryEntry>();
 
 function inventoryEntry(connector: InventoryConnector): InventoryEntry {
-  const inputs = inventoryInputs(connector);
+  const { inputs, facts } = inventoryFacts(connector);
   const cached = inventoryEntries.get(connector);
   if (cached !== undefined && cached.inputs.every((input, index) => input === inputs[index])) return cached;
-  const guideFirst = connectorGuide(connector) !== undefined && connectorGuideRequired(connector);
-  const bare = guideFirst ? `${connector.id}*` : connector.id;
-  const title = connectorInventoryTitle(connector);
-  const purpose = connectorInventoryPurpose(connector, CONNECTOR_PURPOSE_MAX_BYTES);
+  const guideFirst = connectorGuide(facts) !== undefined && connectorGuideRequired(facts);
+  const bare = guideFirst ? `${facts.id}*` : facts.id;
+  const title = connectorInventoryTitle(facts);
+  const purpose = connectorInventoryPurpose(facts, CONNECTOR_PURPOSE_MAX_BYTES);
   const noted = (notes: (string | undefined)[]) => {
     const present = notes.filter((note) => note !== undefined);
     return present.length > 0 ? `${bare} (${present.join("; ")})` : bare;
