@@ -338,8 +338,11 @@ describe("server /mcp end-to-end", () => {
       };
     };
     async function executeDescription(specs: Spec[]) {
+      return describedBy(specs.map(connector));
+    }
+    async function describedBy(connectors: ReturnType<typeof connector>[]) {
       const c = createTestConnecta({
-        connectors: specs.map(connector),
+        connectors,
         auth: machineAuth(TOKEN),
         storage: memoryStorage(),
         publicUrl: BASE,
@@ -425,6 +428,16 @@ describe("server /mcp end-to-end", () => {
     for (let index = 0; index < 16; index++) expect(partial).toContain(`Team ${index} workspace`);
     expect(partial).toMatch(/service_15\* \(Team 15 workspace\)\. \*Read /);
     expect(await inventory(described)).toBe(partial);
+    const shared = described.map(connector);
+    const sharedInventory = async (connectors: typeof shared) =>
+      (await describedBy(connectors)).match(/^Connectors: .*$/m)?.[0];
+    expect(await sharedInventory(shared)).toBe(partial);
+    expect(await sharedInventory(shared.slice(0, 3))).toBe(await inventory(described.slice(0, 3)));
+    expect(await sharedInventory(shared)).toBe(partial);
+    shared[0]!.title = "Renamed workspace";
+    expect(await sharedInventory(shared.slice(0, 1))).toBe(
+      "Connectors: service_00 (Renamed workspace; Purpose 0 of this deployment's long-running work).",
+    );
     // The entry that first misses is the one that would have overflowed the cap.
     const nextPurpose = /Purpose (\d+) of this/g;
     const kept = [...partial.matchAll(nextPurpose)].map((match) => Number(match[1]));
