@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-24: Serving a program's reads from run memory (#1499, #1504) adds TransferMemory, memory transfer pages and the keep path beside the result stash. CI at 9e514d5d (run 45496577086, build (package)) measures the root at 458,185 B and examples/worker at 844,998 B gzip, 365 B and 328 B past their caps. The root cap moves 457,820 to 458,540 B and the examples/worker cap 844,670 to 845,350 B, each about 350 B over CI. ./ui measures 349,094 B and keeps its 349,384 B cap.",
     "2026-11-24: Reusing unchanged redaction walks (#1494, #1501) adds the per-set walk marks, the frozen call-result and catalog paths and the shared tool definitions. CI at 1baa40ab (run 45480813451, build (package)) measures the root at 457,471 B and examples/worker at 844,320 B gzip, 491 B and 290 B past their caps. The root cap moves 456,980 to 457,820 B and the examples/worker cap 844,030 to 844,670 B, each about 350 B over CI. ./ui measures 349,094 B and keeps its 349,384 B cap.",
     "2026-11-24: MCP TypeScript SDK 2.4.0 (#1483) adds its Skills extension types, the stricter x-mcp-header scan and Ajv with fast-uri 3.1.8, plus Connecta's shared header-declaration guard, its check of catalog peeks and the typed local output-schema compile failure. CI at 2bf750e4 (run 45455804179, build (package)) measures the root at 456,630 B and examples/worker at 843,680 B gzip; their caps move to 456,980 B and 844,030 B. ./ui measures 349,094 B and keeps its 349,384 B cap.",
     "2026-11-24: Memoized connector inventory entries (#1483, #1487) keep each entry's text beside the configuration it was read from. CI at f7fb2f84 (run 45446512033, build (package)) measures the root at 455,752 B, 112 B past its cap. The root cap moves 455,640 to 456,100 B, about 350 B over the measurement.",
@@ -123,7 +124,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 457820
+      "maxGzip": 458540
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -218,7 +219,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 844670
+      "maxGzip": 845350
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
