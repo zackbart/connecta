@@ -378,7 +378,7 @@
       "id": "io.modelcontextprotocol/server-card",
       "status": "declined",
       "spec": "https://modelcontextprotocol.io/seps/2127-mcp-server-cards",
-      "notes": "Beta under SEP-2127. Not implemented and not scheduled: no card or ai-catalog document is published. A card would carry only deployment-level identity, which server/discover and legacy initialize already serve from configuration; SEP-2127 keeps caller-scoped tools and capabilities out of cards. Revisit when a supported host reads cards.",
+      "notes": "Beta under SEP-2127. Not implemented and not scheduled: no card or ai-catalog document is published. A card would carry deployment-level identity and connection metadata; server/discover and legacy initialize already serve the configured identity, and SEP-2127 keeps caller-scoped tools and capabilities out of cards. Revisit when a supported host reads cards.",
       "decision": "https://github.com/zackbart/connecta/issues/1483"
     }
   ]
