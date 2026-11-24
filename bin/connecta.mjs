@@ -33,18 +33,22 @@ async function loadEnvFile(path) {
   }
   const parsed = parseEnv(text);
   for (const name of DOCTOR_CREDENTIALS) {
-    if (Object.hasOwn(parsed, name) && process.env[name] === undefined) process.env[name] = parsed[name];
+    if (!Object.hasOwn(parsed, name) || process.env[name] !== undefined) continue;
+    process.env[name] = headerValue(name, parsed[name]) ?? "";
   }
 }
 
-function headerCredential(name) {
-  const value = process.env[name];
+function headerValue(name, value) {
   if (value !== undefined && value !== "" && !/^[\x21-\x7e]+$/.test(value)) {
     throw new Error(
       `${name} holds characters that cannot be sent in a request header. Check its value for quotes, spaces or line breaks.`,
     );
   }
   return value;
+}
+
+function headerCredential(name) {
+  return headerValue(name, process.env[name]);
 }
 
 function usage() {

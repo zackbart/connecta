@@ -635,11 +635,14 @@ describe("connecta doctor --dotenv", () => {
     expect(`${failure?.stderr}${failure?.stdout ?? ""}`).not.toMatch(/secret-first-line|secret-second-line/);
   });
 
-  it("loads only doctor's credential variables from the file", async () => {
-    const path = await envFile(`CONNECTA_TOKEN=${TOKEN}\nNODE_OPTIONS=--definitely-not-a-node-flag\n`);
-    await expect(doctorAgainst(executor, { env: {}, args: ["--dotenv", path] })).resolves.toContain(
-      "Connecta doctor passed",
+  it("refuses a file credential holding a NUL byte instead of sending its prefix", async () => {
+    const path = await envFile('CONNECTA_TOKEN="cta_secret-prefix\0secret-suffix"\n');
+    const failure = await doctorAgainst(executor, { env: {}, args: ["--dotenv", path] }).then(
+      () => undefined,
+      (error: { stderr: string; stdout?: string }) => error,
     );
+    expect(failure?.stderr).toContain("CONNECTA_TOKEN holds characters that cannot be sent in a request header");
+    expect(`${failure?.stderr}${failure?.stdout ?? ""}`).not.toMatch(/secret-prefix|secret-suffix/);
   });
 
   it("changes nothing when the file is absent", async () => {
