@@ -53,8 +53,8 @@ export function baselineDifferences(stored: unknown, current: unknown, path: str
   if (isRecord(stored) && isRecord(current)) {
     const keys = [...new Set([...Object.keys(stored), ...Object.keys(current)])];
     return keys.flatMap((key) => {
-      if (!(key in stored)) return [`${[...path, key].join(" ")}: measured but not in the baseline`];
-      if (!(key in current)) return [`${[...path, key].join(" ")}: in the baseline but no longer measured`];
+      if (!Object.hasOwn(stored, key)) return [`${[...path, key].join(" ")}: measured but not in the baseline`];
+      if (!Object.hasOwn(current, key)) return [`${[...path, key].join(" ")}: in the baseline but no longer measured`];
       return baselineDifferences(stored[key], current[key], [...path, key]);
     });
   }

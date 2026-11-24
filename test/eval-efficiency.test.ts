@@ -439,6 +439,16 @@ describe("eval:perf baseline gate", () => {
     expect(baselineDifferences(phase, current)).toEqual([
       "cells base requests tools/list warm: measured but not in the baseline",
     ]);
+    const extraPhase = stored();
+    extraPhase.cells.base.requests["tools/list"].third = {};
+    expect(baselineDifferences(extraPhase, current)).toEqual([
+      "cells base requests tools/list third: in the baseline but no longer measured",
+    ]);
+    const inherited = stored();
+    Object.defineProperty(inherited.cells.base.requests, "__proto__", { value: {}, enumerable: true });
+    expect(baselineDifferences(inherited, current)).toEqual([
+      "cells base requests __proto__: in the baseline but no longer measured",
+    ]);
     const cell = stored();
     delete cell.cells["result-600k"];
     expect(baselineDifferences(cell, baselineOf([measured(small)]))).toEqual([]);
