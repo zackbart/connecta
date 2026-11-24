@@ -341,6 +341,19 @@ describe("call-scoped sent credentials", () => {
       expect(walk.mock.calls.filter(([root]) => root === value)).toHaveLength(2);
     });
 
+    it("always walks a pass that feeds storage, whatever an earlier pass marked", () => {
+      const secrets = new SentSecrets();
+      secrets.add(SECRET);
+      const walk = walks(secrets);
+      const value = frozen({ tools: [{ name: "a", description: "ordinary" }] });
+      expect(secrets.redactCredentials(value)).toBe(value);
+      expect(secrets.redactCredentials(value)).toBe(value);
+      expect(walk.mock.calls.filter(([root]) => root === value)).toHaveLength(1);
+      expect(secrets.redactCredentials(value, "store")).toBe(value);
+      expect(secrets.redactCredentials(value, "store")).toBe(value);
+      expect(walk.mock.calls.filter(([root]) => root === value)).toHaveLength(3);
+    });
+
     it("never marks frozen data holding binary, which every walk copies", () => {
       const secrets = new SentSecrets();
       secrets.add(SECRET);
