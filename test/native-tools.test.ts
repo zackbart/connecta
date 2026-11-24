@@ -6,7 +6,7 @@
 import { gmail } from "../src/providers/gmail/index.js";
 import { docs } from "../src/providers/docs/index.js";
 import { PRIVATE_KEY } from "./fixtures/rsa.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { activityHistory, type ToolCallActivityEvent } from "../src/activity.js";
 import { accessTokens } from "../src/access-tokens.js";
 import { api } from "../src/connectors/api.js";
@@ -366,6 +366,53 @@ describe("native tool surface", () => {
       await app.close();
     }
   });
+
+  it.each([false, true])(
+    "INV-6 INV-8: refuses a live listing whose header declaration the SDK would drop, before it logs (modern %s)",
+    async (modern) => {
+      const storage = memoryStorage();
+      const warning = vi.spyOn(console, "warn");
+      const connector = (id: string, type: string): Connector => ({
+        id,
+        listTools: async () => [
+          {
+            name: `${id}_private_read`,
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: "object", properties: { amount: { type, "x-mcp-header": "Amount" } } },
+          },
+        ],
+        callTool: async () => ({ content: [] }),
+      });
+      const app = createTestConnecta({
+        storage,
+        accessTokens: accessTokens(storage),
+        agents: ["assistant"],
+        connectors: [connector("crm", "number"), connector("notes", "integer")],
+        pools: { native: { tools: ["crm", "notes"], members: ["agent:assistant"], surface: "native" } },
+        logger: silentLogger,
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const listed = await rpc(app, token, "native", "tools/list", {}, modern);
+        const names = (listed.result.tools as Array<{ name: string }>).map((tool) => tool.name);
+        expect(names).toContain("notes__notes_private_read");
+        expect(names.some((name) => name.includes("crm_private_read"))).toBe(false);
+        const refused = await rpc(
+          app,
+          token,
+          "native",
+          "tools/call",
+          { name: "crm__crm_private_read", arguments: {} },
+          modern,
+        );
+        expect(JSON.stringify(refused)).not.toContain("Amount");
+        expect(warning).not.toHaveBeenCalled();
+      } finally {
+        warning.mockRestore();
+        await app.close();
+      }
+    },
+  );
 
   it("raises a host's inline result threshold per connector cap, never past its ceiling", async () => {
     const storage = memoryStorage();
@@ -1494,6 +1541,55 @@ describe("native tool surface", () => {
       await app.close();
     }
   });
+
+  it.each([false, true])(
+    "INV-6 INV-8: treats a stale peek whose header declaration the SDK would drop as absent, before it logs (modern %s)",
+    async (modern) => {
+      const storage = memoryStorage();
+      const warning = vi.spyOn(console, "warn");
+      const app = createTestConnecta({
+        connectors: [
+          {
+            id: "crm",
+            kind: "mcp" as const,
+            listTools: (ctx) =>
+              new Promise((_, reject) =>
+                ctx.signal!.addEventListener("abort", () => reject(ctx.signal!.reason), { once: true }),
+              ),
+            peekCatalog: async () => ({
+              tools: [
+                {
+                  name: "crm_private_read",
+                  annotations: { readOnlyHint: true },
+                  inputSchema: { type: "object", properties: { amount: { type: "number", "x-mcp-header": "Amount" } } },
+                },
+              ],
+              fetchedAt: Date.now() - 60_000,
+              expiresAt: Date.now() - 1_000,
+            }),
+            callTool: async () => ({}),
+          },
+        ],
+        agents: ["assistant"],
+        pools: { native: { tools: ["crm"], members: ["agent:assistant"], surface: "native" } },
+        discovery: { probeTimeoutMs: 100 },
+        storage,
+        accessTokens: accessTokens(storage),
+        logger: silentLogger,
+      });
+      try {
+        const token = await issueAgentToken(storage, "assistant");
+        const listed = await rpc(app, token, "native", "tools/list", {}, modern);
+        const names = (listed.result.tools as Array<{ name: string }>).map((tool) => tool.name);
+        expect(names.some((name) => name.includes("crm_private_read"))).toBe(false);
+        expect(JSON.stringify(listed)).not.toContain("Amount");
+        expect(warning).not.toHaveBeenCalled();
+      } finally {
+        warning.mockRestore();
+        await app.close();
+      }
+    },
+  );
 
   it("INV-8: preserves object schemas and omits only the connector with an unrepresentable schema", async () => {
     const object: JsonSchema = {

@@ -113,6 +113,7 @@ async function fixture(
     | "transient"
     | "partial"
     | "header"
+    | "numberHeader"
     | "paged"
     | "stalled"
     | "renamed"
@@ -170,7 +171,7 @@ async function fixture(
                   ? "read_renamed"
                   : mode === "name"
                     ? `read_${token}`
-                    : mode === "header"
+                    : mode === "header" || mode === "numberHeader"
                       ? "downstream-private-name"
                       : "read",
               description: options.description ?? `Read ${token}`,
@@ -179,6 +180,7 @@ async function fixture(
                 properties: {
                   [token]: { const: encodeURIComponent(token) },
                   ...(mode === "header" ? { bad: { type: "object", "x-mcp-header": "bad private declaration" } } : {}),
+                  ...(mode === "numberHeader" ? { amount: { type: "number", "x-mcp-header": "Amount" } } : {}),
                 },
               },
               annotations:
@@ -1111,20 +1113,23 @@ describe("SQL-backed SDK catalog cache", () => {
     expect(f.listings()).toBe(ttl === 0 ? 8 : 6);
   });
 
-  it("INV-6 INV-8: invalid header declarations fail before SDK logging or caching", async () => {
-    const f = await fixture({ ttl: 60_000 });
-    const warning = vi.spyOn(console, "warn");
-    f.mode("header");
-    await expect(f.read(f.registry())).rejects.toMatchObject({
-      code: "connector_call_failed",
-      retryable: false,
-      message: "Downstream tool has an invalid x-mcp-header declaration.",
-    });
-    expect(warning).not.toHaveBeenCalled();
-    f.mode("ok");
-    await f.read(f.registry());
-    expect(f.listings()).toBe(2);
-  });
+  it.each(["header", "numberHeader"] as const)(
+    "INV-6 INV-8: invalid header declarations (%s) fail before SDK logging or caching",
+    async (mode) => {
+      const f = await fixture({ ttl: 60_000 });
+      const warning = vi.spyOn(console, "warn");
+      f.mode(mode);
+      await expect(f.read(f.registry())).rejects.toMatchObject({
+        code: "connector_call_failed",
+        retryable: false,
+        message: "Downstream tool has an invalid x-mcp-header declaration.",
+      });
+      expect(warning).not.toHaveBeenCalled();
+      f.mode("ok");
+      await f.read(f.registry());
+      expect(f.listings()).toBe(2);
+    },
+  );
 
   it("INV-8: incomplete SQL writes are misses and never hide a live failure", async () => {
     const f = await fixture({ ttl: 60_000 });

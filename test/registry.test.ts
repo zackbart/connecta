@@ -1,3 +1,4 @@
+import { api } from "../src/connectors/api.js";
 import { describe, expect, it, vi } from "vitest";
 import { MAX_CATALOG_TOOLS, MAX_SERIALIZED_CATALOG_BYTES } from "../src/catalog-limits.js";
 import { Registry } from "../src/registry.js";
@@ -16,6 +17,28 @@ describe("Registry construction", () => {
 
   it("rejects duplicate connector ids", () => {
     expect(() => makeRegistry([calcConnector, { ...calcConnector }])).toThrow(/Duplicate connector id/);
+  });
+
+  it.each([
+    ["a number property", { amount: { type: "number", "x-mcp-header": "Amount" } }],
+    ["an invalid header name", { id: { type: "string", "x-mcp-header": "Bad Name" } }],
+    [
+      "a repeated header name",
+      { a: { type: "string", "x-mcp-header": "Id" }, b: { type: "integer", "x-mcp-header": "id" } },
+    ],
+  ])("INV-11: rejects a static tool with an x-mcp-header the SDK would drop: %s", (_label, properties) => {
+    const tool = (inputSchema: Record<string, unknown>) =>
+      api("crm", {
+        tools: [
+          { name: "read", description: "Read", annotations: { readOnlyHint: true }, inputSchema, handler: () => ({}) },
+        ],
+      });
+    expect(() => makeRegistry([tool({ type: "object", properties })])).toThrow(
+      'Connector "crm" tool "read" has an invalid x-mcp-header declaration',
+    );
+    expect(() =>
+      makeRegistry([tool({ type: "object", properties: { amount: { type: "integer", "x-mcp-header": "Amount" } } })]),
+    ).not.toThrow();
   });
 });
 

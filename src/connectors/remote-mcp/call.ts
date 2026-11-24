@@ -29,7 +29,13 @@ import type { ConnectorContext, ToolDef } from "../../types.js";
 import type { RemoteMcpRuntime, RemoteMcpShared } from "./runtime.js";
 import type { ConnectionState } from "./connection.js";
 import { type CallDispatch, newDispatch, withDispatch } from "./transport.js";
-import { downstreamCallError, hasSdkPayload, ownAbortReason, requiresAuthorization } from "./errors.js";
+import {
+  downstreamCallError,
+  hasSdkPayload,
+  OutputSchemaCompileError,
+  ownAbortReason,
+  requiresAuthorization,
+} from "./errors.js";
 
 /** One connector's callTool operation, before the entry's wrappers. */
 export function remoteMcpCall(rt: RemoteMcpRuntime): Pick<RemoteMcpShared, "callToolOperation"> {
@@ -107,8 +113,8 @@ export function remoteMcpCall(rt: RemoteMcpRuntime): Pick<RemoteMcpShared, "call
                   );
                 }
                 let output: StandardSchemaV1 | undefined;
-                const outputError = (code: number, message: string): unknown =>
-                  rt.atMcpBoundary(ctx, new ProtocolError(code, message), "tools/call", client.transport, [ctx.signal]);
+                const outputError = (code: number, message: string, ErrorClass = ProtocolError): unknown =>
+                  rt.atMcpBoundary(ctx, new ErrorClass(code, message), "tools/call", client.transport, [ctx.signal]);
                 if (toolDefinition?.outputSchema) {
                   try {
                     output = fromJsonSchema(toolDefinition.outputSchema as JsonSchemaType);
@@ -116,6 +122,7 @@ export function remoteMcpCall(rt: RemoteMcpRuntime): Pick<RemoteMcpShared, "call
                     throw outputError(
                       -32602,
                       `Tool '${name}' has an invalid outputSchema: schema could not be compiled`,
+                      OutputSchemaCompileError,
                     );
                   }
                 }
