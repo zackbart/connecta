@@ -84,6 +84,11 @@ export default defineConfig((env: Env) => {
     readOnly: false,
     // Required: model-written programs run in a bounded QuickJS child.
     executor: quickJsExecutor(),
+    // Remote MCP servers built on the MCP TypeScript SDK mark every tool list
+    // immediately stale (ttlMs: 0). Reuse such a list for this many seconds;
+    // a tool the server reclassifies from read to write is noticed at most
+    // that long afterwards. 0 relists on every request.
+    discovery: { catalogZeroTtlSeconds: 300 },
     auth: clerk ? [clerk] : [],
     // Required with Clerk: the Clerk user ids (comma-separated in
     // CONNECTA_MAINTAINERS) who use plain /mcp, which serves every connector,

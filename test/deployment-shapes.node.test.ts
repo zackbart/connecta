@@ -121,6 +121,7 @@ describe("deployment shapes", () => {
         activity: { enabled: false },
       });
       expect(quiet.storage).toEqual({ configured: true, kind: "sqlite" });
+      expect(quiet.limits.discovery).toMatchObject({ catalogZeroTtlSeconds: { source: "config", value: 300 } });
       await off.close();
 
       const on = createConnecta({
@@ -226,6 +227,7 @@ describe("deployment shapes", () => {
       activity: { enabled: false },
     });
     expect(quiet.storage).toEqual({ configured: true, kind: "d1" });
+    expect(quiet.limits.discovery).toMatchObject({ catalogZeroTtlSeconds: { source: "config", value: 300 } });
     await off.close();
     const on = createConnecta({
       ...workerConfig(env({ CREDENTIAL_ENCRYPTION_KEY: VAULT_KEY, CONNECTA_ACTIVITY: "on" })),
