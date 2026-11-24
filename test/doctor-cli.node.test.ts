@@ -260,7 +260,7 @@ describe("connecta doctor's credential destinations", () => {
         env: {
           ...process.env,
           CONNECTA_TOKEN: "synthetic-bearer",
-          CF_ACCESS_CLIENT_ID: "synthetic-id",
+          CF_ACCESS_CLIENT_ID: "synthetic-access-id",
           CF_ACCESS_CLIENT_SECRET: "synthetic-secret",
         },
       }),
@@ -482,7 +482,7 @@ describe("connecta doctor --config", () => {
       );
       await expect(
         run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "local"], {
-          env: { ...env, CONNECTA_TOKEN: "person-token" },
+          env: { ...env, CONNECTA_TOKEN: "person-session-token" },
         }),
       ).rejects.toThrow("--pool is for agent tokens");
     },
@@ -644,6 +644,233 @@ describe("connecta doctor against a server that reflects its credentials", () =>
     expect(JSON.parse(output.stdout)).toMatchObject({ schemaVersion: 1, echoed: { host: expect.any(String) } });
     expect(output.stdout).toContain("[redacted]");
     expectNoCredential(output);
+  });
+
+  it("INV-5: redacts a credential with consecutive backslashes from a --config snapshot as data", async () => {
+    const token = "reflected\\\\\\backslash-token";
+    const server = createServer((request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(
+        JSON.stringify({
+          schemaVersion: 2,
+          role: "maintainer",
+          config: {
+            schemaVersion: 1,
+            authorization: request.headers.authorization,
+            nested: [{ [String(request.headers.authorization)]: `prefix ${token} suffix` }],
+          },
+        }),
+      );
+    });
+    const url = await listening(server);
+    const output = await run(process.execPath, [CLI, "doctor", "--config", "--url", url], {
+      env: { ...process.env, CONNECTA_TOKEN: token, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+    });
+    expect(JSON.parse(output.stdout)).toEqual({
+      schemaVersion: 1,
+      authorization: "[redacted]",
+      nested: [{ "[redacted]": "[redacted]" }],
+    });
+    for (const form of [token, JSON.stringify(token).slice(1, -1), "backslash-token"]) {
+      expect(output.stdout).not.toContain(form);
+      expect(output.stderr).not.toContain(form);
+    }
+  });
+
+  it("refuses a --config response that is not JSON without printing it", async () => {
+    const server = createServer((request, response) => {
+      response.setHeader("Content-Type", "application/json");
+      response.end(`not json ${request.headers.authorization}`);
+    });
+    const url = await listening(server);
+    const output = await run(process.execPath, [CLI, "doctor", "--config", "--url", url], {
+      env: { ...process.env, ...credentials },
+    }).then(
+      () => ({ stdout: "unexpected success", stderr: "" }),
+      (error: { stdout: string; stderr: string }) => error,
+    );
+    expect(output.stderr).toContain("Deployment returned an invalid config contract.");
+    expect(output.stderr).not.toContain("not json");
+    expectNoCredential(output);
+  });
+});
+
+async function listening(server: ReturnType<typeof createServer>): Promise<string> {
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  teardown.push(() => new Promise<void>((done) => server.close(() => done())));
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Expected TCP address");
+  return `http://127.0.0.1:${address.port}`;
+}
+
+describe("connecta doctor prints facts, not server text", () => {
+  const token = `cta_reflected_${"t".repeat(29)}`;
+
+  type Fake = {
+    health?: (auth: string) => unknown;
+    tools?: (auth: string) => Array<{ name: string; _meta?: unknown }>;
+    listError?: (auth: string) => { code: number; message: string };
+    call?: (auth: string) => unknown;
+    oversizedList?: boolean;
+  };
+
+  async function doctorAgainstFake(fake: Fake): Promise<{ stdout: string; stderr: string }> {
+    const server = createServer(async (request, response) => {
+      const auth = String(request.headers.authorization);
+      response.setHeader("Content-Type", "application/json");
+      if (request.url === "/health") {
+        response.end(JSON.stringify(fake.health?.(auth) ?? { status: "ok", connectors: 0 }));
+        return;
+      }
+      if (request.method !== "POST") {
+        response.writeHead(405);
+        response.end();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      for await (const chunk of request) chunks.push(chunk);
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      if (body.method === "notifications/initialized") {
+        response.writeHead(202);
+        response.end();
+        return;
+      }
+      if (body.method === "tools/list" && fake.oversizedList) {
+        const padding = "x".repeat(5 * 1024 * 1024);
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { tools: [], padding } }));
+        return;
+      }
+      if (body.method === "tools/list" && fake.listError) {
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: fake.listError(auth) }));
+        return;
+      }
+      let result: unknown = {};
+      if (body.method === "initialize")
+        result = {
+          protocolVersion: "2025-11-25",
+          capabilities: { tools: {} },
+          serverInfo: { name: "fake", version: "1" },
+        };
+      if (body.method === "tools/list")
+        result = {
+          tools: (fake.tools?.(auth) ?? META_TOOL_NAMES.map((name) => ({ name }))).map((tool) => ({
+            ...tool,
+            inputSchema: { type: "object" },
+          })),
+        };
+      if (body.method === "tools/call")
+        result = fake.call?.(auth) ?? { content: [{ type: "text", text: '{"result":42}' }] };
+      response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result }));
+    });
+    const url = await listening(server);
+    return run(process.execPath, [CLI, "doctor", "--url", url, "--pool", "bots"], {
+      env: { ...process.env, CONNECTA_TOKEN: token, CF_ACCESS_CLIENT_ID: "", CF_ACCESS_CLIENT_SECRET: "" },
+    }).then(
+      ({ stdout, stderr }) => ({ stdout, stderr }),
+      (error: { stdout: string; stderr: string }) => ({ stdout: error.stdout, stderr: error.stderr }),
+    );
+  }
+
+  function expectNoServerText(output: { stdout: string; stderr: string }) {
+    for (const form of [token, `Bearer ${token}`, "reflected", "SERVER-TEXT"]) {
+      expect(output.stdout).not.toContain(form);
+      expect(output.stderr).not.toContain(form);
+    }
+  }
+
+  it("INV-5: names an unexpected health status only when it is a plain identifier", async () => {
+    const output = await doctorAgainstFake({ health: (auth) => ({ status: auth }) });
+    expect(output.stderr).toContain("Unexpected health status from /health: <unprintable>.");
+    expectNoServerText(output);
+  });
+
+  it("INV-5: prints a connector count and executor name only when they carry no credential", async () => {
+    const output = await doctorAgainstFake({
+      health: (auth) => ({ status: "ok", connectors: auth, executor: { name: auth.slice("Bearer ".length) } }),
+    });
+    expect(output.stdout).toMatch(/^Connecta doctor passed: <unprintable> connector\(s\), code executed, /);
+    expectNoServerText(output);
+  });
+
+  it("INV-5: lists unexpected tool names only as checked identifiers", async () => {
+    const output = await doctorAgainstFake({
+      tools: (auth) =>
+        [...META_TOOL_NAMES, auth.slice("Bearer ".length), `SERVER-TEXT ${auth}`].map((name) => ({ name })),
+    });
+    expect(output.stderr).toContain("Unexpected MCP surface.");
+    expect(output.stderr).toContain("received 8 tool(s): ");
+    expect(output.stderr.match(/<unprintable>/g)).toHaveLength(2);
+    expectNoServerText(output);
+  });
+
+  it("INV-5: names unavailable native catalogs only as checked identifiers", async () => {
+    const output = await doctorAgainstFake({
+      tools: (auth) =>
+        ["authorize_connector", "skills", "execute_code"].map((name) => ({
+          name,
+          ...(name === "skills"
+            ? {
+                _meta: {
+                  "dev.connecta/surface": {
+                    surface: "native",
+                    executeCode: true,
+                    catalogErrors: ["crm", auth, `SERVER-TEXT ${auth}`],
+                    staleCatalogs: [],
+                  },
+                },
+              }
+            : {}),
+        })),
+    });
+    expect(output.stderr).toContain("Native catalogs unavailable: crm, <unprintable>, <unprintable>.");
+    expectNoServerText(output);
+  });
+
+  it("INV-5: reports an execution failure without the tool's result", async () => {
+    const output = await doctorAgainstFake({
+      call: (auth) => ({ isError: true, content: [{ type: "text", text: `SERVER-TEXT ${auth}` }] }),
+    });
+    expect(output.stderr).toContain("execute_code check failed: the tool returned an error.");
+    expectNoServerText(output);
+  });
+
+  it("INV-5: reports a JSON-RPC error by code without its message", async () => {
+    const output = await doctorAgainstFake({ listError: (auth) => ({ code: -32603, message: `SERVER-TEXT ${auth}` }) });
+    expect(output.stderr).toMatch(/MCP request to \/agent\/bots failed: \S+ -32603\./);
+    expectNoServerText(output);
+  });
+
+  it("refuses an MCP reply over the byte cap", async () => {
+    const output = await doctorAgainstFake({ oversizedList: true });
+    expect(output.stderr).toContain(`Response from /agent/bots exceeds ${4 * 1024 * 1024} bytes.`);
+    expectNoServerText(output);
+  });
+
+  it("refuses a /health body over the byte cap", async () => {
+    const output = await doctorAgainstFake({ health: () => ({ status: "ok", padding: "x".repeat(70 * 1024) }) });
+    expect(output.stderr).toContain(`Response from /health exceeds ${64 * 1024} bytes.`);
+  });
+
+  it("refuses a credential too short to redact soundly, naming only the variable", async () => {
+    const executor: Executor = { execute: async () => ({ result: 42 }) };
+    for (const [name, value] of [
+      ["CONNECTA_TOKEN", "short-token"],
+      ["CF_ACCESS_CLIENT_SECRET", "short-secret"],
+    ] as const) {
+      const env: Record<string, string> = {
+        CONNECTA_TOKEN: TOKEN,
+        CF_ACCESS_CLIENT_ID: "synthetic-access-id",
+        CF_ACCESS_CLIENT_SECRET: "synthetic-access-secret",
+        [name]: value,
+      };
+      const failure = await doctorAgainst(executor, { env }).then(
+        () => undefined,
+        (error: { stdout: string; stderr: string }) => error,
+      );
+      expect(failure?.stderr).toContain(`${name} is shorter than 16 characters`);
+      expect(`${failure?.stdout}${failure?.stderr}`).not.toContain(value);
+    }
   });
 });
 

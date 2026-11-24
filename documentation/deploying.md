@@ -509,10 +509,23 @@ agent tokens only: with a person's credential doctor always checks plain
 in the process environment wins, and a missing file changes nothing. An
 unreadable file fails with its error code only. The Node
 template's `npm run doctor` passes `--dotenv .env`.
-Doctor never prints these three credentials: a failed `/health` or MCP request
-reports its status without the response body, and any of their values in
-anything else doctor prints, plain, `Bearer`-prefixed, or JSON-, URL- or
-HTML-escaped, is replaced with `[redacted]`.
+Each of the three credentials must be at least 16 characters; doctor refuses a
+shorter value by variable name.
+
+Doctor prints no text chosen by the server it checks. A failed request reports
+its route and status (`HTTP 403 from /health`, `MCP 401 from /agent/assistant`),
+a JSON-RPC error reports only its code, and an execution check reports only
+whether the tool returned an error or a wrong result. Connector ids, tool
+names, the health status and the protocol version appear only when they are
+plain identifiers (letters, digits, `_`, `.`, `:`, `-`, at most 64 characters)
+sharing no 8-character run with a credential; anything else prints as
+`<unprintable>`. Responses over 64 KiB from `/health` or 4 MiB from the config
+or MCP endpoint are refused. The `--config` snapshot is the one server output
+doctor prints: every key or value containing a credential becomes
+`[redacted]` before the JSON is written. As a last resort, doctor also replaces
+an exact credential value in any other text that reaches stdout or stderr. To
+see a failing response body or tool result, reproduce the request with a client
+you control.
 For a Worker protected by Access, `/health` still needs edge admission even
 though `/agent/*` bypasses Access. Use an Access service token admitted by the
 Worker-level policy for that check, alongside the agent token:
