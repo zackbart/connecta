@@ -44,7 +44,7 @@ import {
   MAX_CATALOG_TOOLS,
   MAX_SERIALIZED_CATALOG_BYTES,
 } from "./catalog-limits.js";
-import { redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
+import { assertToolNamesKept, redactCatalog, sentSecretsForRequest } from "./sent-secrets.js";
 import { failureRecord, logFailure } from "./operator-record.js";
 import { secretDigest } from "./storage-digest.js";
 import { responseCacheKeys } from "./storage/keys.js";
@@ -591,6 +591,7 @@ export function catalogIntake(
   }));
   if (tools.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
   const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...result, tools });
+  assertToolNamesKept(tools, clean.tools);
   if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) throw catalogCeiling();
   assertListedHeaderDeclarations(clean.tools);
   return {

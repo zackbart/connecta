@@ -117,6 +117,7 @@ async function fixture(
     | "paged"
     | "stalled"
     | "renamed"
+    | "seam"
     | "destructive" = "ok";
   let resolvedTokens = 0;
   const stalled = new Set<() => void>();
@@ -151,6 +152,25 @@ async function fixture(
         });
       if (mode === "error" || (mode === "partial" && body.params?.cursor))
         return new Response(`Refused ${token}`, { status: 403 });
+      if (mode === "seam")
+        return Response.json({
+          jsonrpc: "2.0",
+          id: body.id,
+          result: {
+            resultType: "complete",
+            ttlMs: options.ttl,
+            cacheScope: "private",
+            tools: [
+              {
+                name: "read",
+                inputSchema: { type: "object" },
+                annotations: { title: `Read ${token.slice(0, 7)}` },
+                _meta: { "example.com/note": "x" },
+              },
+              { name: `${token.slice(7)}_read`, inputSchema: { type: "object" } },
+            ],
+          },
+        });
       return Response.json({
         jsonrpc: "2.0",
         id: body.id,
@@ -1091,6 +1111,26 @@ describe("SQL-backed SDK catalog cache", () => {
     await expect(f.read(f.registry())).resolves.toHaveLength(1);
     expect(f.listings()).toBe(4);
     expect(sdkList).toHaveBeenCalledTimes(3);
+  });
+
+  it("INV-6 INV-8: a tool name the second intake pass would rewrite refuses the complete catalog", async () => {
+    const f = await fixture({ ttl: 60_000 });
+    const seam = "FAKEsk7Q9zLm2W";
+    f.rotate(seam);
+    f.mode("seam");
+    const refusal = await f.read(f.registry()).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(ConnectorCallError);
+    expect(refusal).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect((refusal as Error).message).toContain("tool name");
+    expect((refusal as Error).message).not.toMatch(/_read|Q9zLm2W|FAKEsk7/);
+    const keys = await f.store.list(responseCacheKeys.prefix(f.id));
+    expect(keys.filter((key) => key.includes(":chunk:"))).toEqual([]);
+    for (const key of keys) expect(await f.store.get(key)).not.toMatch(/_read|Q9zLm2W|FAKEsk7/);
+    f.mode("ok");
+    await expect(f.read(f.registry())).resolves.toHaveLength(1);
   });
 
   it.each([0, 1_000])("INV-8: later pages narrow public scope and TTL to %s before SDK publication", async (ttl) => {

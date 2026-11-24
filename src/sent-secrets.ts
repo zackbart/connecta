@@ -2677,14 +2677,24 @@ export function redactBoundedRead(ctx: ConnectorContext, text: string): string {
 export function redactCatalog<T extends { name: string }>(ctx: ConnectorContext, tools: T[]): T[] {
   sentSecretsFor(ctx);
   const redacted = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(tools);
-  if (redacted.some((tool, index) => tool.name !== tools[index]!.name)) {
+  assertToolNamesKept(tools, redacted);
+  return redacted;
+}
+
+/** A later pass over a catalog `redactCatalog` accepted sees different neighbours, so it can
+ * match across a name too: the same refusal applies to whatever it returns. */
+export function assertToolNamesKept(tools: readonly { name: string }[], redacted: unknown): void {
+  if (
+    !Array.isArray(redacted) ||
+    redacted.length !== tools.length ||
+    redacted.some((tool: { name?: unknown } | null, index) => tool?.name !== tools[index]!.name)
+  ) {
     throw new ConnectorCallError(
       "connector_call_failed",
       "Downstream catalog contains a tool name that echoes a sent credential; refusing the complete catalog.",
       { retryable: false },
     );
   }
-  return redacted;
 }
 
 /** Register only after the transport has assembled the request it sends. */
