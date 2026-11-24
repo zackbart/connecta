@@ -201,10 +201,11 @@ Typecheck and restart/redeploy, then use either procedure:
   changed, reload and decide again.
 - **Trusted local provisioning:** the Node template's
   `npm run --silent rotate-token -- assistant` both issues and rotates.
-  Run it with the same environment and database path as the server; local
-  commands do not load `.env`. Store stdout privately. For revocation, add a
+  Run it with the same environment and database path as the server; the
+  template's npm scripts read `.env` when present, and a variable set in the
+  process environment wins over the file. Store stdout privately. For revocation, add a
   small trusted script such as the following to `src/revoke-token.ts` and
-  run `npx tsx src/revoke-token.ts` with that same environment. Workers use
+  run `npx tsx --env-file-if-exists=.env src/revoke-token.ts` with that same environment. Workers use
   the maintainer UI or trusted tooling bound to the same D1 database;
   a local SQLite script cannot manage a Worker's slots.
 
@@ -849,8 +850,10 @@ provider other than the built-in agent-token adapter), and a non-empty
 `maintainers` on a deployment with no such provider. With agents alone
 (`accessTokens` as the only inbound auth), `maintainers` stays empty, nobody
 can be a maintainer, and plain `/mcp` and every operator API admit nobody; the
-agents reach only `/agent/<pool>` for the pools that list them. With no inbound auth at all, the
-deployment is open (see [pools](#pools)). `describeConfig()` lists
+agents reach only `/agent/<pool>` for the pools that list them. With no resolved inbound adapter at all
+(no `auth` entry, no `accessTokens` module and no agent with a `vercel` binding),
+plain `/mcp` admits a request with no `Authorization` header as an anonymous
+caller; connector `members` still narrow what it is served (see [pools](#pools)). `describeConfig()` lists
 `maintainers` as `{ namespace, id }` and each pool's resolved `members`,
 trimmed `description` (`null` when unset), and `path`, where its members
 connect: `/mcp` for a people pool, `/agent/<name>` for an agent pool.
@@ -1055,11 +1058,12 @@ createConnecta({
 });
 ```
 
-Without configured `auth`, an open deployment has one anonymous, non-interactive
-identity. It keeps plain `/mcp` with the whole catalog, as the construction
-warning says, no pool admits anyone because nobody can be a member,
-and every agent endpoint answers the machine-only 401 because no agent can be
-admitted.
+With no resolved inbound adapter, an open deployment has one anonymous,
+non-interactive identity for a request with no `Authorization` header. Plain
+`/mcp` serves it the connectors that connector `members` do not withhold, and
+construction warns that any caller can invoke every shared connector. No pool
+admits a person, because no one can authenticate as a member, and every agent
+endpoint answers the machine-only 401 because no agent can be admitted.
 
 | Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
