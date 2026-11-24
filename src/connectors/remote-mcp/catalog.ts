@@ -399,7 +399,7 @@ export function remoteMcpCatalog(
           ? {}
           : ((yield authCall(rt.cachedCatalog, [ctx])) as Preread & { tools?: Tool[] });
       let clean: ListToolsResult["tools"];
-      if (cached.tools) clean = redactCatalog(ctx, cached.tools, true);
+      if (cached.tools) clean = redactCatalog(ctx, cached.tools, "freeze");
       else {
         const client = (yield authCall(rt.ensureConnected, [ctx, state, cached])) as Client;
         // A credential test must observe the downstream answer itself, never
@@ -411,7 +411,7 @@ export function remoteMcpCatalog(
         listingContexts.set(options, ctx);
         try {
           const result = (yield authInvoke(client, "listTools", [undefined, options])) as ListToolsResult;
-          clean = redactCatalog(ctx, result.tools, true);
+          clean = redactCatalog(ctx, result.tools, "freeze");
         } catch (err) {
           if (ownAbortReason(err, [ctx.signal]) && !hasSdkPayload(err)) throw err;
           const bounded = rt.atMcpBoundary(ctx, err, "tools/list", client.transport, [ctx.signal]);
@@ -436,7 +436,7 @@ export function remoteMcpCatalog(
       const entry = (yield authCall(rt.peekCatalog, [ctx])) as CatalogPeekEntry | undefined;
       if (!entry) return undefined;
       return {
-        tools: toolDefinitions(redactCatalog(ctx, entry.result.tools, true)),
+        tools: toolDefinitions(redactCatalog(ctx, entry.result.tools, "freeze")),
         fetchedAt: entry.fetchedAt,
         expiresAt: entry.expiresAt,
       };

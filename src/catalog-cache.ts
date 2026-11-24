@@ -585,12 +585,12 @@ export function catalogIntake(
   ctx: ConnectorContext,
   result: ListToolsResult,
 ): ListToolsResult & { ttlMs: number; cacheScope: "public" | "private" } {
-  const tools = redactCatalog(ctx, result.tools).map(({ _meta: _ignored, icons, ...tool }) => ({
+  const tools = redactCatalog(ctx, result.tools, "store").map(({ _meta: _ignored, icons, ...tool }) => ({
     ...tool,
     ...(icons ? { icons: icons.filter((icon) => !/^data:/i.test(icon.src)) } : {}),
   }));
   if (tools.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
-  const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...result, tools });
+  const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...result, tools }, "store");
   if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES) throw catalogCeiling();
   assertListedHeaderDeclarations(clean.tools);
   return {
@@ -1229,7 +1229,10 @@ const catalogClientOptionsNative = /* @__PURE__ */ registerAuth(
         const field = method === "resources/list" ? "resources" : "resourceTemplates";
         const items = catalogItems(method, body).map(({ _meta: _ignored, ...item }) => item);
         if (items.length > MAX_CATALOG_TOOLS) throw catalogCeiling();
-        const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials({ ...body, [field]: items });
+        const clean = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(
+          { ...body, [field]: items },
+          "store",
+        );
         if (new TextEncoder().encode(JSON.stringify(clean)).byteLength > MAX_SERIALIZED_CATALOG_BYTES)
           throw catalogCeiling();
         return {

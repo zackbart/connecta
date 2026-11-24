@@ -153,6 +153,9 @@ const replacement = (kind: number | undefined) => (kind === BINARY || kind === E
  * identifiers, counts and addresses to them. */
 type Scan = { budget: { work: number; nodes: number }; payload: boolean };
 type RedactMode = "payload" | "envelope" | "values";
+/** How a credentials-only pass uses marks: reuse them, freeze a value Connecta owns, or ignore
+ * them for a value about to be stored. */
+type CredentialPass = "reuse" | "freeze" | "store";
 /** What a walk that changed nothing read: the set's revision, memo writes and minted states, and
  * the modes it ran under. */
 type WalkMark = { revision: number; memo: number; minted: number; modes: Set<RedactMode> };
@@ -1424,7 +1427,8 @@ export class SentSecrets {
     return this.redactValue(value, mode, false);
   }
 
-  /** {@link redact} for a value Connecta built or parsed itself and never mutates afterwards. When
+  /** {@link redact} for a value Connecta built or parsed itself and never mutates afterwards, never
+   * one a connector or deployment supplied. When
    * the walk returns it as it stood, every container it read is frozen, so a later pass over the
    * same object, at this revision and mode, returns it without walking it again. A copy the walk
    * returns instead is frozen unmarked: the next pass that finds it unchanged marks it. */
@@ -1494,9 +1498,12 @@ export class SentSecrets {
   }
 
   /** Credentials alone: later calls keep the private arguments they submit, and cached
-   * catalogs never depend on one request's arguments. */
-  redactCredentials<T>(value: T, freeze = false): T {
-    return this.credentials().redactValue(value, "envelope", freeze);
+   * catalogs never depend on one request's arguments. A value about to be stored is always walked
+   * in full. */
+  redactCredentials<T>(value: T, use: CredentialPass = "reuse"): T {
+    const view = this.credentials();
+    if (use === "store") return view.idle() ? value : (view.project(value, view.scan(false)).value as T);
+    return view.redactValue(value, "envelope", use === "freeze");
   }
 
   /** A program's outbound arguments, with what the {@link outbound} check matched replaced,
@@ -1519,18 +1526,19 @@ export class SentSecrets {
   }
 
   /** A walk that returns `value` as it stood marks it: a long string as it is, an object when
-   * every container it read was frozen or, with `freeze`, once they are. A write to the memo or
-   * minted states during the walk, or an array hole, which reads through Array.prototype, leaves
-   * it unmarked. */
+   * every container it read was frozen or, with `freeze`, once they are. A registration, memo
+   * write or minted state during the walk, or an array hole, which reads through Array.prototype,
+   * leaves it unmarked. */
   private redactValue<T>(value: T, mode: RedactMode, freeze: boolean): T {
     if (this.idle() || this.settled(value, mode)) return value;
+    const revision = this.revision;
     const memo = this.memoWrites;
     const minted = this.mintedStates.size;
     const reached: object[] | undefined = freeze ? [] : undefined;
     const result = this.project(value, this.scan(mode !== "envelope"), mode === "values", reached);
     if (result.value !== value) {
       if (freeze) frozenData(result.value);
-    } else if (this.memoWrites === memo && this.mintedStates.size === minted) {
+    } else if (this.revision === revision && this.memoWrites === memo && this.mintedStates.size === minted) {
       if (typeof value === "string") {
         if (value.length >= MEMO_UNITS) this.mark(value, mode, memo, minted);
       } else if (
@@ -1577,7 +1585,7 @@ export class SentSecrets {
       mark.modes.has(mode) &&
       mark.memo === this.memoWrites &&
       mark.minted === this.mintedStates.size &&
-      (typeof value === "string" || !("toJSON" in Array.prototype))
+      (typeof value === "string" || !("toJSON" in Object.prototype || "toJSON" in Array.prototype))
     );
   }
 
@@ -2800,9 +2808,13 @@ export function redactBoundedRead(ctx: ConnectorContext, text: string): string {
 /** Sanitize listing facts before any cache or consumer receives them. A name
  * cannot be rewritten without changing dispatch, and dropping one entry would
  * publish a partial catalog, so refuse the complete listing instead. */
-export function redactCatalog<T extends { name: string }>(ctx: ConnectorContext, tools: T[], freeze = false): T[] {
+export function redactCatalog<T extends { name: string }>(
+  ctx: ConnectorContext,
+  tools: T[],
+  use: CredentialPass = "reuse",
+): T[] {
   sentSecretsFor(ctx);
-  const redacted = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(tools, freeze);
+  const redacted = sentSecretsForRequest(ctx.requestScope ?? ctx).redactCredentials(tools, use);
   if (redacted.some((tool, index) => tool.name !== tools[index]!.name)) {
     throw new ConnectorCallError(
       "connector_call_failed",

@@ -1278,7 +1278,9 @@ a frozen value cannot change, so the skipped walk would return it unchanged. A
 mark under one mode never stands for another. Every registration that lets the
 set match more, a stored form (including one a connector context's set passes
 to its request) or an unregistered value, raises the revision and drops the
-marks, so a value is walked again before it is next served. No other set reads
+marks, so a value is walked again before it is next served; a walk during
+which the revision, memo writes or minted states changed marks nothing. No
+other set reads
 a mark: not another request's or caller's, and not the credentials-only view,
 which is a set of its own whenever the request holds a private value. A catalog
 retained across requests is marked, if at all, only in one request's set, so
@@ -1289,8 +1291,10 @@ listing that takes what it read share both), and a program call's inline
 presentation. A copy such a freezing pass made is frozen unmarked and marked by
 the next walk that finds it unchanged. Other callers' values are never frozen
 or mutated; one that is not already deeply frozen is walked every time.
-`text`, which checks wire text about to be returned, stored or paged, and the
-MCP route's pass over the serialized response always walk. Repeats skipped so
+`text`, which checks wire text about to be returned, stored or paged, the
+credentials-only passes before a catalog, resource listing, negotiation
+verdict or catalog fallback is stored, and the MCP route's pass over the
+serialized response always walk. Repeats skipped so
 include the invocation's passes over a remote call's raw result and its
 processing input, a program presentation's pass over its call value and the
 host-to-guest pass over that presentation, and a warm search's second passes

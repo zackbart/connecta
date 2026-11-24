@@ -293,20 +293,69 @@ describe("call-scoped sent credentials", () => {
       expect(walk).toHaveBeenCalledTimes(3);
     });
 
-    it("walks a marked object again once a prototype it inherits from gains a toJSON", () => {
+    it.each([
+      ["Object.prototype", Object.prototype],
+      ["Array.prototype", Array.prototype],
+    ] as const)("walks a marked value again once %s gains a toJSON", (_name, prototype) => {
       const secrets = new SentSecrets();
       secrets.add(SECRET);
-      const value = frozen({ text: "ordinary" });
+      const value = frozen({ rows: [{ text: "ordinary" }] });
       expect(secrets.redact(value)).toBe(value);
       let redacted: unknown;
-      Object.defineProperty(Object.prototype, "toJSON", { value: () => ({ text: SECRET }), configurable: true });
+      Object.defineProperty(prototype, "toJSON", { value: () => ({ text: SECRET }), configurable: true });
       try {
         redacted = secrets.redact(value);
       } finally {
-        delete (Object.prototype as { toJSON?: unknown }).toJSON;
+        delete (prototype as { toJSON?: unknown }).toJSON;
       }
       expect(redacted).not.toBe(value);
       expect(JSON.stringify(redacted)).not.toContain(SECRET);
+    });
+
+    it("leaves a value unmarked when a registration lands during its walk", () => {
+      const secrets = new SentSecrets();
+      secrets.add(SECRET);
+      const child = new Proxy(Object.freeze({}), {
+        isExtensible(target) {
+          secrets.add(LATER);
+          return Reflect.isExtensible(target);
+        },
+      });
+      const value = Object.freeze({ [LATER]: child });
+      expect(secrets.redact(value)).toBe(value);
+      expect(Object.keys(secrets.redact(value))).toEqual(["[redacted]"]);
+    });
+
+    it("walks a marked value again after an unregistered value tightens the set", () => {
+      const secrets = new SentSecrets();
+      secrets.add(SECRET);
+      const walk = walks(secrets);
+      const value = frozen({ text: "ordinary row" });
+      expect(secrets.redact(value)).toBe(value);
+      expect(secrets.redact(value)).toBe(value);
+      secrets.arguments(
+        { note: "x".repeat(524_289) },
+        { type: "object", properties: { note: { type: "string", writeOnly: true } } },
+      );
+      expect(secrets.redact(value)).toEqual({ text: "[redacted]" });
+      expect(walk.mock.calls.filter(([root]) => root === value)).toHaveLength(2);
+    });
+
+    it("never marks frozen data holding binary, which every walk copies", () => {
+      const secrets = new SentSecrets();
+      secrets.add(SECRET);
+      const walk = walks(secrets);
+      for (const binary of [
+        new Uint8Array([1, 2, 3]),
+        Object.freeze(new Uint8Array(0)),
+        Object.freeze(new DataView(new ArrayBuffer(4))),
+        Object.freeze(new ArrayBuffer(4)),
+      ]) {
+        const value = Object.freeze({ binary });
+        expect(secrets.redact(value)).not.toBe(value);
+        expect(secrets.redact(value)).not.toBe(value);
+        expect(walk.mock.calls.filter(([root]) => root === value)).toHaveLength(2);
+      }
     });
   });
 
