@@ -338,8 +338,11 @@ describe("server /mcp end-to-end", () => {
       };
     };
     async function executeDescription(specs: Spec[]) {
+      return describedBy(specs.map(connector));
+    }
+    async function describedBy(connectors: ReturnType<typeof connector>[]) {
       const c = createTestConnecta({
-        connectors: specs.map(connector),
+        connectors,
         auth: machineAuth(TOKEN),
         storage: memoryStorage(),
         publicUrl: BASE,
@@ -425,6 +428,35 @@ describe("server /mcp end-to-end", () => {
     for (let index = 0; index < 16; index++) expect(partial).toContain(`Team ${index} workspace`);
     expect(partial).toMatch(/service_15\* \(Team 15 workspace\)\. \*Read /);
     expect(await inventory(described)).toBe(partial);
+    const shared = described.map(connector);
+    const sharedInventory = async (connectors: typeof shared) =>
+      (await describedBy(connectors)).match(/^Connectors: .*$/m)?.[0];
+    expect(await sharedInventory(shared)).toBe(partial);
+    expect(await sharedInventory(shared.slice(0, 3))).toBe(await inventory(described.slice(0, 3)));
+    expect(await sharedInventory(shared)).toBe(partial);
+    shared[0]!.title = "Renamed workspace";
+    expect(await sharedInventory(shared.slice(0, 1))).toBe(
+      "Connectors: service_00 (Renamed workspace; Purpose 0 of this deployment's long-running work).",
+    );
+    // A description that differs between reads is never retained under another read's value:
+    // whichever single read returns the private text, a later request serves it only if that
+    // read happened during that request.
+    const privateOn = async (privateRead: number) => {
+      let reads = 0;
+      const shifting = connector({ id: "shifting", title: "Shifting workspace", description: "unused" });
+      Object.defineProperty(shifting, "description", {
+        get: () => (++reads === privateRead ? "Private caller notes" : "Common workspace notes"),
+      });
+      await sharedInventory([shifting]);
+      const before = reads;
+      const second = await sharedInventory([shifting]);
+      return { reads, leaked: second!.includes("Private caller notes") && privateRead <= before };
+    };
+    const { reads: totalReads } = await privateOn(0);
+    expect(totalReads).toBeGreaterThan(1);
+    for (let privateRead = 1; privateRead <= totalReads; privateRead++) {
+      expect((await privateOn(privateRead)).leaked, `private text on read ${privateRead}`).toBe(false);
+    }
     // The entry that first misses is the one that would have overflowed the cap.
     const nextPurpose = /Purpose (\d+) of this/g;
     const kept = [...partial.matchAll(nextPurpose)].map((match) => Number(match[1]));
