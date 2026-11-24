@@ -236,6 +236,7 @@ const searchIndexes = new WeakMap<ToolDef[], SearchView>();
 // it avoids hash collisions and charges its UTF-16 storage as well.
 const retainedIndexes = new Map<string, { index: SearchIndex; bytes: number }>();
 const INDEX_BYTES = 8 * 1024 * 1024;
+const EMPTY_INDEX_BYTES = 1024;
 let retainedBytes = 0;
 
 /** A tool's display title; MCP carries it on the tool or on its annotations. */
@@ -324,7 +325,7 @@ export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void
   }
   const index = buildIndex(tools, inputs);
   bindIndex(tools, index);
-  let bytes = key.length * 2 + 128;
+  let bytes = key.length * 2 + EMPTY_INDEX_BYTES;
   for (const doc of index.documents) {
     bytes += 128 + doc.name.length * 2;
     for (const zone of ZONES) for (const token of doc[zone]) bytes += 32 + token.length * 2;
@@ -332,9 +333,9 @@ export function prepareLexicalCatalog(tools: ToolDef[], partition: string): void
   for (const map of index.postings)
     for (const [token, positions] of map) bytes += 96 + token.length * 2 + positions.length * 8;
   if (bytes > INDEX_BYTES) return;
-  while (retainedBytes + bytes > INDEX_BYTES) {
-    const oldest = retainedIndexes.keys().next().value!;
-    retainedBytes -= retainedIndexes.get(oldest)!.bytes;
+  for (const [oldest, entry] of retainedIndexes) {
+    if (retainedBytes + bytes <= INDEX_BYTES) break;
+    retainedBytes -= entry.bytes;
     retainedIndexes.delete(oldest);
   }
   retainedIndexes.set(key, { index, bytes });

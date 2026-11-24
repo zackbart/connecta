@@ -725,9 +725,9 @@ function rememberValidated(key: string, value: CatalogResult, bytes: number): vo
       pending.push(child);
     }
   }
-  while (validatedBytes + bytes > VALIDATED_BYTES) {
-    const oldest = validatedCatalogs.keys().next().value!;
-    validatedBytes -= validatedCatalogs.get(oldest)!.bytes;
+  for (const [oldest, entry] of validatedCatalogs) {
+    if (validatedBytes + bytes <= VALIDATED_BYTES) break;
+    validatedBytes -= entry.bytes;
     validatedCatalogs.delete(oldest);
   }
   validatedCatalogs.set(key, { value, bytes });

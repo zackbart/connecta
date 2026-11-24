@@ -4216,7 +4216,8 @@ never answers token admission; every request still checks current credentials.
 ### Lexical token reuse (contributor)
 
 Search retains complete accepted catalog token indexes within an 8 MiB estimate
-including key text, token strings, postings and structural slots. A reuse makes
+including key text, token strings, postings, structural slots and a fixed
+1,024 bytes per index for its empty maps. A reuse makes
 an index the most recently used; the least recently used indexes are evicted
 first, and no entry count applies beyond the byte budget.
 Identity includes complete served content (including schemas, classification and
