@@ -2504,6 +2504,19 @@ check the published contract. Guest parity and clause evidence are in
 
 ### Skills conformance (contributor)
 
+`test/skills-extension.test.ts` checks two things mechanically on every run,
+against `test/fixtures/ext-skills/schema.json`, an unmodified copy of
+`schema/beta/schema.json` from ext-skills tag `v0.1.0`. Its `$id` is not hosted,
+so the test registers the file under that id and fetches nothing. Every
+`skills/list` page and `skills/get` result served over HTTP for usage,
+investigate, three connector guides and two downstream skills (one with a
+digested file list, one `"dynamic"`) validates against the `ListSkillsResult`
+and `GetSkillResult` definitions, and `skills/get` returns the listed entry
+unchanged. For every local skill, the entry's `frontmatter` equals the YAML
+frontmatter parsed from the `SKILL.md` that `resources/read` serves. Downstream
+frontmatter is the downstream server's claim and is not compared. To move to a
+later tag, replace the fixture and its `LICENSE` and update its `README.md`.
+
 On 2026-11-03, the official [conformance runner](https://github.com/modelcontextprotocol/conformance)
 at `c37eec888e1c6ff140af79987a40008548b7cc5f` passed enumeration (32 checks)
 and manifest (6 checks), with no warnings, against Connecta's HTTP handlers
