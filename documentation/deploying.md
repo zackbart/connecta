@@ -611,6 +611,27 @@ every remote MCP connector whose server sends `ttlMs: 0` is listed again on
 every request. The trade-off is the one stated in
 [Compose capabilities and access](#compose-capabilities-and-access).
 
+Before upgrading to 0.55.0 or later, check tool input schemas for an
+`x-mcp-header` declaration on a parameter of type `number`. A static tool that
+declares one, in an `api()` connector or a provider, now fails construction, so
+the deployment does not start. A remote MCP server or custom connector that
+lists one has its whole tool listing refused, and its tools are no longer
+served. Give the parameter the type `string`, `integer` or `boolean`, or remove
+the declaration: in the deployment's own tools before upgrading, and on the
+downstream server for a remote one.
+
+Starting in 0.55.0, on Node, a downstream tool whose `outputSchema` cannot be compiled,
+such as one whose `$id` or `$ref` has an invalid URI scheme, still appears in
+search, and a call to it fails before dispatch as `connector_call_failed`.
+Correct the schema on the downstream server; changing the call's arguments does
+not help.
+
+A Node deployment that copies the current template's npm scripts starts reading
+`.env` in `start`, `rotate-token` and `adopt-token`. A variable already set in the process environment still wins; every
+other variable in the file now takes effect, including `CONNECTA_DATABASE`,
+which selects the SQLite file. Before restarting with the new scripts, read the
+`.env` beside the deployment and remove or correct any stale value.
+
 Authenticated MCP bodies now default to 4 MiB through
 `admission.requests.maxBodyBytes`; Node's separate pre-auth buffer also defaults
 to 4 MiB. Configure both core and `listen(..., { maxBodyBytes })` if a deployment
