@@ -121,12 +121,12 @@ const sentinelsCollected = (prefix: string) => async (finalized: string[]) =>
 // that the count never grows, then that every charge is released.
 async function releasedMonotonically(fixture: { via: Fetcher; collect: () => Promise<string[]> }) {
   let previous = 16;
-  for (let round = 0; round < COLLECTIONS; round++) {
+  for (let round = 0; round <= COLLECTIONS; round++) {
     const { active, abandoned } = await healthOf(fixture.via);
     expect(active).toBe(0);
     expect(abandoned).toBeLessThanOrEqual(previous);
     if ((previous = abandoned) === 0) return;
-    await fixture.collect();
+    if (round < COLLECTIONS) await fixture.collect();
   }
   throw new Error(`Forced collections never released the cancelled charges (${previous} remain)`);
 }

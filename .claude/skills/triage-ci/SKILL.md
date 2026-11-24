@@ -59,12 +59,14 @@ Start with `gh pr checks <pr>`, then `gh run view <run-id> --log-failed`.
 - **Authentication-admission collections** ([#1493](https://github.com/zackbart/connecta/issues/1493)).
   `test/auth-admission-binding.test.ts` forces full V8 collections through
   `--expose-gc`, which `vitest.config.ts` adds to `MINIFLARE_WORKERD_V8_FLAGS`;
-  locally every sentinel finalizes on the first one. `Forced collections never
-  finalized the expected sentinels` or `never released the cancelled charges`
-  is therefore not load: treat it as a real retention regression in
-  `src/auth-admission.ts` or a lost flag, and do not rerun it away. The old
-  `Allocation pressure never produced the expected collection` came from code
-  before the fix; rebase.
+  locally every sentinel finalizes on the first one. A lost flag fails the
+  first collection request with `workerd runs without --expose-gc`. `Forced
+  collections never finalized the expected sentinels` points first at the
+  fixture or the runtime; `never released the cancelled charges` can be real
+  retention in `src/auth-admission.ts`. Neither depends on allocation pressure
+  any more, though connection-close and collection-round bounds remain, so
+  investigate before rerunning. The old `Allocation pressure never produced
+  the expected collection` came from code before the fix; rebase.
 - **pnpm audit.** A new upstream advisory fails `audit` and `check` on
   every PR and main push. The nightly run also
   audits main without a new commit. Fix it in its own PR that moves the
