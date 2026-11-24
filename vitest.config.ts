@@ -159,6 +159,12 @@ async function authAdmissionEntryWorker(name: string, origin: string) {
   };
 }
 
+// Miniflare passes these V8 flags to workerd. --expose-gc gives the collection
+// scenarios a forced full collection (test/fixtures/auth-admission/entry.ts):
+// allocation pressure alone left V8 free not to collect for 20 s on CI (#1493).
+const v8Flags = new Set(process.env.MINIFLARE_WORKERD_V8_FLAGS?.split(" ").filter(Boolean));
+process.env.MINIFLARE_WORKERD_V8_FLAGS = [...v8Flags.add("--expose-gc")].join(" ");
+
 // One fresh isolate per collection scenario (test/auth-admission-binding.test.ts):
 // in this harness, objects left unreachable by an earlier scenario's cancelled
 // invocations were seen to keep later ones reachable in the same isolate.
