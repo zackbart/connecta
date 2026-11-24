@@ -697,15 +697,21 @@ interface Manifest {
 }
 
 // Only detached JSON facts cross requests: no context, storage, promises or
-// callbacks. FIFO bounds retained partitions, JSON/key text (UTF-16 worst
-// case) and structural slots. No WeakRef or timers required.
+// callbacks. Least recently used entries go first once JSON/key text (UTF-16
+// worst case) and structural slots pass the budget. No WeakRef or timers required.
 const catalogStores = new WeakMap<KVStorage, string>();
 const validatedCatalogs = new Map<string, { value: CatalogResult; bytes: number }>();
 let validatedBytes = 0;
 const VALIDATED_BYTES = 8 * 1024 * 1024;
 function rememberValidated(key: string, value: CatalogResult, bytes: number): void {
-  bytes = bytes * 2 + key.length * 2;
-  if (bytes > VALIDATED_BYTES || validatedCatalogs.has(key)) return;
+  const retained = validatedCatalogs.get(key);
+  if (retained) {
+    validatedCatalogs.delete(key);
+    validatedCatalogs.set(key, retained);
+    return;
+  }
+  bytes = bytes * 2 + key.length * 2 + 128;
+  if (bytes > VALIDATED_BYTES) return;
   const pending: unknown[] = [value];
   while (pending.length) {
     const item = pending.pop();
@@ -719,9 +725,9 @@ function rememberValidated(key: string, value: CatalogResult, bytes: number): vo
       pending.push(child);
     }
   }
-  while (validatedCatalogs.size >= 4 || validatedBytes + bytes > VALIDATED_BYTES) {
-    const oldest = validatedCatalogs.keys().next().value!;
-    validatedBytes -= validatedCatalogs.get(oldest)!.bytes;
+  for (const [oldest, entry] of validatedCatalogs) {
+    if (validatedBytes + bytes <= VALIDATED_BYTES) break;
+    validatedBytes -= entry.bytes;
     validatedCatalogs.delete(oldest);
   }
   validatedCatalogs.set(key, { value, bytes });

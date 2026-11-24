@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-24: Memoized connector inventory entries (#1483, #1487) keep each entry's text beside the configuration it was read from. CI at f7fb2f84 (run 45446512033, build (package)) measures the root at 455,752 B, 112 B past its cap. The root cap moves 455,640 to 456,100 B, about 350 B over the measurement.",
     "2026-11-17: Zero-TTL catalog reuse and store tracing (#1474, #1476) add catalogZeroTtlSeconds, the per-reason refused-store trace families and connector time by kind. CI at 94ca36cd (run 44014051407, build (package)) measures the root at 455,461 B, ./ui at 349,094 B and examples/worker at 842,720 B, 148 B past its cap. The examples/worker cap moves 842,572 to 843,050 B, about 330 B over CI. The root and ./ui caps are unchanged.",
     "2026-11-15: Inline discovery ceiling (#1431, #1464) adds byte-fitted search pages. CI at 2f98ee8 merged with main before #1463 (run 43681810497, build (package)) measures the root at 455,259 B, 63 B past its cap; #1463 adds about 26 B. The root cap moves 455,196 to 455,640 B, about 350 B over the combined size.",
     "2026-11-15: Weak search zones and shared synonyms (#1431, #1449). CI at 4762ba01 stacked on reads-first ranking (run 43677438361, build (package)) measures the root at 454,846 B and examples/worker at 842,222 B. The root cap moves 454,571 to 455,196 B and the examples/worker cap 841,680 to 842,572 B, each about 350 B over CI.",
@@ -120,7 +121,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 455640
+      "maxGzip": 456100
     },
     "./json-schema": {
       "baselineGzip": 5870,

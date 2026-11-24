@@ -1,4 +1,6 @@
+import { Validator, type Schema } from "@cfworker/json-schema";
 import { expect, it, vi } from "vitest";
+import { parse as parseYaml } from "yaml";
 import { callerOf } from "../src/connector-caller.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -9,6 +11,7 @@ import { sentSecretsFor } from "../src/sent-secrets.js";
 import { SkillsRegistry, downstreamSkillUri } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
+import extSkillsSchema from "./fixtures/ext-skills/schema.json";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -476,6 +479,68 @@ it("INV-3 INV-4: serves only advertised skill files and keeps all four readers i
   const unknown = await rpc(c, "skills/get", { uri: "skill://downstream/remote/unadvertised/SKILL.md" });
   expect(unknown.error.code).toBe(-32602);
   await c.close();
+});
+
+const EXT_SKILLS_SCHEMA_ID = "https://modelcontextprotocol.io/ext-skills/beta/schema.json";
+function extSkillsValidator(definition: "ListSkillsResult" | "GetSkillResult") {
+  expect(extSkillsSchema.$id).toBe(EXT_SKILLS_SCHEMA_ID);
+  const validator = new Validator({ $ref: `${EXT_SKILLS_SCHEMA_ID}#/$defs/${definition}` }, "2020-12", false);
+  validator.addSchema(extSkillsSchema as Schema);
+  return (value: unknown) => {
+    const { valid, errors } = validator.validate(value);
+    expect(errors, definition).toEqual([]);
+    return valid;
+  };
+}
+
+function servedFrontmatter(text: string): unknown {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n/.exec(text);
+  expect(match, "SKILL.md opens with a frontmatter block").not.toBeNull();
+  return parseYaml(match![1]!);
+}
+
+it("serves skills/list and skills/get results that match the ext-skills v0.1.0 schema and their SKILL.md frontmatter", async () => {
+  const generated = downstream("generated", {
+    list: async () => [
+      { uri: URI, frontmatter: { name: "review", description: "Review changes." }, resources: "dynamic" },
+    ],
+  });
+  const connectors = [guided("local"), guided("tickets", true), guided("notes_alice"), downstream(), generated];
+  const root = makeRegistry(connectors);
+  const c = createTestConnecta({ connectors: root.listConnectors(), logger: silentLogger });
+  const validList = extSkillsValidator("ListSkillsResult");
+  const validGet = extSkillsValidator("GetSkillResult");
+  try {
+    const skills: { uri: string; frontmatter: Record<string, unknown>; resources: unknown }[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await rpc(c, "skills/list", cursor === undefined ? {} : { cursor });
+      expect(page.error).toBeUndefined();
+      expect(validList(page.result)).toBe(true);
+      skills.push(...page.result.skills);
+      cursor = page.result.nextCursor;
+    } while (cursor !== undefined);
+    expect(skills.filter((skill) => skill.resources === "dynamic").map((skill) => skill.uri)).toEqual([
+      downstreamSkillUri("generated", URI),
+    ]);
+    expect(skills).toHaveLength(7);
+    let locals = 0;
+    for (const skill of skills) {
+      const get = await rpc(c, "skills/get", { uri: skill.uri });
+      expect(get.error).toBeUndefined();
+      expect(validGet(get.result)).toBe(true);
+      expect(get.result.skill).toEqual(skill);
+      if (!skill.uri.startsWith("skill://connecta/")) continue;
+      locals++;
+      const read = await rpc(c, "resources/read", { uri: skill.uri });
+      expect(read.error).toBeUndefined();
+      expect(read.result.contents).toHaveLength(1);
+      expect(servedFrontmatter(read.result.contents[0].text), skill.uri).toEqual(skill.frontmatter);
+    }
+    expect(locals).toBe(5);
+  } finally {
+    await c.close();
+  }
 });
 
 it("INV-5 INV-8: keeps blob credential collisions validly encoded through HTTP serialization", async () => {

@@ -238,9 +238,10 @@ each case after the `catalogMinTtlSeconds` and `catalogMaxTtlSeconds` bounds.
 Two costs follow, only for those calls. A catalog with a zero TTL, which is the
 MCP SDK server's default, is listed again before every such call after the
 request's first to that connector, one `tools/list` round trip each. A
-deployment that sets `discovery.catalogZeroTtlSeconds` reuses such a tool catalog
-instead, for that floor raised to `catalogMinTtlSeconds` and capped at
-`catalogMaxTtlSeconds`, and the bound above becomes that effective TTL
+deployment that sets `discovery.catalogZeroTtlSeconds` to one second or more, as
+the Node template and Worker example do with 300, reuses such a tool catalog
+instead, for that value raised to `catalogMinTtlSeconds` (construction refuses
+one above `catalogMaxTtlSeconds`), and the bound above becomes that effective TTL
 ([catalog TTLs](./architecture.md#storage-credentials-and-connectors)). A relisting
 that fails transiently resolves the call through the bounded stale fallback in
 [architecture](./architecture.md#storage-credentials-and-connectors), so while a
@@ -2503,6 +2504,19 @@ check the published contract. Guest parity and clause evidence are in
 [code-mode verification](./code-mode.md#verification).
 
 ### Skills conformance (contributor)
+
+`test/skills-extension.test.ts` checks two things mechanically on every run,
+against `test/fixtures/ext-skills/schema.json`, an unmodified copy of
+`schema/beta/schema.json` from ext-skills tag `v0.1.0`. Its `$id` is not hosted,
+so the test registers the file under that id and fetches nothing. Every
+`skills/list` page and `skills/get` result served over HTTP for usage,
+investigate, three connector guides and two downstream skills (one with a
+digested file list, one `"dynamic"`) validates against the `ListSkillsResult`
+and `GetSkillResult` definitions, and `skills/get` returns the listed entry
+unchanged. For every local skill, the entry's `frontmatter` equals the YAML
+frontmatter parsed from the `SKILL.md` that `resources/read` serves. Downstream
+frontmatter is the downstream server's claim and is not compared. To move to a
+later tag, replace the fixture and its `LICENSE` and update its `README.md`.
 
 On 2026-11-03, the official [conformance runner](https://github.com/modelcontextprotocol/conformance)
 at `c37eec888e1c6ff140af79987a40008548b7cc5f` passed enumeration (32 checks)

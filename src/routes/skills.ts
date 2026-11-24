@@ -7,6 +7,10 @@ import { ConnectorCallError } from "../errors.js";
 import { SkillsRegistry, type SkillsRegistryOptions } from "../skills.js";
 import type { RegistryView } from "../registry.js";
 
+const listParams = z.object({ cursor: z.string().max(128).optional() });
+const getParams = z.object({ uri: z.string().min(1).max(32_768).startsWith("skill://") });
+const result = z.record(z.string(), z.unknown());
+
 /** Native Skills methods use the same request-view registry as both text readers. */
 export function registerSkills(
   server: McpServer,
@@ -18,9 +22,6 @@ export function registerSkills(
   // listChanged on. Declare the capability on the low-level server instead.
   server.server.registerCapabilities({ resources: {} });
   const registry = new SkillsRegistry(view, baseUrl, options);
-  const listParams = z.object({ cursor: z.string().max(128).optional() });
-  const getParams = z.object({ uri: z.string().min(1).max(32_768).startsWith("skill://") });
-  const result = z.record(z.string(), z.unknown());
   const safely = authMethod((read: () => Promise<Record<string, unknown>>) =>
     authFlow<Record<string, unknown>>(function* () {
       try {

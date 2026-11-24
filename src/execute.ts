@@ -82,6 +82,7 @@ import {
   hasConnectorGuides,
   SkillsRegistry,
 } from "./skills.js";
+import type { ConnectorInventoryFacts } from "./skills.js";
 import type { AdmittingExecutor, ExecuteResult, Executor, ExecutorLease, ExecutorProvider, Logger } from "./types.js";
 
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
@@ -2393,32 +2394,96 @@ const REQUIRED_GUIDE_LEGEND = ' *Read connecta.skill("connector:<id>") before it
 /** Deployment configuration, normalized and capped like a title: a one-line purpose, never a paragraph. */
 const CONNECTOR_PURPOSE_MAX_BYTES = 57;
 
+type InventoryConnector = ReturnType<RegistryView["listConnectors"]>[number];
+
+interface InventoryEntry {
+  readonly inputs: readonly unknown[];
+  readonly guideFirst: boolean;
+  readonly bare: string;
+  readonly titled: string;
+  readonly described: string;
+}
+
+const inventoryInputs = (connector: InventoryConnector): readonly unknown[] => {
+  const guide = connector.usageGuide;
+  return [
+    connector.id,
+    connector.title,
+    connector.description,
+    connector.readOnly,
+    typeof guide === "object",
+    typeof guide === "object" ? guide.content : guide,
+    typeof guide === "object" ? guide.required : undefined,
+  ];
+};
+
+/** The inputs as the connector they were read from, so an entry's text is a function of its key alone. */
+const inventoryFacts = (
+  connector: InventoryConnector,
+): { inputs: readonly unknown[]; facts: ConnectorInventoryFacts } => {
+  const inputs = inventoryInputs(connector);
+  const [id, title, description, readOnly, structured, content, required] = inputs as [
+    string,
+    string | undefined,
+    string | undefined,
+    boolean | undefined,
+    boolean,
+    string | undefined,
+    boolean | undefined,
+  ];
+  const usageGuide =
+    structured && content !== undefined ? { content, ...(required === undefined ? {} : { required }) } : content;
+  return {
+    inputs,
+    facts: {
+      id,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      ...(readOnly === undefined ? {} : { readOnly }),
+      ...(usageGuide === undefined ? {} : { usageGuide }),
+    },
+  };
+};
+
+const inventoryEntries = new WeakMap<InventoryConnector, InventoryEntry>();
+
+function inventoryEntry(connector: InventoryConnector): InventoryEntry {
+  const { inputs, facts } = inventoryFacts(connector);
+  const cached = inventoryEntries.get(connector);
+  if (cached !== undefined && cached.inputs.every((input, index) => input === inputs[index])) return cached;
+  const guideFirst = connectorGuide(facts) !== undefined && connectorGuideRequired(facts);
+  const bare = guideFirst ? `${facts.id}*` : facts.id;
+  const title = connectorInventoryTitle(facts);
+  const purpose = connectorInventoryPurpose(facts, CONNECTOR_PURPOSE_MAX_BYTES);
+  const noted = (notes: (string | undefined)[]) => {
+    const present = notes.filter((note) => note !== undefined);
+    return present.length > 0 ? `${bare} (${present.join("; ")})` : bare;
+  };
+  const entry = { inputs, guideFirst, bare, titled: noted([title]), described: noted([title, purpose]) };
+  inventoryEntries.set(connector, entry);
+  return entry;
+}
+
 /**
  * Every configured connector, from configuration alone. Detail degrades before
  * names do: purposes go first, from the end of registry order, then titles, and
  * only past the byte cap do whole entries give way to an exact omission count.
  * Search and describe name optional guides.
  */
-function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"]>): string {
+function connectorInventory(connectors: readonly InventoryConnector[]): string {
   const prefix = "Connectors: ";
   if (connectors.length === 0) return `${prefix}none.`;
+  const entries = connectors.map(inventoryEntry);
   const fits = (line: string) => boundedEchoText(line, CONNECTOR_INVENTORY_MAX_BYTES) === line;
-  const guideFirst = (connector: (typeof connectors)[number]) =>
-    connectorGuide(connector) !== undefined && connectorGuideRequired(connector);
-  const legend = (shown: typeof connectors) => (shown.some(guideFirst) ? REQUIRED_GUIDE_LEGEND : "");
-  const entry = (connector: (typeof connectors)[number], titled: boolean, withPurpose = false): string => {
-    const name = guideFirst(connector) ? `${connector.id}*` : connector.id;
-    const title = titled ? connectorInventoryTitle(connector) : undefined;
-    const purpose = withPurpose ? connectorInventoryPurpose(connector, CONNECTOR_PURPOSE_MAX_BYTES) : undefined;
-    const notes = [title, purpose].filter((note) => note !== undefined);
-    return notes.length > 0 ? `${name} (${notes.join("; ")})` : name;
-  };
+  const legend = (shown: readonly InventoryEntry[]) =>
+    shown.some((entry) => entry.guideFirst) ? REQUIRED_GUIDE_LEGEND : "";
+  const fullLegend = legend(entries);
   const described = (purposes: number) =>
-    `${prefix}${connectors.map((connector, index) => entry(connector, true, index < purposes)).join(", ")}.${legend(connectors)}`;
+    `${prefix}${entries.map((entry, index) => (index < purposes ? entry.described : entry.titled)).join(", ")}.${fullLegend}`;
   if (fits(described(0))) {
     // The most entries, in registry order, whose purposes still fit.
     let shown = 0;
-    let over = connectors.length + 1;
+    let over = entries.length + 1;
     while (over - shown > 1) {
       const middle = Math.floor((shown + over) / 2);
       if (fits(described(middle))) shown = middle;
@@ -2426,12 +2491,12 @@ function connectorInventory(connectors: ReturnType<RegistryView["listConnectors"
     }
     return described(shown);
   }
-  const untitled = `${prefix}${connectors.map((connector) => entry(connector, false)).join(", ")}.${legend(connectors)}`;
+  const untitled = `${prefix}${entries.map((entry) => entry.bare).join(", ")}.${fullLegend}`;
   if (fits(untitled)) return untitled;
   const truncated = (shown: number) => {
-    const kept = connectors.slice(0, shown);
-    const names = kept.map((connector) => entry(connector, false)).join(", ");
-    return `${prefix}${names}${shown > 0 ? "; " : ""}+${connectors.length - shown} more.${legend(kept)}`;
+    const kept = entries.slice(0, shown);
+    const names = kept.map((entry) => entry.bare).join(", ");
+    return `${prefix}${names}${shown > 0 ? "; " : ""}+${entries.length - shown} more.${legend(kept)}`;
   };
   let shown = 0;
   while (fits(truncated(shown + 1))) shown++;
@@ -2465,7 +2530,7 @@ const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
   hostLimits: { maxHostCalls: number; callTimeoutMs: number; hostCallTimeoutMs: number; runDeadlineMs?: number },
   connectorGuides: boolean,
-  connectors: ReturnType<RegistryView["listConnectors"]>,
+  inventory: string,
   maxWrites: number,
   readOnly: boolean,
   native = false,
@@ -2474,7 +2539,7 @@ const executeDescription = (
 ) =>
   `${programLead(routes, readOnly, native, readRoute)}
 ${native || routes === routeNames("code") || readOnly ? "" : `One known read: ${routes.read}. One known write: ${routes.write}. ${readRoute ? `Read programs: ${READ_PROGRAM_SOURCE}. Programs that write: ${routes.program}.` : `Everything else: ${routes.program}.`} `}${readOnly ? (native ? "Read-only endpoint: the tool list omits writes, search lists them with callable: false, and every write call is refused." : "Read-only endpoint: search and describe list writes with callable: false, and every write call is refused.") : "Writable endpoint: programs may write; the host approves."} Limits: ${hostLimits.maxHostCalls} host calls, ${readOnly ? "" : `${maxWrites} writes, `}${hostLimits.callTimeoutMs === hostLimits.hostCallTimeoutMs ? `${hostLimits.callTimeoutMs / 1_000}s/host call` : `${hostLimits.callTimeoutMs / 1_000}s/call (${hostLimits.hostCallTimeoutMs / 1_000}s result/skill/read)`}${hostLimits.runDeadlineMs === undefined ? "" : `, ${hostLimits.runDeadlineMs / 1_000}s/run`}.
-${connectorInventory(connectors)}
+${inventory}
 
 Use async () => { ... }, no arguments. No imports, require, fetch, filesystem or timers. API:
 \`\`\`ts
@@ -2559,6 +2624,7 @@ export function registerExecuteTool(
     hostCallTimeoutMs: resolveBudget(ctx.hostCallTimeoutMs, EXECUTE_HOST_CALL_TIMEOUT_MS),
   };
   const connectors = registry.listConnectors();
+  const inventory = connectorInventory(connectors);
   const maxWrites = resolveBudget(ctx.maxWrites, DEFAULT_MAX_WRITES);
   const runnerConfig = {
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
@@ -2632,7 +2698,7 @@ export function registerExecuteTool(
             : {}),
         },
         hasConnectorGuides(connectors),
-        connectors,
+        inventory,
         maxWrites,
         ctx.readOnly === true,
         ctx.native === true,
@@ -2655,7 +2721,7 @@ export function registerExecuteTool(
     server.registerTool(
       READ_PROGRAM_SOURCE,
       {
-        description: READ_PROGRAM_DESCRIPTION(hostLimits, connectorInventory(connectors)),
+        description: READ_PROGRAM_DESCRIPTION(hostLimits, inventory),
         inputSchema: EXECUTE_INPUT,
         outputSchema: EXECUTE_OUTPUT,
         ...toolMeta(programResultMeta, ALWAYS_LOAD_META),
