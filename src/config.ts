@@ -461,7 +461,7 @@ const connectaConfig = {
   /**
    * Inbound auth adapters, such as clerkAuth(...). `accessTokens` and agents
    * with `vercel` bindings add their own adapters. When none results, plain
-   * /mcp admits a request carrying no credential as an anonymous caller,
+   * /mcp admits a request with no Authorization header as an anonymous caller,
    * `maintainers` must be empty, and construction warns if any connector is
    * configured.
    */

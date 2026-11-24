@@ -625,6 +625,23 @@ describe("connecta doctor --dotenv", () => {
     ).resolves.toContain("Connecta doctor passed");
   });
 
+  it("refuses a credential that cannot be a header value without printing it", async () => {
+    const path = await envFile('CONNECTA_TOKEN="cta_secret-first-line\nsecret-second-line"\n');
+    const failure = await doctorAgainst(executor, { env: {}, args: ["--dotenv", path] }).then(
+      () => undefined,
+      (error: { stderr: string; stdout?: string }) => error,
+    );
+    expect(failure?.stderr).toContain("CONNECTA_TOKEN holds characters that cannot be sent in a request header");
+    expect(`${failure?.stderr}${failure?.stdout ?? ""}`).not.toMatch(/secret-first-line|secret-second-line/);
+  });
+
+  it("loads only doctor's credential variables from the file", async () => {
+    const path = await envFile(`CONNECTA_TOKEN=${TOKEN}\nNODE_OPTIONS=--definitely-not-a-node-flag\n`);
+    await expect(doctorAgainst(executor, { env: {}, args: ["--dotenv", path] })).resolves.toContain(
+      "Connecta doctor passed",
+    );
+  });
+
   it("changes nothing when the file is absent", async () => {
     const directory = await mkdtemp(join(tmpdir(), "connecta-env-"));
     teardown.push(() => rm(directory, { recursive: true, force: true }));

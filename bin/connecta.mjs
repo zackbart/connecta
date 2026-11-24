@@ -17,6 +17,8 @@ function shellCd(path) {
   return `cd '${path.replaceAll("'", "'\\''")}'`;
 }
 
+const DOCTOR_CREDENTIALS = ["CONNECTA_TOKEN", "CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET"];
+
 function isHelp(arg) {
   return arg === "--help" || arg === "-h";
 }
@@ -29,9 +31,20 @@ async function loadEnvFile(path) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") return;
     throw error;
   }
-  for (const [name, value] of Object.entries(parseEnv(text))) {
-    if (process.env[name] === undefined) process.env[name] = value;
+  const parsed = parseEnv(text);
+  for (const name of DOCTOR_CREDENTIALS) {
+    if (Object.hasOwn(parsed, name) && process.env[name] === undefined) process.env[name] = parsed[name];
   }
+}
+
+function headerCredential(name) {
+  const value = process.env[name];
+  if (value !== undefined && value !== "" && !/^[\x21-\x7e]+$/.test(value)) {
+    throw new Error(
+      `${name} holds characters that cannot be sent in a request header. Check its value for quotes, spaces or line breaks.`,
+    );
+  }
+  return value;
 }
 
 function usage() {
@@ -188,9 +201,7 @@ async function doctor() {
     throw new Error("Refusing to send authentication credentials over remote plaintext HTTP. Use HTTPS.");
   }
   const baseUrl = requestedUrl.replace(/\/+$/, "");
-  const token = process.env.CONNECTA_TOKEN;
-  const accessClientId = process.env.CF_ACCESS_CLIENT_ID;
-  const accessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+  const [token, accessClientId, accessClientSecret] = DOCTOR_CREDENTIALS.map(headerCredential);
   if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
     throw new Error("Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET.");
   }

@@ -852,8 +852,8 @@ provider other than the built-in agent-token adapter), and a non-empty
 can be a maintainer, and plain `/mcp` and every operator API admit nobody; the
 agents reach only `/agent/<pool>` for the pools that list them. With no resolved inbound adapter at all
 (no `auth` entry, no `accessTokens` module and no agent with a `vercel` binding),
-plain `/mcp` admits a request carrying no credential as an anonymous caller,
-subject to connector `members` (see [pools](#pools)). `describeConfig()` lists
+plain `/mcp` admits a request with no `Authorization` header as an anonymous
+caller; connector `members` still narrow what it is served (see [pools](#pools)). `describeConfig()` lists
 `maintainers` as `{ namespace, id }` and each pool's resolved `members`,
 trimmed `description` (`null` when unset), and `path`, where its members
 connect: `/mcp` for a people pool, `/agent/<name>` for an agent pool.
@@ -1059,11 +1059,11 @@ createConnecta({
 ```
 
 With no resolved inbound adapter, an open deployment has one anonymous,
-non-interactive identity for requests that carry no credential. It keeps plain
-`/mcp` with every connector whose `members` does not exclude it, as the
-construction warning says, no pool admits anyone because nobody can be a member,
-and every agent endpoint answers the machine-only 401 because no agent can be
-admitted.
+non-interactive identity for a request with no `Authorization` header. Plain
+`/mcp` serves it the connectors that connector `members` do not withhold, and
+construction warns that any caller can invoke every shared connector. No pool
+admits a person, because no one can authenticate as a member, and every agent
+endpoint answers the machine-only 401 because no agent can be admitted.
 
 | Rule         | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
