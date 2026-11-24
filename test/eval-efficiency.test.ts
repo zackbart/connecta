@@ -399,16 +399,11 @@ describe("eval:perf baseline gate", () => {
   const large = CELLS.find((cell) => cell.id === "result-600k")!;
   const stored = () => JSON.parse(formatBaseline(baselineOf([measured(small), measured(large)])));
 
-  it("accepts its own formatted baseline and leaves reported counters out of it", () => {
+  it("accepts its own formatted baseline and gates every counter of every cell", () => {
     const current = baselineOf([measured(small), measured(large)]);
     expect(baselineDifferences(stored(), current)).toEqual([]);
-    expect(current.cells["result-600k"]!.reported).toEqual([
-      "execute_code.storageRoundTrips",
-      "execute_code.storageStatements",
-      "execute_code.tracedRoundTrips",
-    ]);
-    expect(current.cells["result-600k"]!.requests.execute_code!.warm).not.toHaveProperty("storageRoundTrips");
-    expect(current.cells.base!.requests.execute_code!.warm).toHaveProperty("storageRoundTrips", 1);
+    for (const cell of [current.cells.base!, current.cells["result-600k"]!])
+      expect(Object.keys(cell.requests.execute_code!.warm!)).toEqual([...COUNTERS]);
   });
 
   it("refuses a changed value in either direction", () => {
@@ -458,15 +453,8 @@ describe("eval:perf baseline gate", () => {
     ]);
   });
 
-  it("refuses a gated counter moved to reported, or a changed cell configuration", () => {
+  it("refuses a changed cell configuration", () => {
     const current = baselineOf([measured(small), measured(large)]);
-    const reclassified = stored();
-    reclassified.cells.base.reported = ["execute_code.storageRoundTrips"];
-    delete reclassified.cells.base.requests.execute_code.first.storageRoundTrips;
-    expect(baselineDifferences(reclassified, current)).toEqual([
-      'cells base reported: ["execute_code.storageRoundTrips"] -> []',
-      "cells base requests execute_code first storageRoundTrips: measured but not in the baseline",
-    ]);
     const configured = stored();
     configured.cells.base.config.connectors = 24;
     expect(baselineDifferences(configured, current)).toEqual(["cells base config connectors: 24 -> 6"]);

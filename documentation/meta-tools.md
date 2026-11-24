@@ -843,15 +843,16 @@ Newly stashed JSON and downstream content envelopes use compact serialization,
 and a lone text block stashes as its own text, so `connecta.result` offsets and
 totals describe exactly that text.
 
-| Bound                              | Value                               |
-| ---------------------------------- | ----------------------------------- |
-| Stashed result TTL                 | 15 minutes                          |
-| `results.maxStashBytes`            | 8 MiB per shared storage ledger     |
-| `results.maxStashEntries`          | 64 per shared storage ledger        |
-| Downstream MCP tool answer         | larger of `maxStashBytes` and 8 MiB |
-| Top-level discovery result ceiling | 256,000 UTF-8 bytes                 |
-| `search_tools` inline page budget  | 36,000 UTF-8 bytes of the text copy |
-| Downstream MCP `isError` text      | 512 UTF-8 bytes plus an `…` marker  |
+| Bound                              | Value                                 |
+| ---------------------------------- | ------------------------------------- |
+| Stashed result TTL                 | 15 minutes                            |
+| `results.maxStashBytes`            | 8 MiB per shared storage ledger       |
+| `results.maxStashEntries`          | 64 per shared storage ledger          |
+| Program reads held in run memory   | 4 MiB at once per run, then the stash |
+| Downstream MCP tool answer         | larger of `maxStashBytes` and 8 MiB   |
+| Top-level discovery result ceiling | 256,000 UTF-8 bytes                   |
+| `search_tools` inline page budget  | 36,000 UTF-8 bytes of the text copy   |
+| Downstream MCP `isError` text      | 512 UTF-8 bytes plus an `…` marker    |
 
 A remote MCP tool answer past its bound is not read further and fails the call
 before result processing, as [remote MCP servers](./integrating.md#another-remote-mcp-server)
@@ -909,6 +910,9 @@ during the page read still refuses the page. For example, a search handle with
 30 tool dependencies requires the same number of authentications as one with
 one dependency. Paging deadlines cover both storage and access validation;
 timeout errors identify the active stage as `result storage` or `access validation`.
+A read a program receives whole from its run's memory is no stored page, so it takes
+neither pass ([`L6`](./code-mode.md#cancellation-and-limits)): its call was admitted in
+that run, and no id names its bytes.
 
 New entries store UTF-8 bytes in a base64 envelope split across storage keys,
 48 KiB of result text per chunk — widening past roughly 1.5 MB so no result

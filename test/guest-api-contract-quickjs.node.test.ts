@@ -46,6 +46,7 @@ import {
   checkProgramReturnWriteWarning,
   checkReclaimAfterSealingBegan,
   checkTransferReclaim,
+  memoryTransferCases,
   wholeReadSealingCases,
 } from "./program-result-cases.js";
 
@@ -141,6 +142,9 @@ describe("guest API contract (QuickJS executor)", () => {
   it("[L6] INV-9: reclaims finished reads and keeps a failed run's write output", async () => {
     await checkTransferReclaim(executor);
   });
+  for (const [title, check] of Object.entries(memoryTransferCases)) {
+    it(title, () => check(executor), 60_000);
+  }
   it("[S11] scales the whole-read ceiling with the CPU budget and caps it", async () => {
     const ceiling = (options: Parameters<typeof quickJsExecutor>[0]) => {
       const scaled = quickJsExecutor(options);

@@ -12,6 +12,7 @@ import {
 } from "../src/meta-tools.js";
 import { assertExecutor, customExecutor } from "../src/executor-contract.js";
 import type { CallErrorDetails } from "../src/errors.js";
+import { TransferMemory } from "../src/program-result.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   AdmittingExecutor,
@@ -106,6 +107,30 @@ describe("buildSandboxProviders", () => {
     await expect(required(connecta.fns.call)("ambiguous.missing_annotations", {})).rejects.toThrow("is a write");
     await expect(required(connecta.fns.call)("ambiguous.contradictory", {})).rejects.toThrow("is a write");
     expect(calls).toBe(0);
+  });
+
+  it("[L6] INV-7: a run's end releases a read it was still transferring from memory", async () => {
+    const reader: Connector = connectorWith({
+      id: "reader",
+      kind: "api",
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => "x".repeat(600_000),
+    });
+    const run = new AbortController();
+    const transferMemory = new TransferMemory(undefined, run.signal);
+    const connecta = connectaProvider(
+      await buildSandboxProviders(makeRegistry([reader]), BASE, silentLogger, undefined, {
+        signal: run.signal,
+        transferMemory,
+      }),
+    );
+    const reply = (await required(connecta.fns.call)("reader.read", {})) as { transfer: string };
+    const page = (await required(connecta.fns.result)(reply.transfer)) as { hasMore: boolean; text: string };
+    expect(page).toMatchObject({ hasMore: true, text: "x".repeat(32_768) });
+    expect(transferMemory.heldBytes).toBe(600_000);
+    run.abort();
+    expect(transferMemory.heldBytes).toBe(0);
+    expect(transferMemory.hold(new Uint8Array(1))).toBeUndefined();
   });
 
   it("lets programs discover only calls the sandbox can execute", async () => {

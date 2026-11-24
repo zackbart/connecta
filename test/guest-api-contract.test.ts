@@ -53,6 +53,7 @@ import {
   checkProgramReturnPaging,
   checkProgramReturnWriteWarning,
   checkTransferReclaim,
+  memoryTransferCases,
 } from "./program-result-cases.js";
 
 async function loadWorkerExecutor(options: { timeout?: number } = {}): Promise<Executor | undefined> {
@@ -428,6 +429,11 @@ describe.skipIf(!workerExecutor)("guest API contract (Dynamic Worker executor)",
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
       );
     }, 30_000);
+    for (const [title, check] of Object.entries(memoryTransferCases)) {
+      it(`${custom ? "customExecutor: " : ""}${title}`, async () => {
+        await check(custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!);
+      }, 60_000);
+    }
     it(`INV-3 INV-9: ${custom ? "customExecutor: " : ""}oversized program reads arrive whole through bounded stash pages`, async () => {
       await checkLargeProgramRead(
         custom ? customExecutor(workerExecutor!, { lifecycle: "self-managed" }) : workerExecutor!,
