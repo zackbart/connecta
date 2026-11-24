@@ -238,8 +238,8 @@ each case after the `catalogMinTtlSeconds` and `catalogMaxTtlSeconds` bounds.
 Two costs follow, only for those calls. A catalog with a zero TTL, which is the
 MCP SDK server's default, is listed again before every such call after the
 request's first to that connector, one `tools/list` round trip each. A
-deployment that sets a positive `discovery.catalogZeroTtlSeconds`, as the Node
-template and Worker example do with 300, reuses such a tool catalog
+deployment that sets `discovery.catalogZeroTtlSeconds` to one second or more, as
+the Node template and Worker example do with 300, reuses such a tool catalog
 instead, for that value raised to `catalogMinTtlSeconds` (construction refuses
 one above `catalogMaxTtlSeconds`), and the bound above becomes that effective TTL
 ([catalog TTLs](./architecture.md#storage-credentials-and-connectors)). A relisting

@@ -291,18 +291,15 @@ The template and Worker example set `discovery: { catalogZeroTtlSeconds: 300 }`;
 the library default is 0. A remote MCP server built on the MCP TypeScript SDK
 answers `tools/list` with `ttlMs: 0` unless its author sets another value, which
 marks the list stale at once. With the default of 0, Connecta lists such a
-server again on every request. A positive value reuses that list for that many
-seconds, raised to `discovery.catalogMinTtlSeconds`; a value above
+server again on every request. A value of one second or more reuses that list
+for that long, raised to `discovery.catalogMinTtlSeconds`; a value above
 `discovery.catalogMaxTtlSeconds` fails at construction. While a list is reused,
 calls use its tools and classifications, so a tool the downstream adds, or
-reclassifies from read to write, is not seen until the window lapses and a
-listing succeeds; a read-only route then refuses the reclassified tool before
-dispatch. That is the bound already accepted for a server that omits `ttlMs`,
-through `discovery.catalogTtlSeconds` (default 300). When the listing after the
-window fails transiently, calls keep the old list for at most five more minutes
-and then fail, and search and native tool lists may show the old list, marked
-stale, for up to a day while the server does not answer. Set it to 0 only when
-every downstream change must be seen on the next request.
+reclassifies from read to write, may go unseen until the window lapses and a
+listing succeeds. That is the bound already accepted for a server that omits
+`ttlMs`, through `discovery.catalogTtlSeconds` (default 300). A server that
+cannot be listed once the window lapses is handled as any expired catalog is.
+Set it to 0 only when every downstream change must be seen on the next request.
 [Read programs](./meta-tools.md#read-programs) owns the reclassification bound.
 
 ## Connect an MCP host
