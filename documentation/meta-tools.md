@@ -923,20 +923,22 @@ it reuses, so two faults at once (a missing chunk beside a corrupt sibling, or
 a missing file beside a corrupt `SKILL.md`) can take more than one read, or one
 wait of up to `freshFor`, to clear. A push therefore appears on the first skills read
 more than `freshFor` seconds after the previous check, five minutes at most by
-default. A sync the deadline interrupts publishes nothing; the files it stored
-remain, and the next skills read resumes without fetching them again.
+default, unless the request's time or the platform's operation budget cuts the
+sync short; then later reads resume it. A sync cut short publishes nothing; the
+files it stored remain, and the next skills read resumes without fetching them
+again.
 
 Requests. Every request goes to `https://api.github.com` with
 `Accept`, `X-GitHub-Api-Version: 2026-03-10` and a generic `User-Agent`.
 
-| Step                                 | GitHub requests                                                                                                                                           |
-| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Read within `freshFor`               | 0                                                                                                                                                         |
-| Check, ref unchanged                 | 1: the ref's commit SHA                                                                                                                                   |
-| Check, commit changed but not `path` | 2 + the number of `path` segments: the commit's tree, then one tree per segment                                                                           |
-| Sync of a changed directory          | the check above + 1 recursive tree of `path` + 1 per file not already stored                                                                              |
-| First sync                           | 3 + the number of `path` segments + 1 per file                                                                                                            |
-| Re-store, every 15 days              | the changed-commit check above + 1 recursive tree of `path` + 1 per row older than 15 days, at most 10 files per request while the snapshot is in service |
+| Step                                 | GitHub requests                                                                            |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Read within `freshFor`               | 0                                                                                          |
+| Check, ref unchanged                 | 1: the ref's commit SHA                                                                    |
+| Check, commit changed but not `path` | 2 + the number of `path` segments: the commit's tree, then one tree per segment            |
+| Sync of a changed directory          | the check above + 1 recursive tree of `path` + 1 per file not already stored               |
+| First sync                           | 3 + the number of `path` segments + 1 per file                                             |
+| Re-store, every 15 days              | the changed-commit check above + 1 recursive tree of `path` + 1 per row older than 15 days |
 
 `plugins/team/skills` with 20 skill files makes 26 requests on its first sync.
 No request lists the repository root recursively, so a large monorepo works.
@@ -955,10 +957,15 @@ checks, not typical counts:
   row a read marks for repair;
 - no deletes.
 
-While a snapshot is in service, one request fetches and stores at most 10
-files, then ends by serving that snapshot; the next read continues, so a large
-sync or re-store never takes a request's storage and subrequest budget away
-from serving. A resumed sync skips files and manifest chunks already stored in
+Before a sync step starts with a snapshot in service, the request holds that
+snapshot's record and manifest in memory and, for an unchanged revision, has
+already renewed its record. The step then fetches and stores every pending file
+within the request's time budget and publishes in the same request. If the
+step cannot finish, for any reason including the platform refusing further
+store or network operations, the request keeps what it stored and ends by
+serving the snapshot it holds in memory, with no further store read for the
+listing; its lease then lapses within 30 seconds if it could not be released,
+and the next read after that resumes the sync. A resumed sync skips files and manifest chunks already stored in
 the same partition, and never reads the body of any stored file except the `SKILL.md`
 documents it reuses: each file's digest and write time are in its key. On
 Cloudflare Workers each GitHub request and each D1 query is a subrequest: a
@@ -1070,10 +1077,11 @@ the snapshot record expires seven days after its last check, and never after
 its oldest row. When the oldest row a snapshot relies on is more than 15 days
 old, the next check after `freshFor` stores it again: it fetches the tree and
 fetches again only the rows older than 15 days, writing them with a fresh
-expiry, at most 10 files per request while the existing snapshot keeps
-serving. Each step that leaves the re-store unfinished renews the existing
-record's seven-day expiry, and the snapshot publishes when every row is fresh.
-A failed step keeps serving the existing snapshot. Rows from old revisions,
+expiry, while the existing snapshot keeps serving. The revision is unchanged,
+so each step renews the existing record's seven-day expiry before it fetches,
+as an unchanged-revision check does; the new snapshot publishes in the request
+whose step finishes. A step cut short keeps serving the existing snapshot and
+the next read resumes it. Rows from old revisions,
 old tokens and sources removed from the configuration expire on their own;
 anything that goes missing before then is restored by repair.
 

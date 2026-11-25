@@ -2808,39 +2808,98 @@ it("never shortens a GitHub snapshot's expiry when marking repairs while GitHub 
   }
 });
 
-it("re-stores a GitHub snapshot in small steps under a 50-operation storage budget, serving the existing one on every read", async () => {
-  const extra = Object.fromEntries(
-    Array.from({ length: 60 }, (_, index) => [`${SKILLS_PATH}/review/notes/${index}.md`, `# Note ${index}\n`]),
-  );
+it("publishes a GitHub push of 25 files on the first read after freshFor", async () => {
   const t = await githubDeployment();
   try {
-    await t.fixture.commit(monorepo(extra));
+    const notes = (version: string) =>
+      Object.fromEntries(
+        Array.from({ length: 25 }, (_, index) => [
+          `${SKILLS_PATH}/review/notes/${index}.md`,
+          `# Note ${index} ${version}\n`,
+        ]),
+      );
+    await t.fixture.commit(monorepo(notes("v1")));
     expect(await t.names()).toEqual(TEAM);
-    for (const days of [6, 6]) {
-      t.advance(days * 86_400);
-      expect(await t.names()).toEqual(TEAM);
-    }
-    t.advance(4 * 86_400);
+    await t.fixture.commit(monorepo(notes("v2")));
+    t.advance(301);
     t.fixture.reset();
+    expect(await t.read().text("review", "notes/24.md")).toBe("# Note 24 v2\n");
+    expect(t.blobs()).toBe(25);
+    expect(t.warnings).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it(
+  "re-stores 325 GitHub files under a 50-operation storage budget and one read a day before the old rows expire",
+  { timeout: 60_000 },
+  async () => {
+    const extra = Object.fromEntries(
+      Array.from({ length: 320 }, (_, index) => [`${SKILLS_PATH}/review/notes/${index}.md`, `# Note ${index}\n`]),
+    );
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo(extra));
+      expect(await t.names()).toEqual(TEAM);
+      let operations = 0;
+      t.hooks.op = () => {
+        if (++operations > 50) throw new Error("too many storage operations for this invocation");
+      };
+      t.fixture.reset();
+      let publishedOn: number | undefined;
+      for (let day = 1; day <= 29; day++) {
+        t.advance(86_400);
+        operations = 0;
+        const before = t.blobs();
+        expect(await t.names(), `day ${day}`).toEqual(TEAM);
+        if (
+          day > 15 &&
+          publishedOn === undefined &&
+          t.blobs() === before &&
+          t.fixture.paths().at(-1) === "commits/main"
+        )
+          publishedOn = day;
+      }
+      expect(publishedOn).toBeDefined();
+      expect(publishedOn!).toBeLessThan(30);
+      expect(t.blobs()).toBeLessThan(325 + 4 * 15);
+    } finally {
+      endGithubDeployment();
+    }
+  },
+);
+
+it("serves the GitHub listing from memory when the storage budget cuts a sync step short, and resumes without refetching", async () => {
+  const notes = (version: string) =>
+    Object.fromEntries(
+      Array.from({ length: 60 }, (_, index) => [
+        `${SKILLS_PATH}/review/notes/${index}.md`,
+        `# Note ${index} ${version}\n`,
+      ]),
+    );
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo(notes("v1")));
+    expect(await t.names()).toEqual(TEAM);
+    await t.fixture.commit(monorepo(notes("v2")));
     let operations = 0;
     t.hooks.op = () => {
-      if (++operations > 50) throw new Error("too many storage operations for this invocation");
+      if (++operations > 30) throw new Error("too many storage operations for this invocation");
     };
-    let reads = 0;
-    while (reads < 40) {
-      operations = 0;
-      reads++;
-      expect(await t.names(), `read ${reads}`).toEqual(TEAM);
-      if (t.blobs() >= 65 && t.fixture.paths().at(-1) === "commits/main") break;
-      t.advance(301);
-    }
-    expect(t.blobs()).toBe(65);
-    expect(t.warnings).toEqual([]);
-    t.fixture.reset();
     t.advance(301);
+    t.fixture.reset();
     operations = 0;
     expect(await t.names()).toEqual(TEAM);
-    expect(t.fixture.paths()).toEqual(["commits/main"]);
+    const first = t.blobs();
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThan(60);
+    t.hooks.op = undefined;
+    const stored = (await t.storage.list("skill-source:v1:team:")).filter((key) => key.includes(":file:")).length;
+    t.advance(31);
+    t.fixture.reset();
+    expect(await t.read().text("review", "notes/59.md")).toBe("# Note 59 v2\n");
+    expect(t.blobs()).toBeLessThanOrEqual(60 - (stored - 65));
   } finally {
     endGithubDeployment();
   }

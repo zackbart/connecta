@@ -80,11 +80,6 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const ROW_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const RESTORE_AGE_MS = 15 * 24 * 60 * 60 * 1000;
 const MAX_REPAIR_BLOBS = 64;
-/**
- * Files one request fetches and stores while a snapshot is in service, so the request's own storage and
- * subrequest work stays small enough to end by serving that snapshot.
- */
-const STEP_FILES = 10;
 
 /** Typed, payload-free reasons a check or sync fails; each is one operator warning code. */
 const WARNING_CODES = [
@@ -1007,7 +1002,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
            * `SKILL.md` documents it did not fetch, and skips manifest chunks already stored for the same manifest.
            * Anything fetched that contains the token fails the sync before it, or anything derived from it, is stored.
            */
-          const prepare = (commit: string, revision: string, repair: Pointer["repair"], inService: boolean) =>
+          const prepare = (commit: string, revision: string, repair: Pointer["repair"]) =>
             Effect.gen(function* () {
               const tree = yield* getTree(`${repoPath}/git/trees/${revision}?recursive=1`);
               if (tree.truncated) return yield* Effect.fail(failure("truncated_tree"));
@@ -1049,10 +1044,8 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                   }
                 }
               }
-              const pending = [...missing.values()];
-              const step = inService ? pending.slice(0, STEP_FILES) : pending;
               yield* Effect.forEach(
-                step,
+                [...missing.values()],
                 (file) =>
                   fetchBlob(file).pipe(
                     Effect.flatMap((bytes) =>
@@ -1072,7 +1065,6 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                   ),
                 { concurrency: BLOB_CONCURRENCY, discard: true },
               );
-              if (step.length < pending.length) return { incomplete: true as const };
               const skills: ManifestSkill[] = [];
               for (const skill of plan) {
                 const frontmatter = yamlFrontmatter(documents.get(skill.document)!);
@@ -1130,15 +1122,28 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               const oldestRow = Math.min(...chunkTimes, ...[...rows.values()].map((row) => row.writtenAt));
               const manifest: Manifest = { v: 1, skills };
               const next: Pointer = { v: 1, commit, revision, digest, chunks, chunkTimes, checkedAt: 0, oldestRow };
-              return { incomplete: false as const, manifest, next };
+              return { manifest, next };
             });
 
           /**
            * Checks the revision and syncs it when it changed, when the snapshot needs repair, or when its oldest row
            * is older than {@link RESTORE_AGE_MS}, in which case every file is fetched and stored again.
            */
-          const check = (raw: string | null, pointer: Pointer | undefined) =>
+          /**
+           * The snapshot in service, held in memory before a sync step starts, so a step cut short by time or by the
+           * platform refusing further operations still ends the request by serving it with no further store read.
+           */
+          let inService: SkillSourceSnapshot | undefined;
+
+          /**
+           * Checks the revision and syncs it when it changed, when the snapshot needs repair, or when rows it relies
+           * on are older than {@link RESTORE_AGE_MS}. Before a sync step with a snapshot in service, the snapshot is
+           * loaded into memory and, for an unchanged revision, its record renewed. The step then fetches and stores
+           * every pending file within the request's time budget and publishes in the same request.
+           */
+          const check = (initialRaw: string | null, pointer: Pointer | undefined) =>
             Effect.gen(function* () {
+              let raw = initialRaw;
               const commit = yield* until(checkEnd, commitSha);
               const current =
                 pointer && !pointer.repair && pointer.oldestRow >= Date.now() - RESTORE_AGE_MS ? pointer : undefined;
@@ -1146,14 +1151,15 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               if (current && commit === current.commit) return yield* renew(current);
               const revision = yield* until(checkEnd, directoryTree(commit));
               if (current && revision === current.revision) return yield* renew(current);
-              const prepared = yield* until(
-                budgetEnd,
-                prepare(commit, revision, pointer?.repair, pointer !== undefined),
-              );
-              if (prepared.incomplete)
-                return pointer && revision === pointer.revision
-                  ? yield* publish(raw, { ...pointer, commit, checkedAt: Date.now() })
-                  : pointer!;
+              if (pointer) {
+                const loaded = yield* Effect.result(serve(prefix, pointer));
+                if (Result.isSuccess(loaded)) inService = loaded.success;
+                if (revision === pointer.revision) {
+                  const renewed = yield* renew(pointer);
+                  raw = JSON.stringify(renewed);
+                }
+              }
+              const prepared = yield* until(budgetEnd, prepare(commit, revision, pointer?.repair));
               const published = yield* publish(raw, { ...prepared.next, checkedAt: Date.now() });
               if (published.digest === prepared.next.digest)
                 memo = { prefix, digest: published.digest, manifest: prepared.manifest };
@@ -1192,6 +1198,16 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               }
               const failed = outcome.failure;
               ctx.warn(failed.code);
+              if (inService) {
+                const until = Math.max(
+                  failed.holdUntil ?? 0,
+                  failed.code === "deadline" || failed.code === "storage" ? 0 : Date.now() + config.freshMs,
+                );
+                if (until > Date.now())
+                  yield* io(storageSet(keys.hold, String(until), { expiresAtMs: until })).pipe(Effect.ignore);
+                yield* release;
+                return inService;
+              }
               const latest = yield* pointerNow.pipe(Effect.orElseSucceed(() => ({ raw: null, pointer: undefined })));
               const holdEnd = Math.max(
                 failed.holdUntil ?? 0,
