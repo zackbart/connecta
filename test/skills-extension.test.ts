@@ -2175,7 +2175,13 @@ it("rechecks every stored GitHub file against a rotated token and withdraws a sn
     t.fixture.reset();
     await expect(t.read().list()).rejects.toMatchObject({ code: "unavailable" });
     expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "credential_in_file" }]]);
-    expect((await t.stored()).keys.some((key) => key.endsWith(":snapshot"))).toBe(false);
+    const { keys, values } = await t.stored();
+    expect(keys.some((key) => key.endsWith(":snapshot"))).toBe(false);
+    for (const [index, key] of keys.entries()) {
+      const value = String(values[index]);
+      expect(value).not.toContain(next);
+      if (key.includes(":file:")) expect(atob(value)).not.toContain(next);
+    }
     expect(t.blobs()).toBe(0);
     current = () => {
       throw new Error("vault unavailable");
@@ -2187,6 +2193,69 @@ it("rechecks every stored GitHub file against a rotated token and withdraws a sn
       .catch((error: unknown) => error);
     expect(JSON.stringify(page)).not.toContain(next);
     expect(page).toMatchObject({ code: "unavailable" });
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("never serves a GitHub snapshot captured before another process recorded a rotated token", async () => {
+  const next = "next-skills-token-abcdef0123456789";
+  let current = TOKEN;
+  const t = await githubDeployment({ token: () => current });
+  try {
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/rotation.md`]: `next: ${next}\n` }));
+    expect(await t.names()).toEqual(TEAM);
+    current = next;
+    t.advance(301);
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => (resume = resolve));
+    let rechecking!: () => void;
+    const paused = new Promise<void>((resolve) => (rechecking = resolve));
+    let other: Promise<unknown> | undefined;
+    t.hooks.get = async (key) => {
+      if (!key.endsWith(":hold") || other) return;
+      t.hooks.compareAndSet = async (casKey, value) => {
+        if (!casKey.endsWith(":snapshot") || value === null || !value.includes('"resolvedTag"')) return;
+        t.hooks.compareAndSet = undefined;
+        rechecking();
+        await gate;
+      };
+      other = t
+        .read(t.isolate())
+        .list()
+        .catch((error: unknown) => error);
+      await paused;
+    };
+    const reading = t
+      .read()
+      .list()
+      .catch((error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    resume();
+    const [first, second] = await Promise.all([reading, other]);
+    for (const result of [first, second]) {
+      expect(JSON.stringify(result)).not.toContain("skills/team/review");
+      expect(result).toMatchObject({ code: "unavailable" });
+    }
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("rechecks stored GitHub files after a token change before contacting GitHub, and keeps them in service when GitHub fails", async () => {
+  let current = TOKEN;
+  const t = await githubDeployment({ token: () => current });
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    current = "rotated-skills-token-0123456789abcd";
+    t.fixture.intercept(() => new Response("{}", { status: 503 }));
+    t.advance(301);
+    t.fixture.reset();
+    expect(await t.read().text("review", "references/checklist.md")).toBe(CHECKLIST);
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "http_status" }]]);
+    expect(await t.names(t.isolate())).toEqual(TEAM);
   } finally {
     endGithubDeployment();
   }

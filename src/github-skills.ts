@@ -610,8 +610,17 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
         let token: string | undefined;
         let tokenBytes: Uint8Array | undefined;
         let tokenTag = "none";
+        let tokenResolved = false;
         /** Resolves the token for a check, under the check's deadline; GitHub is never contacted without it. */
         const resolveToken = (deadline: number): Effect.Effect<void, SyncFailure> =>
+          resolveTokenValue(deadline).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                tokenResolved = true;
+              }),
+            ),
+          );
+        const resolveTokenValue = (deadline: number): Effect.Effect<void, SyncFailure> =>
           typeof config.token !== "function"
             ? Effect.sync(() => {
                 token = config.token as string | undefined;
@@ -713,7 +722,9 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
 
         /** Whether a snapshot's files were checked against the token most recently resolved for it. */
         const servable = (pointer: Pointer | undefined): pointer is Pointer =>
-          pointer !== undefined && pointer.tokenTag === pointer.resolvedTag;
+          pointer !== undefined &&
+          pointer.tokenTag === pointer.resolvedTag &&
+          (!tokenResolved || pointer.tokenTag === tokenTag);
 
         const serve = (pointer: Pointer): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
           loadManifest(pointer).pipe(
@@ -829,6 +840,61 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           }),
         );
 
+        /** Stored file values read in one batch, each checked against its Git blob SHA. */
+        const readStored = (entries: readonly (readonly [string, string])[]) =>
+          Effect.gen(function* () {
+            const values = yield* io(storageGetMany(entries.map(([, key]) => key)));
+            const read: [string, Uint8Array<ArrayBuffer>][] = [];
+            for (const [index, [blob, key]] of entries.entries()) {
+              const value = values[index];
+              const bytes =
+                value == null
+                  ? undefined
+                  : yield* Effect.try({ try: () => decodeBase64(value), catch: () => failure("storage") }).pipe(
+                      Effect.option,
+                      Effect.map(Option.getOrUndefined),
+                    );
+              if (!bytes || (yield* gitBlobSha(bytes)) !== blob) {
+                yield* io(storageDelete(key)).pipe(Effect.ignore);
+                return yield* Effect.fail(failure("storage"));
+              }
+              read.push([blob, bytes]);
+            }
+            return read;
+          });
+
+        /** Deletes every stored value of `blob`, while this request holds the lease. */
+        const discardBlob = (blob: string) =>
+          Effect.gen(function* () {
+            if (!(yield* leaseHeld)) return;
+            for (const key of yield* io(storageList(`${keys.filePrefix}${blob}:`))) {
+              if (!withinLease()) return;
+              yield* io(storageDelete(key));
+            }
+          }).pipe(Effect.ignore);
+
+        /**
+         * Rechecks stored files against the current token in batches of {@link STORED_BATCH}, rewriting each under
+         * the current tag. A file holding the token has every stored value deleted and fails the recheck.
+         */
+        const recheckStored = (entries: readonly (readonly [string, string, string])[]) =>
+          Effect.gen(function* () {
+            const bytesByBlob = new Map<string, Uint8Array<ArrayBuffer>>();
+            for (let start = 0; start < entries.length; start += STORED_BATCH) {
+              const batch = entries.slice(start, start + STORED_BATCH);
+              const read = yield* readStored(batch.map(([blob, , key]) => [blob, key] as const));
+              for (const [index, [blob, bytes]] of read.entries()) {
+                if (tokenBytes && containsBytes(bytes, tokenBytes)) {
+                  yield* discardBlob(blob);
+                  return yield* Effect.fail(failure("credential_in_file"));
+                }
+                yield* io(storageSet(keys.file(blob, batch[index]![1], tokenTag), encodeBase64(bytes)));
+                bytesByBlob.set(blob, bytes);
+              }
+            }
+            return bytesByBlob;
+          });
+
         /**
          * Everything a snapshot of `revision` needs except its publish. Each file is stored under the current token
          * tag only after its bytes were checked against the token: a missing file is fetched, and a file stored
@@ -848,15 +914,15 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             const documents = new Map<string, Uint8Array<ArrayBuffer>>();
             const wanted = new Set(plan.map((skill) => skill.document));
             const missing = new Map<string, { blob: string; size: number }>();
-            const recheck = new Map<string, string>();
+            const recheck: (readonly [string, string, string])[] = [];
             for (const skill of plan)
               for (const file of skill.files) {
                 const entry = stored.get(file.blob);
                 if (!entry) missing.set(file.blob, file);
                 else {
                   digests.set(file.blob, entry.digest);
-                  if (!entry.tags.has(tokenTag))
-                    recheck.set(file.blob, keys.file(file.blob, entry.digest, [...entry.tags][0]!));
+                  if (!entry.tags.has(tokenTag) && !recheck.some(([blob]) => blob === file.blob))
+                    recheck.push([file.blob, entry.digest, keys.file(file.blob, entry.digest, [...entry.tags][0]!)]);
                 }
               }
             const accept = (blob: string, bytes: Uint8Array<ArrayBuffer>) =>
@@ -868,32 +934,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                 digests.set(blob, digest);
                 if (wanted.has(blob)) documents.set(blob, bytes);
               });
-            const readStored = (entries: readonly [string, string][]) =>
-              Effect.gen(function* () {
-                const values = yield* io(storageGetMany(entries.map(([, key]) => key)));
-                const read: [string, Uint8Array<ArrayBuffer>][] = [];
-                for (const [index, [blob, key]] of entries.entries()) {
-                  const value = values[index];
-                  const bytes =
-                    value == null
-                      ? undefined
-                      : yield* Effect.try({ try: () => decodeBase64(value), catch: () => failure("storage") }).pipe(
-                          Effect.option,
-                          Effect.map(Option.getOrUndefined),
-                        );
-                  if (!bytes || (yield* gitBlobSha(bytes)) !== blob) {
-                    yield* io(storageDelete(key)).pipe(Effect.ignore);
-                    return yield* Effect.fail(failure("storage"));
-                  }
-                  read.push([blob, bytes]);
-                }
-                return read;
-              });
-            const pendingRecheck = [...recheck];
-            for (let start = 0; start < pendingRecheck.length; start += STORED_BATCH) {
-              for (const [blob, bytes] of yield* readStored(pendingRecheck.slice(start, start + STORED_BATCH)))
-                yield* accept(blob, bytes);
-            }
+            for (const [blob, bytes] of yield* recheckStored(recheck)) if (wanted.has(blob)) documents.set(blob, bytes);
             yield* Effect.forEach(
               [...missing.values()],
               (file) => fetchBlob(file).pipe(Effect.flatMap((bytes) => accept(file.blob, bytes))),
@@ -970,15 +1011,51 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             }
           }).pipe(Effect.ignore);
 
+        /**
+         * After a token change, rechecks every file the stored snapshot names against the new token, from storage
+         * alone, and records the snapshot as checked against it. The record is first marked with the new token, so
+         * no request serves it until the recheck completes; progress is kept in the files' keys. A file holding the
+         * token has its stored values deleted and the snapshot is withdrawn.
+         */
+        const recheckSnapshot = (raw: string | null, pointer: Pointer) =>
+          Effect.gen(function* () {
+            let current = pointer;
+            let currentRaw = raw;
+            if (current.resolvedTag !== tokenTag) {
+              current = yield* publish(currentRaw, { ...current, resolvedTag: tokenTag });
+              currentRaw = JSON.stringify(current);
+              if (current.tokenTag === tokenTag) return { raw: currentRaw, pointer: current };
+            }
+            const manifest = yield* loadManifest(current);
+            const stored = yield* storedFiles;
+            const entries: (readonly [string, string, string])[] = [];
+            const seen = new Set<string>();
+            for (const skill of manifest.skills)
+              for (const file of skill.files) {
+                const entry = stored.get(file.blob);
+                if (!entry) return yield* Effect.fail(failure("snapshot_unreadable"));
+                if (entry.tags.has(tokenTag) || seen.has(file.blob)) continue;
+                seen.add(file.blob);
+                entries.push([file.blob, file.digest, keys.file(file.blob, file.digest, [...entry.tags][0]!)]);
+              }
+            const rechecked = yield* Effect.result(recheckStored(entries));
+            if (Result.isFailure(rechecked)) {
+              if (rechecked.failure.code === "credential_in_file" && (yield* leaseHeld))
+                yield* io(storageCompareAndSet(keys.snapshot, currentRaw, null)).pipe(Effect.ignore);
+              return yield* Effect.fail(rechecked.failure);
+            }
+            const next = yield* publish(currentRaw, { ...current, tokenTag, resolvedTag: tokenTag });
+            return { raw: JSON.stringify(next), pointer: next };
+          });
+
         const check = (initialRaw: string | null, initial: Pointer | undefined, budgetEnd: number) =>
           Effect.gen(function* () {
             let raw = initialRaw;
             let pointer = initial;
             const checkEnd = Math.min(Date.now() + CHECK_TIMEOUT_MS, budgetEnd);
             yield* resolveToken(checkEnd);
-            if (pointer && pointer.resolvedTag !== tokenTag) {
-              pointer = yield* publish(raw, { ...pointer, resolvedTag: tokenTag });
-              raw = JSON.stringify(pointer);
+            if (pointer && pointer.tokenTag !== tokenTag) {
+              ({ raw, pointer } = yield* until(budgetEnd, recheckSnapshot(raw, pointer)));
             }
             const commit = yield* until(checkEnd, commitSha);
             const current = pointer?.tokenTag === tokenTag ? pointer : undefined;
@@ -1004,11 +1081,14 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             return published;
           });
 
+        /** Serves `pointer` only when it passes the one serving gate, {@link servable}. */
+        const serveEligible = (pointer: Pointer | undefined): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
+          servable(pointer) ? serve(pointer) : Effect.fail(failure("snapshot_unreadable"));
+
         /**
          * Holds the lease as `holder` and checks: rereads the snapshot and hold first, so a claim made on stale
-         * state serves what is now stored. A failure's hold is stored before the lease is released. A snapshot is
-         * served only when its files were checked against the token last resolved for it; one that fails that
-         * check against a rotated token is withdrawn.
+         * state serves what is now stored. A failure's hold is stored before the lease is released. Every snapshot
+         * returned is the record as stored after the check, through the serving gate.
          */
         const checkUnderLease = (holder: string, budgetEnd: number): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
           Effect.gen(function* () {
@@ -1027,19 +1107,12 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             const outcome = yield* Effect.result(check(current.raw, current.pointer, budgetEnd));
             if (Result.isSuccess(outcome)) {
               yield* release;
-              return yield* serve(outcome.success);
+              return yield* serveEligible(outcome.success);
             }
             const failed = outcome.failure;
             ctx.warn(failed.code);
-            const latest = yield* readPointer.pipe(Effect.orElseSucceed(() => current));
-            if (failed.code === "credential_in_file" && latest.pointer && latest.pointer.tokenTag !== tokenTag)
-              yield* io(storageCompareAndSet(keys.snapshot, latest.raw, null)).pipe(Effect.ignore);
-            const inService =
-              failed.code === "credential_in_file" && latest.pointer?.tokenTag !== tokenTag
-                ? undefined
-                : servable(latest.pointer)
-                  ? latest.pointer
-                  : undefined;
+            const latest = yield* readPointer.pipe(Effect.orElseSucceed(() => ({ raw: null, pointer: undefined })));
+            const inService = servable(latest.pointer) ? latest.pointer : undefined;
             const holdEnd = Math.max(
               failed.holdUntil ?? 0,
               inService && failed.code !== "deadline" ? Date.now() + config.freshMs : 0,
@@ -1079,7 +1152,8 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
         const budgetEnd = ctx.deadlineAt - Math.min(RESERVE_MS, Math.floor(remaining * RESERVE_FRACTION));
         const holder = crypto.randomUUID();
         if (yield* claim(holder)) return yield* checkUnderLease(holder, budgetEnd);
-        return pointer ? yield* serve(pointer) : yield* awaitPublished(holder, budgetEnd);
+        const { pointer: latest } = yield* readPointer;
+        return servable(latest) ? yield* serve(latest) : yield* awaitPublished(holder, budgetEnd);
       }),
   });
 }

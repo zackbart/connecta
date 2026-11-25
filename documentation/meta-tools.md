@@ -992,18 +992,28 @@ token (base64, percent-encoding) passes it and is stored, and responses redact
 those forms while the token is registered for the request.
 
 Token changes. Each snapshot records a tag of the token its files were checked
-against: a prefix of an HMAC under the deployment's storage digest key (the
-credential vault's, or with no vault a per-process key, so each new process
-rechecks once), never the token. When a check resolves a token whose tag
-differs, nothing is served under it until every file the snapshot names,
-including files a new sync reuses from storage, has been checked against the
-new value; the recheck stores its progress and resumes across requests. A
-snapshot whose files contain the new token is withdrawn with
+against: a prefix of an HMAC under the deployment's storage digest key, never
+the token. With a credential vault the key is the vault's and the tag is the
+same in every process. Without one, each process uses its own random key, so a
+check in a process other than the last one to check sees a different tag and
+rechecks every stored file: one read per 64 files and one write per file, from
+storage alone, with no GitHub request. Configure a vault to avoid that cost.
+
+When a check resolves a token whose tag differs, it first marks the record with
+the new tag, so no request serves the snapshot until the recheck completes;
+then rechecks every file the snapshot names from storage, before any GitHub
+request, keeping its progress in the files' keys so a recheck the deadline
+interrupts resumes on the next read; then records the snapshot as checked
+against the new token and goes on to the revision check. A failed revision
+check leaves the rechecked snapshot in service with its warning. A file holding
+the new token has every stored value deleted and the snapshot is withdrawn with
 `credential_in_file`: this is the one failure that does not leave the stored
-snapshot in service. When the token function fails, only a snapshot checked
-against the last successfully resolved token is served. Within `freshFor` the
-token is not resolved, so a value that changed since the last check is
-compared at the next one.
+snapshot in service. Files a new sync reuses from storage are rechecked the same
+way. Every snapshot a skills read returns is the record as currently stored,
+checked against the token resolved in that request, or, when the token was not
+resolved or its function failed, against the last token resolved for that
+record. Within `freshFor` the token is not resolved, so a value that changed
+since the last check is compared at the next one.
 
 Storage. Keys sit under `skill-source:v1:<source-id>:<digest>:`, where the
 digest covers `repo`, `path` and `ref`, so changing any of them starts a new
