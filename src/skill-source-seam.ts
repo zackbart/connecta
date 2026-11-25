@@ -2,6 +2,8 @@ import type { Effect } from "effect";
 import { ConfigError } from "./config-schema.js";
 import { parseFrontmatter, splitFrontmatter } from "./skill-frontmatter.js";
 import type { SkillSource } from "./skill-sources.js";
+import type { CredentialVault } from "./credential-contract.js";
+import { vaultSecretDigest } from "./storage-digest.js";
 import type { KVStorage, Logger } from "./types.js";
 
 export const MAX_SKILLS = 1_024;
@@ -48,6 +50,8 @@ export interface SkillSourceContext {
   readonly deadlineAt: number;
   /** Registers a credential this request sends, so no reader output, log or record carries it. */
   readonly secret: (value: string) => void;
+  /** `hmac:<hex>` of a secret under the deployment's storage digest key, for a stored key or value only. */
+  readonly digestSecret: (value: string) => Promise<string>;
 }
 
 /** The internal seam every source implements; failure means the source has nothing to serve. */
@@ -200,7 +204,9 @@ export function bindSkillSources(
   sources: readonly SkillSource[],
   storage: KVStorage,
   logger: Logger,
+  vault?: CredentialVault,
 ): readonly BoundSkillSource[] {
+  const digestSecret = (value: string) => vaultSecretDigest(vault, value);
   return sources.map((source) => {
     const definition = skillSourceDefinition(source)!;
     const declared = new Set(definition.warnings ?? []);
@@ -219,7 +225,7 @@ export function bindSkillSources(
       description: source.description,
       cacheTtlMs: definition.cacheTtlMs,
     });
-    bindings.set(bound, { definition, context: (request) => ({ ...request, storage, warn }) });
+    bindings.set(bound, { definition, context: (request) => ({ ...request, storage, warn, digestSecret }) });
     return bound;
   });
 }

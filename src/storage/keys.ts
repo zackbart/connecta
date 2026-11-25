@@ -280,8 +280,11 @@ export const MAX_GITHUB_SKILL_FILE_BYTES = 768 * 1024;
  * A GitHub skill source's snapshots, under the source id and a digest of its
  * repository, path and ref. `snapshot` names the published revision and its
  * manifest digest; the manifest's chunks sit at `manifest:<digest>:<index>`
- * and each file's base64 bytes at `file:<git blob sha>`, so a resumed sync
- * finds what an interrupted one stored. A snapshot is published by
+ * and each file's base64 bytes at `file:<git blob sha>:<sha-256 hex>:<token tag>`,
+ * where the tag is a deployment-keyed digest prefix of the token the bytes were
+ * checked against (`none` without a token), so a resumed sync learns what an
+ * interrupted one stored, its digests and what each was checked against from
+ * one listing. A snapshot is published by
  * compare-and-set only after every chunk and file it names is stored.
  * `lease` arbitrates one checker at a time; `hold` holds back the next check
  * until an epoch-millisecond time. No key or value carries a token.
@@ -308,7 +311,8 @@ export const skillSourceKeys = {
   manifest: (prefix: string, digest: string, index: number) =>
     validateStorageKey(`${prefix}manifest:${digest}:${index}`),
   filePrefix: (prefix: string) => validateStorageKey(`${prefix}file:`),
-  file: (prefix: string, blob: string) => validateStorageKey(`${prefix}file:${blob}`),
+  file: (prefix: string, blob: string, sha256: string, tokenTag: string) =>
+    validateStorageKey(`${prefix}file:${blob}:${sha256}:${tokenTag}`),
 } as const satisfies Keyed;
 
 /** Seconds an OAuth callback's owner binding stays claimable. */

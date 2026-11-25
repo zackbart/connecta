@@ -613,7 +613,12 @@ export class Registry implements RegistryView {
     connectors: Connector[],
     private readonly opts: RegistryOptions,
   ) {
-    this.skillSources = bindSkillSources(opts.skillSources ?? [], opts.rootStorage ?? opts.storage, opts.logger);
+    this.skillSources = bindSkillSources(
+      opts.skillSources ?? [],
+      opts.rootStorage ?? opts.storage,
+      opts.logger,
+      opts.credentialVault,
+    );
     this.configuredConnectors = [...connectors];
     this.observedOutputSchemas = new ObservedOutputSchemas();
     this.maxResultBytes = resolveMaxResultBytes(opts.maxResultBytes, DEFAULT_MAX_RESULT_BYTES);

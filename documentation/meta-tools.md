@@ -859,14 +859,14 @@ createConnecta({
 });
 ```
 
-| Option        | Contract                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `repo`        | `owner/name` on github.com. GitHub Enterprise hosts are not supported.                                                                                                                                                                                                                                                                                                      |
-| `path`        | A directory, `/`-separated with no leading or trailing `/`, `.` or `..` segment, empty segment or backslash; `""` for the repository root.                                                                                                                                                                                                                                  |
-| `ref`         | Required: a branch, tag or commit SHA, as GitHub's `GET /repos/{owner}/{repo}/commits/{ref}` accepts it. Pinning a commit SHA makes every later check one request that never changes the snapshot.                                                                                                                                                                          |
-| `token`       | Optional: a string, or a function returning a string or a promise of one, called on each skills read. Without it the source reads a public repository at GitHub's unauthenticated limit of 60 requests an hour per IP address. A fine-grained personal access token needs only **Contents: Read** on the repository; a classic token needs `repo` for a private repository. |
-| `description` | Optional: one line, 1 to 120 characters after trimming, with no control characters, shown with the id in the `skills` tool's description.                                                                                                                                                                                                                                   |
-| `freshFor`    | Seconds a stored snapshot is served without contacting GitHub: a whole number from 30 to 86,400, default 300. A caller who sees the source is advertised a native `ttlMs` no longer than `freshFor`.                                                                                                                                                                        |
+| Option        | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `repo`        | `owner/name` on github.com. GitHub Enterprise hosts are not supported.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `path`        | A directory, `/`-separated with no leading or trailing `/`, `.` or `..` segment, empty segment or backslash; `""` for the repository root.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `ref`         | Required: a branch, tag or commit SHA, as GitHub's `GET /repos/{owner}/{repo}/commits/{ref}` accepts it. Pinning a commit SHA makes every later check one request that never changes the snapshot.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `token`       | Optional: a string, or a function `({ signal }) => string \| Promise<string>` called only when a check contacts GitHub (never for a read within `freshFor`), under the check's deadline, with `signal` aborting when that deadline passes. A function that throws, misses the deadline, or yields anything but a non-empty string is `token_unavailable`, and no request is sent. Without a token the source reads a public repository at GitHub's unauthenticated limit of 60 requests an hour per IP address. A fine-grained personal access token needs only **Contents: Read** on the repository; a classic token needs `repo` for a private repository. |
+| `description` | Optional: one line, 1 to 120 characters after trimming, with no control characters, shown with the id in the `skills` tool's description.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `freshFor`    | Seconds a stored snapshot is served without contacting GitHub: a whole number from 30 to 86,400, default 300. A caller who sees the source is advertised a native `ttlMs` no longer than `freshFor`.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 `githubSkills` throws a `ConfigError` naming the source for an invalid id,
 description or option.
@@ -892,12 +892,17 @@ expires.
 
 Revalidation. Within `freshFor` of the last check, a skills read serves the
 stored snapshot and sends nothing to GitHub. After it, the next skills read
-claims a lease in storage, rereads the snapshot and any hold, and checks the revision, within at most 10 seconds;
-concurrent readers serve the stored snapshot meanwhile, and a reader with no
-stored snapshot waits for the first sync up to its skills deadline. Unchanged:
-the snapshot is served and its freshness renewed. Changed: the new revision is
-synced within the skills read's deadline (20 seconds by default, the discovery
-probe timeout) and served. A push therefore appears on the first skills read
+claims a lease in storage, rereads the snapshot and any hold (serving what is
+stored if another request has just refreshed it), and checks the revision,
+within at most 10 seconds. Concurrent readers serve the stored snapshot
+meanwhile; a reader with no stored snapshot waits for the first sync up to its
+skills deadline, and takes the lease over if the syncing request's lease
+expires first. Unchanged: the snapshot is served and its freshness renewed.
+Changed: the new revision is synced within the skills read's deadline, the
+discovery probe timeout (`discovery.probeTimeoutMs`, 30 seconds by default for
+MCP requests), less a reserve of a fifth of it up to two seconds for serving
+the result, and served. A snapshot is published only before that deadline, and
+the request does not return while a publish is in flight. A push therefore appears on the first skills read
 more than `freshFor` seconds after the previous check, five minutes at most by
 default. A sync the deadline interrupts publishes nothing; the files it stored
 remain, and the next skills read resumes without fetching them again.
@@ -915,8 +920,13 @@ Requests. Every request goes to `https://api.github.com` with
 
 `plugins/team/skills` with 20 skill files makes 26 requests on its first sync.
 No request lists the repository root recursively, so a large monorepo works.
-Storage adds about one write per fetched file and a handful of reads and
-writes per sync. On Cloudflare Workers each GitHub request and each D1 query
+Storage work is bounded: besides one write per file it fetches, a sync makes one
+listing of stored files, one batched read of the `SKILL.md` documents it did
+not fetch (64 keys per query), one write per manifest chunk, and fewer than ten
+lease, snapshot and hold operations. A resumed sync never reads the body of any
+other stored file: each file's digest and token check are in its key. After the
+token changes, each stored file is read once in those batches and rewritten
+once. On Cloudflare Workers each GitHub request and each D1 query
 is a subrequest: a Free plan invocation allows 50 subrequests (and 50 D1
 queries), a Paid one 10,000 subrequests and 1,000 D1 queries. A first sync
 that exceeds the limit fails at that point and resumes on later reads, each
@@ -925,7 +935,7 @@ storing more files, until the snapshot publishes.
 Limits. A sync fails, and nothing from it is published, for any of these: a skill
 directory whose name differs from its frontmatter `name` or breaks the Agent
 Skills name rule; missing or invalid frontmatter (see Frontmatter above); a symlink or submodule under
-a skill; a tree GitHub reports as truncated; more than 1,024 skills, 512 files
+a skill; any tree the check or sync reads that GitHub reports as truncated; more than 1,024 skills, 512 files
 in one skill or 16 MiB in one skill; a file over 786,432 bytes (768 KiB), the
 per-file limit set by storing each file as one base64 value of at most 1 MiB,
 well under D1's 2,000,000-byte row limit; or a file whose bytes contain the
@@ -937,49 +947,70 @@ deadline, truncated tree, invalid skill, exceeded bound) leaves the stored
 snapshot in service and logs one payload-free warning,
 `[connecta] skill source warning` with `{ source, code }`:
 
-| `code`                 | Cause                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------ |
-| `token_unavailable`    | The token function threw or returned something other than a non-empty string.              |
-| `network`              | The request did not complete.                                                              |
-| `redirect_refused`     | A redirect pointed outside `https://api.github.com`, or more than three redirects.         |
-| `unauthorized`         | GitHub answered 401.                                                                       |
-| `forbidden`            | GitHub answered 403 without rate-limit headers.                                            |
-| `not_found`            | GitHub answered 404: the repository, ref or a tree is missing, or the token cannot see it. |
-| `http_status`          | Any other non-2xx answer.                                                                  |
-| `rate_limited`         | GitHub answered 403 or 429 with `retry-after` or `x-ratelimit-remaining: 0`, or 429.       |
-| `deadline`             | The check or sync ran out of time.                                                         |
-| `invalid_response`     | A response was malformed, too large, or a blob's bytes did not match its Git SHA.          |
-| `path_not_found`       | `path` is missing at the ref or is not a directory.                                        |
-| `truncated_tree`       | GitHub reported the directory's tree as truncated.                                         |
-| `invalid_skill`        | A skill's name, frontmatter or a file path is invalid.                                     |
-| `name_mismatch`        | A skill directory's name differs from its frontmatter `name`.                              |
-| `symlink`, `submodule` | A skill holds a symlink or a submodule.                                                    |
-| `bound_exceeded`       | More than 1,024 skills, 512 files or 16 MiB in a skill.                                    |
-| `file_too_large`       | A file exceeds 786,432 bytes.                                                              |
-| `credential_in_file`   | A file's bytes contain the token.                                                          |
-| `storage`              | Storage failed, or a stored file no longer matched its Git SHA (it is removed).            |
-| `snapshot_unreadable`  | The stored snapshot could not be read back.                                                |
+| `code`                 | Cause                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `token_unavailable`    | The token function threw, missed the check's deadline, or yielded something other than a non-empty string.             |
+| `network`              | The request did not complete.                                                                                          |
+| `redirect_refused`     | A redirect pointed anywhere but `https:` on host `api.github.com` with the default port, or more than three redirects. |
+| `unauthorized`         | GitHub answered 401.                                                                                                   |
+| `forbidden`            | GitHub answered 403 without rate-limit headers.                                                                        |
+| `not_found`            | GitHub answered 404: the repository, ref or a tree is missing, or the token cannot see it.                             |
+| `http_status`          | Any other non-2xx answer.                                                                                              |
+| `rate_limited`         | GitHub answered 403 or 429 with `retry-after` or `x-ratelimit-remaining: 0`, or 429.                                   |
+| `deadline`             | The check or sync ran out of time.                                                                                     |
+| `invalid_response`     | A response was malformed, too large, or a blob's bytes did not match its Git SHA.                                      |
+| `path_not_found`       | `path` is missing at the ref or is not a directory.                                                                    |
+| `truncated_tree`       | GitHub reported a tree on the way to `path`, or the directory's recursive tree, as truncated.                          |
+| `invalid_skill`        | A skill's name, frontmatter or a file path is invalid.                                                                 |
+| `name_mismatch`        | A skill directory's name differs from its frontmatter `name`.                                                          |
+| `symlink`, `submodule` | A skill holds a symlink or a submodule.                                                                                |
+| `bound_exceeded`       | More than 1,024 skills, 512 files or 16 MiB in a skill.                                                                |
+| `file_too_large`       | A file exceeds 786,432 bytes.                                                                                          |
+| `credential_in_file`   | A file's bytes contain the token, including a stored file rechecked after the token changed.                           |
+| `storage`              | Storage failed, or a stored file no longer matched its Git SHA (it is removed).                                        |
+| `snapshot_unreadable`  | The stored snapshot could not be read back.                                                                            |
 
 After a failed check while a snapshot is in service, the next check waits the
-later of `freshFor` seconds and any hold GitHub set: after a rate limit, its
-`retry-after` or `x-ratelimit-reset` time, or a minute when neither is given;
-after a 403 without rate-limit headers, a minute. The hold is stored before the checking request releases its lease, so no other process sends a request in between. With no stored snapshot,
+later of `freshFor` seconds and any hold GitHub set: after a rate limit, the
+later of its `retry-after` and `x-ratelimit-reset` times, or a minute when
+neither is given; after a 403 without rate-limit headers, a minute. A
+`deadline` failure sets no wait, so an interrupted sync resumes on the next
+read. The wait can delay recovery from a transient failure by up to
+`freshFor`. The hold is stored before the checking request releases its lease, so no other process sends a request in between. With no stored snapshot,
 the source is unavailable: the skills listing fails as a failed downstream
 skills listing does, built-in skills and connector guides stay readable by
 name, and the next skills read tries again (after a rate limit, once its reset
 time has passed).
 
 Credentials. The token is sent only to `https://api.github.com`, as
-`Authorization: Bearer`, and never to a redirect target on another host: such a
-redirect fails the check. It is registered with the request's credential
-redaction, so it reaches no agent output, and it appears in no operator
-record, log, storage key or stored value: a file containing it fails the sync.
+`Authorization: Bearer`, and never to a redirect target with another scheme,
+host or port: such a redirect fails the check. It is registered with the
+request's credential redaction, so it reaches no agent output, and it appears
+in no operator record, log, storage key or stored value: a file containing it
+fails the sync. The check is literal: a file holding an encoded form of the
+token (base64, percent-encoding) passes it and is stored, and responses redact
+those forms while the token is registered for the request.
+
+Token changes. Each snapshot records a tag of the token its files were checked
+against: a prefix of an HMAC under the deployment's storage digest key (the
+credential vault's, or with no vault a per-process key, so each new process
+rechecks once), never the token. When a check resolves a token whose tag
+differs, nothing is served under it until every file the snapshot names,
+including files a new sync reuses from storage, has been checked against the
+new value; the recheck stores its progress and resumes across requests. A
+snapshot whose files contain the new token is withdrawn with
+`credential_in_file`: this is the one failure that does not leave the stored
+snapshot in service. When the token function fails, only a snapshot checked
+against the last successfully resolved token is served. Within `freshFor` the
+token is not resolved, so a value that changed since the last check is
+compared at the next one.
 
 Storage. Keys sit under `skill-source:v1:<source-id>:<digest>:`, where the
 digest covers `repo`, `path` and `ref`, so changing any of them starts a new
 snapshot. `snapshot` names the published revision and manifest digest;
-`manifest:<digest>:<n>` holds the manifest in 1 MiB chunks; `file:<git blob
-SHA>` holds each file's bytes as base64; `lease` and `hold` coordinate checks.
+`manifest:<digest>:<n>` holds the manifest in 1 MiB chunks;
+`file:<git blob SHA>:<SHA-256>:<token tag>` holds each file's bytes as base64;
+`lease` and `hold` coordinate checks.
 When a request publishes a new snapshot, it removes files and manifest chunks
 that neither that snapshot nor the one it replaced names, only while that
 snapshot is still the record in storage and the request still holds the lease.

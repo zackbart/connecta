@@ -31,8 +31,11 @@ import { GITHUB_SKILL_SNAPSHOT_TTL_MS, MAX_GITHUB_SKILL_FILE_BYTES, skillSourceK
 
 export { MAX_GITHUB_SKILL_FILE_BYTES };
 
-/** A GitHub token, or a function the source calls before each skills read. */
-export type GitHubSkillsToken = string | (() => string | Promise<string>);
+/**
+ * A GitHub token, or a function the source calls when it contacts GitHub. The function receives a signal that
+ * aborts when the check's deadline passes.
+ */
+export type GitHubSkillsToken = string | ((context: { signal: AbortSignal }) => string | Promise<string>);
 
 export interface GitHubSkillsOptions {
   /** `owner/name`. */
@@ -49,7 +52,8 @@ export interface GitHubSkillsOptions {
   readonly freshFor?: number;
 }
 
-const API_ORIGIN = "https://api.github.com";
+const API_HOST = "api.github.com";
+const API_ORIGIN = `https://${API_HOST}`;
 const API_VERSION = "2026-03-10";
 const USER_AGENT = "connecta-skill-source";
 const JSON_MEDIA = "application/vnd.github+json";
@@ -60,14 +64,14 @@ const MIN_FRESH_SECONDS = 30;
 const MAX_FRESH_SECONDS = 86_400;
 const CHECK_TIMEOUT_MS = 10_000;
 const RESERVE_MS = 2_000;
+const RESERVE_FRACTION = 0.2;
 const LEASE_MARGIN_MS = 1_000;
-const LEASE_SAFETY_MS = 2_000;
 const AWAIT_INTERVAL_MS = 1_000;
 const MIN_FORBIDDEN_HOLD_MS = 60_000;
 const DEFAULT_RATE_LIMIT_HOLD_MS = 60_000;
 const MAX_HOLD_MS = 86_400_000;
 const BLOB_CONCURRENCY = 4;
-const STORED_BATCH = 50;
+const STORED_BATCH = 64;
 const MAX_REDIRECTS = 3;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const MAX_SHA_BYTES = 256;
@@ -75,6 +79,7 @@ const MANIFEST_CHUNK_CHARS = 1024 * 1024;
 const MAX_MANIFEST_CHUNKS = 4_096;
 const GIT_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
+const TOKEN_TAG = /^(?:none|[0-9a-f]{32})$/;
 
 /** Typed, payload-free reasons a check or sync fails; each is one operator warning code. */
 const WARNING_CODES = [
@@ -119,6 +124,10 @@ interface Pointer {
   readonly digest: string;
   readonly chunks: number;
   readonly checkedAt: number;
+  /** The token tag every file this snapshot names was checked against: `none` without a token. */
+  readonly tokenTag: string;
+  /** The tag of the token most recently resolved for this record; the snapshot is served only when they match. */
+  readonly resolvedTag: string;
 }
 
 interface ManifestFile {
@@ -166,6 +175,11 @@ function hasControlCharacter(value: string): boolean {
 }
 
 function validRef(ref: string): boolean {
+  try {
+    encodeURIComponent(ref);
+  } catch {
+    return false;
+  }
   return (
     ref.length > 0 &&
     ref.length <= 255 &&
@@ -240,16 +254,17 @@ function gitBlobSha(bytes: Uint8Array): Effect.Effect<string, SyncFailure> {
   return digestHex("SHA-1", framed);
 }
 
+/** The latest time GitHub's rate-limit headers allow the next request, or undefined when they name none. */
 function holdFor(response: Response, now: number): number | undefined {
+  const times: number[] = [];
   const retryAfter = response.headers.get("retry-after")?.trim();
-  if (retryAfter && /^\d+$/.test(retryAfter)) return now + Math.min(Number(retryAfter) * 1000, MAX_HOLD_MS);
+  if (retryAfter && /^\d+$/.test(retryAfter)) times.push(now + Number(retryAfter) * 1000);
   if (response.headers.get("x-ratelimit-remaining")?.trim() === "0") {
     const reset = Number(response.headers.get("x-ratelimit-reset"));
-    return Number.isFinite(reset) && reset * 1000 > now
-      ? Math.min(reset * 1000, now + MAX_HOLD_MS)
-      : now + DEFAULT_RATE_LIMIT_HOLD_MS;
+    times.push(Number.isFinite(reset) && reset * 1000 > now ? reset * 1000 : now + DEFAULT_RATE_LIMIT_HOLD_MS);
   }
-  return response.status === 429 ? now + DEFAULT_RATE_LIMIT_HOLD_MS : undefined;
+  if (times.length === 0 && response.status === 429) times.push(now + DEFAULT_RATE_LIMIT_HOLD_MS);
+  return times.length === 0 ? undefined : Math.min(Math.max(...times), now + MAX_HOLD_MS);
 }
 
 function statusFailure(response: Response): SyncFailure {
@@ -341,7 +356,15 @@ async function githubGet(
       } catch {
         next = undefined;
       }
-      if (!next || next.origin !== API_ORIGIN || next.username || next.password || hop >= MAX_REDIRECTS)
+      if (
+        !next ||
+        next.protocol !== "https:" ||
+        next.hostname !== API_HOST ||
+        next.port !== "" ||
+        next.username ||
+        next.password ||
+        hop >= MAX_REDIRECTS
+      )
         throw failure("redirect_refused");
       target = next;
       continue;
@@ -499,7 +522,11 @@ function parsePointer(raw: string | null): Pointer | undefined {
       Number.isSafeInteger(value.chunks) &&
       (value.chunks as number) >= 1 &&
       (value.chunks as number) <= MAX_MANIFEST_CHUNKS &&
-      Number.isSafeInteger(value.checkedAt)
+      Number.isSafeInteger(value.checkedAt) &&
+      typeof value.tokenTag === "string" &&
+      TOKEN_TAG.test(value.tokenTag) &&
+      typeof value.resolvedTag === "string" &&
+      TOKEN_TAG.test(value.resolvedTag)
     )
       return value as unknown as Pointer;
   } catch {
@@ -569,35 +596,76 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           manifestPrefix: skillSourceKeys.manifestPrefix(keyPrefix),
           filePrefix: skillSourceKeys.filePrefix(keyPrefix),
           manifest: (digest: string, index: number) => skillSourceKeys.manifest(keyPrefix!, digest, index),
-          file: (blob: string) => skillSourceKeys.file(keyPrefix!, blob),
+          file: (blob: string, digest: string, tag: string) =>
+            skillSourceKeys.file(keyPrefix!, blob, digest.slice("sha256:".length), tag),
         };
+        /** One storage operation. It is uninterruptible, so a deadline waits for it rather than leaving it in flight. */
         const io = <A>(effect: Effect.Effect<A, unknown, Storage>): Effect.Effect<A, SyncFailure> =>
           effect.pipe(
             Effect.provideService(Storage, ctx.storage),
             Effect.mapError(() => failure("storage")),
+            Effect.uninterruptible,
           );
 
-        const token = yield* Effect.result(
-          Effect.tryPromise({
-            try: async () => {
-              const value = typeof config.token === "function" ? await config.token() : config.token;
-              if (value !== undefined && (typeof value !== "string" || value === "")) throw new Error("invalid");
-              return value;
-            },
-            catch: () => failure("token_unavailable"),
-          }),
-        );
-        if (Result.isSuccess(token) && token.success !== undefined) ctx.secret(token.success);
-        const tokenBytes =
-          Result.isSuccess(token) && token.success !== undefined ? encoder.encode(token.success) : undefined;
+        let token: string | undefined;
+        let tokenBytes: Uint8Array | undefined;
+        let tokenTag = "none";
+        /** Resolves the token for a check, under the check's deadline; GitHub is never contacted without it. */
+        const resolveToken = (deadline: number): Effect.Effect<void, SyncFailure> =>
+          typeof config.token !== "function"
+            ? Effect.sync(() => {
+                token = config.token as string | undefined;
+              }).pipe(
+                Effect.flatMap(() =>
+                  token === undefined
+                    ? Effect.void
+                    : Effect.tryPromise({
+                        try: () => ctx.digestSecret(token!),
+                        catch: () => failure("token_unavailable"),
+                      }).pipe(
+                        Effect.map((digest) => {
+                          ctx.secret(token!);
+                          tokenBytes = encoder.encode(token!);
+                          tokenTag = digest.replace(/^hmac:/, "").slice(0, 32);
+                        }),
+                      ),
+                ),
+              )
+            : until(
+                deadline,
+                Effect.tryPromise({
+                  try: (signal) => Promise.resolve((config.token as Exclude<GitHubSkillsToken, string>)({ signal })),
+                  catch: () => failure("token_unavailable"),
+                }).pipe(
+                  Effect.flatMap((value) =>
+                    typeof value === "string" && value !== ""
+                      ? Effect.sync(() => {
+                          token = value;
+                        })
+                      : Effect.fail(failure("token_unavailable")),
+                  ),
+                ),
+                "token_unavailable",
+              ).pipe(
+                Effect.tap(() =>
+                  Effect.gen(function* () {
+                    if (token === undefined) return;
+                    ctx.secret(token);
+                    tokenBytes = encoder.encode(token);
+                    const digest = yield* Effect.tryPromise({
+                      try: () => ctx.digestSecret(token!),
+                      catch: () => failure("token_unavailable"),
+                    });
+                    tokenTag = digest.replace(/^hmac:/, "").slice(0, 32);
+                  }),
+                ),
+              );
 
         const get = (path: string, accept: string, limit: number) =>
-          Result.isFailure(token)
-            ? Effect.fail(token.failure)
-            : Effect.tryPromise({
-                try: (signal) => githubGet(path, accept, token.success, limit, signal),
-                catch: (error) => asFailure(error, "network"),
-              });
+          Effect.tryPromise({
+            try: (signal) => githubGet(path, accept, token, limit, signal),
+            catch: (error) => asFailure(error, "network"),
+          });
         const getJson = (path: string) =>
           get(path, JSON_MEDIA, MAX_JSON_BYTES).pipe(
             Effect.flatMap((bytes) =>
@@ -610,13 +678,18 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               Effect.try({ try: () => parseTree(value), catch: (error) => asFailure(error, "invalid_response") }),
             ),
           );
-        const until = <A>(deadline: number, effect: Effect.Effect<A, SyncFailure>) =>
-          effect.pipe(
+        function until<A>(
+          deadline: number,
+          effect: Effect.Effect<A, SyncFailure>,
+          code: FailureCode = "deadline",
+        ): Effect.Effect<A, SyncFailure> {
+          return effect.pipe(
             Effect.timeoutOption(Duration.millis(Math.max(0, deadline - Date.now()))),
             Effect.flatMap((option) =>
-              Option.isNone(option) ? Effect.fail(failure("deadline")) : Effect.succeed(option.value),
+              Option.isNone(option) ? Effect.fail(failure(code)) : Effect.succeed(option.value),
             ),
           );
+        }
 
         const loadManifest = (pointer: Pointer): Effect.Effect<Manifest, SyncFailure> =>
           Effect.gen(function* () {
@@ -638,6 +711,10 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             return manifest;
           });
 
+        /** Whether a snapshot's files were checked against the token most recently resolved for it. */
+        const servable = (pointer: Pointer | undefined): pointer is Pointer =>
+          pointer !== undefined && pointer.tokenTag === pointer.resolvedTag;
+
         const serve = (pointer: Pointer): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
           loadManifest(pointer).pipe(
             Effect.map((manifest) => ({
@@ -649,7 +726,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                   digest: file.digest,
                   size: file.size,
                   read: (reader: SkillSourceContext) =>
-                    storageGet(keys.file(file.blob)).pipe(
+                    storageGet(keys.file(file.blob, file.digest, pointer.tokenTag)).pipe(
                       Effect.provideService(Storage, reader.storage),
                       Effect.flatMap((stored) =>
                         stored === null
@@ -669,17 +746,18 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           Effect.map((raw) => ({ raw, pointer: parsePointer(raw) })),
         );
 
-        let lease: { holder: string; end: number } | undefined;
-        const withinLease = () => lease !== undefined && Date.now() < lease.end - LEASE_SAFETY_MS;
-        /** Whether this request still holds the check lease, with time left before storage expires it. */
+        let lease: { holder: string; budgetEnd: number } | undefined;
+        const withinLease = () => lease !== undefined && Date.now() < lease.budgetEnd && !ctx.signal.aborted;
+        /** Whether this request still holds the check lease, before its budget ends and storage expires the lease. */
         const leaseHeld = Effect.gen(function* () {
           if (!withinLease()) return false;
           return (yield* io(storageGet(keys.lease))) === lease!.holder;
         });
 
         /**
-         * Publishes `next` over the record read as `expected`, only while this request holds the lease, so no
-         * publish lands during another holder's cleanup; a lost race serves whichever record won.
+         * Publishes `next` over the record read as `expected`. It starts only while this request holds the lease
+         * and its deadline has not passed, and the compare-and-set itself is uninterruptible, so no publish lands
+         * after the request returns or during another holder's cleanup. A lost race serves whichever record won.
          */
         const publish = (expected: string | null, next: Pointer): Effect.Effect<Pointer, SyncFailure> =>
           Effect.gen(function* () {
@@ -701,7 +779,10 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           }),
         );
 
-        /** The source directory's tree, walked one segment at a time so no recursive listing of the repository is needed. */
+        /**
+         * The source directory's tree, walked one segment at a time so no recursive listing of the repository is
+         * needed. Any tree GitHub reports as truncated fails the check.
+         */
         const directoryTree = (commit: string) =>
           Effect.gen(function* () {
             const object = yield* getJson(`${repoPath}/git/commits/${commit}`);
@@ -709,9 +790,9 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             if (typeof sha !== "string" || !GIT_SHA.test(sha)) return yield* Effect.fail(failure("invalid_response"));
             for (const segment of segments) {
               const tree = yield* getTree(`${repoPath}/git/trees/${sha}`);
+              if (tree.truncated) return yield* Effect.fail(failure("truncated_tree"));
               const entry = tree.entries.find((candidate) => candidate.path === segment);
-              if (!entry) return yield* Effect.fail(failure(tree.truncated ? "truncated_tree" : "path_not_found"));
-              if (entry.type !== "tree" || !GIT_SHA.test(entry.sha))
+              if (!entry || entry.type !== "tree" || !GIT_SHA.test(entry.sha))
                 return yield* Effect.fail(failure("path_not_found"));
               sha = entry.sha;
             }
@@ -731,7 +812,30 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             ),
           );
 
-        const sync = (commit: string, revision: string, expected: string | null, previous: Pointer | undefined) =>
+        /** Stored files by Git blob SHA: the SHA-256 digest and the token tags their keys carry. */
+        const storedFiles = io(storageList(keys.filePrefix)).pipe(
+          Effect.map((listed) => {
+            const stored = new Map<string, { digest: string; tags: Set<string> }>();
+            for (const key of listed) {
+              const match = /^([0-9a-f]{40}):([0-9a-f]{64}):(none|[0-9a-f]{32})$/.exec(
+                key.slice(keys.filePrefix.length),
+              );
+              if (!match) continue;
+              const entry = stored.get(match[1]!) ?? { digest: `sha256:${match[2]!}`, tags: new Set<string>() };
+              entry.tags.add(match[3]!);
+              stored.set(match[1]!, entry);
+            }
+            return stored;
+          }),
+        );
+
+        /**
+         * Everything a snapshot of `revision` needs except its publish. Each file is stored under the current token
+         * tag only after its bytes were checked against the token: a missing file is fetched, and a file stored
+         * under another tag is read and rewritten under this one. A resumed sync reads no other stored file body:
+         * digests and tags are in the keys. `SKILL.md` documents not read here are read in one batch.
+         */
+        const prepare = (commit: string, revision: string) =>
           Effect.gen(function* () {
             const tree = yield* getTree(`${repoPath}/git/trees/${revision}?recursive=1`);
             if (tree.truncated) return yield* Effect.fail(failure("truncated_tree"));
@@ -739,60 +843,66 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               try: () => planSkills(tree.entries),
               catch: (error) => asFailure(error, "invalid_response"),
             });
-            const prior = previous ? yield* loadManifest(previous).pipe(Effect.option) : Option.none<Manifest>();
-            const known = new Map<string, string>();
-            if (Option.isSome(prior))
-              for (const skill of prior.value.skills) for (const file of skill.files) known.set(file.blob, file.digest);
-            const stored = new Set(
-              (yield* io(storageList(keys.filePrefix))).map((key) => key.slice(keys.filePrefix.length)),
-            );
+            const stored = yield* storedFiles;
+            const digests = new Map<string, string>();
             const documents = new Map<string, Uint8Array<ArrayBuffer>>();
             const wanted = new Set(plan.map((skill) => skill.document));
             const missing = new Map<string, { blob: string; size: number }>();
+            const recheck = new Map<string, string>();
             for (const skill of plan)
-              for (const file of skill.files) if (!stored.has(file.blob)) missing.set(file.blob, file);
-            yield* Effect.forEach(
-              [...missing.values()],
-              (file) =>
-                fetchBlob(file).pipe(
-                  Effect.flatMap((bytes) =>
-                    Effect.gen(function* () {
-                      known.set(file.blob, `sha256:${yield* digestHex("SHA-256", bytes)}`);
-                      if (wanted.has(file.blob)) documents.set(file.blob, bytes);
-                      yield* io(storageSet(keys.file(file.blob), encodeBase64(bytes)));
-                    }),
-                  ),
-                ),
-              { concurrency: BLOB_CONCURRENCY, discard: true },
-            );
-            const unread = new Set<string>();
-            for (const skill of plan) {
-              if (!documents.has(skill.document)) unread.add(skill.document);
-              for (const file of skill.files) if (!known.has(file.blob)) unread.add(file.blob);
-            }
-            const pending = [...unread];
-            for (let start = 0; start < pending.length; start += STORED_BATCH) {
-              const batch = pending.slice(start, start + STORED_BATCH);
-              const values = yield* io(storageGetMany(batch.map(keys.file)));
-              for (const [index, blob] of batch.entries()) {
-                const value = values[index];
-                const bytes =
-                  value == null
-                    ? undefined
-                    : yield* Effect.try({ try: () => decodeBase64(value), catch: () => failure("storage") }).pipe(
-                        Effect.option,
-                        Effect.map(Option.getOrUndefined),
-                      );
-                if (!bytes || (yield* gitBlobSha(bytes)) !== blob) {
-                  yield* io(storageDelete(keys.file(blob))).pipe(Effect.ignore);
-                  return yield* Effect.fail(failure("storage"));
+              for (const file of skill.files) {
+                const entry = stored.get(file.blob);
+                if (!entry) missing.set(file.blob, file);
+                else {
+                  digests.set(file.blob, entry.digest);
+                  if (!entry.tags.has(tokenTag))
+                    recheck.set(file.blob, keys.file(file.blob, entry.digest, [...entry.tags][0]!));
                 }
+              }
+            const accept = (blob: string, bytes: Uint8Array<ArrayBuffer>) =>
+              Effect.gen(function* () {
                 if (tokenBytes && containsBytes(bytes, tokenBytes))
                   return yield* Effect.fail(failure("credential_in_file"));
-                known.set(blob, `sha256:${yield* digestHex("SHA-256", bytes)}`);
+                const digest = `sha256:${yield* digestHex("SHA-256", bytes)}`;
+                yield* io(storageSet(keys.file(blob, digest, tokenTag), encodeBase64(bytes)));
+                digests.set(blob, digest);
                 if (wanted.has(blob)) documents.set(blob, bytes);
-              }
+              });
+            const readStored = (entries: readonly [string, string][]) =>
+              Effect.gen(function* () {
+                const values = yield* io(storageGetMany(entries.map(([, key]) => key)));
+                const read: [string, Uint8Array<ArrayBuffer>][] = [];
+                for (const [index, [blob, key]] of entries.entries()) {
+                  const value = values[index];
+                  const bytes =
+                    value == null
+                      ? undefined
+                      : yield* Effect.try({ try: () => decodeBase64(value), catch: () => failure("storage") }).pipe(
+                          Effect.option,
+                          Effect.map(Option.getOrUndefined),
+                        );
+                  if (!bytes || (yield* gitBlobSha(bytes)) !== blob) {
+                    yield* io(storageDelete(key)).pipe(Effect.ignore);
+                    return yield* Effect.fail(failure("storage"));
+                  }
+                  read.push([blob, bytes]);
+                }
+                return read;
+              });
+            const pendingRecheck = [...recheck];
+            for (let start = 0; start < pendingRecheck.length; start += STORED_BATCH) {
+              for (const [blob, bytes] of yield* readStored(pendingRecheck.slice(start, start + STORED_BATCH)))
+                yield* accept(blob, bytes);
             }
+            yield* Effect.forEach(
+              [...missing.values()],
+              (file) => fetchBlob(file).pipe(Effect.flatMap((bytes) => accept(file.blob, bytes))),
+              { concurrency: BLOB_CONCURRENCY, discard: true },
+            );
+            const unread = [...wanted]
+              .filter((blob) => !documents.has(blob))
+              .map((blob): [string, string] => [blob, keys.file(blob, digests.get(blob)!, tokenTag)]);
+            for (const [blob, bytes] of yield* readStored(unread)) documents.set(blob, bytes);
             const skills: ManifestSkill[] = [];
             for (const skill of plan) {
               const frontmatter = yamlFrontmatter(documents.get(skill.document)!);
@@ -806,7 +916,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                 files: skill.files.map((file) => ({
                   path: file.path,
                   blob: file.blob,
-                  digest: known.get(file.blob)!,
+                  digest: digests.get(file.blob)!,
                   size: file.size,
                 })),
               });
@@ -824,25 +934,20 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                   serialized.slice(index * MANIFEST_CHUNK_CHARS, (index + 1) * MANIFEST_CHUNK_CHARS),
                 ),
               );
-            memo = { digest, manifest: { v: 1, skills } };
-            const published = yield* publish(expected, {
-              v: 1,
-              commit,
-              revision,
-              digest,
-              chunks,
-              checkedAt: Date.now(),
-            });
-            if (published.digest === digest) {
-              const keep = new Set(skills.flatMap((skill) => skill.files.map((file) => keys.file(file.blob))));
-              for (let index = 0; index < chunks; index++) keep.add(keys.manifest(digest, index));
-              if (previous && Option.isSome(prior)) {
-                for (const skill of prior.value.skills) for (const file of skill.files) keep.add(keys.file(file.blob));
-                for (let index = 0; index < previous.chunks; index++) keep.add(keys.manifest(previous.digest, index));
-              }
-              yield* collect(keep, digest);
-            }
-            return published;
+            const manifest: Manifest = { v: 1, skills };
+            return {
+              manifest,
+              next: {
+                v: 1,
+                commit,
+                revision,
+                digest,
+                chunks,
+                checkedAt: 0,
+                tokenTag,
+                resolvedTag: tokenTag,
+              } as Pointer,
+            };
           });
 
         /**
@@ -865,62 +970,116 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             }
           }).pipe(Effect.ignore);
 
-        const check = (raw: string | null, pointer: Pointer | undefined, budgetEnd: number) =>
+        const check = (initialRaw: string | null, initial: Pointer | undefined, budgetEnd: number) =>
           Effect.gen(function* () {
+            let raw = initialRaw;
+            let pointer = initial;
             const checkEnd = Math.min(Date.now() + CHECK_TIMEOUT_MS, budgetEnd);
+            yield* resolveToken(checkEnd);
+            if (pointer && pointer.resolvedTag !== tokenTag) {
+              pointer = yield* publish(raw, { ...pointer, resolvedTag: tokenTag });
+              raw = JSON.stringify(pointer);
+            }
             const commit = yield* until(checkEnd, commitSha);
+            const current = pointer?.tokenTag === tokenTag ? pointer : undefined;
             const renew = (next: Pointer) => publish(raw, { ...next, commit, checkedAt: Date.now() });
-            if (pointer && commit === pointer.commit) return yield* renew(pointer);
+            if (current && commit === current.commit) return yield* renew(current);
             const revision = yield* until(checkEnd, directoryTree(commit));
-            if (pointer && revision === pointer.revision) return yield* renew(pointer);
-            return yield* until(budgetEnd, sync(commit, revision, raw, pointer));
+            if (current && revision === current.revision) return yield* renew(current);
+            const prepared = yield* until(budgetEnd, prepare(commit, revision));
+            const published = yield* publish(raw, { ...prepared.next, checkedAt: Date.now() });
+            if (published.digest !== prepared.next.digest) return published;
+            memo = { digest: published.digest, manifest: prepared.manifest };
+            const keep = new Set<string>();
+            for (const skill of prepared.manifest.skills)
+              for (const file of skill.files) keep.add(keys.file(file.blob, file.digest, published.tokenTag));
+            for (let index = 0; index < published.chunks; index++) keep.add(keys.manifest(published.digest, index));
+            const prior = pointer ? yield* loadManifest(pointer).pipe(Effect.option) : Option.none<Manifest>();
+            if (pointer && Option.isSome(prior)) {
+              for (const skill of prior.value.skills)
+                for (const file of skill.files) keep.add(keys.file(file.blob, file.digest, pointer.tokenTag));
+              for (let index = 0; index < pointer.chunks; index++) keep.add(keys.manifest(pointer.digest, index));
+            }
+            yield* until(budgetEnd, collect(keep, published.digest)).pipe(Effect.ignore);
+            return published;
           });
 
-        const awaitPublished = (budgetEnd: number): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
+        /**
+         * Holds the lease as `holder` and checks: rereads the snapshot and hold first, so a claim made on stale
+         * state serves what is now stored. A failure's hold is stored before the lease is released. A snapshot is
+         * served only when its files were checked against the token last resolved for it; one that fails that
+         * check against a rotated token is withdrawn.
+         */
+        const checkUnderLease = (holder: string, budgetEnd: number): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
+          Effect.gen(function* () {
+            lease = { holder, budgetEnd };
+            const release = io(storageCompareAndSet(keys.lease, holder, null)).pipe(Effect.ignore);
+            const current = yield* readPointer;
+            const heldNow = yield* io(storageGet(keys.hold));
+            const heldUntil = heldNow !== null && /^\d+$/.test(heldNow) ? Number(heldNow) : 0;
+            const fresh = servable(current.pointer) && Date.now() - current.pointer.checkedAt < config.freshMs;
+            if (heldUntil > Date.now() || fresh) {
+              yield* release;
+              return servable(current.pointer)
+                ? yield* serve(current.pointer)
+                : yield* Effect.fail(failure("rate_limited"));
+            }
+            const outcome = yield* Effect.result(check(current.raw, current.pointer, budgetEnd));
+            if (Result.isSuccess(outcome)) {
+              yield* release;
+              return yield* serve(outcome.success);
+            }
+            const failed = outcome.failure;
+            ctx.warn(failed.code);
+            const latest = yield* readPointer.pipe(Effect.orElseSucceed(() => current));
+            if (failed.code === "credential_in_file" && latest.pointer && latest.pointer.tokenTag !== tokenTag)
+              yield* io(storageCompareAndSet(keys.snapshot, latest.raw, null)).pipe(Effect.ignore);
+            const inService =
+              failed.code === "credential_in_file" && latest.pointer?.tokenTag !== tokenTag
+                ? undefined
+                : servable(latest.pointer)
+                  ? latest.pointer
+                  : undefined;
+            const holdEnd = Math.max(
+              failed.holdUntil ?? 0,
+              inService && failed.code !== "deadline" ? Date.now() + config.freshMs : 0,
+            );
+            if (holdEnd > Date.now())
+              yield* io(storageSet(keys.hold, String(holdEnd), { expiresAtMs: holdEnd })).pipe(Effect.ignore);
+            yield* release;
+            return inService ? yield* serve(inService) : yield* Effect.fail(failed);
+          });
+
+        const claim = (holder: string) =>
+          io(storageCompareAndSet(keys.lease, null, holder, { expiresAtMs: ctx.deadlineAt + LEASE_MARGIN_MS }));
+
+        /**
+         * With nothing stored and another request syncing, waits for its snapshot, claiming the lease itself if
+         * that request's lease expires first.
+         */
+        const awaitPublished = (holder: string, budgetEnd: number): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
           Effect.gen(function* () {
             while (Date.now() + AWAIT_INTERVAL_MS < budgetEnd) {
               yield* Effect.sleep(Duration.millis(AWAIT_INTERVAL_MS));
               const { pointer } = yield* readPointer;
-              if (pointer) return yield* serve(pointer);
+              if (servable(pointer)) return yield* serve(pointer);
+              if (yield* claim(holder)) return yield* checkUnderLease(holder, budgetEnd);
             }
             return yield* Effect.fail(failure("deadline"));
           });
 
-        const { pointer } = yield* readPointer;
+        const { pointer: stored } = yield* readPointer;
+        const pointer = servable(stored) ? stored : undefined;
         const now = Date.now();
         if (pointer && now - pointer.checkedAt < config.freshMs) return yield* serve(pointer);
         const held = yield* io(storageGet(keys.hold));
         const holdUntil = held !== null && /^\d+$/.test(held) ? Number(held) : 0;
         if (holdUntil > now) return pointer ? yield* serve(pointer) : yield* Effect.fail(failure("rate_limited"));
-        const budgetEnd = ctx.deadlineAt - RESERVE_MS;
+        const remaining = Math.max(0, ctx.deadlineAt - now);
+        const budgetEnd = ctx.deadlineAt - Math.min(RESERVE_MS, Math.floor(remaining * RESERVE_FRACTION));
         const holder = crypto.randomUUID();
-        const leaseEnd = ctx.deadlineAt + LEASE_MARGIN_MS;
-        const claimed = yield* io(storageCompareAndSet(keys.lease, null, holder, { expiresAtMs: leaseEnd }));
-        if (!claimed) return pointer ? yield* serve(pointer) : yield* awaitPublished(budgetEnd);
-        lease = { holder, end: leaseEnd };
-        const release = io(storageCompareAndSet(keys.lease, holder, null)).pipe(Effect.ignore);
-        const current = yield* readPointer;
-        const heldNow = yield* io(storageGet(keys.hold));
-        const heldUntil = heldNow !== null && /^\d+$/.test(heldNow) ? Number(heldNow) : 0;
-        if (heldUntil > Date.now() || (current.pointer && Date.now() - current.pointer.checkedAt < config.freshMs)) {
-          yield* release;
-          return current.pointer ? yield* serve(current.pointer) : yield* Effect.fail(failure("rate_limited"));
-        }
-        const outcome = yield* Effect.result(check(current.raw, current.pointer, budgetEnd));
-        if (Result.isSuccess(outcome)) {
-          yield* release;
-          return yield* serve(outcome.success);
-        }
-        const failed = outcome.failure;
-        ctx.warn(failed.code);
-        const holdEnd = Math.max(
-          failed.holdUntil ?? 0,
-          current.pointer && failed.code !== "deadline" ? Date.now() + config.freshMs : 0,
-        );
-        if (holdEnd > Date.now())
-          yield* io(storageSet(keys.hold, String(holdEnd), { expiresAtMs: holdEnd })).pipe(Effect.ignore);
-        yield* release;
-        return current.pointer ? yield* serve(current.pointer) : yield* Effect.fail(failed);
+        if (yield* claim(holder)) return yield* checkUnderLease(holder, budgetEnd);
+        return pointer ? yield* serve(pointer) : yield* awaitPublished(holder, budgetEnd);
       }),
   });
 }

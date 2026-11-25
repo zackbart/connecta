@@ -18,8 +18,8 @@ ships.
 
 `createConnecta({ skills })` takes skill sources. A source has an id and yields
 complete Agent Skills: a directory with `SKILL.md` and any supporting files.
-`inlineSkills` takes them from deployment code; a GitHub source that reads a
-repository directory follows in the same issue. The source type stays opaque
+`inlineSkills` takes them from deployment code; `githubSkills`, from its own
+package subpath, reads them from a directory of a GitHub repository. The source type stays opaque
 until a custom-source contract is worth publishing.
 
 The source is declared in code; its content need not be. Goal 4 already holds
