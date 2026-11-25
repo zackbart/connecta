@@ -16,7 +16,7 @@ import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { Effect } from "effect";
 import { parseFrontmatter } from "../src/skill-frontmatter.js";
-import { defineSkillSource } from "../src/skill-source-seam.js";
+import { defineSkillSource, readSkillSource } from "../src/skill-source-seam.js";
 import { inlineSkills } from "../src/skill-sources.js";
 import { githubSkills, type GitHubSkillsOptions } from "../src/github-skills.js";
 import { ConfigError } from "../src/config-schema.js";
@@ -1427,6 +1427,7 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}) {
     get?: ((key: string) => Promise<void>) | undefined;
     list?: ((prefix: string) => Promise<void>) | undefined;
     set?: ((key: string) => Promise<void>) | undefined;
+    delete?: ((key: string) => Promise<void>) | undefined;
     compareAndSet?: ((key: string, next: string | null) => Promise<void>) | undefined;
   } = {};
   const storage: KVStorage = {
@@ -1440,7 +1441,10 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}) {
       await hooks.set?.(key);
       return inner.set(key, value, options);
     },
-    delete: (key) => inner.delete(key),
+    async delete(key) {
+      await hooks.delete?.(key);
+      return inner.delete(key);
+    },
     async list(prefix) {
       const keys = await inner.list(prefix);
       await hooks.list?.(prefix);
@@ -1470,8 +1474,11 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}) {
       skillSources: [githubSkills("team", { repo: REPO, path: SKILLS_PATH, ref: "main", token: TOKEN, ...options })],
     } as never);
   const root = isolate();
-  const read = (registry = root, probeTimeoutMs?: number) =>
-    new SkillsRegistry(registry, BASE, probeTimeoutMs === undefined ? {} : { probeTimeoutMs });
+  const read = (registry = root, probeTimeoutMs?: number, requestSignal?: AbortSignal) =>
+    new SkillsRegistry(registry, BASE, {
+      ...(probeTimeoutMs === undefined ? {} : { probeTimeoutMs }),
+      ...(requestSignal === undefined ? {} : { requestSignal }),
+    });
   const names = async (registry = root) => (await read(registry).summaries()).map((skill) => skill.name);
   const advance = (seconds: number) => vi.setSystemTime(Date.now() + seconds * 1000);
   const blobs = () => fixture.paths().filter((path) => path.startsWith("git/blobs/")).length;
@@ -2282,6 +2289,178 @@ it("rewrites stored GitHub files under a rotated token without fetching them aga
     endGithubDeployment();
   }
 });
+
+it("repairs a GitHub snapshot whose stored file or manifest chunk went missing, fetching only what is missing", async () => {
+  for (const lost of ["chunk and file", "file"] as const) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo());
+      expect(await t.names()).toEqual(TEAM);
+      const keys = await t.storage.list("skill-source:v1:team:");
+      const files = keys.filter((key) => key.includes(":file:"));
+      for (const key of files) {
+        const value = await t.storage.get(key);
+        if (value !== null && atob(value) === CHECKLIST) await t.storage.delete(key);
+      }
+      if (lost === "chunk and file")
+        for (const key of keys.filter((key) => key.includes(":manifest:"))) await t.storage.delete(key);
+      t.advance(10);
+      t.fixture.reset();
+      const reader = lost === "file" ? t.root : t.isolate();
+      if (lost === "file") {
+        await expect(t.read(reader).text("review", "references/checklist.md"), lost).rejects.toMatchObject({
+          code: "unavailable",
+        });
+        t.advance(10);
+      }
+      expect(await t.read(reader).text("review", "references/checklist.md"), lost).toBe(CHECKLIST);
+      expect(t.blobs(), lost).toBe(1);
+      expect(await t.names(t.isolate()), lost).toEqual(TEAM);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("rereads the GitHub snapshot record before each cleanup delete and never deletes a key it names", async () => {
+  const t = await githubDeployment();
+  const extra = {
+    [`${SKILLS_PATH}/review/one.md`]: "# One\n",
+    [`${SKILLS_PATH}/review/two.md`]: "# Two\n",
+  };
+  try {
+    await t.fixture.commit(monorepo(extra));
+    await t.names();
+    const snapshotKey = (await t.storage.list("skill-source:v1:team:")).find((key) => key.endsWith(":snapshot"))!;
+    const original = (await t.storage.get(snapshotKey))!;
+    await t.fixture.commit(monorepo());
+    t.advance(301);
+    await t.names();
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/checklist.md`]: "# Checklist v2\n" }));
+    t.advance(301);
+    let deletes = 0;
+    t.hooks.delete = async (key) => {
+      if (key.includes(":file:") && ++deletes === 1)
+        await t.storage.set(snapshotKey, original.replace(/"checkedAt":\d+/, `"checkedAt":${Date.now()}`));
+    };
+    await t.names();
+    t.hooks.delete = undefined;
+    const remaining = await t.storage.list("skill-source:v1:team:");
+    const named = [CHECKLIST, "# One\n", "# Two\n"];
+    let survivors = 0;
+    for (const key of remaining.filter((key) => key.includes(":file:"))) {
+      const value = await t.storage.get(key);
+      if (value !== null && named.includes(atob(value))) survivors++;
+    }
+    expect(deletes).toBe(1);
+    expect(survivors).toBeGreaterThanOrEqual(2);
+    expect(remaining.some((key) => key.includes(`:manifest:${JSON.parse(original).digest}:`))).toBe(true);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("never starts a GitHub publish after the deadline or an aborted signal, even when the lease read stalls", async () => {
+  for (const stop of ["deadline", "signal"] as const) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo());
+      const controller = new AbortController();
+      t.hooks.get = async (key) => {
+        if (!key.endsWith(":lease")) return;
+        t.hooks.get = undefined;
+        if (stop === "signal") controller.abort(new Error("caller went away"));
+        else t.advance(30);
+      };
+      const source = t.root.listSkillSources()[0]!;
+      const outcome = await Effect.runPromise(
+        Effect.result(
+          readSkillSource(source as never, {
+            signal: controller.signal,
+            deadlineAt: Date.now() + 20_000,
+            secret: () => undefined,
+          }),
+        ),
+      );
+      expect(outcome._tag, stop).toBe("Failure");
+      expect(
+        (await t.stored()).keys.some((key) => key.endsWith(":snapshot")),
+        stop,
+      ).toBe(false);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("lets a GitHub lease held by an interrupted request lapse within its short lifetime under a five-minute budget", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    let stalled = true;
+    t.fixture.intercept(async (url) => {
+      if (stalled && url.pathname.includes("/git/blobs/")) await new Promise(() => {});
+      return undefined;
+    });
+    const controller = new AbortController();
+    const first = t
+      .read(t.root, 300_000, controller.signal)
+      .list()
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(t.blobs()).toBeGreaterThan(0));
+    controller.abort(new Error("caller went away"));
+    expect(await first).toBeDefined();
+    stalled = false;
+    t.advance(31);
+    expect((await t.read(t.isolate(), 3_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it(
+  "refuses a GitHub manifest over 8 MiB and resumes a manifest without rewriting stored chunks",
+  { timeout: 60_000 },
+  async () => {
+    const skillsOf = (count: number) =>
+      Object.fromEntries(
+        Array.from({ length: count }, (_, index) => {
+          const name = `skill-${index}`;
+          return [
+            `${SKILLS_PATH}/${name}/SKILL.md`,
+            `---\nname: ${name}\ndescription: Skill ${index}.\nnotes: "${"n".repeat(30_000)}"\n---\n\nBody.\n`,
+          ];
+        }),
+      );
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit({ "README.md": "# Monorepo\n", ...skillsOf(290) });
+      await expect(t.read().list()).rejects.toMatchObject({ code: "unavailable" });
+      expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "manifest_too_large" }]]);
+    } finally {
+      endGithubDeployment();
+    }
+    const u = await githubDeployment();
+    try {
+      await u.fixture.commit({ "README.md": "# Monorepo\n", ...skillsOf(50) });
+      let chunkWrites = 0;
+      u.hooks.set = async (key) => {
+        if (!key.includes(":manifest:")) return;
+        if (++chunkWrites === 2) throw new Error("storage refused the chunk");
+      };
+      await expect(u.read().list()).rejects.toMatchObject({ code: "unavailable" });
+      const written: string[] = [];
+      u.hooks.set = async (key) => {
+        if (key.includes(":manifest:")) written.push(key);
+      };
+      expect((await u.read().summaries()).length).toBe(52);
+      expect(written).toHaveLength(1);
+      expect(written[0]).toMatch(/:1$/);
+    } finally {
+      endGithubDeployment();
+    }
+  },
+);
 
 it("sends a GitHub source's token only to api.github.com and keeps it out of every response, log and stored value", async () => {
   const t = await githubDeployment();

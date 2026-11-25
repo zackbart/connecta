@@ -897,12 +897,21 @@ stored if another request has just refreshed it), and checks the revision,
 within at most 10 seconds. Concurrent readers serve the stored snapshot
 meanwhile; a reader with no stored snapshot waits for the first sync up to its
 skills deadline, and takes the lease over if the syncing request's lease
-expires first. Unchanged: the snapshot is served and its freshness renewed.
+expires first. The lease lasts 30 seconds and its holder extends it while it
+makes progress, so the lease of a request that is interrupted lapses within 30
+seconds whatever the discovery timeout. Unchanged: the snapshot is served and its freshness renewed.
 Changed: the new revision is synced within the skills read's deadline, the
 discovery probe timeout (`discovery.probeTimeoutMs`, 30 seconds by default for
 MCP requests), less a reserve of a fifth of it up to two seconds for serving
-the result, and served. A snapshot is published only before that deadline, and
-the request does not return while a publish is in flight. A push therefore appears on the first skills read
+the result, and served. A snapshot is published only while the request holds
+the lease and before that deadline, checked immediately before the write is
+dispatched, and the request does not return while a publish is in flight.
+
+Repair. When a skills read finds a file or manifest chunk the stored snapshot
+names missing or not matching its digest, it marks the record for repair. That
+read, or the next one if it cannot finish in time, checks regardless of
+`freshFor` and resyncs even an unchanged revision, fetching only what is
+missing, and the snapshot serves again. A push therefore appears on the first skills read
 more than `freshFor` seconds after the previous check, five minutes at most by
 default. A sync the deadline interrupts publishes nothing; the files it stored
 remain, and the next skills read resumes without fetching them again.
@@ -923,7 +932,8 @@ No request lists the repository root recursively, so a large monorepo works.
 Storage work is bounded: besides one write per file it fetches, a sync makes one
 listing of stored files, one batched read of the `SKILL.md` documents it did
 not fetch (64 keys per query), one write per manifest chunk, and fewer than ten
-lease, snapshot and hold operations. A resumed sync never reads the body of any
+lease, snapshot and hold operations. A resumed sync skips manifest chunks already
+stored for the same manifest. A resumed sync never reads the body of any
 other stored file: each file's digest and token check are in its key. After the
 token changes, each stored file is read once in those batches and rewritten
 once. On Cloudflare Workers each GitHub request and each D1 query
@@ -936,7 +946,8 @@ Limits. A sync fails, and nothing from it is published, for any of these: a skil
 directory whose name differs from its frontmatter `name` or breaks the Agent
 Skills name rule; missing or invalid frontmatter (see Frontmatter above); a symlink or submodule under
 a skill; any tree the check or sync reads that GitHub reports as truncated; more than 1,024 skills, 512 files
-in one skill or 16 MiB in one skill; a file over 786,432 bytes (768 KiB), the
+in one skill or 16 MiB in one skill; a manifest over 8 MiB, the bound the skills
+registry keeps for catalog metadata (`manifest_too_large`); a file over 786,432 bytes (768 KiB), the
 per-file limit set by storing each file as one base64 value of at most 1 MiB,
 well under D1's 2,000,000-byte row limit; or a file whose bytes contain the
 token. The source never follows a URL found in a file and reads nothing outside
@@ -969,6 +980,7 @@ snapshot in service and logs one payload-free warning,
 | `credential_in_file`   | A file's bytes contain the token, including a stored file rechecked after the token changed.                           |
 | `storage`              | Storage failed, or a stored file no longer matched its Git SHA (it is removed).                                        |
 | `snapshot_unreadable`  | The stored snapshot could not be read back.                                                                            |
+| `manifest_too_large`   | The snapshot's manifest exceeds 8 MiB.                                                                                 |
 
 After a failed check while a snapshot is in service, the next check waits the
 later of `freshFor` seconds and any hold GitHub set: after a rate limit, the
@@ -976,7 +988,10 @@ later of its `retry-after` and `x-ratelimit-reset` times, or a minute when
 neither is given; after a 403 without rate-limit headers, a minute. A
 `deadline` failure sets no wait, so an interrupted sync resumes on the next
 read. The wait can delay recovery from a transient failure by up to
-`freshFor`. The hold is stored before the checking request releases its lease, so no other process sends a request in between. With no stored snapshot,
+`freshFor`. The hold is stored before the checking request releases its lease, so no other
+process sends a request in between; it is honored across processes once its
+write succeeds, so a hold whose write is still pending when the lease expires,
+or is rejected, can let one more request through inside GitHub's wait. With no stored snapshot,
 the source is unavailable: the skills listing fails as a failed downstream
 skills listing does, built-in skills and connector guides stay readable by
 name, and the next skills read tries again (after a rate limit, once its reset
@@ -1022,10 +1037,11 @@ snapshot. `snapshot` names the published revision and manifest digest;
 `file:<git blob SHA>:<SHA-256>:<token tag>` holds each file's bytes as base64;
 `lease` and `hold` coordinate checks.
 When a request publishes a new snapshot, it removes files and manifest chunks
-that neither that snapshot nor the one it replaced names, only while that
-snapshot is still the record in storage and the request still holds the lease.
-Every publish requires the lease, so a published snapshot's files and chunks
-stay readable for as long as its record is in service. Removing a source from the
+that neither that snapshot nor the one it replaced names, while it holds the
+lease. It rereads the record immediately before each delete and never deletes
+a key the record in storage names. A delete already in flight when another
+request republishes is not prevented by this; [repair](#github-skill-source)
+restores what it removed on the next read. Removing a source from the
 configuration leaves its rows until they are deleted by prefix.
 
 ### Native Skills extension
