@@ -5,12 +5,12 @@
  * the YAML 1.2 core schema does. Anything outside the subset is refused rather
  * than guessed, so a value served in a manifest always equals what a YAML
  * parser reads from the same bytes. Every path is linear in the block's size,
- * which is capped at {@link MAX_FRONTMATTER_LENGTH}.
+ * which is capped at {@link MAX_FRONTMATTER_BYTES} of UTF-8.
  */
 
 type YamlValue = string | number | boolean | null | YamlValue[] | { [key: string]: YamlValue };
 
-const MAX_FRONTMATTER_LENGTH = 32 * 1024;
+const MAX_FRONTMATTER_BYTES = 32 * 1024;
 const MAX_DEPTH = 8;
 
 class Unsupported extends Error {}
@@ -59,7 +59,12 @@ function hasRefusedCharacter(source: string): boolean {
 
 /** The frontmatter as a plain object, or undefined when it is not a mapping in the supported subset. */
 export function parseFrontmatter(source: string): Record<string, unknown> | undefined {
-  if (source.length > MAX_FRONTMATTER_LENGTH || hasRefusedCharacter(source)) return undefined;
+  if (
+    source.length > MAX_FRONTMATTER_BYTES ||
+    hasRefusedCharacter(source) ||
+    new TextEncoder().encode(source).byteLength > MAX_FRONTMATTER_BYTES
+  )
+    return undefined;
   try {
     const lines = source.split(/\r?\n/).map((raw): Line => {
       let indent = 0;
@@ -196,21 +201,31 @@ function splitKey(content: string): [string, string] {
   return [key, after];
 }
 
-/** The value text before a ` #` comment, with surrounding spaces removed. */
+/**
+ * The value text before a ` #` comment, with surrounding spaces removed. A quote opens a quoted scalar only where a
+ * scalar starts: at the head of the value, or after `[` or `,` in a flow sequence. Inside a plain scalar it is text.
+ */
 function stripComment(text: string): string {
-  let inSingle = false;
-  let inDouble = false;
+  let flow = false;
+  let scalarStart = true;
+  let quote: string | undefined;
   for (let i = 0; i < text.length; i++) {
-    const char = text[i];
-    if (inDouble) {
-      if (char === "\\") i++;
-      else if (char === '"') inDouble = false;
-    } else if (inSingle) {
-      if (char === "'") inSingle = false;
-    } else if ((char === '"' || char === "'") && (i === 0 || text[i - 1] === " " || text[i - 1] === "[")) {
-      if (char === '"') inDouble = true;
-      else inSingle = true;
+    const char = text[i]!;
+    if (quote !== undefined) {
+      if (quote === '"' && char === "\\") i++;
+      else if (char === quote) {
+        if (quote === "'" && text[i + 1] === "'") i++;
+        else quote = undefined;
+      }
     } else if (char === "#" && (i === 0 || text[i - 1] === " ")) return trimSpaces(text.slice(0, i));
+    else if (char === " ") continue;
+    else if (scalarStart && (char === '"' || char === "'")) {
+      quote = char;
+      scalarStart = false;
+    } else {
+      if (scalarStart && char === "[") flow = true;
+      scalarStart = flow && (char === "[" || char === ",");
+    }
   }
   return trimSpaces(text);
 }

@@ -1228,6 +1228,17 @@ it("parses the SKILL.md frontmatter subset exactly as a YAML parser does and ref
       "name: x\ndescription: |\n  Line one\n  line three\n\nmetadata:\n  author: alice # who\n  tags:\n    - a\n    - \"b c\"\n  nested:\n    deep: 1\nlist:\n- one\nflow: [a, \"b\", 'c d', 3]\nempty: []\nfolded: >-\n  one\n  two\n\n  three\nlicense: 'It''s MIT'\nversion: 1.0",
     ),
   ).toBe(true);
+  for (const value of [
+    'Write "hello # internal note"',
+    "it's fine # note",
+    'say "hi" there',
+    '"a # b" # c',
+    "'it''s # x' # c",
+    '[a, "b # c", d] # e',
+    "[a, 'b # c']",
+  ])
+    expect(same(`name: x\ndescription: ${value}`), value).toBe(true);
+  expect(same(`name: x\ndescription: ${"é".repeat(16_000)}`)).toBe(true);
   let accepted = 0;
   for (const source of frontmatterCorpus(6_000)) if (same(source)) accepted++;
   expect(accepted).toBeGreaterThan(1_000);
@@ -1260,6 +1271,7 @@ it("parses the SKILL.md frontmatter subset exactly as a YAML parser does and ref
     'name: "\\ud800"',
     `${"a".repeat(20_000)}`,
     `name: ${"x".repeat(40_000)}`,
+    `name: ${"é".repeat(17_000)}`,
     Array.from({ length: 12 }, (_, depth) => `${"  ".repeat(depth)}k${depth}:`).join("\n") + " x",
   ])
     expect(parseFrontmatter(source), source).toBeUndefined();
