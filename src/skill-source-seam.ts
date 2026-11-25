@@ -61,6 +61,8 @@ export interface SkillSourceDefinition {
   readonly warnings?: readonly string[];
   /** How long a reader may cache this source's content, in milliseconds; absent imposes no limit. */
   readonly cacheTtlMs?: number;
+  /** When set, the deployment must have a credential vault; without one, construction throws this message. */
+  readonly credentialVaultRequired?: string;
 }
 
 const definitions = new WeakMap<object, SkillSourceDefinition>();
@@ -207,6 +209,10 @@ export function bindSkillSources(
   vault?: CredentialVault,
 ): readonly BoundSkillSource[] {
   const digestSecret = (value: string) => vaultSecretDigest(vault, value);
+  for (const source of sources) {
+    const required = skillSourceDefinition(source)?.credentialVaultRequired;
+    if (required !== undefined && !vault?.storageDigestKey) throw new ConfigError(required);
+  }
   return sources.map((source) => {
     const definition = skillSourceDefinition(source)!;
     const declared = new Set(definition.warnings ?? []);

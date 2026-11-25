@@ -5,14 +5,7 @@ import { REDIRECT_STATUSES } from "./http-policy.js";
 import { parseDocument } from "yaml";
 import { MAX_FRONTMATTER_BYTES, splitFrontmatter } from "./skill-frontmatter.js";
 import { Storage } from "./runtime/services.js";
-import {
-  storageCompareAndSet,
-  storageDelete,
-  storageGet,
-  storageGetMany,
-  storageList,
-  storageSet,
-} from "./runtime/storage.js";
+import { storageCompareAndSet, storageGet, storageGetMany, storageList, storageSet } from "./runtime/storage.js";
 import {
   assertSourceIdentity,
   defineSkillSource,
@@ -83,7 +76,9 @@ const LEASE_TTL_MS = 30_000;
 const LEASE_SAFETY_MS = 2_000;
 const GIT_SHA = /^[0-9a-f]{40}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
-const TOKEN_TAG = /^(?:none|[0-9a-f]{32})$/;
+const ROW_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const RESTORE_AGE_MS = 15 * 24 * 60 * 60 * 1000;
+const MAX_REPAIR_BLOBS = 64;
 
 /** Typed, payload-free reasons a check or sync fails; each is one operator warning code. */
 const WARNING_CODES = [
@@ -128,13 +123,13 @@ interface Pointer {
   readonly revision: string;
   readonly digest: string;
   readonly chunks: number;
+  /** When each manifest chunk was written; its key carries the time. */
+  readonly chunkTimes: readonly number[];
   readonly checkedAt: number;
-  /** The token tag every file this snapshot names was checked against: `none` without a token. */
-  readonly tokenTag: string;
-  /** The tag of the token most recently resolved for this record; the snapshot is served only when they match. */
-  readonly resolvedTag: string;
-  /** Set when a file or manifest chunk this record names was found missing or corrupt; the next check resyncs. */
-  readonly repair?: true;
+  /** When the oldest file or chunk this snapshot relies on was written. */
+  readonly oldestRow: number;
+  /** Files and chunks found missing or corrupt; the next check refetches them, regardless of `freshFor`. */
+  readonly repair?: { readonly blobs: readonly string[]; readonly chunks: boolean };
 }
 
 interface ManifestFile {
@@ -142,6 +137,8 @@ interface ManifestFile {
   readonly blob: string;
   readonly digest: string;
   readonly size: number;
+  /** When the stored row holding the file's bytes was written; its key carries the time. */
+  readonly writtenAt: number;
 }
 
 interface ManifestSkill {
@@ -517,6 +514,7 @@ function parsePointer(raw: string | null): Pointer | undefined {
   if (raw === null) return undefined;
   try {
     const value: unknown = JSON.parse(raw);
+    const repair = isObject(value) ? value.repair : undefined;
     if (
       isObject(value) &&
       value.v === 1 &&
@@ -529,12 +527,17 @@ function parsePointer(raw: string | null): Pointer | undefined {
       Number.isSafeInteger(value.chunks) &&
       (value.chunks as number) >= 1 &&
       (value.chunks as number) <= MAX_MANIFEST_CHUNKS &&
+      Array.isArray(value.chunkTimes) &&
+      value.chunkTimes.length === value.chunks &&
+      value.chunkTimes.every((time: unknown) => Number.isSafeInteger(time)) &&
       Number.isSafeInteger(value.checkedAt) &&
-      typeof value.tokenTag === "string" &&
-      TOKEN_TAG.test(value.tokenTag) &&
-      typeof value.resolvedTag === "string" &&
-      TOKEN_TAG.test(value.resolvedTag) &&
-      (value.repair === undefined || value.repair === true)
+      Number.isSafeInteger(value.oldestRow) &&
+      (repair === undefined ||
+        (isObject(repair) &&
+          typeof repair.chunks === "boolean" &&
+          Array.isArray(repair.blobs) &&
+          repair.blobs.length <= MAX_REPAIR_BLOBS &&
+          repair.blobs.every((blob: unknown) => typeof blob === "string" && GIT_SHA.test(blob))))
     )
       return value as unknown as Pointer;
   } catch {
@@ -559,7 +562,8 @@ function parseManifest(serialized: string): Manifest {
           typeof file.blob === "string" &&
           GIT_SHA.test(file.blob) &&
           typeof file.digest === "string" &&
-          Number.isSafeInteger(file.size),
+          Number.isSafeInteger(file.size) &&
+          Number.isSafeInteger(file.writtenAt),
       )
     )
       throw failure("snapshot_unreadable");
@@ -582,118 +586,29 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
   const repoPath = `/repos/${encodeURIComponent(config.owner)}/${encodeURIComponent(config.name)}`;
   const segments = config.path === "" ? [] : config.path.split("/");
   const refPath = config.ref.split("/").map(encodeURIComponent).join("/");
-  let keyPrefix: string | undefined;
-  let memo: { digest: string; manifest: Manifest } | undefined;
+  const configKey = JSON.stringify([config.owner, config.name, config.path, config.ref]);
+  let tokenlessPrefix: string | undefined;
+  const prefixes = new Map<string, string>();
+  /** The partition a function token last resolved to, in this process. */
+  let remembered: { token: string; prefix: string } | undefined;
+  let memo: { prefix: string; digest: string; manifest: Manifest } | undefined;
 
   return defineSkillSource(label, id, description, {
     warnings: WARNING_CODES,
     cacheTtlMs: config.freshMs,
+    ...(config.token === undefined
+      ? {}
+      : {
+          credentialVaultRequired: `${label} has a token, which needs a credential vault so every process derives the same storage partition for it: configure the deployment's credential vault, or remove the token for a public repository.`,
+        }),
     snapshot: (ctx: SkillSourceContext) =>
       Effect.gen(function* () {
-        keyPrefix ??= skillSourceKeys.prefix(
-          id,
-          (yield* digestHex(
-            "SHA-256",
-            encoder.encode(JSON.stringify([config.owner, config.name, config.path, config.ref])),
-          )).slice(0, 32),
-        );
-        const keys = {
-          snapshot: skillSourceKeys.snapshot(keyPrefix),
-          lease: skillSourceKeys.lease(keyPrefix),
-          hold: skillSourceKeys.hold(keyPrefix),
-          manifestPrefix: skillSourceKeys.manifestPrefix(keyPrefix),
-          filePrefix: skillSourceKeys.filePrefix(keyPrefix),
-          manifest: (digest: string, index: number) => skillSourceKeys.manifest(keyPrefix!, digest, index),
-          file: (blob: string, digest: string, tag: string) =>
-            skillSourceKeys.file(keyPrefix!, blob, digest.slice("sha256:".length), tag),
-        };
         /** One storage operation. It is uninterruptible, so a deadline waits for it rather than leaving it in flight. */
         const io = <A>(effect: Effect.Effect<A, unknown, Storage>): Effect.Effect<A, SyncFailure> =>
           effect.pipe(
             Effect.provideService(Storage, ctx.storage),
             Effect.mapError(() => failure("storage")),
             Effect.uninterruptible,
-          );
-
-        let token: string | undefined;
-        let tokenBytes: Uint8Array | undefined;
-        let tokenTag = "none";
-        let tokenResolved = false;
-        /** Resolves the token for a check, under the check's deadline; GitHub is never contacted without it. */
-        const resolveToken = (deadline: number): Effect.Effect<void, SyncFailure> =>
-          resolveTokenValue(deadline).pipe(
-            Effect.tap(() =>
-              Effect.sync(() => {
-                tokenResolved = true;
-              }),
-            ),
-          );
-        const resolveTokenValue = (deadline: number): Effect.Effect<void, SyncFailure> =>
-          typeof config.token !== "function"
-            ? Effect.sync(() => {
-                token = config.token as string | undefined;
-              }).pipe(
-                Effect.flatMap(() =>
-                  token === undefined
-                    ? Effect.void
-                    : Effect.tryPromise({
-                        try: () => ctx.digestSecret(token!),
-                        catch: () => failure("token_unavailable"),
-                      }).pipe(
-                        Effect.map((digest) => {
-                          ctx.secret(token!);
-                          tokenBytes = encoder.encode(token!);
-                          tokenTag = digest.replace(/^hmac:/, "").slice(0, 32);
-                        }),
-                      ),
-                ),
-              )
-            : until(
-                deadline,
-                Effect.tryPromise({
-                  try: (signal) => Promise.resolve((config.token as Exclude<GitHubSkillsToken, string>)({ signal })),
-                  catch: () => failure("token_unavailable"),
-                }).pipe(
-                  Effect.flatMap((value) =>
-                    typeof value === "string" && value !== ""
-                      ? Effect.sync(() => {
-                          token = value;
-                        })
-                      : Effect.fail(failure("token_unavailable")),
-                  ),
-                ),
-                "token_unavailable",
-              ).pipe(
-                Effect.tap(() =>
-                  Effect.gen(function* () {
-                    if (token === undefined) return;
-                    ctx.secret(token);
-                    tokenBytes = encoder.encode(token);
-                    const digest = yield* Effect.tryPromise({
-                      try: () => ctx.digestSecret(token!),
-                      catch: () => failure("token_unavailable"),
-                    });
-                    tokenTag = digest.replace(/^hmac:/, "").slice(0, 32);
-                  }),
-                ),
-              );
-
-        const get = (path: string, accept: string, limit: number) =>
-          Effect.tryPromise({
-            try: (signal) => githubGet(path, accept, token, limit, signal),
-            catch: (error) => asFailure(error, "network"),
-          });
-        const getJson = (path: string) =>
-          get(path, JSON_MEDIA, MAX_JSON_BYTES).pipe(
-            Effect.flatMap((bytes) =>
-              Effect.try({ try: () => parseJson(bytes), catch: (error) => asFailure(error, "invalid_response") }),
-            ),
-          );
-        const getTree = (path: string) =>
-          getJson(path).pipe(
-            Effect.flatMap((value) =>
-              Effect.try({ try: () => parseTree(value), catch: (error) => asFailure(error, "invalid_response") }),
-            ),
           );
         function until<A>(
           deadline: number,
@@ -708,57 +623,166 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           );
         }
 
-        const loadManifest = (pointer: Pointer): Effect.Effect<Manifest, SyncFailure> =>
-          Effect.gen(function* () {
-            if (memo?.digest === pointer.digest) return memo.manifest;
+        /**
+         * The storage partition for this source and token: a digest of the repository, path, ref and token, keyed
+         * by the credential vault's storage digest key when there is a token. Nothing stored under one token is
+         * read, reused or served under another.
+         */
+        const partitionFor = (token: string | undefined): Effect.Effect<string, SyncFailure> => {
+          if (token === undefined)
+            return tokenlessPrefix !== undefined
+              ? Effect.succeed(tokenlessPrefix)
+              : digestHex("SHA-256", encoder.encode(`${configKey}\0none`)).pipe(
+                  Effect.map((digest) => (tokenlessPrefix = skillSourceKeys.prefix(id, digest.slice(0, 32)))),
+                );
+          const known = prefixes.get(token);
+          if (known !== undefined) return Effect.succeed(known);
+          return Effect.tryPromise({
+            try: () => ctx.digestSecret(`${configKey}\0${token}`),
+            catch: () => failure("token_unavailable"),
+          }).pipe(
+            Effect.map((digest) => {
+              const prefix = skillSourceKeys.prefix(id, digest.replace(/^hmac:/, "").slice(0, 32));
+              prefixes.clear();
+              prefixes.set(token, prefix);
+              return prefix;
+            }),
+          );
+        };
+
+        const remaining = Math.max(0, ctx.deadlineAt - Date.now());
+        const budgetEnd = ctx.deadlineAt - Math.min(RESERVE_MS, Math.floor(remaining * RESERVE_FRACTION));
+        const checkEnd = Math.min(Date.now() + CHECK_TIMEOUT_MS, budgetEnd);
+
+        if (typeof config.token !== "function") {
+          if (config.token !== undefined) ctx.secret(config.token);
+          return yield* partition(yield* partitionFor(config.token), config.token);
+        }
+        const tokenFunction = config.token;
+        if (remembered) {
+          ctx.secret(remembered.token);
+          const fresh = yield* freshSnapshot(remembered.prefix);
+          if (fresh) return fresh;
+        }
+        const resolved = yield* Effect.result(
+          until(
+            checkEnd,
+            Effect.tryPromise({
+              try: (signal) => Promise.resolve(tokenFunction({ signal })),
+              catch: () => failure("token_unavailable"),
+            }).pipe(
+              Effect.flatMap((value) =>
+                typeof value === "string" && value !== ""
+                  ? Effect.succeed(value)
+                  : Effect.fail(failure("token_unavailable")),
+              ),
+            ),
+            "token_unavailable",
+          ),
+        );
+        if (Result.isFailure(resolved)) {
+          ctx.warn("token_unavailable");
+          if (!remembered) return yield* Effect.fail(resolved.failure);
+          const stored = yield* storedSnapshot(remembered.prefix);
+          return stored ?? (yield* Effect.fail(resolved.failure));
+        }
+        ctx.secret(resolved.success);
+        const prefix = yield* partitionFor(resolved.success);
+        remembered = { token: resolved.success, prefix };
+        return yield* partition(prefix, resolved.success);
+
+        /** The partition's snapshot when it is stored, fresh and needs no repair. */
+        function freshSnapshot(prefix: string) {
+          return Effect.gen(function* () {
+            const { pointer } = yield* readPointer(prefix);
+            if (!pointer || pointer.repair || Date.now() - pointer.checkedAt >= config.freshMs) return undefined;
+            const served = yield* Effect.result(serve(prefix, pointer));
+            return Result.isSuccess(served) ? served.success : undefined;
+          });
+        }
+
+        /** The partition's stored snapshot, whatever its age. */
+        function storedSnapshot(prefix: string) {
+          return Effect.gen(function* () {
+            const { pointer } = yield* readPointer(prefix);
+            if (!pointer) return undefined;
+            const served = yield* Effect.result(serve(prefix, pointer));
+            return Result.isSuccess(served) ? served.success : undefined;
+          });
+        }
+
+        function keysFor(prefix: string) {
+          return {
+            snapshot: skillSourceKeys.snapshot(prefix),
+            lease: skillSourceKeys.lease(prefix),
+            hold: skillSourceKeys.hold(prefix),
+            filePrefix: skillSourceKeys.filePrefix(prefix),
+            manifestDigestPrefix: (digest: string) => skillSourceKeys.manifestDigestPrefix(prefix, digest),
+            manifest: (digest: string, index: number, writtenAt: number) =>
+              skillSourceKeys.manifest(prefix, digest, index, writtenAt),
+            file: (blob: string, digest: string, writtenAt: number) =>
+              skillSourceKeys.file(prefix, blob, digest.slice("sha256:".length), writtenAt),
+          };
+        }
+
+        function readPointer(prefix: string) {
+          return io(storageGet(skillSourceKeys.snapshot(prefix))).pipe(
+            Effect.map((raw) => ({ raw, pointer: parsePointer(raw) })),
+          );
+        }
+
+        function loadManifest(prefix: string, pointer: Pointer): Effect.Effect<Manifest, SyncFailure> {
+          return Effect.gen(function* () {
+            if (memo?.prefix === prefix && memo.digest === pointer.digest) return memo.manifest;
+            const keys = keysFor(prefix);
             const chunks = yield* io(
               storageGetMany(
-                Array.from({ length: pointer.chunks }, (_, index) => keys.manifest(pointer.digest, index)),
+                pointer.chunkTimes.map((writtenAt, index) => keys.manifest(pointer.digest, index, writtenAt)),
               ),
             );
             if (chunks.some((chunk) => chunk === null)) return yield* Effect.fail(failure("snapshot_unreadable"));
             const serialized = chunks.join("");
-            if ((yield* digestHex("SHA-256", encoder.encode(serialized))) !== pointer.digest) {
-              for (let index = 0; index < pointer.chunks; index++)
-                yield* io(storageDelete(keys.manifest(pointer.digest, index))).pipe(Effect.ignore);
+            if ((yield* digestHex("SHA-256", encoder.encode(serialized))) !== pointer.digest)
               return yield* Effect.fail(failure("snapshot_unreadable"));
-            }
             const manifest = yield* Effect.try({
               try: () => parseManifest(serialized),
               catch: () => failure("snapshot_unreadable"),
             });
-            memo = { digest: pointer.digest, manifest };
+            memo = { prefix, digest: pointer.digest, manifest };
             return manifest;
           });
-
-        /** Whether a snapshot's files were checked against the token most recently resolved for it. */
-        const servable = (pointer: Pointer | undefined): pointer is Pointer =>
-          pointer !== undefined &&
-          pointer.tokenTag === pointer.resolvedTag &&
-          (!tokenResolved || pointer.tokenTag === tokenTag);
+        }
 
         /**
-         * Marks the stored record for repair when it is still `pointer`'s snapshot: the record goes stale, so the
-         * next skills read checks regardless of `freshFor`, and that check resyncs even an unchanged revision,
-         * fetching only what is missing.
+         * Records on the stored snapshot that a file or its manifest was found missing or corrupt, when the record is
+         * still `pointer`'s snapshot. The record goes stale, so the next skills read checks regardless of `freshFor`
+         * and refetches exactly those rows; nothing is deleted.
          */
-        const markRepair = (pointer: Pointer, storage: KVStorage) =>
-          Effect.gen(function* () {
-            const raw = yield* storageGet(keys.snapshot);
+        function markRepair(prefix: string, pointer: Pointer, storage: KVStorage, blob?: string) {
+          return Effect.gen(function* () {
+            const key = skillSourceKeys.snapshot(prefix);
+            const raw = yield* storageGet(key);
             const current = parsePointer(raw);
-            if (!current || current.digest !== pointer.digest || current.repair) return;
-            yield* storageCompareAndSet(
-              keys.snapshot,
-              raw,
-              JSON.stringify({ ...current, checkedAt: 0, repair: true } satisfies Pointer),
-              { expiresAtMs: current.checkedAt + GITHUB_SKILL_SNAPSHOT_TTL_MS },
-            );
+            if (!current || current.digest !== pointer.digest) return;
+            const blobs = new Set(current.repair?.blobs ?? []);
+            if (blob !== undefined) blobs.add(blob);
+            const next: Pointer =
+              blobs.size > MAX_REPAIR_BLOBS
+                ? { ...current, checkedAt: 0, oldestRow: 0, repair: { blobs: [], chunks: true } }
+                : {
+                    ...current,
+                    checkedAt: 0,
+                    repair: { blobs: [...blobs], chunks: (current.repair?.chunks ?? false) || blob === undefined },
+                  };
+            yield* storageCompareAndSet(key, raw, JSON.stringify(next), { expiresAtMs: recordExpiry(current) });
           }).pipe(Effect.provideService(Storage, storage), Effect.ignore, Effect.uninterruptible);
+        }
 
-        const serve = (pointer: Pointer): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
-          loadManifest(pointer).pipe(
+        function serve(prefix: string, pointer: Pointer): Effect.Effect<SkillSourceSnapshot, SyncFailure> {
+          const keys = keysFor(prefix);
+          return loadManifest(prefix, pointer).pipe(
             Effect.tapError((error) =>
-              error.code === "snapshot_unreadable" ? markRepair(pointer, ctx.storage) : Effect.void,
+              error.code === "snapshot_unreadable" ? markRepair(prefix, pointer, ctx.storage) : Effect.void,
             ),
             Effect.map((manifest) => ({
               skills: manifest.skills.map((skill) => ({
@@ -769,7 +793,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                   digest: file.digest,
                   size: file.size,
                   read: (reader: SkillSourceContext) =>
-                    storageGet(keys.file(file.blob, file.digest, pointer.tokenTag)).pipe(
+                    storageGet(keys.file(file.blob, file.digest, file.writtenAt)).pipe(
                       Effect.provideService(Storage, reader.storage),
                       Effect.mapError(() => failure("storage")),
                       Effect.flatMap((stored) =>
@@ -781,13 +805,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                                   Effect.orElseSucceed(() => undefined),
                                 );
                           if (bytes && `sha256:${yield* digestHex("SHA-256", bytes)}` === file.digest) return bytes;
-                          if (stored !== null)
-                            yield* storageDelete(keys.file(file.blob, file.digest, pointer.tokenTag)).pipe(
-                              Effect.provideService(Storage, reader.storage),
-                              Effect.ignore,
-                              Effect.uninterruptible,
-                            );
-                          yield* markRepair(pointer, reader.storage);
+                          yield* markRepair(prefix, pointer, reader.storage, file.blob);
                           return yield* Effect.fail(failure("snapshot_unreadable"));
                         }),
                       ),
@@ -796,500 +814,417 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               })),
             })),
           );
+        }
 
-        const readPointer = io(storageGet(keys.snapshot)).pipe(
-          Effect.map((raw) => ({ raw, pointer: parsePointer(raw) })),
-        );
+        /** The latest a snapshot record may live: seven days after its check, and never past its oldest row. */
+        function recordExpiry(pointer: Pointer) {
+          return Math.min(pointer.checkedAt + GITHUB_SKILL_SNAPSHOT_TTL_MS, pointer.oldestRow + ROW_TTL_MS);
+        }
 
-        let lease:
-          | { holder: string; value: string; budgetEnd: number; expiresAt: number; renewing: boolean }
-          | undefined;
-        /** The stored lease value: the holder and the expiry it last wrote, so every renewal names what it replaces. */
-        const leaseValue = (holder: string, expiresAt: number) => `${holder}:${expiresAt}`;
-        const leaseExpiry = () =>
-          Math.min(Date.now() + LEASE_TTL_MS, ctx.deadlineAt + LEASE_SAFETY_MS + LEASE_MARGIN_MS);
-        /** Synchronous: the request is live, its budget has not ended, and its lease has time left. */
-        const withinLease = () =>
-          lease !== undefined &&
-          !ctx.signal.aborted &&
-          Date.now() < Math.min(lease.budgetEnd, lease.expiresAt - LEASE_SAFETY_MS);
-        /** Whether this request still holds the check lease, before its budget ends and storage expires the lease. */
-        const leaseHeld = Effect.gen(function* () {
-          if (!withinLease()) return false;
-          return (yield* io(storageGet(keys.lease))) === lease!.value;
-        });
-        /**
-         * Extends the lease while the holder makes progress, once less than half of {@link LEASE_TTL_MS} remains,
-         * so an interrupted holder's lease lapses within that lifetime. One renewal runs at a time, it is a
-         * compare-and-set against the value this holder last wrote, and it is written only when it moves the
-         * expiry later, so a delayed renewal can never shorten the lease. Losing the lease fails the work.
-         */
-        const extendLease = Effect.gen(function* () {
-          const held = lease;
-          if (!held || held.renewing || Date.now() < held.expiresAt - LEASE_TTL_MS / 2) return;
-          const expiresAt = leaseExpiry();
-          if (expiresAt <= held.expiresAt) return;
-          if (!withinLease()) return yield* Effect.fail(failure("deadline"));
-          const value = leaseValue(held.holder, expiresAt);
-          held.renewing = true;
-          const renewed = yield* io(
-            storageCompareAndSet(keys.lease, held.value, value, { expiresAtMs: expiresAt }),
-          ).pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                held.renewing = false;
-              }),
-            ),
-          );
-          if (!renewed) return yield* Effect.fail(failure("deadline"));
-          held.value = value;
-          held.expiresAt = expiresAt;
-        });
+        /** Serves, checks or syncs the snapshot of one storage partition. */
+        function partition(prefix: string, token: string | undefined): Effect.Effect<SkillSourceSnapshot, SyncFailure> {
+          const keys = keysFor(prefix);
+          const tokenBytes = token === undefined ? undefined : encoder.encode(token);
+          const pointerNow = readPointer(prefix);
 
-        /**
-         * Publishes `next` over the record read as `expected`. It starts only while this request holds the lease
-         * and its deadline has not passed, and the compare-and-set itself is uninterruptible, so no publish lands
-         * after the request returns or during another holder's cleanup. A lost race serves whichever record won.
-         */
-        const publish = (expected: string | null, next: Pointer): Effect.Effect<Pointer, SyncFailure> =>
-          Effect.gen(function* () {
-            if (!(yield* leaseHeld)) return yield* Effect.fail(failure("deadline"));
-            const swapped = yield* Effect.suspend(() =>
-              withinLease()
-                ? io(
-                    storageCompareAndSet(keys.snapshot, expected, JSON.stringify(next), {
-                      expiresAtMs: next.checkedAt + GITHUB_SKILL_SNAPSHOT_TTL_MS,
-                    }),
-                  )
-                : Effect.fail(failure("deadline")),
-            );
-            if (swapped) return next;
-            const { pointer } = yield* readPointer;
-            return pointer ?? (yield* Effect.fail(failure("storage")));
-          });
-
-        const commitSha = get(`${repoPath}/commits/${refPath}`, SHA_MEDIA, MAX_SHA_BYTES).pipe(
-          Effect.flatMap((bytes) => {
-            const sha = new TextDecoder().decode(bytes).trim();
-            return GIT_SHA.test(sha) ? Effect.succeed(sha) : Effect.fail(failure("invalid_response"));
-          }),
-        );
-
-        /**
-         * The source directory's tree, walked one segment at a time so no recursive listing of the repository is
-         * needed. Any tree GitHub reports as truncated fails the check.
-         */
-        const directoryTree = (commit: string) =>
-          Effect.gen(function* () {
-            const object = yield* getJson(`${repoPath}/git/commits/${commit}`);
-            let sha = isObject(object) && isObject(object.tree) ? object.tree.sha : undefined;
-            if (typeof sha !== "string" || !GIT_SHA.test(sha)) return yield* Effect.fail(failure("invalid_response"));
-            for (const segment of segments) {
-              const tree = yield* getTree(`${repoPath}/git/trees/${sha}`);
-              if (tree.truncated) return yield* Effect.fail(failure("truncated_tree"));
-              const entry = tree.entries.find((candidate) => candidate.path === segment);
-              if (!entry || entry.type !== "tree" || !GIT_SHA.test(entry.sha))
-                return yield* Effect.fail(failure("path_not_found"));
-              sha = entry.sha;
-            }
-            return sha as string;
-          });
-
-        const fetchBlob = (file: { blob: string; size: number }) =>
-          get(`${repoPath}/git/blobs/${file.blob}`, RAW_MEDIA, file.size).pipe(
-            Effect.flatMap((bytes) =>
-              Effect.gen(function* () {
-                if (bytes.length !== file.size || (yield* gitBlobSha(bytes)) !== file.blob)
-                  return yield* Effect.fail(failure("invalid_response"));
-                if (tokenBytes && containsBytes(bytes, tokenBytes))
-                  return yield* Effect.fail(failure("credential_in_file"));
-                return bytes;
-              }),
-            ),
-          );
-
-        /** Stored files by Git blob SHA: the SHA-256 digest and the token tags their keys carry. */
-        const storedFiles = io(storageList(keys.filePrefix)).pipe(
-          Effect.map((listed) => {
-            const stored = new Map<string, { digest: string; tags: Set<string> }>();
-            for (const key of listed) {
-              const match = /^([0-9a-f]{40}):([0-9a-f]{64}):(none|[0-9a-f]{32})$/.exec(
-                key.slice(keys.filePrefix.length),
-              );
-              if (!match) continue;
-              const entry = stored.get(match[1]!) ?? { digest: `sha256:${match[2]!}`, tags: new Set<string>() };
-              entry.tags.add(match[3]!);
-              stored.set(match[1]!, entry);
-            }
-            return stored;
-          }),
-        );
-
-        /** Stored file values read in one batch, each checked against its Git blob SHA. */
-        const readStored = (entries: readonly (readonly [string, string])[]) =>
-          Effect.gen(function* () {
-            const values = yield* io(storageGetMany(entries.map(([, key]) => key)));
-            const read: [string, Uint8Array<ArrayBuffer>][] = [];
-            for (const [index, [blob, key]] of entries.entries()) {
-              const value = values[index];
-              const bytes =
-                value == null
-                  ? undefined
-                  : yield* Effect.try({ try: () => decodeBase64(value), catch: () => failure("storage") }).pipe(
-                      Effect.option,
-                      Effect.map(Option.getOrUndefined),
-                    );
-              if (!bytes || (yield* gitBlobSha(bytes)) !== blob) {
-                yield* io(storageDelete(key)).pipe(Effect.ignore);
-                return yield* Effect.fail(failure("storage"));
-              }
-              read.push([blob, bytes]);
-            }
-            return read;
-          });
-
-        /** Deletes every stored value of `blob`, while this request holds the lease. */
-        const discardBlob = (blob: string) =>
-          Effect.gen(function* () {
-            if (!(yield* leaseHeld)) return;
-            for (const key of yield* io(storageList(`${keys.filePrefix}${blob}:`))) {
-              if (!withinLease()) return;
-              yield* io(storageDelete(key));
-            }
-          }).pipe(Effect.ignore);
-
-        /**
-         * Rechecks stored files against the current token in batches of {@link STORED_BATCH}, rewriting each under
-         * the current tag. A file holding the token has every stored value deleted and fails the recheck.
-         */
-        const recheckStored = (entries: readonly (readonly [string, string, string])[]) =>
-          Effect.gen(function* () {
-            const bytesByBlob = new Map<string, Uint8Array<ArrayBuffer>>();
-            for (let start = 0; start < entries.length; start += STORED_BATCH) {
-              yield* extendLease;
-              const batch = entries.slice(start, start + STORED_BATCH);
-              const read = yield* readStored(batch.map(([blob, , key]) => [blob, key] as const));
-              for (const [index, [blob, bytes]] of read.entries()) {
-                if (tokenBytes && containsBytes(bytes, tokenBytes)) {
-                  yield* discardBlob(blob);
-                  return yield* Effect.fail(failure("credential_in_file"));
-                }
-                yield* io(storageSet(keys.file(blob, batch[index]![1], tokenTag), encodeBase64(bytes)));
-                bytesByBlob.set(blob, bytes);
-              }
-            }
-            return bytesByBlob;
-          });
-
-        /**
-         * Everything a snapshot of `revision` needs except its publish. Each file is stored under the current token
-         * tag only after its bytes were checked against the token: a missing file is fetched, and a file stored
-         * under another tag is read and rewritten under this one. A resumed sync reads no other stored file body:
-         * digests and tags are in the keys. `SKILL.md` documents not read here are read in one batch.
-         */
-        const prepare = (commit: string, revision: string) =>
-          Effect.gen(function* () {
-            const tree = yield* getTree(`${repoPath}/git/trees/${revision}?recursive=1`);
-            if (tree.truncated) return yield* Effect.fail(failure("truncated_tree"));
-            const plan = yield* Effect.try({
-              try: () => planSkills(tree.entries),
-              catch: (error) => asFailure(error, "invalid_response"),
+          const get = (path: string, accept: string, limit: number) =>
+            Effect.tryPromise({
+              try: (signal) => githubGet(path, accept, token, limit, signal),
+              catch: (error) => asFailure(error, "network"),
             });
-            const stored = yield* storedFiles;
-            const digests = new Map<string, string>();
-            const documents = new Map<string, Uint8Array<ArrayBuffer>>();
-            const wanted = new Set(plan.map((skill) => skill.document));
-            const missing = new Map<string, { blob: string; size: number }>();
-            const recheck: (readonly [string, string, string])[] = [];
-            for (const skill of plan)
-              for (const file of skill.files) {
-                const entry = stored.get(file.blob);
-                if (!entry) missing.set(file.blob, file);
-                else {
-                  digests.set(file.blob, entry.digest);
-                  if (!entry.tags.has(tokenTag) && !recheck.some(([blob]) => blob === file.blob))
-                    recheck.push([file.blob, entry.digest, keys.file(file.blob, entry.digest, [...entry.tags][0]!)]);
-                }
-              }
-            const accept = (blob: string, bytes: Uint8Array<ArrayBuffer>) =>
-              Effect.gen(function* () {
-                if (tokenBytes && containsBytes(bytes, tokenBytes))
-                  return yield* Effect.fail(failure("credential_in_file"));
-                const digest = `sha256:${yield* digestHex("SHA-256", bytes)}`;
-                yield* extendLease;
-                yield* io(storageSet(keys.file(blob, digest, tokenTag), encodeBase64(bytes)));
-                digests.set(blob, digest);
-                if (wanted.has(blob)) documents.set(blob, bytes);
-              });
-            for (const [blob, bytes] of yield* recheckStored(recheck)) if (wanted.has(blob)) documents.set(blob, bytes);
-            yield* Effect.forEach(
-              [...missing.values()],
-              (file) => fetchBlob(file).pipe(Effect.flatMap((bytes) => accept(file.blob, bytes))),
-              { concurrency: BLOB_CONCURRENCY, discard: true },
+          const getJson = (path: string) =>
+            get(path, JSON_MEDIA, MAX_JSON_BYTES).pipe(
+              Effect.flatMap((bytes) =>
+                Effect.try({ try: () => parseJson(bytes), catch: (error) => asFailure(error, "invalid_response") }),
+              ),
             );
-            const unread = [...wanted]
-              .filter((blob) => !documents.has(blob))
-              .map((blob): [string, string] => [blob, keys.file(blob, digests.get(blob)!, tokenTag)]);
-            for (const [blob, bytes] of yield* readStored(unread)) documents.set(blob, bytes);
-            const skills: ManifestSkill[] = [];
-            for (const skill of plan) {
-              const frontmatter = yamlFrontmatter(documents.get(skill.document)!);
-              if (!frontmatter) return yield* Effect.fail(failure("invalid_skill"));
-              const parsed = checkSkillFrontmatter(skill.name, frontmatter);
-              if ("invalid" in parsed)
-                return yield* Effect.fail(failure(frontmatter.name !== skill.name ? "name_mismatch" : "invalid_skill"));
-              skills.push({
-                name: skill.name,
-                frontmatter: parsed.frontmatter,
-                files: skill.files.map((file) => ({
-                  path: file.path,
-                  blob: file.blob,
-                  digest: digests.get(file.blob)!,
-                  size: file.size,
-                })),
-              });
-            }
-            const serialized = asciiJson({ v: 1, skills } satisfies Manifest);
-            if (tokenBytes && containsBytes(encoder.encode(serialized), tokenBytes))
-              return yield* Effect.fail(failure("credential_in_file"));
-            if (serialized.length > MAX_MANIFEST_BYTES) return yield* Effect.fail(failure("manifest_too_large"));
-            const digest = yield* digestHex("SHA-256", encoder.encode(serialized));
-            const chunks = Math.max(1, Math.ceil(serialized.length / MANIFEST_CHUNK_CHARS));
-            const written = new Set(yield* io(storageList(`${keys.manifestPrefix}${digest}:`)));
-            for (let index = 0; index < chunks; index++) {
-              if (written.has(keys.manifest(digest, index))) continue;
-              yield* extendLease;
-              yield* io(
-                storageSet(
-                  keys.manifest(digest, index),
-                  serialized.slice(index * MANIFEST_CHUNK_CHARS, (index + 1) * MANIFEST_CHUNK_CHARS),
-                ),
-              );
-            }
-            const manifest: Manifest = { v: 1, skills };
-            return {
-              manifest,
-              next: {
-                v: 1,
-                commit,
-                revision,
-                digest,
-                chunks,
-                checkedAt: 0,
-                tokenTag,
-                resolvedTag: tokenTag,
-              } as Pointer,
-            };
+          const getTree = (path: string) =>
+            getJson(path).pipe(
+              Effect.flatMap((value) =>
+                Effect.try({ try: () => parseTree(value), catch: (error) => asFailure(error, "invalid_response") }),
+              ),
+            );
+
+          let lease:
+            | { holder: string; value: string; budgetEnd: number; expiresAt: number; renewing: boolean }
+            | undefined;
+          /** The stored lease value: the holder and the expiry it last wrote, so every renewal names what it replaces. */
+          const leaseValue = (holder: string, expiresAt: number) => `${holder}:${expiresAt}`;
+          const leaseExpiry = () =>
+            Math.min(Date.now() + LEASE_TTL_MS, ctx.deadlineAt + LEASE_SAFETY_MS + LEASE_MARGIN_MS);
+          /** Synchronous: the request is live, its budget has not ended, and its lease has time left. */
+          const withinLease = () =>
+            lease !== undefined &&
+            !ctx.signal.aborted &&
+            Date.now() < Math.min(lease.budgetEnd, lease.expiresAt - LEASE_SAFETY_MS);
+          /** Whether this request still holds the check lease, before its budget ends and storage expires the lease. */
+          const leaseHeld = Effect.gen(function* () {
+            if (!withinLease()) return false;
+            return (yield* io(storageGet(keys.lease))) === lease!.value;
+          });
+          /**
+           * Extends the lease while the holder makes progress, once less than half of {@link LEASE_TTL_MS} remains,
+           * so an interrupted holder's lease lapses within that lifetime. One renewal runs at a time, it is a
+           * compare-and-set against the value this holder last wrote, and it is written only when it moves the
+           * expiry later, so a delayed renewal can never shorten the lease. Losing the lease fails the work.
+           */
+          const extendLease = Effect.gen(function* () {
+            const held = lease;
+            if (!held || held.renewing || Date.now() < held.expiresAt - LEASE_TTL_MS / 2) return;
+            const expiresAt = leaseExpiry();
+            if (expiresAt <= held.expiresAt) return;
+            if (!withinLease()) return yield* Effect.fail(failure("deadline"));
+            const value = leaseValue(held.holder, expiresAt);
+            held.renewing = true;
+            const renewed = yield* io(
+              storageCompareAndSet(keys.lease, held.value, value, { expiresAtMs: expiresAt }),
+            ).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  held.renewing = false;
+                }),
+              ),
+            );
+            if (!renewed) return yield* Effect.fail(failure("deadline"));
+            held.value = value;
+            held.expiresAt = expiresAt;
           });
 
-        /**
-         * Removes stored files and manifest chunks that neither the snapshot just published nor the one it replaced
-         * names. It runs only while the record in storage is still that snapshot and this request holds the lease,
-         * and every publish requires the lease, so no snapshot can be published during the deletes.
-         */
-        /** Every storage key a snapshot record names: its manifest chunks and its files under its token tag. */
-        const namedBy = (pointer: Pointer) =>
-          loadManifest(pointer).pipe(
-            Effect.map((manifest) => {
-              const named = new Set<string>();
-              for (let index = 0; index < pointer.chunks; index++) named.add(keys.manifest(pointer.digest, index));
-              for (const skill of manifest.skills)
-                for (const file of skill.files) named.add(keys.file(file.blob, file.digest, pointer.tokenTag));
-              return named;
+          /**
+           * Publishes `next` over the record read as `expected`. It starts only while this request holds the lease
+           * and its deadline has not passed, rechecked immediately before the compare-and-set is dispatched, and the
+           * compare-and-set itself is uninterruptible, so no publish lands after the request returns. A lost race
+           * serves whichever record won.
+           */
+          const publish = (expected: string | null, next: Pointer): Effect.Effect<Pointer, SyncFailure> =>
+            Effect.gen(function* () {
+              if (!(yield* leaseHeld)) return yield* Effect.fail(failure("deadline"));
+              const swapped = yield* Effect.suspend(() =>
+                withinLease()
+                  ? io(
+                      storageCompareAndSet(keys.snapshot, expected, JSON.stringify(next), {
+                        expiresAtMs: recordExpiry(next),
+                      }),
+                    )
+                  : Effect.fail(failure("deadline")),
+              );
+              if (swapped) return next;
+              const { pointer } = yield* pointerNow;
+              return pointer ?? (yield* Effect.fail(failure("storage")));
+            });
+
+          const commitSha = get(`${repoPath}/commits/${refPath}`, SHA_MEDIA, MAX_SHA_BYTES).pipe(
+            Effect.flatMap((bytes) => {
+              const sha = new TextDecoder().decode(bytes).trim();
+              return GIT_SHA.test(sha) ? Effect.succeed(sha) : Effect.fail(failure("invalid_response"));
             }),
           );
 
-        /**
-         * Removes stored files and manifest chunks that neither the snapshot just published nor the one it replaced
-         * names, while this request holds the lease. The record is reread immediately before each delete and a key
-         * it names is never deleted. A delete already in flight when another request republishes is not prevented
-         * by this; repair covers it.
-         */
-        const collect = (keep: ReadonlySet<string>) =>
-          Effect.gen(function* () {
-            const listed = [
-              ...(yield* io(storageList(keys.filePrefix))),
-              ...(yield* io(storageList(keys.manifestPrefix))),
-            ];
-            if (!(yield* leaseHeld)) return;
-            let seen: { raw: string; named: Set<string> } | undefined;
-            for (const key of listed) {
-              if (keep.has(key)) continue;
-              const { raw, pointer } = yield* readPointer;
-              if (!pointer || raw === null) return;
-              if (seen?.raw !== raw) seen = { raw, named: yield* namedBy(pointer) };
-              if (seen.named.has(key)) continue;
-              if (!withinLease()) return;
-              yield* io(storageDelete(key));
-            }
-          }).pipe(Effect.ignore);
-
-        /**
-         * After a token change, rechecks every file the stored snapshot names against the new token, from storage
-         * alone, and records the snapshot as checked against it. The record is first marked with the new token, so
-         * no request serves it until the recheck completes; progress is kept in the files' keys. A file holding the
-         * token has its stored values deleted and the snapshot is withdrawn.
-         */
-        const recheckSnapshot = (raw: string | null, pointer: Pointer) =>
-          Effect.gen(function* () {
-            let current = pointer;
-            let currentRaw = raw;
-            if (current.resolvedTag !== tokenTag) {
-              current = yield* publish(currentRaw, { ...current, resolvedTag: tokenTag });
-              currentRaw = JSON.stringify(current);
-              if (current.tokenTag === tokenTag) return { raw: currentRaw, pointer: current };
-            }
-            const manifest = yield* loadManifest(current);
-            const stored = yield* storedFiles;
-            const entries: (readonly [string, string, string])[] = [];
-            const seen = new Set<string>();
-            for (const skill of manifest.skills)
-              for (const file of skill.files) {
-                const entry = stored.get(file.blob);
-                if (!entry) return yield* Effect.fail(failure("snapshot_unreadable"));
-                if (entry.tags.has(tokenTag) || seen.has(file.blob)) continue;
-                seen.add(file.blob);
-                entries.push([file.blob, file.digest, keys.file(file.blob, file.digest, [...entry.tags][0]!)]);
+          /**
+           * The source directory's tree, walked one segment at a time so no recursive listing of the repository is
+           * needed. Any tree GitHub reports as truncated fails the check.
+           */
+          const directoryTree = (commit: string) =>
+            Effect.gen(function* () {
+              const object = yield* getJson(`${repoPath}/git/commits/${commit}`);
+              let sha = isObject(object) && isObject(object.tree) ? object.tree.sha : undefined;
+              if (typeof sha !== "string" || !GIT_SHA.test(sha)) return yield* Effect.fail(failure("invalid_response"));
+              for (const segment of segments) {
+                const tree = yield* getTree(`${repoPath}/git/trees/${sha}`);
+                if (tree.truncated) return yield* Effect.fail(failure("truncated_tree"));
+                const entry = tree.entries.find((candidate) => candidate.path === segment);
+                if (!entry || entry.type !== "tree" || !GIT_SHA.test(entry.sha))
+                  return yield* Effect.fail(failure("path_not_found"));
+                sha = entry.sha;
               }
-            const rechecked = yield* Effect.result(recheckStored(entries));
-            if (Result.isFailure(rechecked)) {
-              if (rechecked.failure.code === "credential_in_file" && (yield* leaseHeld))
-                yield* io(storageCompareAndSet(keys.snapshot, currentRaw, null)).pipe(Effect.ignore);
-              return yield* Effect.fail(rechecked.failure);
-            }
-            const next = yield* publish(currentRaw, { ...current, tokenTag, resolvedTag: tokenTag });
-            return { raw: JSON.stringify(next), pointer: next };
-          });
+              return sha as string;
+            });
 
-        const check = (initialRaw: string | null, initial: Pointer | undefined, budgetEnd: number) =>
-          Effect.gen(function* () {
-            let raw = initialRaw;
-            let pointer = initial;
-            const checkEnd = Math.min(Date.now() + CHECK_TIMEOUT_MS, budgetEnd);
-            yield* resolveToken(checkEnd);
-            if (pointer && pointer.tokenTag !== tokenTag) {
-              if (pointer.repair) {
-                if (pointer.resolvedTag !== tokenTag) {
-                  pointer = yield* publish(raw, { ...pointer, resolvedTag: tokenTag });
-                  raw = JSON.stringify(pointer);
+          /** A fetched blob's bytes, checked against its Git SHA and refused when they contain the token. */
+          const fetchBlob = (file: { blob: string; size: number }) =>
+            get(`${repoPath}/git/blobs/${file.blob}`, RAW_MEDIA, file.size).pipe(
+              Effect.flatMap((bytes) =>
+                Effect.gen(function* () {
+                  if (bytes.length !== file.size || (yield* gitBlobSha(bytes)) !== file.blob)
+                    return yield* Effect.fail(failure("invalid_response"));
+                  if (tokenBytes && containsBytes(bytes, tokenBytes))
+                    return yield* Effect.fail(failure("credential_in_file"));
+                  return bytes;
+                }),
+              ),
+            );
+
+          /** Stored files by Git blob SHA: the newest row's digest and write time, as its key carries them. */
+          const storedFiles = io(storageList(keys.filePrefix)).pipe(
+            Effect.map((listed) => {
+              const stored = new Map<string, { digest: string; writtenAt: number }>();
+              for (const key of listed) {
+                const match = /^([0-9a-f]{40}):([0-9a-f]{64}):(\d+)$/.exec(key.slice(keys.filePrefix.length));
+                if (!match) continue;
+                const writtenAt = Number(match[3]);
+                const known = stored.get(match[1]!);
+                if (!known || writtenAt > known.writtenAt)
+                  stored.set(match[1]!, { digest: `sha256:${match[2]!}`, writtenAt });
+              }
+              return stored;
+            }),
+          );
+
+          /** Stored rows read in one batch; a row missing or not matching its Git blob SHA reads as absent. */
+          const readStored = (entries: readonly (readonly [string, string])[]) =>
+            Effect.gen(function* () {
+              const values = yield* io(storageGetMany(entries.map(([, key]) => key)));
+              const read = new Map<string, Uint8Array<ArrayBuffer>>();
+              for (const [index, [blob]] of entries.entries()) {
+                const value = values[index];
+                const bytes =
+                  value == null
+                    ? undefined
+                    : yield* Effect.try({ try: () => decodeBase64(value), catch: () => undefined }).pipe(
+                        Effect.orElseSucceed(() => undefined),
+                      );
+                if (bytes && (yield* gitBlobSha(bytes)) === blob) read.set(blob, bytes);
+              }
+              return read;
+            });
+
+          /**
+           * Everything a snapshot of `revision` needs except its publish. A stored row in this partition is reused
+           * when it was written within {@link RESTORE_AGE_MS} and is not marked for repair; anything else is fetched
+           * and stored with a {@link ROW_TTL_MS} expiry. A resumed sync reads no stored file body except the
+           * `SKILL.md` documents it did not fetch, and skips manifest chunks already stored for the same manifest.
+           * Anything fetched that contains the token fails the sync before it, or anything derived from it, is stored.
+           */
+          const prepare = (commit: string, revision: string, repair: Pointer["repair"]) =>
+            Effect.gen(function* () {
+              const tree = yield* getTree(`${repoPath}/git/trees/${revision}?recursive=1`);
+              if (tree.truncated) return yield* Effect.fail(failure("truncated_tree"));
+              const plan = yield* Effect.try({
+                try: () => planSkills(tree.entries),
+                catch: (error) => asFailure(error, "invalid_response"),
+              });
+              const reuseAfter = Date.now() - RESTORE_AGE_MS;
+              const broken = new Set(repair?.blobs ?? []);
+              const stored = yield* storedFiles;
+              const rows = new Map<string, { digest: string; writtenAt: number }>();
+              const documents = new Map<string, Uint8Array<ArrayBuffer>>();
+              const wanted = new Set(plan.map((skill) => skill.document));
+              const missing = new Map<string, { blob: string; size: number }>();
+              for (const skill of plan)
+                for (const file of skill.files) {
+                  const row = stored.get(file.blob);
+                  if (row && row.writtenAt >= reuseAfter && !broken.has(file.blob)) rows.set(file.blob, row);
+                  else missing.set(file.blob, file);
                 }
-              } else ({ raw, pointer } = yield* until(budgetEnd, recheckSnapshot(raw, pointer)));
-            }
-            const commit = yield* until(checkEnd, commitSha);
-            const current = pointer?.tokenTag === tokenTag && !pointer.repair ? pointer : undefined;
-            const renew = (next: Pointer) => publish(raw, { ...next, commit, checkedAt: Date.now() });
-            if (current && commit === current.commit) return yield* renew(current);
-            const revision = yield* until(checkEnd, directoryTree(commit));
-            if (current && revision === current.revision) return yield* renew(current);
-            const prepared = yield* until(budgetEnd, prepare(commit, revision));
-            const published = yield* publish(raw, { ...prepared.next, checkedAt: Date.now() });
-            if (published.digest !== prepared.next.digest) return published;
-            memo = { digest: published.digest, manifest: prepared.manifest };
-            const keep = new Set<string>();
-            for (const skill of prepared.manifest.skills)
-              for (const file of skill.files) keep.add(keys.file(file.blob, file.digest, published.tokenTag));
-            for (let index = 0; index < published.chunks; index++) keep.add(keys.manifest(published.digest, index));
-            const prior = pointer ? yield* loadManifest(pointer).pipe(Effect.option) : Option.none<Manifest>();
-            if (pointer && Option.isSome(prior)) {
-              for (const skill of prior.value.skills)
-                for (const file of skill.files) keep.add(keys.file(file.blob, file.digest, pointer.tokenTag));
-              for (let index = 0; index < pointer.chunks; index++) keep.add(keys.manifest(pointer.digest, index));
-            }
-            yield* until(budgetEnd, collect(keep)).pipe(Effect.ignore);
-            return published;
-          });
+              const unread = [...wanted]
+                .filter((blob) => rows.has(blob))
+                .map((blob): [string, string] => [
+                  blob,
+                  keys.file(blob, rows.get(blob)!.digest, rows.get(blob)!.writtenAt),
+                ]);
+              for (let start = 0; start < unread.length; start += STORED_BATCH) {
+                const batch = unread.slice(start, start + STORED_BATCH);
+                const read = yield* readStored(batch);
+                for (const [blob] of batch) {
+                  const bytes = read.get(blob);
+                  if (bytes) documents.set(blob, bytes);
+                  else {
+                    rows.delete(blob);
+                    missing.set(
+                      blob,
+                      plan.flatMap((skill) => skill.files).find((file) => file.blob === blob)!,
+                    );
+                  }
+                }
+              }
+              yield* Effect.forEach(
+                [...missing.values()],
+                (file) =>
+                  fetchBlob(file).pipe(
+                    Effect.flatMap((bytes) =>
+                      Effect.gen(function* () {
+                        const digest = `sha256:${yield* digestHex("SHA-256", bytes)}`;
+                        const writtenAt = Date.now();
+                        yield* extendLease;
+                        yield* io(
+                          storageSet(keys.file(file.blob, digest, writtenAt), encodeBase64(bytes), {
+                            expiresAtMs: writtenAt + ROW_TTL_MS,
+                          }),
+                        );
+                        rows.set(file.blob, { digest, writtenAt });
+                        if (wanted.has(file.blob)) documents.set(file.blob, bytes);
+                      }),
+                    ),
+                  ),
+                { concurrency: BLOB_CONCURRENCY, discard: true },
+              );
+              const skills: ManifestSkill[] = [];
+              for (const skill of plan) {
+                const frontmatter = yamlFrontmatter(documents.get(skill.document)!);
+                if (!frontmatter) return yield* Effect.fail(failure("invalid_skill"));
+                const parsed = checkSkillFrontmatter(skill.name, frontmatter);
+                if ("invalid" in parsed)
+                  return yield* Effect.fail(
+                    failure(frontmatter.name !== skill.name ? "name_mismatch" : "invalid_skill"),
+                  );
+                skills.push({
+                  name: skill.name,
+                  frontmatter: parsed.frontmatter,
+                  files: skill.files.map((file) => ({
+                    path: file.path,
+                    blob: file.blob,
+                    digest: rows.get(file.blob)!.digest,
+                    size: file.size,
+                    writtenAt: rows.get(file.blob)!.writtenAt,
+                  })),
+                });
+              }
+              const serialized = asciiJson({ v: 1, skills } satisfies Manifest);
+              if (tokenBytes && containsBytes(encoder.encode(serialized), tokenBytes))
+                return yield* Effect.fail(failure("credential_in_file"));
+              if (serialized.length > MAX_MANIFEST_BYTES) return yield* Effect.fail(failure("manifest_too_large"));
+              const digest = yield* digestHex("SHA-256", encoder.encode(serialized));
+              const chunks = Math.max(1, Math.ceil(serialized.length / MANIFEST_CHUNK_CHARS));
+              const written = new Map<number, number>();
+              const chunkPrefix = keys.manifestDigestPrefix(digest);
+              for (const key of yield* io(storageList(chunkPrefix))) {
+                const match = /^(\d+):(\d+)$/.exec(key.slice(chunkPrefix.length));
+                if (!match) continue;
+                const [index, writtenAt] = [Number(match[1]), Number(match[2])];
+                if (writtenAt >= reuseAfter && !repair?.chunks && writtenAt > (written.get(index) ?? -1))
+                  written.set(index, writtenAt);
+              }
+              const chunkTimes: number[] = [];
+              for (let index = 0; index < chunks; index++) {
+                const reused = written.get(index);
+                if (reused !== undefined) {
+                  chunkTimes.push(reused);
+                  continue;
+                }
+                const writtenAt = Date.now();
+                yield* extendLease;
+                yield* io(
+                  storageSet(
+                    keys.manifest(digest, index, writtenAt),
+                    serialized.slice(index * MANIFEST_CHUNK_CHARS, (index + 1) * MANIFEST_CHUNK_CHARS),
+                    { expiresAtMs: writtenAt + ROW_TTL_MS },
+                  ),
+                );
+                chunkTimes.push(writtenAt);
+              }
+              const oldestRow = Math.min(...chunkTimes, ...[...rows.values()].map((row) => row.writtenAt));
+              const manifest: Manifest = { v: 1, skills };
+              const next: Pointer = { v: 1, commit, revision, digest, chunks, chunkTimes, checkedAt: 0, oldestRow };
+              return { manifest, next };
+            });
 
-        /** Serves `pointer` only when it passes the one serving gate, {@link servable}. */
-        const serveEligible = (pointer: Pointer | undefined): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
-          servable(pointer) ? serve(pointer) : Effect.fail(failure("snapshot_unreadable"));
+          /**
+           * Checks the revision and syncs it when it changed, when the snapshot needs repair, or when its oldest row
+           * is older than {@link RESTORE_AGE_MS}, in which case every file is fetched and stored again.
+           */
+          const check = (raw: string | null, pointer: Pointer | undefined) =>
+            Effect.gen(function* () {
+              const commit = yield* until(checkEnd, commitSha);
+              const current =
+                pointer && !pointer.repair && pointer.oldestRow >= Date.now() - RESTORE_AGE_MS ? pointer : undefined;
+              const renew = (next: Pointer) => publish(raw, { ...next, commit, checkedAt: Date.now() });
+              if (current && commit === current.commit) return yield* renew(current);
+              const revision = yield* until(checkEnd, directoryTree(commit));
+              if (current && revision === current.revision) return yield* renew(current);
+              const prepared = yield* until(budgetEnd, prepare(commit, revision, pointer?.repair));
+              const published = yield* publish(raw, { ...prepared.next, checkedAt: Date.now() });
+              if (published.digest === prepared.next.digest)
+                memo = { prefix, digest: published.digest, manifest: prepared.manifest };
+              return published;
+            });
 
-        /**
-         * Holds the lease as `holder` and checks: rereads the snapshot and hold first, so a claim made on stale
-         * state serves what is now stored. A failure's hold is stored before the lease is released. Every snapshot
-         * returned is the record as stored after the check, through the serving gate.
-         */
-        const checkUnderLease = (
-          holder: string,
-          budgetEnd: number,
-          expiresAt: number,
-        ): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
-          Effect.gen(function* () {
-            lease = { holder, value: leaseValue(holder, expiresAt), budgetEnd, expiresAt, renewing: false };
-            const release = Effect.suspend(() => io(storageCompareAndSet(keys.lease, lease!.value, null))).pipe(
-              Effect.ignore,
-            );
-            const current = yield* readPointer;
-            const heldNow = yield* io(storageGet(keys.hold));
-            const heldUntil = heldNow !== null && /^\d+$/.test(heldNow) ? Number(heldNow) : 0;
-            const fresh = servable(current.pointer) && Date.now() - current.pointer.checkedAt < config.freshMs;
-            if (heldUntil > Date.now() || fresh) {
+          /**
+           * Holds the lease as `holder` and checks: rereads the snapshot and hold first, so a claim made on stale
+           * state serves what is now stored. A failure's hold is stored before the lease is released, and a failed
+           * check serves the record as stored afterwards.
+           */
+          const checkUnderLease = (
+            holder: string,
+            expiresAt: number,
+          ): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
+            Effect.gen(function* () {
+              lease = { holder, value: leaseValue(holder, expiresAt), budgetEnd, expiresAt, renewing: false };
+              const release = Effect.suspend(() => io(storageCompareAndSet(keys.lease, lease!.value, null))).pipe(
+                Effect.ignore,
+              );
+              const current = yield* pointerNow;
+              const heldNow = yield* io(storageGet(keys.hold));
+              const heldUntil = heldNow !== null && /^\d+$/.test(heldNow) ? Number(heldNow) : 0;
+              const fresh =
+                current.pointer && !current.pointer.repair && Date.now() - current.pointer.checkedAt < config.freshMs;
+              if (heldUntil > Date.now() || fresh) {
+                yield* release;
+                return current.pointer
+                  ? yield* serve(prefix, current.pointer)
+                  : yield* Effect.fail(failure("rate_limited"));
+              }
+              const outcome = yield* Effect.result(check(current.raw, current.pointer));
+              if (Result.isSuccess(outcome)) {
+                yield* release;
+                return yield* serve(prefix, outcome.success);
+              }
+              const failed = outcome.failure;
+              ctx.warn(failed.code);
+              const latest = yield* pointerNow.pipe(Effect.orElseSucceed(() => ({ raw: null, pointer: undefined })));
+              const holdEnd = Math.max(
+                failed.holdUntil ?? 0,
+                latest.pointer && failed.code !== "deadline" ? Date.now() + config.freshMs : 0,
+              );
+              if (holdEnd > Date.now())
+                yield* io(storageSet(keys.hold, String(holdEnd), { expiresAtMs: holdEnd })).pipe(Effect.ignore);
               yield* release;
-              return servable(current.pointer)
-                ? yield* serve(current.pointer)
-                : yield* Effect.fail(failure("rate_limited"));
-            }
-            const outcome = yield* Effect.result(check(current.raw, current.pointer, budgetEnd));
-            if (Result.isSuccess(outcome)) {
-              yield* release;
-              return yield* serveEligible(outcome.success);
-            }
-            const failed = outcome.failure;
-            ctx.warn(failed.code);
-            const latest = yield* readPointer.pipe(Effect.orElseSucceed(() => ({ raw: null, pointer: undefined })));
-            const inService = servable(latest.pointer) ? latest.pointer : undefined;
-            const holdEnd = Math.max(
-              failed.holdUntil ?? 0,
-              inService && failed.code !== "deadline" ? Date.now() + config.freshMs : 0,
-            );
-            if (holdEnd > Date.now())
-              yield* io(storageSet(keys.hold, String(holdEnd), { expiresAtMs: holdEnd })).pipe(Effect.ignore);
-            yield* release;
-            return inService ? yield* serve(inService) : yield* Effect.fail(failed);
-          });
+              return latest.pointer ? yield* serve(prefix, latest.pointer) : yield* Effect.fail(failed);
+            });
 
-        /** Claims the lease for {@link LEASE_TTL_MS}, or the request's deadline if sooner; the expiry when claimed. */
-        const claim = (holder: string) =>
-          Effect.suspend(() => {
-            const expiresAt = leaseExpiry();
-            return io(
-              storageCompareAndSet(keys.lease, null, leaseValue(holder, expiresAt), { expiresAtMs: expiresAt }),
-            ).pipe(Effect.map((claimed) => (claimed ? expiresAt : undefined)));
-          });
+          /** Claims the lease for {@link LEASE_TTL_MS}, or the request's deadline if sooner; the expiry when claimed. */
+          const claim = (holder: string) =>
+            Effect.suspend(() => {
+              const expiresAt = leaseExpiry();
+              return io(
+                storageCompareAndSet(keys.lease, null, leaseValue(holder, expiresAt), { expiresAtMs: expiresAt }),
+              ).pipe(Effect.map((claimed) => (claimed ? expiresAt : undefined)));
+            });
 
-        /**
-         * With nothing stored and another request syncing, waits for its snapshot, claiming the lease itself if
-         * that request's lease expires first.
-         */
-        const awaitPublished = (holder: string, budgetEnd: number): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
-          Effect.gen(function* () {
-            while (Date.now() + AWAIT_INTERVAL_MS < budgetEnd) {
-              yield* Effect.sleep(Duration.millis(AWAIT_INTERVAL_MS));
-              const { pointer } = yield* readPointer;
-              if (servable(pointer)) return yield* serve(pointer);
-              const claimed = yield* claim(holder);
-              if (claimed !== undefined) return yield* checkUnderLease(holder, budgetEnd, claimed);
+          /**
+           * With nothing stored and another request syncing, waits for its snapshot, claiming the lease itself if
+           * that request's lease expires first.
+           */
+          const awaitPublished = (holder: string): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
+            Effect.gen(function* () {
+              while (Date.now() + AWAIT_INTERVAL_MS < budgetEnd) {
+                yield* Effect.sleep(Duration.millis(AWAIT_INTERVAL_MS));
+                const { pointer } = yield* pointerNow;
+                if (pointer) return yield* serve(prefix, pointer);
+                const claimed = yield* claim(holder);
+                if (claimed !== undefined) return yield* checkUnderLease(holder, claimed);
+              }
+              return yield* Effect.fail(failure("deadline"));
+            });
+
+          return Effect.gen(function* () {
+            const { pointer } = yield* pointerNow;
+            const now = Date.now();
+            if (pointer && !pointer.repair && now - pointer.checkedAt < config.freshMs) {
+              const served = yield* Effect.result(serve(prefix, pointer));
+              if (Result.isSuccess(served)) return served.success;
+              if (served.failure.code !== "snapshot_unreadable") return yield* Effect.fail(served.failure);
             }
-            return yield* Effect.fail(failure("deadline"));
+            const held = yield* io(storageGet(keys.hold));
+            const holdUntil = held !== null && /^\d+$/.test(held) ? Number(held) : 0;
+            if (holdUntil > now)
+              return pointer ? yield* serve(prefix, pointer) : yield* Effect.fail(failure("rate_limited"));
+            const holder = crypto.randomUUID();
+            const claimed = yield* claim(holder);
+            if (claimed !== undefined) return yield* checkUnderLease(holder, claimed);
+            const { pointer: latest } = yield* pointerNow;
+            return latest ? yield* serve(prefix, latest) : yield* awaitPublished(holder);
           });
-
-        const { pointer: stored } = yield* readPointer;
-        const pointer = servable(stored) ? stored : undefined;
-        const now = Date.now();
-        if (pointer && now - pointer.checkedAt < config.freshMs) {
-          const served = yield* Effect.result(serve(pointer));
-          if (Result.isSuccess(served)) return served.success;
-          if (served.failure.code !== "snapshot_unreadable") return yield* Effect.fail(served.failure);
         }
-        const held = yield* io(storageGet(keys.hold));
-        const holdUntil = held !== null && /^\d+$/.test(held) ? Number(held) : 0;
-        if (holdUntil > now) return pointer ? yield* serve(pointer) : yield* Effect.fail(failure("rate_limited"));
-        const remaining = Math.max(0, ctx.deadlineAt - now);
-        const budgetEnd = ctx.deadlineAt - Math.min(RESERVE_MS, Math.floor(remaining * RESERVE_FRACTION));
-        const holder = crypto.randomUUID();
-        const claimed = yield* claim(holder);
-        if (claimed !== undefined) return yield* checkUnderLease(holder, budgetEnd, claimed);
-        const { pointer: latest } = yield* readPointer;
-        return servable(latest) ? yield* serve(latest) : yield* awaitPublished(holder, budgetEnd);
       }),
   });
 }

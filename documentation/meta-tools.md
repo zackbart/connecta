@@ -859,14 +859,14 @@ createConnecta({
 });
 ```
 
-| Option        | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `repo`        | `owner/name` on github.com. GitHub Enterprise hosts are not supported.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `path`        | A directory, `/`-separated with no leading or trailing `/`, `.` or `..` segment, empty segment or backslash; `""` for the repository root.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `ref`         | Required: a branch, tag or commit SHA, as GitHub's `GET /repos/{owner}/{repo}/commits/{ref}` accepts it. Pinning a commit SHA makes every later check one request that never changes the snapshot.                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `token`       | Optional: a string, or a function `({ signal }) => string \| Promise<string>` called only when a check contacts GitHub (never for a read within `freshFor`), under the check's deadline, with `signal` aborting when that deadline passes. A function that throws, misses the deadline, or yields anything but a non-empty string is `token_unavailable`, and no request is sent. Without a token the source reads a public repository at GitHub's unauthenticated limit of 60 requests an hour per IP address. A fine-grained personal access token needs only **Contents: Read** on the repository; a classic token needs `repo` for a private repository. |
-| `description` | Optional: one line, 1 to 120 characters after trimming, with no control characters, shown with the id in the `skills` tool's description.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `freshFor`    | Seconds a stored snapshot is served without contacting GitHub: a whole number from 30 to 86,400, default 300. A caller who sees the source is advertised a native `ttlMs` no longer than `freshFor`.                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Option        | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repo`        | `owner/name` on github.com. GitHub Enterprise hosts are not supported.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `path`        | A directory, `/`-separated with no leading or trailing `/`, `.` or `..` segment, empty segment or backslash; `""` for the repository root.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `ref`         | Required: a branch, tag or commit SHA, as GitHub's `GET /repos/{owner}/{repo}/commits/{ref}` accepts it. Pinning a commit SHA makes every later check one request that never changes the snapshot.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `token`       | Optional: a string, or a function `({ signal }) => string \| Promise<string>` called only when this process has no fresh snapshot for the partition it last resolved to, under the check's deadline, with `signal` aborting when that deadline passes. A function that throws, misses the deadline, or yields anything but a non-empty string is `token_unavailable`, and no request is sent. Without a token the source reads a public repository at GitHub's unauthenticated limit of 60 requests an hour per IP address. A token requires a credential vault. A fine-grained personal access token needs only **Contents: Read** on the repository; a classic token needs `repo` for a private repository. |
+| `description` | Optional: one line, 1 to 120 characters after trimming, with no control characters, shown with the id in the `skills` tool's description.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `freshFor`    | Seconds a stored snapshot is served without contacting GitHub: a whole number from 30 to 86,400, default 300. A caller who sees the source is advertised a native `ttlMs` no longer than `freshFor`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 `githubSkills` throws a `ConfigError` naming the source for an invalid id,
 description or option.
@@ -916,8 +916,8 @@ it.
 Repair. When a skills read finds a file or manifest chunk the stored snapshot
 names missing or not matching its digest, it marks the record for repair. That
 read, or the next one if it cannot finish in time, checks regardless of
-`freshFor` and resyncs even an unchanged revision, fetching only what is
-missing, and the snapshot serves again. Repair restores a missing row, and a
+`freshFor` and resyncs even an unchanged revision, fetching only the rows that
+were missing or corrupt, and the snapshot serves again; nothing is deleted. Repair restores a missing row, and a
 row that fails its digest when a read reaches it; it does not re-validate rows
 it reuses, so two faults at once (a missing chunk beside a corrupt sibling, or
 a missing file beside a corrupt `SKILL.md`) can take more than one read, or one
@@ -942,23 +942,23 @@ No request lists the repository root recursively, so a large monorepo works.
 Storage work is bounded. These are upper bounds for one skills read that
 checks, not typical counts:
 
-- one write per file it fetches or rechecks, and one batched read per 64 stored
-  files it rechecks or `SKILL.md` documents it did not fetch;
-- at most 8 manifest chunk writes and one batched read of at most 8 chunks;
-- at most 6 key listings;
-- at most 24 lease, snapshot and hold operations, plus one lease renewal for
+- one write per file it fetches, and one batched read per 64 `SKILL.md`
+  documents it reuses from storage instead of fetching;
+- at most 8 manifest chunk writes, and one batched read of at most 8 chunks
+  each time a process loads a manifest;
+- at most 2 key listings: the stored files and the manifest's stored chunks;
+- at most 16 lease, snapshot and hold operations, plus one lease renewal for
   each 15 seconds of work;
-- in cleanup, for each key deleted, one snapshot-record read and one delete,
-  plus one manifest read whenever the record has changed.
+- no deletes.
 
-A resumed sync skips manifest chunks already stored for the same manifest. A resumed sync never reads the body of any
-other stored file: each file's digest and token check are in its key. After the
-token changes, each stored file is read once in those batches and rewritten
-once. On Cloudflare Workers each GitHub request and each D1 query
-is a subrequest: a Free plan invocation allows 50 subrequests (and 50 D1
-queries), a Paid one 10,000 subrequests and 1,000 D1 queries. A first sync
-that exceeds the limit fails at that point and resumes on later reads, each
-storing more files, until the snapshot publishes.
+A resumed sync skips files and manifest chunks already stored in the same
+partition, and never reads the body of any stored file except the `SKILL.md`
+documents it reuses: each file's digest and write time are in its key. On
+Cloudflare Workers each GitHub request and each D1 query is a subrequest: a
+Free plan invocation allows 50 subrequests (and 50 D1 queries), a Paid one
+10,000 subrequests and 1,000 D1 queries. A first sync that exceeds the limit
+fails at that point and resumes on later reads, each storing more files, until
+the snapshot publishes.
 
 Limits. A sync fails, and nothing from it is published, for any of these: a skill
 directory whose name differs from its frontmatter `name` or breaks the Agent
@@ -995,8 +995,8 @@ snapshot in service and logs one payload-free warning,
 | `symlink`, `submodule` | A skill holds a symlink or a submodule.                                                                                |
 | `bound_exceeded`       | More than 1,024 skills, 512 files or 16 MiB in a skill.                                                                |
 | `file_too_large`       | A file exceeds 786,432 bytes.                                                                                          |
-| `credential_in_file`   | A file's bytes contain the token, including a stored file rechecked after the token changed.                           |
-| `storage`              | Storage failed, or a stored file no longer matched its Git SHA (it is removed).                                        |
+| `credential_in_file`   | A file fetched in the sync, or a value derived from one, contains the token.                                           |
+| `storage`              | A storage operation failed.                                                                                            |
 | `snapshot_unreadable`  | The stored snapshot could not be read back.                                                                            |
 | `manifest_too_large`   | The snapshot's manifest exceeds 8 MiB.                                                                                 |
 
@@ -1019,48 +1019,50 @@ Credentials. The token is sent only to `https://api.github.com`, as
 `Authorization: Bearer`, and never to a redirect target with another scheme,
 host or port: such a redirect fails the check. It is registered with the
 request's credential redaction, so it reaches no agent output, and it appears
-in no operator record, log, storage key or stored value: a file containing it
-fails the sync. The check is literal: a file holding an encoded form of the
+in no operator record, log, storage key or stored value. During a sync,
+anything fetched that contains the token used for that sync fails the sync with
+`credential_in_file` before it is stored: a file's bytes, and every value
+derived from them, the parsed frontmatter and the manifest entries included.
+Files the sync fetched and stored before that failure hold no token; they stay
+until they expire. The check is literal: a file holding an encoded form of the
 token (base64, percent-encoding) passes it and is stored, and responses redact
 those forms while the token is registered for the request.
 
-Token changes. Each snapshot records a tag of the token its files were checked
-against: a prefix of an HMAC under the deployment's storage digest key, never
-the token. With a credential vault the key is the vault's and the tag is the
-same in every process. Without one, each process uses its own random key, so a
-check in a process other than the last one to check sees a different tag and
-rechecks every stored file: one read per 64 files and one write per file, from
-storage alone, with no GitHub request. Configure a vault to avoid that cost.
+A token needs a credential vault: `createConnecta` throws a `ConfigError`
+naming the source when a source has a token and the deployment has no vault.
+A source without a token needs none.
 
-When a check resolves a token whose tag differs, it first marks the record with
-the new tag, so no request serves the snapshot until the recheck completes;
-then rechecks every file the snapshot names from storage, before any GitHub
-request, keeping its progress in the files' keys so a recheck the deadline
-interrupts resumes on the next read; then records the snapshot as checked
-against the new token and goes on to the revision check. A failed revision
-check leaves the rechecked snapshot in service with its warning. A file holding
-the new token has every stored value deleted and the snapshot is withdrawn with
-`credential_in_file`: this is the one failure that does not leave the stored
-snapshot in service. Files a new sync reuses from storage are rechecked the same
-way. Every snapshot a skills read returns is the record as currently stored,
-checked against the token resolved in that request, or, when the token was not
-resolved or its function failed, against the last token resolved for that
-record. Within `freshFor` the token is not resolved, so a value that changed
-since the last check is compared at the next one.
+Token changes. Stored snapshots are partitioned by token: the partition is a
+digest of `repo`, `path`, `ref` and the token, keyed by the vault's storage
+digest key (without a token, a fixed marker). Nothing stored under one token is
+read, reused or served under another, and two tokens on one source keep
+separate copies. A function token's partition is remembered in the process:
+while that partition's snapshot is fresh the function is not called, and when
+it is called it runs under the check's deadline. If it fails or yields no
+usable value, the process serves its remembered partition's snapshot with
+`token_unavailable`; a process that has never resolved it has nothing to serve,
+and the source is unavailable for that request. No request reaches GitHub
+without a usable token when one is configured.
 
-Storage. Keys sit under `skill-source:v1:<source-id>:<digest>:`, where the
-digest covers `repo`, `path` and `ref`, so changing any of them starts a new
-snapshot. `snapshot` names the published revision and manifest digest;
-`manifest:<digest>:<n>` holds the manifest in 1 MiB chunks;
-`file:<git blob SHA>:<SHA-256>:<token tag>` holds each file's bytes as base64;
-`lease` and `hold` coordinate checks.
-When a request publishes a new snapshot, it removes files and manifest chunks
-that neither that snapshot nor the one it replaced names, while it holds the
-lease. It rereads the record immediately before each delete and never deletes
-a key the record in storage names. A delete already in flight when another
-request republishes is not prevented by this; [repair](#github-skill-source)
-restores what it removed on the next read. Removing a source from the
-configuration leaves its rows until they are deleted by prefix.
+The first check after a token changes runs a full sync in the new partition:
+every file is fetched again. Until it publishes, the source is unavailable to
+requests that resolved the new token, and if GitHub fails at that moment it
+stays unavailable until a sync succeeds. Use a long-lived token: a function
+that returns a new value often downloads the directory again each time.
+
+Storage. Keys sit under `skill-source:v1:<source-id>:<partition>:`.
+`snapshot` names the published revision, its manifest digest and when each row
+it relies on was written; `manifest:<digest>:<n>:<written at>` holds the
+manifest in 1 MiB chunks; `file:<git blob SHA>:<SHA-256>:<written at>` holds
+each file's bytes as base64; `lease` and `hold` coordinate checks. Nothing is
+ever deleted. Each file and manifest chunk is written with a 30-day expiry, and
+the snapshot record expires seven days after its last check, and never after
+its oldest row. When the oldest row a snapshot relies on is more than 15 days
+old, the next check after `freshFor` stores the whole snapshot again, fetching
+every file and writing every row with a fresh expiry, and the existing snapshot
+keeps serving until that publishes or when it fails. Rows from old revisions,
+old tokens and sources removed from the configuration expire on their own;
+anything that goes missing before then is restored by repair.
 
 ### Native Skills extension
 

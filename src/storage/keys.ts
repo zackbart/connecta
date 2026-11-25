@@ -277,17 +277,19 @@ export const GITHUB_SKILL_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_GITHUB_SKILL_FILE_BYTES = 768 * 1024;
 
 /**
- * A GitHub skill source's snapshots, under the source id and a digest of its
- * repository, path and ref. `snapshot` names the published revision and its
- * manifest digest; the manifest's chunks sit at `manifest:<digest>:<index>`
- * and each file's base64 bytes at `file:<git blob sha>:<sha-256 hex>:<token tag>`,
- * where the tag is a deployment-keyed digest prefix of the token the bytes were
- * checked against (`none` without a token), so a resumed sync learns what an
- * interrupted one stored, its digests and what each was checked against from
- * one listing. A snapshot is published by
- * compare-and-set only after every chunk and file it names is stored.
- * `lease` arbitrates one checker at a time; `hold` holds back the next check
- * until an epoch-millisecond time. No key or value carries a token.
+ * A GitHub skill source's snapshots, under the source id and a storage
+ * partition: a digest of the repository, path, ref and token, keyed by the
+ * credential vault's storage digest key when there is a token, so nothing
+ * stored under one token is used under another. `snapshot` names the
+ * published revision, its manifest digest and when each row it relies on was
+ * written; the manifest's chunks sit at `manifest:<digest>:<index>:<written at>`
+ * and each file's base64 bytes at `file:<git blob sha>:<sha-256 hex>:<written
+ * at>`, so a resumed sync learns what an interrupted one stored from one
+ * listing. A snapshot is published by compare-and-set only after every chunk
+ * and file it names is stored. Nothing is deleted: rows expire 30 days after
+ * they are written and a snapshot whose oldest row is 15 days old is stored
+ * again. `lease` arbitrates one checker at a time; `hold` holds back the next
+ * check until an epoch-millisecond time. No key or value carries a token.
  */
 export const skillSourceKeys = {
   family: {
@@ -298,21 +300,20 @@ export const skillSourceKeys = {
     codec: textCodec,
     ttl: {
       kind: "configured",
-      by: "snapshot: seven days after its last revalidation; lease: the checking request's deadline; hold: the next permitted check; manifest chunks and files: removed once no current or previous snapshot names them",
+      by: "snapshot: seven days after its last revalidation, and never past its oldest row; files and manifest chunks: 30 days after they are written; lease: 30 seconds, extended while its holder makes progress; hold: the next permitted check",
     },
     durable: false,
   },
-  prefix: (sourceId: string, configDigest: string) =>
-    validateStorageKey(`skill-source:v1:${sourceId}:${configDigest}:`),
+  prefix: (sourceId: string, partition: string) => validateStorageKey(`skill-source:v1:${sourceId}:${partition}:`),
   snapshot: (prefix: string) => validateStorageKey(`${prefix}snapshot`),
   lease: (prefix: string) => validateStorageKey(`${prefix}lease`),
   hold: (prefix: string) => validateStorageKey(`${prefix}hold`),
-  manifestPrefix: (prefix: string) => validateStorageKey(`${prefix}manifest:`),
-  manifest: (prefix: string, digest: string, index: number) =>
-    validateStorageKey(`${prefix}manifest:${digest}:${index}`),
+  manifestDigestPrefix: (prefix: string, digest: string) => validateStorageKey(`${prefix}manifest:${digest}:`),
+  manifest: (prefix: string, digest: string, index: number, writtenAt: number) =>
+    validateStorageKey(`${prefix}manifest:${digest}:${index}:${writtenAt}`),
   filePrefix: (prefix: string) => validateStorageKey(`${prefix}file:`),
-  file: (prefix: string, blob: string, sha256: string, tokenTag: string) =>
-    validateStorageKey(`${prefix}file:${blob}:${sha256}:${tokenTag}`),
+  file: (prefix: string, blob: string, sha256: string, writtenAt: number) =>
+    validateStorageKey(`${prefix}file:${blob}:${sha256}:${writtenAt}`),
 } as const satisfies Keyed;
 
 /** Seconds an OAuth callback's owner binding stays claimable. */
