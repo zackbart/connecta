@@ -892,7 +892,7 @@ expires.
 
 Revalidation. Within `freshFor` of the last check, a skills read serves the
 stored snapshot and sends nothing to GitHub. After it, the next skills read
-claims a lease in storage and checks the revision, within at most 10 seconds;
+claims a lease in storage, rereads the snapshot and any hold, and checks the revision, within at most 10 seconds;
 concurrent readers serve the stored snapshot meanwhile, and a reader with no
 stored snapshot waits for the first sync up to its skills deadline. Unchanged:
 the snapshot is served and its freshness renewed. Changed: the new revision is
@@ -963,7 +963,7 @@ snapshot in service and logs one payload-free warning,
 After a failed check while a snapshot is in service, the next check waits the
 later of `freshFor` seconds and any hold GitHub set: after a rate limit, its
 `retry-after` or `x-ratelimit-reset` time, or a minute when neither is given;
-after a 403 without rate-limit headers, a minute. With no stored snapshot,
+after a 403 without rate-limit headers, a minute. The hold is stored before the checking request releases its lease, so no other process sends a request in between. With no stored snapshot,
 the source is unavailable: the skills listing fails as a failed downstream
 skills listing does, built-in skills and connector guides stay readable by
 name, and the next skills read tries again (after a rate limit, once its reset
@@ -980,8 +980,11 @@ digest covers `repo`, `path` and `ref`, so changing any of them starts a new
 snapshot. `snapshot` names the published revision and manifest digest;
 `manifest:<digest>:<n>` holds the manifest in 1 MiB chunks; `file:<git blob
 SHA>` holds each file's bytes as base64; `lease` and `hold` coordinate checks.
-Files and manifest chunks that neither the current nor the previous snapshot
-names are removed when a new snapshot publishes. Removing a source from the
+When a request publishes a new snapshot, it removes files and manifest chunks
+that neither that snapshot nor the one it replaced names, only while that
+snapshot is still the record in storage and the request still holds the lease.
+Every publish requires the lease, so a published snapshot's files and chunks
+stay readable for as long as its record is in service. Removing a source from the
 configuration leaves its rows until they are deleted by prefix.
 
 ### Native Skills extension

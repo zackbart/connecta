@@ -10,7 +10,7 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { sentSecretsFor } from "../src/sent-secrets.js";
 import { SkillsRegistry, downstreamSkillUri } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, KVStorage } from "../src/types.js";
 import extSkillsSchema from "./fixtures/ext-skills/schema.json";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
@@ -1421,7 +1421,32 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}) {
   const fixture = githubSkillsApi();
   vi.stubGlobal("fetch", fixture.fetch);
   vi.useFakeTimers({ toFake: ["Date"], now: Date.UTC(2026, 10, 1) });
-  const storage = memoryStorage();
+  const inner = memoryStorage();
+  const hooks: {
+    get?: ((key: string) => Promise<void>) | undefined;
+    list?: ((prefix: string) => Promise<void>) | undefined;
+    compareAndSet?: ((key: string, next: string | null) => Promise<void>) | undefined;
+  } = {};
+  const storage: KVStorage = {
+    capabilities: { absoluteExpiry: true },
+    async get(key) {
+      const value = await inner.get(key);
+      await hooks.get?.(key);
+      return value;
+    },
+    set: (key, value, options) => inner.set(key, value, options),
+    delete: (key) => inner.delete(key),
+    async list(prefix) {
+      const keys = await inner.list(prefix);
+      await hooks.list?.(prefix);
+      return keys;
+    },
+    async compareAndSet(key, expected, next, options) {
+      const swapped = await inner.compareAndSet(key, expected, next, options);
+      await hooks.compareAndSet?.(key, next);
+      return swapped;
+    },
+  };
   const warnings: unknown[][] = [];
   const logs: unknown[][] = [];
   const logger = {
@@ -1448,7 +1473,7 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}) {
     const keys = await storage.list("");
     return { keys, values: await Promise.all(keys.map((key) => storage.get(key))) };
   };
-  return { fixture, storage, warnings, logs, isolate, root, read, names, advance, blobs, stored };
+  return { fixture, storage, hooks, warnings, logs, isolate, root, read, names, advance, blobs, stored };
 }
 
 function endGithubDeployment() {
@@ -1825,6 +1850,79 @@ it("syncs a GitHub source once when two readers race the first sync, and serves 
     expect(t.warnings).toEqual([]);
   } finally {
     endGithubDeployment();
+  }
+});
+
+it("never deletes a file the GitHub snapshot in storage names when a newer snapshot publishes during cleanup", async () => {
+  const t = await githubDeployment();
+  const shared = { [`${SKILLS_PATH}/review/shared.md`]: "# Shared across revisions\n" };
+  try {
+    await t.fixture.commit(monorepo(shared));
+    await t.names();
+    await t.fixture.commit(monorepo());
+    t.advance(301);
+    await t.names();
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/checklist.md`]: "# Checklist v2\n" }));
+    t.advance(301);
+    let resume!: () => void;
+    const gate = new Promise<void>((resolve) => (resume = resolve));
+    let entered!: () => void;
+    const cleaning = new Promise<void>((resolve) => (entered = resolve));
+    t.hooks.list = async (prefix) => {
+      if (!prefix.endsWith(":manifest:")) return;
+      t.hooks.list = undefined;
+      entered();
+      await gate;
+    };
+    const first = t.names();
+    await cleaning;
+    t.advance(301);
+    await t.fixture.commit(monorepo(shared));
+    const other = t.isolate();
+    expect(await t.read(other).text("review", "shared.md")).toBe("# Shared across revisions\n");
+    t.fixture.reset();
+    resume();
+    expect(await first).toEqual(TEAM);
+    expect(await t.read(other).text("review", "shared.md")).toBe("# Shared across revisions\n");
+    expect(t.blobs()).toBe(0);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("stores a GitHub rate limit's hold before releasing the lease, and rereads the hold after claiming it", async () => {
+  for (const arrival of ["at release", "between read and claim"] as const) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo());
+      await t.names();
+      t.fixture.intercept(() => new Response("{}", { status: 429, headers: { "retry-after": "600" } }));
+      t.advance(301);
+      t.fixture.reset();
+      let other: Promise<string[]> | undefined;
+      if (arrival === "at release") {
+        t.hooks.compareAndSet = async (key, next) => {
+          if (!key.endsWith(":lease") || next !== null || other) return;
+          other = t.names(t.isolate());
+          await other;
+        };
+        expect(await t.names()).toEqual(TEAM);
+      } else {
+        t.hooks.get = async (key) => {
+          if (!key.endsWith(":hold") || other) return;
+          other = t.names();
+          await other;
+        };
+        expect(await t.names(t.isolate())).toEqual(TEAM);
+      }
+      expect(await other, arrival).toEqual(TEAM);
+      expect(t.fixture.paths(), arrival).toEqual(["commits/main"]);
+      expect(t.warnings, arrival).toEqual([
+        ["[connecta] skill source warning", { source: "team", code: "rate_limited" }],
+      ]);
+    } finally {
+      endGithubDeployment();
+    }
   }
 });
 

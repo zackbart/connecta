@@ -61,6 +61,7 @@ const MAX_FRESH_SECONDS = 86_400;
 const CHECK_TIMEOUT_MS = 10_000;
 const RESERVE_MS = 2_000;
 const LEASE_MARGIN_MS = 1_000;
+const LEASE_SAFETY_MS = 2_000;
 const AWAIT_INTERVAL_MS = 1_000;
 const MIN_FORBIDDEN_HOLD_MS = 60_000;
 const DEFAULT_RATE_LIMIT_HOLD_MS = 60_000;
@@ -668,9 +669,21 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           Effect.map((raw) => ({ raw, pointer: parsePointer(raw) })),
         );
 
-        /** Publishes `next` over the record read as `expected`; a lost race serves whichever record won. */
+        let lease: { holder: string; end: number } | undefined;
+        const withinLease = () => lease !== undefined && Date.now() < lease.end - LEASE_SAFETY_MS;
+        /** Whether this request still holds the check lease, with time left before storage expires it. */
+        const leaseHeld = Effect.gen(function* () {
+          if (!withinLease()) return false;
+          return (yield* io(storageGet(keys.lease))) === lease!.holder;
+        });
+
+        /**
+         * Publishes `next` over the record read as `expected`, only while this request holds the lease, so no
+         * publish lands during another holder's cleanup; a lost race serves whichever record won.
+         */
         const publish = (expected: string | null, next: Pointer): Effect.Effect<Pointer, SyncFailure> =>
           Effect.gen(function* () {
+            if (!(yield* leaseHeld)) return yield* Effect.fail(failure("deadline"));
             const swapped = yield* io(
               storageCompareAndSet(keys.snapshot, expected, JSON.stringify(next), {
                 expiresAtMs: next.checkedAt + GITHUB_SKILL_SNAPSHOT_TTL_MS,
@@ -827,23 +840,29 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                 for (const skill of prior.value.skills) for (const file of skill.files) keep.add(keys.file(file.blob));
                 for (let index = 0; index < previous.chunks; index++) keep.add(keys.manifest(previous.digest, index));
               }
-              yield* collect(keep);
+              yield* collect(keep, digest);
             }
             return published;
           });
 
-        /** Removes stored files and manifest chunks no current or previous snapshot names. */
-        const collect = (keep: ReadonlySet<string>) =>
+        /**
+         * Removes stored files and manifest chunks that neither the snapshot just published nor the one it replaced
+         * names. It runs only while the record in storage is still that snapshot and this request holds the lease,
+         * and every publish requires the lease, so no snapshot can be published during the deletes.
+         */
+        const collect = (keep: ReadonlySet<string>, digest: string) =>
           Effect.gen(function* () {
             const listed = [
               ...(yield* io(storageList(keys.filePrefix))),
               ...(yield* io(storageList(keys.manifestPrefix))),
             ];
-            yield* Effect.forEach(
-              listed.filter((key) => !keep.has(key)),
-              (key) => io(storageDelete(key)),
-              { discard: true },
-            );
+            const { pointer } = yield* readPointer;
+            if (pointer?.digest !== digest || !(yield* leaseHeld)) return;
+            for (const key of listed) {
+              if (keep.has(key)) continue;
+              if (!withinLease()) return;
+              yield* io(storageDelete(key));
+            }
           }).pipe(Effect.ignore);
 
         const check = (raw: string | null, pointer: Pointer | undefined, budgetEnd: number) =>
@@ -867,7 +886,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             return yield* Effect.fail(failure("deadline"));
           });
 
-        const { raw, pointer } = yield* readPointer;
+        const { pointer } = yield* readPointer;
         const now = Date.now();
         if (pointer && now - pointer.checkedAt < config.freshMs) return yield* serve(pointer);
         const held = yield* io(storageGet(keys.hold));
@@ -875,23 +894,33 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
         if (holdUntil > now) return pointer ? yield* serve(pointer) : yield* Effect.fail(failure("rate_limited"));
         const budgetEnd = ctx.deadlineAt - RESERVE_MS;
         const holder = crypto.randomUUID();
-        const claimed = yield* io(
-          storageCompareAndSet(keys.lease, null, holder, { expiresAtMs: ctx.deadlineAt + LEASE_MARGIN_MS }),
-        );
+        const leaseEnd = ctx.deadlineAt + LEASE_MARGIN_MS;
+        const claimed = yield* io(storageCompareAndSet(keys.lease, null, holder, { expiresAtMs: leaseEnd }));
         if (!claimed) return pointer ? yield* serve(pointer) : yield* awaitPublished(budgetEnd);
-        const outcome = yield* Effect.result(check(raw, pointer, budgetEnd)).pipe(
-          Effect.ensuring(io(storageCompareAndSet(keys.lease, holder, null)).pipe(Effect.ignore)),
-        );
-        if (Result.isSuccess(outcome)) return yield* serve(outcome.success);
+        lease = { holder, end: leaseEnd };
+        const release = io(storageCompareAndSet(keys.lease, holder, null)).pipe(Effect.ignore);
+        const current = yield* readPointer;
+        const heldNow = yield* io(storageGet(keys.hold));
+        const heldUntil = heldNow !== null && /^\d+$/.test(heldNow) ? Number(heldNow) : 0;
+        if (heldUntil > Date.now() || (current.pointer && Date.now() - current.pointer.checkedAt < config.freshMs)) {
+          yield* release;
+          return current.pointer ? yield* serve(current.pointer) : yield* Effect.fail(failure("rate_limited"));
+        }
+        const outcome = yield* Effect.result(check(current.raw, current.pointer, budgetEnd));
+        if (Result.isSuccess(outcome)) {
+          yield* release;
+          return yield* serve(outcome.success);
+        }
         const failed = outcome.failure;
         ctx.warn(failed.code);
         const holdEnd = Math.max(
           failed.holdUntil ?? 0,
-          pointer && failed.code !== "deadline" ? Date.now() + config.freshMs : 0,
+          current.pointer && failed.code !== "deadline" ? Date.now() + config.freshMs : 0,
         );
         if (holdEnd > Date.now())
           yield* io(storageSet(keys.hold, String(holdEnd), { expiresAtMs: holdEnd })).pipe(Effect.ignore);
-        return pointer ? yield* serve(pointer) : yield* Effect.fail(failed);
+        yield* release;
+        return current.pointer ? yield* serve(current.pointer) : yield* Effect.fail(failed);
       }),
   });
 }
