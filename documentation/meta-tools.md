@@ -925,8 +925,10 @@ wait of up to `freshFor`, to clear. A push therefore appears on the first skills
 more than `freshFor` seconds after the previous check, five minutes at most by
 default, unless the request's time or the platform's operation budget cuts the
 sync short; then later reads resume it. A sync cut short publishes nothing; the
-files it stored remain, and the next skills read resumes without fetching them
-again.
+files it stored remain, and the next skills read that checks resumes without
+fetching them again: at once after a deadline, once the lease lapses (at most
+30 seconds) after a refused store operation, and after the wait a failed
+request sets.
 
 Requests. Every request goes to `https://api.github.com` with
 `Accept`, `X-GitHub-Api-Version: 2026-03-10` and a generic `User-Agent`.
@@ -964,7 +966,9 @@ within the request's time budget and publishes in the same request. If the
 step cannot finish, for any reason including the platform refusing further
 store or network operations, the request keeps what it stored and ends by
 serving the snapshot it holds in memory, with no further store read for the
-listing; its lease then lapses within 30 seconds if it could not be released,
+listing. A file read needs the store, so when a refused store operation ended
+the step, file reads in that same request fail as unavailable and the next
+request serves them. The lease then lapses within 30 seconds if it could not be released,
 and the next read after that resumes the sync. A resumed sync skips files and manifest chunks already stored in
 the same partition, and never reads the body of any stored file except the `SKILL.md`
 documents it reuses: each file's digest and write time are in its key. On
@@ -972,7 +976,12 @@ Cloudflare Workers each GitHub request and each D1 query is a subrequest: a
 Free plan invocation allows 50 subrequests (and 50 D1 queries), a Paid one
 10,000 subrequests and 1,000 D1 queries. A first sync that exceeds the limit
 fails at that point and resumes on later reads, each storing more files, until
-the snapshot publishes.
+the snapshot publishes. Storing one file takes two D1 queries, so a Free plan
+request stores about 19 files. A source is supported on a plan only when its
+reads can store all of its files within the 15 days a re-store has: a
+325-file source read once a day on the Free plan cannot, and it becomes
+unavailable when its rows expire and can stay unavailable. Use a Paid plan for
+a source of more than a few dozen files.
 
 Limits. A sync fails, and nothing from it is published, for any of these: a skill
 directory whose name differs from its frontmatter `name` or breaks the Agent
@@ -1080,8 +1089,9 @@ fetches again only the rows older than 15 days, writing them with a fresh
 expiry, while the existing snapshot keeps serving. The revision is unchanged,
 so each step renews the existing record's seven-day expiry before it fetches,
 as an unchanged-revision check does; the new snapshot publishes in the request
-whose step finishes. A step cut short keeps serving the existing snapshot and
-the next read resumes it. Rows from old revisions,
+whose step finishes. A step cut short keeps serving the existing snapshot, and
+because the record was renewed first, the next check `freshFor` seconds later
+resumes it. Rows from old revisions,
 old tokens and sources removed from the configuration expire on their own;
 anything that goes missing before then is restored by repair.
 
