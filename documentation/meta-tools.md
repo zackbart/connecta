@@ -720,7 +720,7 @@ the short conditional guide pointers in its tool definitions.
 ### Deployment skill sources
 
 A deployment publishes Agent Skills of its own, which no connector backs, with
-`skills` on `createConnecta`. Each entry is a skill source; this release ships
+`skills` on `createConnecta`. Each entry is a skill source. Two are available from 0.56.0:
 `inlineSkills(id, skills, { description? })` from the package root, which takes
 skills from deployment code as file maps, and
 [`githubSkills`](#github-skill-source) from `@zackbart/connecta/github-skills`,
