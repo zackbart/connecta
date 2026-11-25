@@ -801,7 +801,11 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           Effect.map((raw) => ({ raw, pointer: parsePointer(raw) })),
         );
 
-        let lease: { holder: string; budgetEnd: number; expiresAt: number } | undefined;
+        let lease:
+          | { holder: string; value: string; budgetEnd: number; expiresAt: number; renewing: boolean }
+          | undefined;
+        /** The stored lease value: the holder and the expiry it last wrote, so every renewal names what it replaces. */
+        const leaseValue = (holder: string, expiresAt: number) => `${holder}:${expiresAt}`;
         const leaseExpiry = () =>
           Math.min(Date.now() + LEASE_TTL_MS, ctx.deadlineAt + LEASE_SAFETY_MS + LEASE_MARGIN_MS);
         /** Synchronous: the request is live, its budget has not ended, and its lease has time left. */
@@ -812,22 +816,34 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
         /** Whether this request still holds the check lease, before its budget ends and storage expires the lease. */
         const leaseHeld = Effect.gen(function* () {
           if (!withinLease()) return false;
-          return (yield* io(storageGet(keys.lease))) === lease!.holder;
+          return (yield* io(storageGet(keys.lease))) === lease!.value;
         });
         /**
-         * Extends the lease while the holder makes progress, once half its lifetime has passed, so an interrupted
-         * holder's lease lapses within {@link LEASE_TTL_MS}. Losing the lease fails the work.
+         * Extends the lease while the holder makes progress, once less than half of {@link LEASE_TTL_MS} remains,
+         * so an interrupted holder's lease lapses within that lifetime. One renewal runs at a time, it is a
+         * compare-and-set against the value this holder last wrote, and it is written only when it moves the
+         * expiry later, so a delayed renewal can never shorten the lease. Losing the lease fails the work.
          */
         const extendLease = Effect.gen(function* () {
-          if (!lease) return;
-          if (Date.now() < lease.expiresAt - LEASE_TTL_MS / 2) return;
+          const held = lease;
+          if (!held || held.renewing || Date.now() < held.expiresAt - LEASE_TTL_MS / 2) return;
           const expiresAt = leaseExpiry();
-          if (
-            !withinLease() ||
-            !(yield* io(storageCompareAndSet(keys.lease, lease.holder, lease.holder, { expiresAtMs: expiresAt })))
-          )
-            return yield* Effect.fail(failure("deadline"));
-          lease.expiresAt = expiresAt;
+          if (expiresAt <= held.expiresAt) return;
+          if (!withinLease()) return yield* Effect.fail(failure("deadline"));
+          const value = leaseValue(held.holder, expiresAt);
+          held.renewing = true;
+          const renewed = yield* io(
+            storageCompareAndSet(keys.lease, held.value, value, { expiresAtMs: expiresAt }),
+          ).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                held.renewing = false;
+              }),
+            ),
+          );
+          if (!renewed) return yield* Effect.fail(failure("deadline"));
+          held.value = value;
+          held.expiresAt = expiresAt;
         });
 
         /**
@@ -1198,8 +1214,10 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           expiresAt: number,
         ): Effect.Effect<SkillSourceSnapshot, SyncFailure> =>
           Effect.gen(function* () {
-            lease = { holder, budgetEnd, expiresAt };
-            const release = io(storageCompareAndSet(keys.lease, holder, null)).pipe(Effect.ignore);
+            lease = { holder, value: leaseValue(holder, expiresAt), budgetEnd, expiresAt, renewing: false };
+            const release = Effect.suspend(() => io(storageCompareAndSet(keys.lease, lease!.value, null))).pipe(
+              Effect.ignore,
+            );
             const current = yield* readPointer;
             const heldNow = yield* io(storageGet(keys.hold));
             const heldUntil = heldNow !== null && /^\d+$/.test(heldNow) ? Number(heldNow) : 0;
@@ -1233,9 +1251,9 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
         const claim = (holder: string) =>
           Effect.suspend(() => {
             const expiresAt = leaseExpiry();
-            return io(storageCompareAndSet(keys.lease, null, holder, { expiresAtMs: expiresAt })).pipe(
-              Effect.map((claimed) => (claimed ? expiresAt : undefined)),
-            );
+            return io(
+              storageCompareAndSet(keys.lease, null, leaseValue(holder, expiresAt), { expiresAtMs: expiresAt }),
+            ).pipe(Effect.map((claimed) => (claimed ? expiresAt : undefined)));
           });
 
         /**

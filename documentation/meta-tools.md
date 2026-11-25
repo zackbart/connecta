@@ -905,13 +905,23 @@ discovery probe timeout (`discovery.probeTimeoutMs`, 30 seconds by default for
 MCP requests), less a reserve of a fifth of it up to two seconds for serving
 the result, and served. A snapshot is published only while the request holds
 the lease and before that deadline, checked immediately before the write is
-dispatched, and the request does not return while a publish is in flight.
+dispatched, and the request does not return while a publish is in flight. A
+publish sent on time whose storage write stalls past the lease's lifetime can
+land after another process has taken over and leave the older revision marked
+fresh; the next check after `freshFor` corrects it. The lease is renewed by
+compare-and-set against the value its holder last wrote, one renewal at a time
+and only when it moves the expiry later, so a delayed renewal never shortens
+it.
 
 Repair. When a skills read finds a file or manifest chunk the stored snapshot
 names missing or not matching its digest, it marks the record for repair. That
 read, or the next one if it cannot finish in time, checks regardless of
 `freshFor` and resyncs even an unchanged revision, fetching only what is
-missing, and the snapshot serves again. A push therefore appears on the first skills read
+missing, and the snapshot serves again. Repair restores a missing row, and a
+row that fails its digest when a read reaches it; it does not re-validate rows
+it reuses, so two faults at once (a missing chunk beside a corrupt sibling, or
+a missing file beside a corrupt `SKILL.md`) can take more than one read, or one
+wait of up to `freshFor`, to clear. A push therefore appears on the first skills read
 more than `freshFor` seconds after the previous check, five minutes at most by
 default. A sync the deadline interrupts publishes nothing; the files it stored
 remain, and the next skills read resumes without fetching them again.
@@ -929,11 +939,19 @@ Requests. Every request goes to `https://api.github.com` with
 
 `plugins/team/skills` with 20 skill files makes 26 requests on its first sync.
 No request lists the repository root recursively, so a large monorepo works.
-Storage work is bounded: besides one write per file it fetches, a sync makes one
-listing of stored files, one batched read of the `SKILL.md` documents it did
-not fetch (64 keys per query), one write per manifest chunk, and fewer than ten
-lease, snapshot and hold operations. A resumed sync skips manifest chunks already
-stored for the same manifest. A resumed sync never reads the body of any
+Storage work is bounded. These are upper bounds for one skills read that
+checks, not typical counts:
+
+- one write per file it fetches or rechecks, and one batched read per 64 stored
+  files it rechecks or `SKILL.md` documents it did not fetch;
+- at most 8 manifest chunk writes and one batched read of at most 8 chunks;
+- at most 6 key listings;
+- at most 24 lease, snapshot and hold operations, plus one lease renewal for
+  each 15 seconds of work;
+- in cleanup, for each key deleted, one snapshot-record read and one delete,
+  plus one manifest read whenever the record has changed.
+
+A resumed sync skips manifest chunks already stored for the same manifest. A resumed sync never reads the body of any
 other stored file: each file's digest and token check are in its key. After the
 token changes, each stored file is read once in those batches and rewritten
 once. On Cloudflare Workers each GitHub request and each D1 query

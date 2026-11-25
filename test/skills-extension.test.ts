@@ -1428,6 +1428,10 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}) {
     list?: ((prefix: string) => Promise<void>) | undefined;
     set?: ((key: string) => Promise<void>) | undefined;
     delete?: ((key: string) => Promise<void>) | undefined;
+    beforeCompareAndSet?:
+      | ((key: string, expected: string | null, next: string | null, expiresAtMs?: number) => Promise<void>)
+      | undefined;
+    committed?: ((key: string, next: string | null, expiresAtMs?: number) => void) | undefined;
     compareAndSet?: ((key: string, next: string | null) => Promise<void>) | undefined;
   } = {};
   const storage: KVStorage = {
@@ -1451,7 +1455,9 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}) {
       return keys;
     },
     async compareAndSet(key, expected, next, options) {
+      await hooks.beforeCompareAndSet?.(key, expected, next, options?.expiresAtMs);
       const swapped = await inner.compareAndSet(key, expected, next, options);
+      if (swapped) hooks.committed?.(key, next, options?.expiresAtMs);
       await hooks.compareAndSet?.(key, next);
       return swapped;
     },
@@ -2413,6 +2419,62 @@ it("lets a GitHub lease held by an interrupted request lapse within its short li
     stalled = false;
     t.advance(31);
     expect((await t.read(t.isolate(), 3_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("never shortens a GitHub lease when a delayed renewal lands after a later one", async () => {
+  const t = await githubDeployment();
+  try {
+    const extra = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [`${SKILLS_PATH}/review/notes/${index}.md`, `# Note ${index}\n`]),
+    );
+    await t.fixture.commit(monorepo(extra));
+    let pausing: Promise<unknown> | undefined;
+    t.fixture.intercept(async (url) => {
+      if (!url.pathname.includes("/git/blobs/")) return undefined;
+      await pausing;
+      t.advance(3);
+      return undefined;
+    });
+    const renewals: number[] = [];
+    let held = 0;
+    let later!: () => void;
+    const landed = new Promise<void>((resolve) => (later = resolve));
+    t.hooks.beforeCompareAndSet = async (key, expected, next) => {
+      if (!key.endsWith(":lease") || expected === null || next === null) return;
+      if (++held !== 1) return;
+      pausing = Promise.race([landed, new Promise((resolve) => setTimeout(resolve, 200))]);
+      await pausing;
+    };
+    t.hooks.committed = (key, next, expiresAtMs) => {
+      if (!key.endsWith(":lease") || next === null || expiresAtMs === undefined) return;
+      renewals.push(expiresAtMs);
+      if (renewals.length === 3) later();
+    };
+    expect((await t.read(t.root, 300_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+    expect(renewals.length).toBeGreaterThan(1);
+    for (let index = 1; index < renewals.length; index++) expect(renewals[index]).toBeGreaterThan(renewals[index - 1]!);
+    expect(t.warnings).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("writes no GitHub lease renewal that does not extend the lease", async () => {
+  const t = await githubDeployment();
+  try {
+    const extra = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [`${SKILLS_PATH}/review/notes/${index}.md`, `# Note ${index}\n`]),
+    );
+    await t.fixture.commit(monorepo(extra));
+    let writes = 0;
+    t.hooks.committed = (key, next) => {
+      if (key.endsWith(":lease") && next !== null) writes++;
+    };
+    expect((await t.read(t.root, 5_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+    expect(writes).toBe(1);
   } finally {
     endGithubDeployment();
   }
