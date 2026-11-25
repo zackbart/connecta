@@ -430,7 +430,7 @@ export const missing: [Exclude<keyof GuestApi, keyof Compact>] extends [never] ?
     ["an invented argument", "query?: string;", "q?: string;"],
     ["a wrong result type", "hasMore: boolean;", "hasMore: number;"],
     ["a refused argument", "addresses?: string[];", "addresses?: number[];"],
-    ["a missing method", "\nskill(name: string): Promise<{ text: string }>;", ""],
+    ["a missing method", "\nskill(name: string, options?: { file?: string }): Promise<{ text: string }>;", ""],
     ["an optional authored field", "data: string; mimeType: string }", "data: string; mimeType?: string }"],
     ["an untyped authored block", '{ type: "text"; text: string }', "{ type: string; text: string }"],
     ["a native block it cannot take back", '| { type: "resource_link"; uri: string; name: string }', ""],

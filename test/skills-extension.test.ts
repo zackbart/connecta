@@ -13,6 +13,11 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import extSkillsSchema from "./fixtures/ext-skills/schema.json";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { Effect } from "effect";
+import { parseFrontmatter } from "../src/skill-frontmatter.js";
+import { defineSkillSource } from "../src/skill-source-seam.js";
+import { inlineSkills } from "../src/skill-sources.js";
 
 const BASE = "https://connecta.test";
 const URI = "skill://vendor/review/SKILL.md";
@@ -803,4 +808,584 @@ it("rejects ambiguous compatibility aliases without losing canonical guides", as
   } finally {
     spy.mockRestore();
   }
+});
+
+const REVIEW_MD =
+  "---\nname: review\ndescription: Review a pull request against the team checklist.\nmetadata:\n  owner: alice\n  tags: [code, quality]\nlicense: 'It''s MIT'\n---\n\n# Review\r\n\nFollow [the checklist](references/checklist.md).\n";
+const CHECKLIST = "# Checklist\n\n- Tests pass.\n";
+const LOGO = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00, 0xfe]);
+const RELEASE_MD = "---\nname: release\ndescription: Cut a release.\n---\n\nTag, then publish.\n";
+function teamSkills(id = "team", description?: string) {
+  return inlineSkills(
+    id,
+    {
+      review: { "SKILL.md": REVIEW_MD, "references/checklist.md": CHECKLIST, "assets/logo.png": LOGO },
+      release: { "SKILL.md": RELEASE_MD },
+    },
+    description === undefined ? {} : { description },
+  );
+}
+const sha256 = async (bytes: Uint8Array) =>
+  "sha256:" +
+  Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) => b.toString(16).padStart(2, "0")).join(
+    "",
+  );
+const served = (content: { text?: string; blob?: string }) =>
+  typeof content.text === "string"
+    ? new TextEncoder().encode(content.text)
+    : Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0));
+const toolText = (result: { content: { type: string; text?: string }[] }) => result.content[0]?.text ?? "";
+
+it("serves an inline source skill's complete manifest, byte-exact files and ext-skills results", async () => {
+  const c = createTestConnecta({ connectors: [guided("crm")], skills: [teamSkills()], logger: silentLogger });
+  const validList = extSkillsValidator("ListSkillsResult");
+  const validGet = extSkillsValidator("GetSkillResult");
+  try {
+    const page = await rpc(c, "skills/list");
+    expect(validList(page.result)).toBe(true);
+    expect(page.result.skills.map((skill: { uri: string }) => skill.uri)).toEqual([
+      "skill://connecta/usage/SKILL.md",
+      "skill://connecta/connectors/crm/SKILL.md",
+      "skill://connecta/skills/team/release/SKILL.md",
+      "skill://connecta/skills/team/review/SKILL.md",
+      "skill://connecta/investigate/SKILL.md",
+    ]);
+    const review = page.result.skills[3];
+    expect(review.resources.map((file: { uri: string }) => file.uri)).toEqual([
+      "skill://connecta/skills/team/review/SKILL.md",
+      "skill://connecta/skills/team/review/assets/logo.png",
+      "skill://connecta/skills/team/review/references/checklist.md",
+    ]);
+    for (const file of review.resources) {
+      const read = await rpc(c, "resources/read", { uri: file.uri });
+      expect(read.error).toBeUndefined();
+      const bytes = served(read.result.contents[0]);
+      expect(bytes.length).toBe(file.size);
+      expect(await sha256(bytes)).toBe(file.digest);
+    }
+    const document = (await rpc(c, "resources/read", { uri: review.uri })).result.contents[0];
+    expect(document.text).toBe(REVIEW_MD);
+    expect(servedFrontmatter(document.text)).toEqual(review.frontmatter);
+    expect(review.frontmatter).toEqual({
+      name: "review",
+      description: "Review a pull request against the team checklist.",
+      metadata: { owner: "alice", tags: ["code", "quality"] },
+      license: "It's MIT",
+    });
+    const logo = (await rpc(c, "resources/read", { uri: review.resources[1].uri })).result.contents[0];
+    expect(logo.text).toBeUndefined();
+    expect(served(logo)).toEqual(LOGO);
+    const get = await rpc(c, "skills/get", { uri: review.uri });
+    expect(validGet(get.result)).toBe(true);
+    expect(get.result.skill).toEqual(review);
+    const resources = await rpc(c, "resources/list");
+    expect(resources.result.resources).toContainEqual(
+      expect.objectContaining({ uri: review.uri, name: "review", mimeType: "text/markdown" }),
+    );
+    expect(JSON.stringify(page.result)).not.toContain("Third-party");
+  } finally {
+    await c.close();
+  }
+});
+
+it("reads source skills, their bodies and supporting files on the skills tool and connecta.skill", async () => {
+  const root = makeRegistry([guided("crm")], { skillSources: [teamSkills()] } as never);
+  const tools = createMetaTools(root, BASE);
+  const guest = (await buildSandboxProviders(root, BASE, silentLogger))[0]!.fns;
+  const listing = await tools.skills({});
+  expect(listing.structuredContent).toMatchObject({
+    skills: expect.arrayContaining([
+      { name: "team:review", uri: "skill://connecta/skills/team/review/SKILL.md", description: expect.any(String) },
+    ]),
+  });
+  expect(toolText(listing)).toContain("- `team:review` — Review a pull request against the team checklist.");
+  const body =
+    "# Review\r\n\nFollow [the checklist](references/checklist.md).\n\n\nSupporting files (pass one as file with this skill's name to read it): assets/logo.png, references/checklist.md.";
+  for (const name of ["team:review", "review", "skill://connecta/skills/team/review/SKILL.md"]) {
+    expect(toolText(await tools.skills({ name }))).toBe(body);
+    expect(((await guest.skill!(name)) as { text: string }).text).toBe(body);
+  }
+  expect(toolText(await tools.skills({ name: "release" }))).toBe("Tag, then publish.\n");
+  expect(toolText(await tools.skills({ name: "review", file: "references/checklist.md" }))).toBe(CHECKLIST);
+  expect(((await guest.skill!("team:review", { file: "references/checklist.md" })) as { text: string }).text).toBe(
+    CHECKLIST,
+  );
+  expect(
+    ((await guest.skill!({ name: "team:review", file: "references/checklist.md" })) as { text: string }).text,
+  ).toBe(CHECKLIST);
+  const binary = await tools.skills({ name: "team:review", file: "assets/logo.png" });
+  expect(binary.isError).toBe(true);
+  expect(binary.structuredContent).toMatchObject({ error: { code: "unsupported_capability" } });
+  expect(toolText(binary)).toContain("binary");
+  await expect(guest.skill!("team:review", { file: "assets/logo.png" })).rejects.toMatchObject({
+    code: "unsupported_capability",
+  });
+  for (const file of [
+    "../release/SKILL.md",
+    "/references/checklist.md",
+    "references\\checklist.md",
+    "references//checklist.md",
+    "missing.md",
+  ]) {
+    const refused = await tools.skills({ name: "team:review", file });
+    expect(refused.structuredContent).toMatchObject({ error: { code: "not_found" } });
+  }
+  expect((await tools.skills({ file: "references/checklist.md" })).structuredContent).toMatchObject({
+    error: { code: "invalid_args" },
+  });
+
+  const twice = makeRegistry([], { skillSources: [teamSkills(), teamSkills("ops")] } as never);
+  const ambiguous = await createMetaTools(twice, BASE).skills({ name: "review" });
+  expect(ambiguous.structuredContent).toMatchObject({ error: { code: "invalid_args" } });
+  expect(toolText(ambiguous)).toContain("team:review, ops:review");
+  expect(toolText(await createMetaTools(twice, BASE).skills({ name: "ops:review" }))).toBe(body);
+  const order = (await new SkillsRegistry(twice, BASE).summaries()).map((skill) => skill.name);
+  expect(order).toEqual(["usage", "team:release", "team:review", "ops:release", "ops:review", "investigate"]);
+});
+
+it("INV-4: scopes source skills to pools that list them and serves unknown-skill responses otherwise", async () => {
+  const person = (id: string) => ({ namespace: "https://clerk.skills.test", id });
+  const config = (skills: ReturnType<typeof inlineSkills>[], poolSkills?: string[]) =>
+    createTestConnecta({
+      connectors: [guided("crm")],
+      logger: silentLogger,
+      skills,
+      auth: {
+        kind: "clerk",
+        activityActorNamespace: "https://clerk.skills.test",
+        authorize: (request) => {
+          const id = request.headers.get("Authorization")?.slice(7);
+          return id ? { ok: true, userId: id } : { ok: false, response: new Response(null, { status: 401 }) };
+        },
+      },
+      maintainers: [person("root")],
+      pools: {
+        with: { tools: ["crm"], members: [person("alice")], ...(poolSkills ? { skills: poolSkills } : {}) },
+        without: { tools: ["crm"], members: [person("bob")] },
+      },
+    });
+  const c = config([teamSkills("team", "Team workflows: pull request review."), teamSkills("ops")], ["team"]);
+  const none = config([]);
+  const uri = "skill://connecta/skills/team/review/SKILL.md";
+  const file = "skill://connecta/skills/team/review/references/checklist.md";
+  try {
+    const root = JSON.stringify((await rpc(c, "skills/list", {}, "/mcp", "root")).result);
+    expect(root).toContain("skills/team/review");
+    expect(root).toContain("skills/ops/release");
+    const alice = JSON.stringify((await rpc(c, "skills/list", {}, "/mcp", "alice")).result);
+    expect(alice).toContain("skills/team/review");
+    expect(alice).not.toContain("skills/ops/");
+    expect((await rpc(c, "resources/read", { uri: file }, "/mcp", "alice")).result.contents[0].text).toBe(CHECKLIST);
+    const bob = await rpc(c, "skills/list", {}, "/mcp", "bob");
+    expect(JSON.stringify(bob.result)).not.toContain("skills/");
+    for (const [method, params] of [
+      ["skills/get", { uri }],
+      ["resources/read", { uri }],
+      ["resources/read", { uri: file }],
+    ] as const) {
+      const hidden = await rpc(c, method, params, "/mcp", "bob");
+      expect(hidden.error).toBeDefined();
+      expect(hidden).toEqual(await rpc(none, method, params, "/mcp", "bob"));
+    }
+    const call = async (app: typeof c, token: string, args: Record<string, unknown>) =>
+      (await readJsonRpc(await mcpRpc(app, "tools/call", { name: "skills", arguments: args }, { token }))).result;
+    for (const args of [
+      { name: "team:review" },
+      { name: "review" },
+      { name: uri },
+      { name: "team:review", file: "references/checklist.md" },
+    ])
+      expect(await call(c, "bob", args)).toEqual(await call(none, "bob", args));
+    expect(toolText(await call(c, "alice", { name: "review", file: "references/checklist.md" }))).toBe(CHECKLIST);
+
+    const description = async (app: typeof c, token: string) => {
+      const listed = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token }));
+      return JSON.stringify(listed.result.tools.find((tool: { name: string }) => tool.name === "skills"));
+    };
+    const first = await description(c, "alice");
+    expect(await description(c, "alice")).toBe(first);
+    expect(first).toContain("Sources: team (Team workflows: pull request review.).");
+    expect(first).not.toContain("ops");
+    expect(first).not.toContain("release");
+    expect(first).not.toContain("checklist");
+    expect(await description(c, "root")).toContain("Sources: team (Team workflows: pull request review.), ops.");
+    expect(await description(c, "bob")).toBe(await description(none, "bob"));
+  } finally {
+    await c.close();
+    await none.close();
+  }
+});
+
+it("fails the skills listing for a source with nothing to serve while local skills stay readable", async () => {
+  const failing = defineSkillSource("broken", "broken", undefined, {
+    snapshot: () => Effect.fail(new Error("upstream detail that must not surface")),
+  });
+  const root = makeRegistry([guided("crm")], { skillSources: [failing] } as never);
+  const registry = new SkillsRegistry(root, BASE);
+  await expect(registry.list()).rejects.toMatchObject({ code: "unavailable" });
+  expect((await registry.read("skill://connecta/usage/SKILL.md")).contents[0]?.text).toContain("# Connecta usage");
+  expect(await registry.text("crm")).toContain("Read crm.");
+  const tools = createMetaTools(root, BASE);
+  const listing = await tools.skills({});
+  expect(listing.isError).toBe(true);
+  expect(JSON.stringify(listing)).not.toContain("upstream detail");
+  expect(toolText(await tools.skills({ name: "usage" }))).toContain("Connecta usage");
+  expect((await tools.skills({ name: "broken:anything" })).structuredContent).toMatchObject({
+    error: { code: "unavailable" },
+  });
+});
+
+function frontmatterCorpus(count: number, seed = 1506): string[] {
+  let state = seed;
+  const random = () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = <T>(items: readonly T[]) => items[Math.floor(random() * items.length)]!;
+  const good = [
+    "x",
+    "Review a pull request.",
+    "1",
+    "0",
+    "+1",
+    "1.5",
+    ".5",
+    "5.",
+    "1e3",
+    "true",
+    "yes",
+    "~",
+    "null",
+    "a:b",
+    "a#c",
+    "'q''s'",
+    '"esc\\n"',
+    '"\\u00e9"',
+    "[a, b]",
+    "[ a ,b ]",
+    "[]",
+    "-x",
+    "12:30",
+    "2024-01-01",
+    "Bash(git:*) Read",
+    "é",
+    "😀",
+    "x, y",
+    "-.5",
+    '""',
+    "''",
+  ];
+  const goodKeys = ["name", "description", "a-b", "_x", "Key", "metadata", "license"];
+  const scalars = [
+    "x",
+    "Review a pull request.",
+    " x ",
+    "1",
+    "-0",
+    "0",
+    "+1",
+    "1.5",
+    ".5",
+    "5.",
+    "1e3",
+    "1e999",
+    "0x1f",
+    "0o7",
+    "1_000",
+    "true",
+    "True",
+    "yes",
+    "~",
+    "null",
+    "a: b",
+    "a:b",
+    "a #c",
+    "a#c",
+    "'q''s'",
+    '"esc\\n"',
+    '"\\ud800"',
+    '"\\u00e9"',
+    '"\\x41"',
+    "[a, b]",
+    "[a, [b]]",
+    "[ a ,b ]",
+    "[a,]",
+    "[]",
+    "{}",
+    "{a: 1}",
+    "&a x",
+    "*a",
+    "!t x",
+    "- a",
+    "-x",
+    "?x",
+    "x  ",
+    "x\t",
+    '"x" #c',
+    "'x'#c",
+    "12:30",
+    "2024-01-01",
+    ".inf",
+    ".nan",
+    "@x",
+    "`x`",
+    "%x",
+    "x, y",
+    "Bash(git:*) Read",
+    "é",
+    "😀",
+    "x y",
+    "'unterminated",
+    '"a" b',
+    "--- x",
+    "...",
+    "9007199254740993",
+    "-.5",
+    "x # c # d",
+    "#",
+    "x:",
+    ":x",
+    '""',
+    "''",
+  ];
+  const keys = [
+    "name",
+    "description",
+    "a-b",
+    "_x",
+    "x.y",
+    "1",
+    "true",
+    "null",
+    '"q"',
+    "Key",
+    "metadata",
+    "license",
+    "k k",
+    "-k",
+    "k:",
+    "é",
+    "__proto__",
+  ];
+  const docs: string[] = [];
+  const entry = (indent: string, depth: number): string[] => {
+    const key = random() < 0.85 ? pick(goodKeys) : pick(keys);
+    const roll = random();
+    const comment = random() < 0.15 ? pick([" # c", "#c", " #"]) : "";
+    if (roll < 0.55)
+      return [`${indent}${key}:${random() < 0.05 ? "" : " "}${random() < 0.8 ? pick(good) : pick(scalars)}${comment}`];
+    if (roll < 0.7) {
+      const header = pick(["|", "|-", ">", ">-", "|+", ">2", "| # c"]);
+      const lines = Array.from({ length: 1 + Math.floor(random() * 4) }, () =>
+        pick(["text", "more text", "", "  indented", "trailing ", "# not a comment", "a: b"]),
+      );
+      return [
+        `${indent}${key}: ${header}`,
+        ...lines.map((line) => (line === "" ? (random() < 0.2 ? `${indent}  ` : "") : `${indent}  ${line}`)),
+      ];
+    }
+    if (roll < 0.85) {
+      const sub = random() < 0.2 ? indent : `${indent}  `;
+      return [
+        `${indent}${key}:${comment}`,
+        ...Array.from(
+          { length: 1 + Math.floor(random() * 3) },
+          () => `${sub}- ${random() < 0.8 ? pick(good) : pick(scalars)}`,
+        ),
+      ];
+    }
+    if (depth > 2) return [`${indent}${key}: x`];
+    return [
+      `${indent}${key}:`,
+      ...Array.from({ length: 1 + Math.floor(random() * 3) }, () =>
+        entry(`${indent}${random() < 0.1 ? " " : "  "}`, depth + 1),
+      ).flat(),
+    ];
+  };
+  for (let n = 0; n < count; n++) {
+    const lines: string[] = [];
+    for (let i = 0, total = 1 + Math.floor(random() * 5); i < total; i++) {
+      if (random() < 0.1) lines.push(pick(["# comment", "", "  # indented comment", "   "]));
+      lines.push(...entry("", 0));
+    }
+    docs.push(lines.join(random() < 0.1 ? "\r\n" : "\n"));
+  }
+  return docs;
+}
+
+it("parses the SKILL.md frontmatter subset exactly as a YAML parser does and refuses the rest", () => {
+  const same = (source: string) => {
+    const ours = parseFrontmatter(source);
+    if (ours === undefined) return false;
+    expect(ours, source).toEqual(parseYaml(source));
+    expect(JSON.parse(JSON.stringify(ours)), source).toEqual(ours);
+    return true;
+  };
+  expect(
+    same(
+      "name: x\ndescription: |\n  Line one\n  line three\n\nmetadata:\n  author: alice # who\n  tags:\n    - a\n    - \"b c\"\n  nested:\n    deep: 1\nlist:\n- one\nflow: [a, \"b\", 'c d', 3]\nempty: []\nfolded: >-\n  one\n  two\n\n  three\nlicense: 'It''s MIT'\nversion: 1.0",
+    ),
+  ).toBe(true);
+  for (const value of [
+    'Write "hello # internal note"',
+    "it's fine # note",
+    'say "hi" there',
+    '"a # b" # c',
+    "'it''s # x' # c",
+    '[a, "b # c", d] # e',
+    "[a, 'b # c']",
+  ])
+    expect(same(`name: x\ndescription: ${value}`), value).toBe(true);
+  expect(same(`name: x\ndescription: ${"é".repeat(16_000)}`)).toBe(true);
+  let accepted = 0;
+  for (const source of frontmatterCorpus(6_000)) if (same(source)) accepted++;
+  expect(accepted).toBeGreaterThan(1_000);
+  for (const source of [
+    "name: \u00a0x\u00a0",
+    '{"name": "x", "name": "y"}',
+    '{"name": "x", "description": 1e999}',
+    "1: x",
+    "true: x",
+    "null: x",
+    '"quoted": x',
+    "name: x\t# c",
+    "name: x\tx",
+    "name: [a, [b]]",
+    "name: &a x",
+    "name: *a",
+    "a: b: c",
+    "name: x\n  more",
+    "name: 0x1f",
+    "name: .inf",
+    "name: -0",
+    "name: 1e999",
+    "name: 9007199254740993",
+    "k: v\nk: w",
+    "- a",
+    "name: !tag x",
+    "x: |2\n  a",
+    "x: |+\n  a\n",
+    'name: "unterminated',
+    'name: "\\ud800"',
+    `${"a".repeat(20_000)}`,
+    `name: ${"x".repeat(40_000)}`,
+    `name: ${"é".repeat(17_000)}`,
+    Array.from({ length: 12 }, (_, depth) => `${"  ".repeat(depth)}k${depth}:`).join("\n") + " x",
+  ])
+    expect(parseFrontmatter(source), source).toBeUndefined();
+  const started = performance.now();
+  for (const source of ["a".repeat(32_000), `a: [${"x,".repeat(15_000)}x]`, `a:\n${"- x\n".repeat(7_000)}`])
+    parseFrontmatter(source);
+  expect(performance.now() - started).toBeLessThan(250);
+});
+
+it("refuses a supporting-file selector that more than one manifest entry decodes to", async () => {
+  const files = { "skill://vendor/review/guide.md": "first", "skill://vendor/review/%67uide.md": "second" };
+  const remote = downstream("remote", {
+    list: async (ctx) => [
+      {
+        ...(await downstream().downstreamSkills!.list(ctx))[0]!,
+        resources: [
+          { uri: URI, digest: DIGEST, size: new TextEncoder().encode(TEXT).length },
+          ...Object.entries(files).map(([uri, text]) => ({ uri, digest: DIGEST, size: text.length })),
+          { uri: "skill://vendor/review/notes.md", digest: DIGEST, size: 5 },
+        ],
+      },
+    ],
+    read: async (uri) => [
+      { uri, text: uri === URI ? TEXT : uri.endsWith("notes.md") ? "notes" : files[uri as keyof typeof files] },
+    ],
+  });
+  const tools = createMetaTools(makeRegistry([remote]), BASE);
+  const name = downstreamSkillUri("remote", URI);
+  const listing = toolText(await tools.skills({ name }));
+  expect(listing).toContain("Supporting files (pass one as file with this skill's name to read it): notes.md.");
+  expect(listing).not.toContain("guide.md");
+  expect((await tools.skills({ name, file: "guide.md" })).structuredContent).toMatchObject({
+    error: { code: "not_found" },
+  });
+  expect(toolText(await tools.skills({ name, file: "notes.md" }))).toBe(
+    'Third-party guidance from connector "remote".\n\nnotes',
+  );
+});
+
+it("keeps a visible connector id and a former guide name from resolving to a same-named source skill", async () => {
+  const legacy = `connector-${"a".repeat(48)}`;
+  const document = (name: string) => `---\nname: ${name}\ndescription: Source ${name}.\n---\n\nSource body.\n`;
+  const sources = [
+    inlineSkills("team", { crm: { "SKILL.md": document("crm") }, [legacy]: { "SKILL.md": document(legacy) } }),
+  ];
+  const unguided: Connector = { id: "crm", listTools: async () => [], callTool: async () => null };
+  const tools = createMetaTools(makeRegistry([unguided], { skillSources: sources } as never), BASE);
+  const bare = await tools.skills({ name: "crm" });
+  expect(bare.structuredContent).toMatchObject({
+    error: { code: "not_found", message: expect.stringContaining('Connector "crm" has no usage guide.') },
+  });
+  expect((await tools.skills({ name: legacy })).structuredContent).toMatchObject({ error: { code: "not_found" } });
+  expect(toolText(await tools.skills({ name: "team:crm" }))).toBe("Source body.\n");
+  expect(toolText(await tools.skills({ name: `team:${legacy}` }))).toBe("Source body.\n");
+  const elsewhere = createMetaTools(makeRegistry([], { skillSources: sources } as never), BASE);
+  expect(toolText(await elsewhere.skills({ name: "crm" }))).toBe("Source body.\n");
+});
+
+it("reads a source file under its own live signal and deadline, logs only declared warning codes and caps ttlMs", async () => {
+  const document = "---\nname: notes\ndescription: Notes.\n---\n\nBody.\n";
+  const reference = new TextEncoder().encode("Reference.\n");
+  const seen: { phase: string; aborted: boolean; live: boolean; signal: AbortSignal }[] = [];
+  const file = (path: string, bytes: Uint8Array, digest: string) => ({
+    path,
+    digest,
+    size: bytes.length,
+    read: (ctx: { signal: AbortSignal; deadlineAt: number }) =>
+      Effect.sync(() => {
+        seen.push({ phase: path, aborted: ctx.signal.aborted, live: ctx.deadlineAt > Date.now(), signal: ctx.signal });
+        return bytes;
+      }),
+  });
+  const bytes = new TextEncoder().encode(document);
+  const [documentDigest, referenceDigest] = [await sha256(bytes), await sha256(reference)];
+  const source = defineSkillSource("probe", "probe", undefined, {
+    warnings: ["revision_check_failed"],
+    cacheTtlMs: 60_000,
+    snapshot: (ctx) =>
+      Effect.sync(() => {
+        seen.push({ phase: "snapshot", aborted: false, live: true, signal: ctx.signal });
+        ctx.warn("revision_check_failed");
+        ctx.warn("ghp_looks_like_a_token");
+        ctx.warn("Not A Code");
+        return {
+          skills: [
+            {
+              name: "notes",
+              frontmatter: { name: "notes", description: "Notes." },
+              files: [file("SKILL.md", bytes, documentDigest), file("reference.md", reference, referenceDigest)],
+            },
+          ],
+        };
+      }),
+  });
+  const warnings: unknown[] = [];
+  const logger = { ...silentLogger, warn: (...args: unknown[]) => warnings.push(args) };
+  const root = makeRegistry([], { skillSources: [source], logger } as never);
+  const registry = new SkillsRegistry(root, BASE);
+  expect((await registry.list()).ttlMs).toBe(60_000);
+  expect(await registry.text("probe:notes", "reference.md")).toBe("Reference.\n");
+  const snapshot = seen.find((entry) => entry.phase === "snapshot")!;
+  const read = seen.find((entry) => entry.phase === "reference.md")!;
+  expect(snapshot.signal.aborted).toBe(true);
+  expect(read).toMatchObject({ aborted: false, live: true });
+  expect(read.signal).not.toBe(snapshot.signal);
+  expect(warnings).toEqual([
+    ["[connecta] skill source warning", { source: "probe", code: "revision_check_failed" }],
+    ["[connecta] skill source warning", { source: "probe", code: "unknown" }],
+    ["[connecta] skill source warning", { source: "probe", code: "unknown" }],
+  ]);
+  expect(
+    (await new SkillsRegistry(makeRegistry([], { skillSources: [teamSkills()] } as never), BASE).list()).ttlMs,
+  ).toBe(300_000);
+  expect(() =>
+    defineSkillSource("bad", "bad", undefined, { warnings: ["Bad Code"], snapshot: () => Effect.die("unused") }),
+  ).toThrow("warning code");
 });

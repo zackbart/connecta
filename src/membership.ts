@@ -31,6 +31,8 @@ export interface ResolvedPool {
    */
   access: ConnectorAccess;
   unlisted?: ReadonlySet<string>;
+  /** Skill source ids its members see; absent sees none. */
+  skills?: readonly string[];
   /** Non-empty and homogeneous: all people or all agents. */
   members: readonly Member[];
   /** Trimmed `owner`: the Workspace address agents in this pool act as. */

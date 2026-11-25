@@ -23,9 +23,25 @@ import { sentSecretsForRequest } from "./sent-secrets.js";
 import type { RegistryView } from "./registry.js";
 import type { DeferredWork } from "./connector-scope.js";
 import type { Connector, ConnectorContext, ConnectorSkill, ConnectorSkillResourceContents } from "./types.js";
+import {
+  MAX_SKILL_BYTES,
+  MAX_SKILL_FILES,
+  MAX_SKILLS,
+  validSkillFilePath,
+  validSkillName,
+  readSkillFile,
+  readSkillSource,
+  type BoundSkillSource,
+  type SkillSourceFile,
+  type SkillSourceSnapshot,
+} from "./skill-source-seam.js";
+import { splitFrontmatter } from "./skill-frontmatter.js";
 
 /** Trusted diagnostics constructed from the caller-visible local registry. */
 export class SkillLookupError extends ConnectorCallError {}
+
+/** A refused skills request whose trusted message names only what the caller can see. */
+export class SkillRequestError extends ConnectorCallError {}
 
 // The meta instructions and built-in guides use the meta names: built-in guides
 // are byte-identical across deployments, and the eval code arm replaces usage.
@@ -42,14 +58,14 @@ const policy = (readOnly: boolean) => (readOnly ? READ_ONLY_POLICY : WRITE_POLIC
 /** Connector ids in instructions; execute_code's inventory carries the rest. */
 const INSTRUCTION_CONNECTORS_MAX_BYTES = 120;
 
-/** Ids in roster order, then an exact count once they pass the byte cap. Ids are ASCII. */
+/** Entries in order, then an exact count once they pass the UTF-8 byte cap. */
 export function connectorList(ids: readonly string[], maxBytes = INSTRUCTION_CONNECTORS_MAX_BYTES): string {
   if (ids.length === 0) return "none";
   const all = ids.join(", ");
-  if (all.length <= maxBytes) return all;
+  if (utf8Length(all) <= maxBytes) return all;
   for (let shown = ids.length - 1; shown > 0; shown--) {
     const line = [...ids.slice(0, shown), `+${ids.length - shown} more`].join(", ");
-    if (line.length <= maxBytes) return line;
+    if (utf8Length(line) <= maxBytes) return line;
   }
   return `+${ids.length} more`;
 }
@@ -526,10 +542,11 @@ export function connectorGuideRequired(connector: ConnectorInventoryFacts): bool
 
 /** Complete entries stay atomic within ChatGPT's five-skill import budget. */
 const SKILL_PAGE_SIZE = 5;
-const MAX_SKILL_FILES = 512;
-const MAX_SKILL_BYTES = 16 * 1024 * 1024;
 const MAX_SKILL_CATALOG_BYTES = 8 * 1024 * 1024;
-const MAX_SKILLS = 1_024;
+const SUPPORTING_FILES_MAX_BYTES = 1_000;
+const SOURCE_ROOT = "skill://connecta/skills/";
+/** Connector ids and former guide names keep their meaning as bare names; a source skill takes its qualified name. */
+const LEGACY_GUIDE_NAME = /^connector-[0-9a-f]{48}$/;
 const encoder = new TextEncoder();
 const PRIVATE = { resultType: "complete" as const, ttlMs: 0, cacheScope: "private" as const };
 
@@ -539,6 +556,107 @@ interface SkillRecord {
   content?: string;
   connector?: Connector;
   files?: Map<string, string>;
+  source?: { id: string; name: string; files: Map<string, SkillSourceFile> };
+}
+
+/** A source file's URI: each path segment percent-encoded under the skill's root. */
+function sourceFileUri(sourceId: string, skill: string, path: string): string {
+  return `${SOURCE_ROOT}${sourceId}/${skill}/${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+const skillRoot = (record: SkillRecord) => record.entry.uri.slice(0, -"SKILL.md".length);
+
+/**
+ * A manifest's files by decoded path relative to the skill root, `SKILL.md`
+ * included. A path two manifest entries decode to selects neither.
+ */
+function manifestFiles(record: SkillRecord): Map<string, string> {
+  const files = new Map<string, string>([["SKILL.md", record.entry.uri]]);
+  if (record.entry.resources === "dynamic") return files;
+  const root = skillRoot(record);
+  const ambiguous = new Set<string>();
+  for (const file of record.entry.resources) {
+    if (file.uri === record.entry.uri || !file.uri.startsWith(root)) continue;
+    let path: string;
+    try {
+      path = file.uri.slice(root.length).split("/").map(decodeURIComponent).join("/");
+    } catch {
+      continue;
+    }
+    if (files.has(path)) ambiguous.add(path);
+    else files.set(path, file.uri);
+  }
+  for (const path of ambiguous) files.delete(path);
+  return files;
+}
+
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  return btoa(binary);
+}
+
+const SOURCE_UNAVAILABLE = () => new ConnectorCallError("unavailable", "Skill source is unavailable.");
+
+/** Checks a source's complete snapshot and maps it to records in skill-name order. */
+function sourceRecords(source: BoundSkillSource, snapshot: SkillSourceSnapshot): SkillRecord[] {
+  const skills = snapshot?.skills;
+  if (!Array.isArray(skills) || skills.length > MAX_SKILLS) throw SOURCE_UNAVAILABLE();
+  const seen = new Set<string>();
+  return [...skills]
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+    .map((skill) => {
+      const frontmatter = skill.frontmatter;
+      if (
+        typeof skill.name !== "string" ||
+        !validSkillName(skill.name) ||
+        seen.has(skill.name) ||
+        !frontmatter ||
+        typeof frontmatter !== "object" ||
+        Array.isArray(frontmatter) ||
+        frontmatter.name !== skill.name ||
+        typeof frontmatter.description !== "string" ||
+        !frontmatter.description ||
+        frontmatter.description.length > 1024 ||
+        !Array.isArray(skill.files) ||
+        skill.files.length === 0 ||
+        skill.files.length > MAX_SKILL_FILES
+      )
+        throw SOURCE_UNAVAILABLE();
+      seen.add(skill.name);
+      const files = new Map<string, SkillSourceFile>();
+      let bytes = 0;
+      const ordered = [...skill.files].sort((a, b) =>
+        a.path === "SKILL.md" ? -1 : b.path === "SKILL.md" ? 1 : a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
+      );
+      for (const file of ordered) {
+        if (
+          typeof file.path !== "string" ||
+          !validSkillFilePath(file.path) ||
+          typeof file.digest !== "string" ||
+          !/^sha256:[a-f0-9]{64}$/.test(file.digest) ||
+          !Number.isSafeInteger(file.size) ||
+          file.size < 0
+        )
+          throw SOURCE_UNAVAILABLE();
+        const uri = sourceFileUri(source.id, skill.name, file.path);
+        if (files.has(uri)) throw SOURCE_UNAVAILABLE();
+        files.set(uri, file);
+        bytes += file.size;
+      }
+      const uri = sourceFileUri(source.id, skill.name, "SKILL.md");
+      if (!files.has(uri) || bytes > MAX_SKILL_BYTES) throw SOURCE_UNAVAILABLE();
+      return {
+        entry: {
+          uri,
+          frontmatter: structuredClone(frontmatter) as ConnectorSkill["frontmatter"],
+          resources: [...files].map(([uri, file]) => ({ uri, digest: file.digest, size: file.size })),
+        },
+        aliases: [`${source.id}:${skill.name}`, skill.name],
+        source: { id: source.id, name: skill.name, files },
+      };
+    });
 }
 
 function localRecord(name: string, uri: string, description: string, content: string, aliases: string[]): SkillRecord {
@@ -549,11 +667,6 @@ function localRecord(name: string, uri: string, description: string, content: st
 function localSkillBody(text: string): string {
   const close = text.indexOf("\n---\n", 3);
   return close === -1 ? text : text.slice(close + "\n---\n".length).replace(/^\n/, "");
-}
-
-/** JSON frontmatter is YAML too; no runtime provider imports or filesystem reads. */
-function validSkillName(name: string): boolean {
-  return name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name);
 }
 
 /** Resolve guide names once from the admitted connector roster, including collisions. */
@@ -790,6 +903,8 @@ const withManifestNative = /* @__PURE__ */ registerAuth(withManifest, function (
 export interface SkillsRegistryOptions {
   readOnly?: boolean | undefined;
   onRead?: ((connector: Connector, source: "local" | "downstream") => void) | undefined;
+  /** A text reader disclosed content or names from this skill source. */
+  onSourceRead?: ((sourceId: string) => void) | undefined;
   requestScope?: object | undefined;
   requestSignal?: AbortSignal | undefined;
   probeTimeoutMs?: number | undefined;
@@ -807,6 +922,7 @@ export class SkillsRegistry {
   private readonly cacheHints: typeof PRIVATE;
   private readonly local: Effect.Effect<SkillRecord[], unknown>;
   private snapshot: Effect.Effect<SkillRecord[], unknown> | undefined;
+  private readonly sourceLoads = new Map<string, Effect.Effect<SkillRecord[], unknown>>();
 
   constructor(
     private readonly registry: RegistryView,
@@ -817,9 +933,114 @@ export class SkillsRegistry {
     this.scope = options.requestScope ?? {};
     this.cacheHints = {
       ...PRIVATE,
-      ttlMs: registry.listConnectors().some((connector) => connector.downstreamSkills !== undefined) ? 0 : 300_000,
+      ttlMs: Math.min(
+        registry.listConnectors().some((connector) => connector.downstreamSkills !== undefined) ? 0 : 300_000,
+        ...registry.listSkillSources().map((source) => source.cacheTtlMs ?? Infinity),
+      ),
     };
     this.local = authCall<SkillRecord[]>(localRecords, [registry.listConnectors(), options.readOnly === true]);
+  }
+
+  private deadline<A>(operation: (signal: AbortSignal) => Effect.Effect<A, unknown>): Effect.Effect<A, unknown> {
+    return withDeadlineEffect(operation, {
+      timeoutMs: this.options.probeTimeoutMs ?? 20_000,
+      ...(this.options.requestSignal ? { signal: this.options.requestSignal } : {}),
+      timeoutError: SOURCE_UNAVAILABLE(),
+    }).pipe(Effect.mapError(SOURCE_UNAVAILABLE));
+  }
+
+  /** A visible source's records, loaded once per registry; a failed load is discarded. */
+  private sourceLoad(source: BoundSkillSource): Effect.Effect<SkillRecord[], unknown> {
+    return Effect.gen({ self: this }, function* () {
+      const cached = this.sourceLoads.get(source.id);
+      if (cached) return yield* cached;
+      const secrets = sentSecretsForRequest(this.scope);
+      const timeoutMs = this.options.probeTimeoutMs ?? 20_000;
+      const load: Effect.Effect<SkillRecord[], unknown> = yield* Effect.cached(
+        this.deadline<SkillSourceSnapshot>((signal) =>
+          readSkillSource(source, {
+            signal,
+            deadlineAt: Date.now() + timeoutMs,
+            secret: (value) => secrets.secret(value),
+          }),
+        ).pipe(
+          Effect.flatMap((snapshot) =>
+            Effect.try({ try: () => sourceRecords(source, snapshot), catch: SOURCE_UNAVAILABLE }),
+          ),
+          Effect.onError(() =>
+            Effect.sync(() => {
+              this.sourceLoads.delete(source.id);
+            }),
+          ),
+        ),
+      );
+      this.sourceLoads.set(source.id, load);
+      return yield* load;
+    });
+  }
+
+  private sourceById(key: string): BoundSkillSource | undefined {
+    const id = key.slice(0, key.search(/[:/]|$/));
+    return this.registry.listSkillSources().find((source) => source.id === id);
+  }
+
+  /**
+   * A source skill by URI, root, `<source>:<skill>` or a bare name exactly one
+   * visible source serves. A source outside the view is never loaded.
+   */
+  private sourceLookup(key: string): Effect.Effect<SkillRecord | undefined, unknown> {
+    return Effect.gen({ self: this }, function* () {
+      if (key.startsWith(SOURCE_ROOT)) {
+        const source = this.sourceById(key.slice(SOURCE_ROOT.length));
+        if (!source) return undefined;
+        return (yield* this.sourceLoad(source)).find(
+          (record) => record.entry.uri === key || skillRoot(record).slice(0, -1) === key,
+        );
+      }
+      if (key.includes(":")) {
+        const source = this.sourceById(key);
+        if (!source) return undefined;
+        return (yield* this.sourceLoad(source)).find((record) => record.aliases[0] === key);
+      }
+      if (!validSkillName(key) || this.registry.getConnector(key) || LEGACY_GUIDE_NAME.test(key)) return undefined;
+      const matches: SkillRecord[] = [];
+      for (const source of this.registry.listSkillSources())
+        matches.push(...(yield* this.sourceLoad(source)).filter((record) => record.source!.name === key));
+      if (matches.length > 1) {
+        for (const record of matches) this.options.onSourceRead?.(record.source!.id);
+        return yield* Effect.fail(
+          new SkillRequestError(
+            "invalid_args",
+            `Ambiguous skill name "${key}"; use one of ${matches.map((record) => record.aliases[0]).join(", ")}.`,
+          ),
+        );
+      }
+      return matches[0];
+    });
+  }
+
+  /** One source file's bytes, checked against the size and digest its manifest lists. */
+  private sourceFile(source: BoundSkillSource, file: SkillSourceFile): Effect.Effect<Uint8Array, unknown> {
+    const secrets = sentSecretsForRequest(this.scope);
+    const timeoutMs = this.options.probeTimeoutMs ?? 20_000;
+    return this.deadline((signal) =>
+      readSkillFile(source, file, {
+        signal,
+        deadlineAt: Date.now() + timeoutMs,
+        secret: (value) => secrets.secret(value),
+      }),
+    ).pipe(
+      Effect.flatMap((bytes) =>
+        authFlow<Uint8Array>(function* () {
+          if (!(bytes instanceof Uint8Array) || bytes.length !== file.size) throw SOURCE_UNAVAILABLE();
+          const digest = bytesToHex(
+            new Uint8Array(yield* upwardStep(authInvoke<ArrayBuffer>(crypto.subtle, "digest", ["SHA-256", bytes]))),
+          );
+          if (`sha256:${digest}` !== file.digest) throw SOURCE_UNAVAILABLE();
+          return bytes;
+        }),
+      ),
+    );
   }
 
   private operation<T>(connector: Connector, read: (ctx: ConnectorContext) => Promise<T>): Promise<T> {
@@ -930,8 +1151,9 @@ export class SkillsRegistry {
     );
   }
 
-  text(name: string): Promise<string> {
-    return runEdge(authOwnMethod<string>(SkillsRegistry.prototype, this, "text", [name]));
+  /** A skill's instructions without frontmatter, or with `file`, one manifest file's text by relative path. */
+  text(name: string, file?: string): Promise<string> {
+    return runEdge(authOwnMethod<string>(SkillsRegistry.prototype, this, "text", [name, file]));
   }
 
   summaries() {
@@ -969,13 +1191,48 @@ export class SkillsRegistry {
     registerAuthMethod(
       SkillsRegistry.prototype,
       "text",
-      function (name: string) {
+      function (name: string, file?: string) {
         const self = this as SkillsRegistry;
         return duringViewEffect(
           { requestScope: (this as SkillsRegistry).scope, signal: (this as SkillsRegistry).options.requestSignal },
           () =>
             authFlow<string>(function* () {
               const record = yield* upwardStep(authInvoke<SkillRecord>(self, "lookup", [name]));
+              if (record.source) self.options.onSourceRead?.(record.source.id);
+              const shown = record.aliases[0] ?? record.entry.uri;
+              const files = manifestFiles(record);
+              if (file !== undefined) {
+                const uri = file === "SKILL.md" || validSkillFilePath(file) ? files.get(file) : undefined;
+                if (uri === undefined)
+                  throw new SkillLookupError(
+                    "not_found",
+                    `Skill "${boundedEchoText(shown)}" has no file "${boundedEchoText(file)}". Fetch the skill by name to see its files.`,
+                  );
+                const content = (yield* upwardStep(
+                  authInvoke<{ contents: ConnectorSkillResourceContents[] }>(self, "read", [uri]),
+                )).contents[0]!;
+                const origin = record.files ? `${downstreamOrigin(record.connector!.id)}\n\n` : "";
+                if (typeof content.text === "string") return origin + content.text;
+                try {
+                  return (
+                    origin +
+                    new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+                      Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0)),
+                    )
+                  );
+                } catch {
+                  throw new SkillRequestError(
+                    "unsupported_capability",
+                    `Skill file "${boundedEchoText(file)}" is binary, not UTF-8 text. A host reads it with native resources/read at ${uri}.`,
+                    { retryable: false },
+                  );
+                }
+              }
+              const listed = [...files.keys()].filter((path) => path !== "SKILL.md");
+              const note =
+                listed.length === 0
+                  ? ""
+                  : `\n\nSupporting files (pass one as file with this skill's name to read it): ${connectorList(listed, SUPPORTING_FILES_MAX_BYTES)}.`;
               const content = (yield* upwardStep(
                 authInvoke<{
                   contents: ConnectorSkillResourceContents[];
@@ -984,17 +1241,22 @@ export class SkillsRegistry {
                   cacheScope: "private";
                 }>(self, "read", [record.entry.uri]),
               )).contents[0]!;
+              if (record.source) {
+                if (typeof content.text !== "string") throw SOURCE_UNAVAILABLE();
+                return (splitFrontmatter(content.text)?.body ?? content.text) + note;
+              }
               // Connecta prepends frontmatter to local guides for native SKILL.md; a
               // tool reader wants only the body. Downstream files keep their bytes.
               if (!record.files && typeof content.text === "string") return localSkillBody(content.text);
               const origin = record.files ? `${downstreamOrigin(record.connector!.id)}\n\n` : "";
-              if (typeof content.text === "string") return origin + content.text;
+              if (typeof content.text === "string") return origin + content.text + note;
               try {
                 return (
                   origin +
                   new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
                     Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0)),
-                  )
+                  ) +
+                  note
                 );
               } catch {
                 throw new ConnectorCallError("unavailable", "Skill instructions are not UTF-8 text.");
@@ -1028,6 +1290,25 @@ export class SkillsRegistry {
                   ? sentSecretsForRequest(self.scope).redact(record.content!)
                   : record.content!;
                 return { ...self.cacheHints, contents: [{ uri: record.entry.uri, mimeType: "text/markdown", text }] };
+              }
+              if (uri.startsWith(SOURCE_ROOT)) {
+                const source = self.sourceById(uri.slice(SOURCE_ROOT.length));
+                const owner = source
+                  ? (yield* upwardStep(self.sourceLoad(source))).find((record) => record.source!.files.has(uri))
+                  : undefined;
+                if (!owner) throw self.missing(uri);
+                const bytes = yield* upwardStep(self.sourceFile(source!, owner.source!.files.get(uri)!));
+                let text: string | undefined;
+                try {
+                  text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+                } catch {
+                  text = undefined;
+                }
+                const content: ConnectorSkillResourceContents =
+                  text === undefined
+                    ? { uri, blob: encodeBase64(bytes) }
+                    : { uri, ...(uri.endsWith(".md") ? { mimeType: "text/markdown" } : {}), text };
+                return { ...self.cacheHints, contents: [sentSecretsForRequest(self.scope).redact(content)] };
               }
               if (!uri.startsWith("skill://downstream/")) throw self.missing(uri);
               const record = (yield* upwardStep(authInvoke<SkillRecord[]>(self, "records", []))).find((record) =>
@@ -1188,7 +1469,12 @@ export class SkillsRegistry {
                 return record;
               }
               // A non-skill URI never starts a downstream resource request or listing.
-              if (!uri.startsWith("skill://downstream/")) throw self.missing(uri);
+              if (!uri.startsWith("skill://downstream/")) {
+                const sourced = yield* upwardStep(self.sourceLookup(uri));
+                if (!sourced) throw self.missing(uri);
+                self.assertSafe([sourced]);
+                return sourced;
+              }
               const record = (yield* upwardStep(authInvoke<SkillRecord[]>(self, "records", []))).find(
                 (record) => record.entry.uri === uri,
               );
@@ -1217,6 +1503,10 @@ export class SkillsRegistry {
                   },
                 ),
               );
+              for (const source of self.registry.listSkillSources())
+                records.push(...(yield* upwardStep(self.sourceLoad(source))));
+              if (records.length > MAX_SKILLS)
+                throw new ConnectorCallError("unavailable", "Skills listing exceeds its byte or entry bound.");
               let catalogBytes = utf8Length(JSON.stringify(records.map((record) => record.entry)));
               // Bounded sequential connector reads avoid unbounded fan-out and finish
               // cleanup before a later connector's failure can end the whole listing.

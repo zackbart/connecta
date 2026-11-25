@@ -120,6 +120,7 @@ function resolvePools(
       throw new Error(`ConnectaConfig.pools.${name}: a pool must name at least one connector or tool`);
     }
     const unlisted = pool.unlisted === undefined ? undefined : resolveUnlisted(name, pool.unlisted, access);
+    const skills = pool.skills === undefined ? undefined : resolvePoolSkills(name, pool.skills, registry);
     const path = `ConnectaConfig.pools.${name}.members`;
     if (pool.members.length === 0) {
       throw new ConfigError(`${path} is empty; a pool serves only its members, so list at least one.`);
@@ -138,6 +139,7 @@ function resolvePools(
         authElicitation: pool.authElicitation ?? inherited.authElicitation,
         members: Object.freeze(resolvePoolMembers(pool.members, path, members)),
         ...(unlisted ? { unlisted } : {}),
+        ...(skills ? { skills } : {}),
         ...(pool.owner !== undefined ? { owner: pool.owner.trim() } : {}),
         ...(pool.description !== undefined ? { description: pool.description.trim() } : {}),
         ...(pool.surface === "native" ? { native: { executeCode: pool.executeCode ?? true } } : {}),
@@ -196,6 +198,21 @@ function resolveUnlisted(name: string, value: readonly unknown[], access: Connec
     ids.add(id);
   });
   return ids;
+}
+
+function resolvePoolSkills(name: string, value: readonly unknown[], registry: Registry): readonly string[] {
+  const path = `ConnectaConfig.pools.${name}.skills`;
+  if (value.length === 0) throw new ConfigError(`${path} is empty; omit it instead.`);
+  const known = new Set(registry.listSkillSources().map((source) => source.id));
+  const ids: string[] = [];
+  for (let index = 0; index < value.length; index++) {
+    const id = value[index];
+    if (typeof id !== "string" || !known.has(id))
+      throw new ConfigError(`${path}[${index}] must be the id of a source in ConnectaConfig.skills.`);
+    if (ids.includes(id)) throw new ConfigError(`${path}[${index}] repeats "${id}".`);
+    ids.push(id);
+  }
+  return Object.freeze(ids);
 }
 
 /**
@@ -384,6 +401,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     results: resolved.results,
     classification: resolved.classification,
     routes,
+    skillSources: resolved.skills,
   });
   const maintainers = resolveMaintainers(
     input.maintainers,
@@ -473,6 +491,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
 }
 export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
+export { inlineSkills, type InlineSkillFiles, type SkillSource } from "./skill-sources.js";
 export { keys, optionsOf, array, opaque, instance, strings, variants } from "./config-schema.js";
 export { defineProvider, PROVIDER_COMMON } from "./provider.js";
 export type {

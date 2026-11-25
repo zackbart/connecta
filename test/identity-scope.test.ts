@@ -5,7 +5,7 @@ import { api } from "../src/connectors/api.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { identityStorageKey } from "../src/identity.js";
-import { createConnecta, customExecutor, type ConnectaConfig } from "../src/index.js";
+import { createConnecta, customExecutor, inlineSkills, type ConnectaConfig } from "../src/index.js";
 import type { ToolCallActivityEvent } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { operatorUi } from "../src/ui.js";
@@ -1156,6 +1156,135 @@ describe("pools serve exactly their tools", () => {
       readOnly: true,
       writes: ["notes.delete", "notes.search"],
     });
+  });
+});
+
+describe("skill sources at construction", () => {
+  const holes = (length: number, last?: unknown) => {
+    const array: unknown[] = [];
+    array.length = length;
+    if (last !== undefined) array[length - 1] = last;
+    return array;
+  };
+  const skill = (name: string, document = `---\nname: ${name}\ndescription: Do ${name}.\n---\n\nSteps.\n`) => ({
+    [name]: { "SKILL.md": document },
+  });
+
+  it("INV-11: refuses pool skills that are not an array, empty, repeated or unknown, naming the pool", () => {
+    const pool = (skills: unknown) => () =>
+      deployment({
+        skills: [inlineSkills("team", skill("review"))],
+        pools: { support: { tools: ["wiki"], members: ["bob"], skills: skills as string[] } },
+      });
+    const refusals: Array<[unknown, string]> = [
+      ["team", "ConnectaConfig.pools.support.skills must be an array of skill source ids."],
+      [[], "ConnectaConfig.pools.support.skills is empty; omit it instead."],
+      [["team", "team"], 'ConnectaConfig.pools.support.skills[1] repeats "team".'],
+      [["ops"], "ConnectaConfig.pools.support.skills[0] must be the id of a source in ConnectaConfig.skills."],
+      [["team:review"], "ConnectaConfig.pools.support.skills[0] must be the id of a source in ConnectaConfig.skills."],
+      [holes(2), "ConnectaConfig.pools.support.skills[0] must be the id of a source in ConnectaConfig.skills."],
+      [holes(2, "team"), "ConnectaConfig.pools.support.skills[0] must be the id of a source in ConnectaConfig.skills."],
+    ];
+    for (const [skills, message] of refusals) {
+      expect(pool(skills)).toThrow(ConfigError);
+      expect(pool(skills)).toThrow(message);
+    }
+    expect(pool(["team"])).not.toThrow();
+  });
+
+  it("INV-4: pages a retained source skill only while the pool still sees its source", async () => {
+    const storage = memoryStorage();
+    const body = "Step. ".repeat(20_000);
+    const handbook = inlineSkills("team", {
+      handbook: {
+        "SKILL.md": `---\nname: handbook\ndescription: The team handbook.\n---\n\n${body}`,
+        "references/long.md": body,
+      },
+    });
+    let read: "skill" | "file" | "page" = "skill";
+    let resultId = "";
+    const build = (skills: string[] | undefined) =>
+      deployment({
+        storage,
+        skills: [handbook],
+        pools: { team: { tools: ["wiki"], members: ["bob"], ...(skills ? { skills } : {}) } },
+        executor: scriptedExecutor(async (fns) =>
+          read === "page"
+            ? fns.result!(resultId, { maxBytes: 200 })
+            : read === "file"
+              ? fns.skill!("team:handbook", { file: "references/long.md" })
+              : fns.skill!("team:handbook"),
+        ),
+      });
+    for (const kind of ["skill", "file"] as const) {
+      const granted = build(["team"]);
+      read = kind;
+      const first = (await rpc(granted, "/mcp", "bob", "execute_code", { code: "async () => null" })).result;
+      resultId = first.structuredContent.result.resultId;
+      expect(resultId, kind).toEqual(expect.any(String));
+      read = "page";
+      const kept = (await rpc(granted, "/mcp", "bob", "execute_code", { code: "async () => null" })).result;
+      expect(kept.structuredContent.result.text, kind).toContain("Step.");
+      await granted.close();
+      const revoked = build(undefined);
+      const refused = (await rpc(revoked, "/mcp", "bob", "execute_code", { code: "async () => null" })).result;
+      expect(refused.structuredContent.error, kind).toMatchObject({ code: "not_found" });
+      expect(JSON.stringify(refused), kind).not.toContain("Step.");
+      await revoked.close();
+    }
+  });
+
+  it("INV-11: refuses invalid source ids, descriptions and skills when the source is built", () => {
+    const refusals: Array<[() => unknown, string]> = [
+      [() => inlineSkills("Team", skill("review")), "id must be lowercase"],
+      [() => inlineSkills("a".repeat(65), skill("review")), "at most 64 characters"],
+      [() => inlineSkills("connector", skill("review")), 'id "connector" is reserved'],
+      [() => inlineSkills("connecta", skill("review")), 'id "connecta" is reserved'],
+      [() => inlineSkills("downstream", skill("review")), 'id "downstream" is reserved'],
+      [() => inlineSkills("team", skill("review"), { description: "  " }), "description must be one line"],
+      [() => inlineSkills("team", skill("review"), { description: "a\nb" }), "description must be one line"],
+      [() => inlineSkills("team", skill("review"), { description: "x".repeat(121) }), "description must be one line"],
+      [() => inlineSkills("team", { Review: { "SKILL.md": "x" } }), "Agent Skills name rule"],
+      [() => inlineSkills("team", { review: { "notes.md": "x" } }), "has no SKILL.md"],
+      [() => inlineSkills("team", skill("review", "# no frontmatter\n")), "no supported YAML frontmatter"],
+      [
+        () => inlineSkills("team", skill("review", "---\nname: other\ndescription: x\n---\n")),
+        "differs from the directory",
+      ],
+      [() => inlineSkills("team", skill("review", "---\nname: review\n---\n")), "description must be"],
+      [() => inlineSkills("team", { review: { ...skill("review").review, "../x.md": "x" } }), "relative path"],
+      [() => inlineSkills("team", { review: { ...skill("review").review, "a\\b.md": "x" } }), "relative path"],
+      [() => inlineSkills("team", { review: { ...skill("review").review, "a//b.md": "x" } }), "relative path"],
+      [() => inlineSkills("team", { review: { ...skill("review").review, "notes\ud800.md": "x" } }), "relative path"],
+      [
+        () =>
+          inlineSkills(
+            "team",
+            skill(
+              "review",
+              `---\nname: review\ndescription: x\n${Array.from({ length: 12 }, (_, depth) => `${"  ".repeat(depth)}k${depth}:`).join("\n")} x\n---\n`,
+            ),
+          ),
+        "no supported YAML frontmatter",
+      ],
+      [
+        () => inlineSkills("team", skill("review", '---\n{"name": "review", "description": "x"}\n---\n')),
+        "no supported YAML frontmatter",
+      ],
+    ];
+    for (const [build, message] of refusals) {
+      expect(build).toThrow(ConfigError);
+      expect(build).toThrow(message);
+    }
+    expect(() => deployment({ skills: [inlineSkills("team", skill("a")), inlineSkills("team", skill("b"))] })).toThrow(
+      'ConnectaConfig.skills[1] repeats the source id "team".',
+    );
+    expect(() => deployment({ skills: holes(2, inlineSkills("team", skill("a"))) as never })).toThrow(
+      "ConnectaConfig.skills[0] must be a skill source built with inlineSkills.",
+    );
+    expect(() => deployment({ skills: [{ id: "team" } as never] })).toThrow(
+      "ConnectaConfig.skills[0] must be a skill source built with inlineSkills.",
+    );
   });
 });
 

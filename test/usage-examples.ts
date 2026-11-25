@@ -100,8 +100,9 @@ export async function checkUsageExamples(executor: Executor): Promise<void> {
   for (const readOnly of [false, true]) {
     for (const guided of [false, true]) {
       const description = usageDescription(executor, readOnly, guided);
-      // 67 above 3,000 for the result(id, { all: true }) overload that recovery text names and its Data type.
-      expect(description.length).toBeLessThan(3_067);
+      // 67 above 3,000 for the result(id, { all: true }) overload that recovery text names and its Data type,
+      // then 29 for connecta.skill's { file } option.
+      expect(description.length).toBeLessThan(3_096);
       for (const code of examples(description)) {
         const result = await run({ code });
         expect(result.isError).toBeFalsy();

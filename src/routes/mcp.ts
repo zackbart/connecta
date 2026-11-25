@@ -934,9 +934,17 @@ export function createMcpRoute(opts: ServerOptions): {
         // exactly its tools (INV-4).
         const scopeFor = (
           admitted: Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>,
-        ): Readonly<{ pool?: string; access: ConnectorAccess; readOnly: boolean; poolOwner?: string }> | undefined => {
+        ):
+          | Readonly<{
+              pool?: string;
+              access: ConnectorAccess;
+              readOnly: boolean;
+              poolOwner?: string;
+              skillSources: "all" | readonly string[];
+            }>
+          | undefined => {
           if (poolName === undefined && admitsMaintainer(opts, admitted))
-            return { access: { connectorIds: "all" }, readOnly: opts.config.readOnly };
+            return { access: { connectorIds: "all" }, readOnly: opts.config.readOnly, skillSources: "all" };
           const match =
             poolName === undefined ? personPool(opts, admitted.identity) : agentPool(opts, poolName, admitted.identity);
           return match
@@ -944,6 +952,7 @@ export function createMcpRoute(opts: ServerOptions): {
                 pool: match.name,
                 access: match.pool.access,
                 readOnly: presentsReadOnly(match.pool),
+                skillSources: match.pool.skills ?? [],
                 ...(match.pool.owner !== undefined ? { poolOwner: match.pool.owner } : {}),
               }
             : undefined;
@@ -1063,6 +1072,7 @@ export function createMcpRoute(opts: ServerOptions): {
           try {
             scopedRegistry = opts.registry.scoped({
               connectorIds: access.connectorIds,
+              skillSources: scope.skillSources,
               // Connector members narrow every endpoint, plain /mcp for maintainers included.
               viewer: authz.identity,
               ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
@@ -1094,6 +1104,7 @@ export function createMcpRoute(opts: ServerOptions): {
                     const { access: currentAccess, readOnly: currentReadOnly } = currentScope;
                     const view = opts.registry.scoped({
                       ...currentAccess,
+                      skillSources: currentScope.skillSources,
                       ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
                       ...(current.principalKey ? { principalKey: current.principalKey } : {}),
                       caller: callerFor(current.identity, currentScope),
@@ -1111,9 +1122,11 @@ export function createMcpRoute(opts: ServerOptions): {
                         // Skill and resource content requires a whole grant; catalog metadata requires visibility.
                         if (dependency.tool === undefined) {
                           if (
-                            !(dependency.access === "catalog"
-                              ? view.getConnector(dependency.connector)
-                              : view.getResourceConnector(dependency.connector))
+                            !(dependency.access === "skill-source"
+                              ? view.listSkillSources().some((source) => source.id === dependency.connector)
+                              : dependency.access === "catalog"
+                                ? view.getConnector(dependency.connector)
+                                : view.getResourceConnector(dependency.connector))
                           )
                             return false;
                           continue;

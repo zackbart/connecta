@@ -4,8 +4,8 @@
       "config": {"catalogZeroTtlSeconds":300,"connectors":6,"largestCatalog":8,"resultBytes":1024,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721}
         },
         "search_tools": {
           "first": {"storageRoundTrips":110,"storageStatements":146,"tracedRoundTrips":109,"downstreamRequests":12,"downstreamListings":6,"catalogLookups":12,"catalogHits":0,"catalogStores":6,"responseBytes":1186},
@@ -25,8 +25,8 @@
       "config": {"catalogZeroTtlSeconds":0,"connectors":6,"largestCatalog":8,"resultBytes":1024,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721}
         },
         "search_tools": {
           "first": {"storageRoundTrips":92,"storageStatements":116,"tracedRoundTrips":91,"downstreamRequests":12,"downstreamListings":6,"catalogLookups":12,"catalogHits":0,"catalogStores":0,"responseBytes":1186},
@@ -46,8 +46,8 @@
       "config": {"catalogZeroTtlSeconds":300,"connectors":1,"largestCatalog":8,"resultBytes":1024,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":9897},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":9897}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":9951},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":9951}
         },
         "search_tools": {
           "first": {"storageRoundTrips":20,"storageStatements":26,"tracedRoundTrips":19,"downstreamRequests":2,"downstreamListings":1,"catalogLookups":2,"catalogHits":0,"catalogStores":1,"responseBytes":642},
@@ -67,8 +67,8 @@
       "config": {"catalogZeroTtlSeconds":0,"connectors":1,"largestCatalog":8,"resultBytes":1024,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":9897},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":9897}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":9951},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":9951}
         },
         "search_tools": {
           "first": {"storageRoundTrips":17,"storageStatements":21,"tracedRoundTrips":16,"downstreamRequests":2,"downstreamListings":1,"catalogLookups":2,"catalogHits":0,"catalogStores":0,"responseBytes":642},
@@ -88,8 +88,8 @@
       "config": {"catalogZeroTtlSeconds":300,"connectors":24,"largestCatalog":8,"resultBytes":1024,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":11669},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":11669}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":11723},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":11723}
         },
         "search_tools": {
           "first": {"storageRoundTrips":434,"storageStatements":578,"tracedRoundTrips":433,"downstreamRequests":48,"downstreamListings":24,"catalogLookups":48,"catalogHits":0,"catalogStores":24,"responseBytes":3088},
@@ -109,8 +109,8 @@
       "config": {"catalogZeroTtlSeconds":0,"connectors":24,"largestCatalog":8,"resultBytes":1024,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":11669},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":11669}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":11723},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":11723}
         },
         "search_tools": {
           "first": {"storageRoundTrips":362,"storageStatements":458,"tracedRoundTrips":361,"downstreamRequests":48,"downstreamListings":24,"catalogLookups":48,"catalogHits":0,"catalogStores":0,"responseBytes":3088},
@@ -130,8 +130,8 @@
       "config": {"catalogZeroTtlSeconds":300,"connectors":6,"largestCatalog":400,"resultBytes":1024,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721}
         },
         "search_tools": {
           "first": {"storageRoundTrips":110,"storageStatements":146,"tracedRoundTrips":109,"downstreamRequests":12,"downstreamListings":6,"catalogLookups":12,"catalogHits":0,"catalogStores":6,"responseBytes":1186},
@@ -151,8 +151,8 @@
       "config": {"catalogZeroTtlSeconds":0,"connectors":6,"largestCatalog":400,"resultBytes":1024,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721}
         },
         "search_tools": {
           "first": {"storageRoundTrips":92,"storageStatements":116,"tracedRoundTrips":91,"downstreamRequests":12,"downstreamListings":6,"catalogLookups":12,"catalogHits":0,"catalogStores":0,"responseBytes":1186},
@@ -172,8 +172,8 @@
       "config": {"catalogZeroTtlSeconds":300,"connectors":6,"largestCatalog":8,"resultBytes":65536,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721}
         },
         "search_tools": {
           "first": {"storageRoundTrips":110,"storageStatements":146,"tracedRoundTrips":109,"downstreamRequests":12,"downstreamListings":6,"catalogLookups":12,"catalogHits":0,"catalogStores":6,"responseBytes":1186},
@@ -193,8 +193,8 @@
       "config": {"catalogZeroTtlSeconds":300,"connectors":6,"largestCatalog":8,"resultBytes":614400,"secrets":false},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721}
         },
         "search_tools": {
           "first": {"storageRoundTrips":110,"storageStatements":146,"tracedRoundTrips":109,"downstreamRequests":12,"downstreamListings":6,"catalogLookups":12,"catalogHits":0,"catalogStores":6,"responseBytes":1186},
@@ -214,8 +214,8 @@
       "config": {"catalogZeroTtlSeconds":300,"connectors":6,"largestCatalog":8,"resultBytes":1024,"secrets":true},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721}
         },
         "search_tools": {
           "first": {"storageRoundTrips":116,"storageStatements":152,"tracedRoundTrips":109,"downstreamRequests":12,"downstreamListings":6,"catalogLookups":12,"catalogHits":0,"catalogStores":6,"responseBytes":1186},
@@ -235,8 +235,8 @@
       "config": {"catalogZeroTtlSeconds":300,"connectors":6,"largestCatalog":8,"resultBytes":614400,"secrets":true},
       "requests": {
         "tools/list": {
-          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667},
-          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10667}
+          "first": {"storageRoundTrips":3,"storageStatements":4,"tracedRoundTrips":2,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721},
+          "warm": {"storageRoundTrips":1,"storageStatements":1,"tracedRoundTrips":0,"downstreamRequests":0,"downstreamListings":0,"catalogLookups":0,"catalogHits":0,"catalogStores":0,"responseBytes":10721}
         },
         "search_tools": {
           "first": {"storageRoundTrips":116,"storageStatements":152,"tracedRoundTrips":109,"downstreamRequests":12,"downstreamListings":6,"catalogLookups":12,"catalogHits":0,"catalogStores":6,"responseBytes":1186},

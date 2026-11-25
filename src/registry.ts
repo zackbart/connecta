@@ -107,6 +107,14 @@ import type {
 } from "./types.js";
 import { isWorkspaceAddress } from "./workspace-address.js";
 import { workspaceSubjectOf } from "./workspace-subject.js";
+import { bindSkillSources } from "./skill-source-seam.js";
+import type { SkillSource } from "./skill-sources.js";
+
+/** A skill source as a registry view lists it. */
+export interface SkillSourceHandle extends Pick<SkillSource, "id" | "description"> {
+  /** The longest a reader may cache this source's content, in milliseconds; undefined imposes no limit. */
+  readonly cacheTtlMs: number | undefined;
+}
 
 const ID_RE = /^[a-z0-9_-]+$/;
 
@@ -234,6 +242,8 @@ export interface RegistryOptions {
   results?: { maxStashBytes?: number; maxStashEntries?: number } | undefined;
   /** Route names every context carries unless a call names its own; meta by default. */
   routes?: import("./types.js").AgentRouteNames | undefined;
+  /** The deployment's skill sources, in configuration order. */
+  skillSources?: readonly SkillSource[] | undefined;
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
@@ -289,8 +299,11 @@ export interface ResultIdentity {
 }
 
 export interface ProgramResultDependency {
-  /** Catalog metadata needs visibility, not permission to invoke a write. */
-  access?: "catalog";
+  /**
+   * Catalog metadata needs visibility, not permission to invoke a write.
+   * `"skill-source"` names a skill source in `connector` that must stay visible.
+   */
+  access?: "catalog" | "skill-source";
   connector: string;
   tool?: string;
   classification: "read" | "write";
@@ -310,6 +323,8 @@ export interface RegistryView {
   /** Deployment-wide result-size cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
   listConnectors(): Connector[];
+  /** The skill sources this view sees, in configuration order. */
+  listSkillSources(): readonly SkillSourceHandle[];
   /** Whole-connector permission for downstream skill files, which have no tool grants. */
   canReadConnectorSkills(id: string): boolean;
   getConnector(id: string): Connector | undefined;
@@ -415,6 +430,8 @@ export interface RegistryScope {
   caller?: ConnectorCaller;
   /** Operator admission, forwarded only to principal-forwarding remote MCP connectors. */
   operatorCaller?: ConnectorCaller;
+  /** Skill source ids this view sees; absent sees none. */
+  skillSources?: "all" | readonly string[];
   /**
    * Whom connector `members` are matched against (#1377). Absent, a
    * connector that lists members is hidden. `"management"` keeps every
@@ -590,11 +607,13 @@ export class Registry implements RegistryView {
   private callAdmissionClosed = false;
   /** Bounded FIFO of absent grants already warned about. */
   private readonly warnedAbsentGrants = new Set<string>();
+  private readonly skillSources: readonly SkillSourceHandle[];
 
   constructor(
     connectors: Connector[],
     private readonly opts: RegistryOptions,
   ) {
+    this.skillSources = bindSkillSources(opts.skillSources ?? [], opts.rootStorage ?? opts.storage, opts.logger);
     this.configuredConnectors = [...connectors];
     this.observedOutputSchemas = new ObservedOutputSchemas();
     this.maxResultBytes = resolveMaxResultBytes(opts.maxResultBytes, DEFAULT_MAX_RESULT_BYTES);
@@ -713,6 +732,7 @@ export class Registry implements RegistryView {
         credentialOwner: principalKey,
         catalogStorage: this.opts.catalogStorage ?? this.opts.storage,
         constructionChecks: false,
+        skillSources: undefined,
       },
     );
     registry.overrideReports = this.overrideReports;
@@ -837,6 +857,10 @@ export class Registry implements RegistryView {
 
   listConnectors(): Connector[] {
     return [...this.connectors.values()];
+  }
+
+  listSkillSources(): readonly SkillSourceHandle[] {
+    return this.skillSources;
   }
 
   /**
@@ -1808,6 +1832,13 @@ class ScopedRegistryView implements RegistryView {
 
   canReadConnectorSkills(id: string): boolean {
     return this.registryFor(id) !== undefined && !this.scope.toolAccess?.has(id);
+  }
+
+  listSkillSources(): readonly SkillSourceHandle[] {
+    const visible = this.scope.skillSources;
+    if (visible === undefined) return [];
+    const all = this.root.listSkillSources();
+    return visible === "all" ? all : all.filter((source) => visible.includes(source.id));
   }
 
   getConnector(id: string): Connector | undefined {

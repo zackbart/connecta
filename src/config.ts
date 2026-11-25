@@ -36,6 +36,8 @@ import type { MemberRef } from "./membership.js";
 import { assertExecutor } from "./executor-contract.js";
 import type { AccessTokensModule, ActivityModule, OperatorSurface } from "./module-contracts.js";
 import { memoryStorage } from "./storage/memory.js";
+import { skillSourceDefinition } from "./skill-source-seam.js";
+import type { SkillSource } from "./skill-sources.js";
 import type { Connector, Executor, InboundAuth, KVStorage, Logger } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
 import { isWorkspaceAddress } from "./workspace-address.js";
@@ -358,6 +360,15 @@ const pool = {
     },
   }),
   /**
+   * Ids of the deployment's skill sources this pool's members see. Without
+   * it the pool sees none. Source ids only: no per-skill grants.
+   */
+  skills: opaque<readonly string[]>({
+    check: (value, path) => {
+      if (!Array.isArray(value)) throw new ConfigError(`${path} must be an array of skill source ids.`);
+    },
+  }),
+  /**
    * Who this pool serves: principal ids in the namespace of the one
    * interactive auth provider, `{ namespace, id }`, or `"agent:<name>"` for a
    * declared agent. All members must be people or all must be agents. People
@@ -519,6 +530,20 @@ const connectaConfig = {
   maintainers: opaque<readonly MemberRef[]>({ check: assertMemberList }),
   /** Named tool pools, each served to its members only: people at plain `/mcp`, agents at `/agent/<name>`. */
   pools: record(object(pool)),
+  /**
+   * The deployment's own Agent Skills, each source built with `inlineSkills`,
+   * with unique ids. Plain `/mcp` serves every source to maintainers and to an
+   * open deployment's anonymous caller; a pool sees the sources its `skills`
+   * lists.
+   */
+  skills: array(
+    opaque<SkillSource>({
+      check: (value, path) => {
+        if (!skillSourceDefinition(value))
+          throw new ConfigError(`${path} must be a skill source built with inlineSkills.`);
+      },
+    }),
+  ),
   /** Exact connector id -> tool name -> verdict. Hidden tools cannot be discovered or called.
    * `"read"` applies only where the source is silent, and asserts the call is safe to repeat; a
    * source's declared write stays a write and is reported. `"read-repeatable"` also serves a
@@ -784,6 +809,16 @@ function assertCoherent(config: Parsed): void {
   }
   if (config.discovery.catalogZeroTtlSeconds > config.discovery.catalogMaxTtlSeconds) {
     throw new ConfigError("ConnectaConfig.discovery requires catalogZeroTtlSeconds <= catalogMaxTtlSeconds.");
+  }
+  const sourceIds = new Set<string>();
+  const skills = config.skills ?? [];
+  for (let index = 0; index < skills.length; index++) {
+    const source = skills[index];
+    if (!source)
+      throw new ConfigError(`ConnectaConfig.skills[${index}] must be a skill source built with inlineSkills.`);
+    if (sourceIds.has(source.id))
+      throw new ConfigError(`ConnectaConfig.skills[${index}] repeats the source id "${source.id}".`);
+    sourceIds.add(source.id);
   }
   const { vault } = config;
   const oauth = config.connectors.find((connector) => connector.startAuth);

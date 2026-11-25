@@ -15,8 +15,8 @@ records the work still needed; a goal is not a claim that it has shipped.
 3. **Classify, don't approve.** Connecta knows which tools read and which
    write, and tells the host truthfully. Approval belongs to the host. Each
    endpoint answers one question, set in deployment code: can it write.
-4. **Configuration is code.** Deployment source defines connectors,
-   maintainers, agents, and pools with their members. The operator UI shows configuration and
+4. **Configuration is code.** Deployment source defines connectors, skill
+   sources, maintainers, agents, and pools with their members. The operator UI shows configuration and
    manages auth material, never capability.
 5. **One core, two runtimes.** A Web-API core runs on Node and Cloudflare
    Workers, with one storage shape per platform: one D1 database on Workers,

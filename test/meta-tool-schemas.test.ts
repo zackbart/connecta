@@ -62,7 +62,7 @@ const GOLDEN: Record<string, unknown> = {
   skills: {
     type: "object",
     $schema: DRAFT,
-    properties: { name: { type: "string" } },
+    properties: { name: { type: "string" }, file: { type: "string" } },
   },
   search_tools: {
     type: "object",
@@ -266,8 +266,9 @@ describe("meta-tool output schemas", () => {
 const BUDGETS = {
   // Grew for each description's routing first line, the only line some hosts show,
   // then 69 (67 raw plus two escaped newlines) for the result(id, { all: true }) overload that recovery text names
-  // and the Data type it shares with emit.
-  total: 9_069,
+  // and the Data type it shares with emit,
+  // then 50 for the skills tool's file argument and connecta.skill's { file } option that read a skill's supporting files.
+  total: 9_119,
   // A writable endpoint's execute_read_code: description, shared input and output schemas.
   readRouteTotal: 1_560,
   readRouteInstructions: 550,
@@ -725,7 +726,7 @@ describe("meta-tool descriptions", () => {
             .find((tool) => tool.name === "execute_code")!
             .description.split("\n")
             .find((line: string) => line.startsWith("Connectors: "));
-          expect(new TextEncoder().encode(inventory).length).toBeGreaterThan(CONNECTOR_INVENTORY_MAX_BYTES - 100);
+          expect(new TextEncoder().encode(inventory).length).toBeGreaterThan(CONNECTOR_INVENTORY_MAX_BYTES - 110);
         }
       } finally {
         await app.close();
