@@ -186,6 +186,10 @@
     "./google-account": {
       "types": "./dist/google-account.d.ts",
       "import": "./dist/google-account.js"
+    },
+    "./github-skills": {
+      "types": "./dist/github-skills.d.ts",
+      "import": "./dist/github-skills.js"
     }
   },
   "scripts": {
@@ -259,7 +263,8 @@
     "@clerk/backend": "^3.12.0",
     "@cloudflare/codemode": "^0.4.4 || ^0.5.0",
     "quickjs-emscripten": "^0.32.0",
-    "undici": "6.29.1"
+    "undici": "6.29.1",
+    "yaml": "^2.9.0"
   },
   "peerDependenciesMeta": {
     "@clerk/backend": {
@@ -272,6 +277,9 @@
       "optional": true
     },
     "undici": {
+      "optional": true
+    },
+    "yaml": {
       "optional": true
     }
   },

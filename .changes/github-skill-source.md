@@ -1,0 +1,5 @@
+---
+type: added
+---
+
+`githubSkills(id, { repo, path, ref, token?, description?, freshFor? })` from the new `@zackbart/connecta/github-skills` subpath serves the Agent Skills in one directory of a GitHub repository as a deployment skill source (#1506). Snapshots of the directory's Git tree live in the deployment's storage and are published only once complete; a read after `freshFor` (default 300 seconds) checks the revision once, so a commit outside the directory fetches no file, and one caller at a time syncs while others serve the stored snapshot. A failed check or sync keeps the stored snapshot in service with one typed operator warning, waits for GitHub's rate-limit reset, and resumes an interrupted sync without refetching stored files. The token is sent only to `https://api.github.com` and appears in no output, log or stored value. Frontmatter is read as full YAML 1.2 (core schema) with the `yaml` package, a new optional peer dependency installed by deployments that import the subpath; `inlineSkills` keeps the strict subset.

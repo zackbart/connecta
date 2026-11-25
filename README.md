@@ -39,7 +39,9 @@ should call.
 
 Your team's own Agent Skills, such as how you review a pull request, can be
 served to every agent that connects, with their supporting files, and limited
-to the pools that should see them. See
+to the pools that should see them. Write them in deployment code, or keep them
+in a GitHub repository, where they stay reviewed and versioned and Connecta
+picks up each push. See
 [deployment skill sources](./documentation/meta-tools.md#deployment-skill-sources).
 
 ## What it protects

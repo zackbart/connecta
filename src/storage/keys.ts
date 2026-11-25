@@ -266,6 +266,51 @@ export const responseCacheKeys = {
     validateStorageKey(`${partition}:chunk:${revision}:${index}`),
 } as const satisfies Keyed;
 
+/** A GitHub skill source's snapshot expires this long after its last revalidation. */
+export const GITHUB_SKILL_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The largest file a GitHub skill source stores: its base64 value is at most
+ * 1 MiB, the per-value ceiling the catalog chunks keep, well under D1's
+ * 2,000,000-byte row limit.
+ */
+export const MAX_GITHUB_SKILL_FILE_BYTES = 768 * 1024;
+
+/**
+ * A GitHub skill source's snapshots, under the source id and a digest of its
+ * repository, path and ref. `snapshot` names the published revision and its
+ * manifest digest; the manifest's chunks sit at `manifest:<digest>:<index>`
+ * and each file's base64 bytes at `file:<git blob sha>`, so a resumed sync
+ * finds what an interrupted one stored. A snapshot is published by
+ * compare-and-set only after every chunk and file it names is stored.
+ * `lease` arbitrates one checker at a time; `hold` holds back the next check
+ * until an epoch-millisecond time. No key or value carries a token.
+ */
+export const skillSourceKeys = {
+  family: {
+    name: "skill-source",
+    scope: "root",
+    prefixes: ["skill-source:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: {
+      kind: "configured",
+      by: "snapshot: seven days after its last revalidation; lease: the checking request's deadline; hold: the next permitted check; manifest chunks and files: removed once no current or previous snapshot names them",
+    },
+    durable: false,
+  },
+  prefix: (sourceId: string, configDigest: string) =>
+    validateStorageKey(`skill-source:v1:${sourceId}:${configDigest}:`),
+  snapshot: (prefix: string) => validateStorageKey(`${prefix}snapshot`),
+  lease: (prefix: string) => validateStorageKey(`${prefix}lease`),
+  hold: (prefix: string) => validateStorageKey(`${prefix}hold`),
+  manifestPrefix: (prefix: string) => validateStorageKey(`${prefix}manifest:`),
+  manifest: (prefix: string, digest: string, index: number) =>
+    validateStorageKey(`${prefix}manifest:${digest}:${index}`),
+  filePrefix: (prefix: string) => validateStorageKey(`${prefix}file:`),
+  file: (prefix: string, blob: string) => validateStorageKey(`${prefix}file:${blob}`),
+} as const satisfies Keyed;
+
 /** Seconds an OAuth callback's owner binding stays claimable. */
 export const OAUTH_HANDOFF_TTL_SECONDS = 15 * 60;
 

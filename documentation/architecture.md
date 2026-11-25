@@ -284,7 +284,13 @@ and the maintainer-run provider check; public health counts are removed.
 with private one-hour discovery cache hints. It includes the configured identity, icons, title,
 and website in `io.modelcontextprotocol/serverInfo` result metadata. The Skills
 extension and its skill-only resources share `src/skills.ts` with the meta-tool
-and guest API. Both direct
+and guest API. Deployment skill sources implement the internal seam in
+`src/skill-source-seam.ts`: `inlineSkills` (`src/skill-sources.ts`) and
+`githubSkills` (`src/github-skills.ts`, the `/github-skills` subpath, outside the
+root import graph). The GitHub source keeps snapshots in the `skill-source:v1:`
+storage family, publishing a snapshot record by compare-and-set only after its
+manifest chunks and files are stored, as the catalog cache publishes a manifest
+after its chunks. Both direct
 call tools declare `address` as `x-mcp-header: "Address"`, which the SDK mirrors
 and validates as `Mcp-Param-Address` on modern requests.
 

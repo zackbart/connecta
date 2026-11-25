@@ -10,7 +10,7 @@
 
 type YamlValue = string | number | boolean | null | YamlValue[] | { [key: string]: YamlValue };
 
-const MAX_FRONTMATTER_BYTES = 32 * 1024;
+export const MAX_FRONTMATTER_BYTES = 32 * 1024;
 const MAX_DEPTH = 8;
 
 class Unsupported extends Error {}

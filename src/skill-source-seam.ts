@@ -37,7 +37,7 @@ export interface SkillSourceSnapshot {
 }
 
 /** What a source receives for one snapshot or file read, bound to the request performing it. */
-interface SkillSourceContext {
+export interface SkillSourceContext {
   /** The deployment's storage, unpartitioned. */
   readonly storage: KVStorage;
   /** Emits one operator warning carrying the source id and this code; a code the source did not declare logs `unknown`. */
@@ -109,6 +109,14 @@ export function skillFrontmatter(
   const split = splitFrontmatter(text);
   const frontmatter = split && parseFrontmatter(split.yaml);
   if (!frontmatter) return { invalid: "SKILL.md has no supported YAML frontmatter block" };
+  return checkSkillFrontmatter(directory, frontmatter);
+}
+
+/** A parsed frontmatter mapping's `name` and `description` against the skill's directory. */
+export function checkSkillFrontmatter(
+  directory: string,
+  frontmatter: Record<string, unknown>,
+): { frontmatter: Record<string, unknown> } | { invalid: string } {
   if (frontmatter.name !== directory) return { invalid: "frontmatter name differs from the directory name" };
   const description = frontmatter.description;
   if (typeof description !== "string" || description.trim() === "" || description.length > MAX_SKILL_DESCRIPTION)

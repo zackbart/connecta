@@ -138,8 +138,12 @@ describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }
       "activity.ts",
       "access-tokens.ts",
       "routes/access-tokens.ts",
+      "github-skills.ts",
     ])
       expect(graph.has(join(SRC, file)), file).toBe(false);
+    // The GitHub skill source must stay loadable on Workers.
+    for (const file of importGraph(join(SRC, "github-skills.ts")))
+      expect(FORBIDDEN_NODE_IMPORT.test(readFileSync(file, "utf8")), `${file} via /github-skills`).toBe(false);
     const withUi = importGraph(join(SRC, "ui.ts"));
     for (const file of [
       "credentials.ts",

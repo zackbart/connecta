@@ -722,8 +722,10 @@ the short conditional guide pointers in its tool definitions.
 A deployment publishes Agent Skills of its own, which no connector backs, with
 `skills` on `createConnecta`. Each entry is a skill source; this release ships
 `inlineSkills(id, skills, { description? })` from the package root, which takes
-skills from deployment code as file maps. The source type is opaque: no custom
-source is a published contract.
+skills from deployment code as file maps, and
+[`githubSkills`](#github-skill-source) from `@zackbart/connecta/github-skills`,
+which reads them from a directory of a GitHub repository. The source type is
+opaque: no custom source is a published contract.
 
 ```ts
 import { createConnecta, inlineSkills } from "@zackbart/connecta";
@@ -748,14 +750,14 @@ createConnecta({
 });
 ```
 
-| Rule        | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Source id   | Matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters, unique among sources, and not `connector`, `connecta` or `downstream`. `description` is optional: one line of 1 to 120 characters after trimming, with no control characters.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| Skill       | Each key is a directory name and each value its files by relative path, `SKILL.md` included. The directory name equals the frontmatter `name`, and both satisfy the Agent Skills name rule. `SKILL.md` frontmatter carries `name` and a 1 to 1,024 character `description`; other fields pass through unchanged. A string is stored as UTF-8 and a `Uint8Array` is served byte-exact.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| Frontmatter | At most 32 KiB of UTF-8. Block mappings nested at most eight deep, with keys of letters, digits, `_` and `-` that start with a letter or `_` and are not `null`, `true` or `false`; block and flow sequences of scalars; plain and one-line single- or double-quoted scalars (a quote inside a plain scalar is text, and ` #` after it starts a comment); literal (`\|`, `\|-`) and folded (`>`, `>-`) scalars; and comments. Plain scalars resolve as the YAML 1.2 core schema does. JSON, tabs, control characters, Unicode spaces, byte-order marks, unpaired surrogates, anchors, aliases, tags, keep chomping, explicit indentation indicators, multi-line plain or quoted scalars, nested flow collections, duplicate keys, `-0`, numbers too large for a finite JavaScript number, and integers outside the safe integer range are refused rather than guessed, so the manifest's `frontmatter` always equals what a YAML parser reads from the served `SKILL.md`. |
-| Paths       | A relative path with no `.` or `..` segment, leading `/`, backslash, empty segment, control character or unpaired surrogate, at most 1,024 characters.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| Bounds      | At most 1,024 skills per source, 512 files and 16 MiB per skill. The whole skills listing keeps its 1,024-entry and 8 MiB bounds.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Errors      | `inlineSkills` throws a `ConfigError` naming the source and skill for any rule above; `createConnecta` throws for a repeated source id or an entry not built with `inlineSkills`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Rule        | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source id   | Matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters, unique among sources, and not `connector`, `connecta` or `downstream`. `description` is optional: one line of 1 to 120 characters after trimming, with no control characters.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| Skill       | Each key is a directory name and each value its files by relative path, `SKILL.md` included. The directory name equals the frontmatter `name`, and both satisfy the Agent Skills name rule. `SKILL.md` frontmatter carries `name` and a 1 to 1,024 character `description`; other fields pass through unchanged. A string is stored as UTF-8 and a `Uint8Array` is served byte-exact.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| Frontmatter | At most 32 KiB of UTF-8. Block mappings nested at most eight deep, with keys of letters, digits, `_` and `-` that start with a letter or `_` and are not `null`, `true` or `false`; block and flow sequences of scalars; plain and one-line single- or double-quoted scalars (a quote inside a plain scalar is text, and ` #` after it starts a comment); literal (`\|`, `\|-`) and folded (`>`, `>-`) scalars; and comments. Plain scalars resolve as the YAML 1.2 core schema does. JSON, tabs, control characters, Unicode spaces, byte-order marks, unpaired surrogates, anchors, aliases, tags, keep chomping, explicit indentation indicators, multi-line plain or quoted scalars, nested flow collections, duplicate keys, `-0`, numbers too large for a finite JavaScript number, and integers outside the safe integer range are refused rather than guessed, so the manifest's `frontmatter` always equals what a YAML parser reads from the served `SKILL.md`. This subset is `inlineSkills`'s, which fails at construction; [`githubSkills`](#github-skill-source) reads full YAML. |
+| Paths       | A relative path with no `.` or `..` segment, leading `/`, backslash, empty segment, control character or unpaired surrogate, at most 1,024 characters.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| Bounds      | At most 1,024 skills per source, 512 files and 16 MiB per skill. The whole skills listing keeps its 1,024-entry and 8 MiB bounds.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Errors      | `inlineSkills` throws a `ConfigError` naming the source and skill for any rule above; `createConnecta` throws for a repeated source id or an entry not built with `inlineSkills`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 
 Identity. A skill's document is
 `skill://connecta/skills/<source-id>/<skill-name>/SKILL.md`, and each
@@ -821,6 +823,167 @@ skill name, file, revision or other source content reaches `tools/list` or the
 instructions, so one configuration serves identical bytes on every request. A
 caller who sees no source receives the unchanged description.
 
+### GitHub skill source
+
+`githubSkills(id, { repo, path, ref, token?, description?, freshFor? })` from
+`@zackbart/connecta/github-skills` serves the skills in one directory of a
+GitHub repository. Each immediate child directory of `path` that contains
+`SKILL.md` is one skill, with every file under it; other entries are ignored and
+nested skills are not discovered. Identity, readers, visibility and the
+always-loaded surface are those of every [skill source](#deployment-skill-sources).
+
+The subpath parses frontmatter with the [`yaml`](https://www.npmjs.com/package/yaml)
+package, an optional peer dependency: install it beside Connecta
+(`npm install yaml`) in a deployment that imports
+`@zackbart/connecta/github-skills`. It runs on Workers and Node and stays out of
+the root import graph.
+
+```ts
+import { createConnecta } from "@zackbart/connecta";
+import { githubSkills } from "@zackbart/connecta/github-skills";
+
+createConnecta({
+  // ...
+  skills: [
+    githubSkills("team", {
+      repo: "example-org/agent-skills",
+      path: "plugins/team/skills",
+      ref: "main",
+      token: env.SKILLS_GITHUB_TOKEN,
+      description: "Team workflows: pull request review and release steps.",
+    }),
+  ],
+  pools: {
+    support: { tools: ["tickets"], skills: ["team"], members: supportTeam },
+  },
+});
+```
+
+| Option        | Contract                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `repo`        | `owner/name` on github.com. GitHub Enterprise hosts are not supported.                                                                                                                                                                                                                                                                                                      |
+| `path`        | A directory, `/`-separated with no leading or trailing `/`, `.` or `..` segment, empty segment or backslash; `""` for the repository root.                                                                                                                                                                                                                                  |
+| `ref`         | Required: a branch, tag or commit SHA, as GitHub's `GET /repos/{owner}/{repo}/commits/{ref}` accepts it. Pinning a commit SHA makes every later check one request that never changes the snapshot.                                                                                                                                                                          |
+| `token`       | Optional: a string, or a function returning a string or a promise of one, called on each skills read. Without it the source reads a public repository at GitHub's unauthenticated limit of 60 requests an hour per IP address. A fine-grained personal access token needs only **Contents: Read** on the repository; a classic token needs `repo` for a private repository. |
+| `description` | Optional: one line, 1 to 120 characters after trimming, with no control characters, shown with the id in the `skills` tool's description.                                                                                                                                                                                                                                   |
+| `freshFor`    | Seconds a stored snapshot is served without contacting GitHub: a whole number from 30 to 86,400, default 300. A caller who sees the source is advertised a native `ttlMs` no longer than `freshFor`.                                                                                                                                                                        |
+
+`githubSkills` throws a `ConfigError` naming the source for an invalid id,
+description or option.
+
+Frontmatter. Unlike `inlineSkills`, which accepts only the strict subset above
+and fails at construction, `githubSkills` reads each `SKILL.md` frontmatter as
+full YAML 1.2 with the core schema, because people and formatters the
+deployment does not control write a repository's files: quoted scalars wrapped
+across lines, sequences of mappings such as a `hooks:` block, anchors and
+aliases are served as a YAML parser reads them. The manifest's `frontmatter` is
+that parsed value. A frontmatter block is refused, failing the sync with
+`invalid_skill`, when it is over 32 KiB, is not a mapping, has a non-string or
+duplicate key, exceeds the parser's limit of 100 alias expansions, or holds a
+value a JSON round trip would change (`.inf`, `.nan`, `-0`, a binary or other
+tagged value). `name` and `description` are checked as for every source.
+
+Snapshots. A snapshot is the complete set of skills and files at one revision of
+the directory, where the revision is the directory's Git tree: a commit that does
+not touch `path` changes no file. Snapshots live in the deployment's storage, so
+every process and isolate serves the same one. A snapshot is published only
+after every file it names is stored, and one not revalidated for seven days
+expires.
+
+Revalidation. Within `freshFor` of the last check, a skills read serves the
+stored snapshot and sends nothing to GitHub. After it, the next skills read
+claims a lease in storage and checks the revision, within at most 10 seconds;
+concurrent readers serve the stored snapshot meanwhile, and a reader with no
+stored snapshot waits for the first sync up to its skills deadline. Unchanged:
+the snapshot is served and its freshness renewed. Changed: the new revision is
+synced within the skills read's deadline (20 seconds by default, the discovery
+probe timeout) and served. A push therefore appears on the first skills read
+more than `freshFor` seconds after the previous check, five minutes at most by
+default. A sync the deadline interrupts publishes nothing; the files it stored
+remain, and the next skills read resumes without fetching them again.
+
+Requests. Every request goes to `https://api.github.com` with
+`Accept`, `X-GitHub-Api-Version: 2026-03-10` and a generic `User-Agent`.
+
+| Step                                 | GitHub requests                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------- |
+| Read within `freshFor`               | 0                                                                               |
+| Check, ref unchanged                 | 1: the ref's commit SHA                                                         |
+| Check, commit changed but not `path` | 2 + the number of `path` segments: the commit's tree, then one tree per segment |
+| Sync of a changed directory          | the check above + 1 recursive tree of `path` + 1 per file not already stored    |
+| First sync                           | 3 + the number of `path` segments + 1 per file                                  |
+
+`plugins/team/skills` with 20 skill files makes 26 requests on its first sync.
+No request lists the repository root recursively, so a large monorepo works.
+Storage adds about one write per fetched file and a handful of reads and
+writes per sync. On Cloudflare Workers each GitHub request and each D1 query
+is a subrequest: a Free plan invocation allows 50 subrequests (and 50 D1
+queries), a Paid one 10,000 subrequests and 1,000 D1 queries. A first sync
+that exceeds the limit fails at that point and resumes on later reads, each
+storing more files, until the snapshot publishes.
+
+Limits. A sync fails, and nothing from it is published, for any of these: a skill
+directory whose name differs from its frontmatter `name` or breaks the Agent
+Skills name rule; missing or invalid frontmatter (see Frontmatter above); a symlink or submodule under
+a skill; a tree GitHub reports as truncated; more than 1,024 skills, 512 files
+in one skill or 16 MiB in one skill; a file over 786,432 bytes (768 KiB), the
+per-file limit set by storing each file as one base64 value of at most 1 MiB,
+well under D1's 2,000,000-byte row limit; or a file whose bytes contain the
+token. The source never follows a URL found in a file and reads nothing outside
+`path`.
+
+Failure. A failed check or sync (network error, non-2xx status, rate limit,
+deadline, truncated tree, invalid skill, exceeded bound) leaves the stored
+snapshot in service and logs one payload-free warning,
+`[connecta] skill source warning` with `{ source, code }`:
+
+| `code`                 | Cause                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `token_unavailable`    | The token function threw or returned something other than a non-empty string.              |
+| `network`              | The request did not complete.                                                              |
+| `redirect_refused`     | A redirect pointed outside `https://api.github.com`, or more than three redirects.         |
+| `unauthorized`         | GitHub answered 401.                                                                       |
+| `forbidden`            | GitHub answered 403 without rate-limit headers.                                            |
+| `not_found`            | GitHub answered 404: the repository, ref or a tree is missing, or the token cannot see it. |
+| `http_status`          | Any other non-2xx answer.                                                                  |
+| `rate_limited`         | GitHub answered 403 or 429 with `retry-after` or `x-ratelimit-remaining: 0`, or 429.       |
+| `deadline`             | The check or sync ran out of time.                                                         |
+| `invalid_response`     | A response was malformed, too large, or a blob's bytes did not match its Git SHA.          |
+| `path_not_found`       | `path` is missing at the ref or is not a directory.                                        |
+| `truncated_tree`       | GitHub reported the directory's tree as truncated.                                         |
+| `invalid_skill`        | A skill's name, frontmatter or a file path is invalid.                                     |
+| `name_mismatch`        | A skill directory's name differs from its frontmatter `name`.                              |
+| `symlink`, `submodule` | A skill holds a symlink or a submodule.                                                    |
+| `bound_exceeded`       | More than 1,024 skills, 512 files or 16 MiB in a skill.                                    |
+| `file_too_large`       | A file exceeds 786,432 bytes.                                                              |
+| `credential_in_file`   | A file's bytes contain the token.                                                          |
+| `storage`              | Storage failed, or a stored file no longer matched its Git SHA (it is removed).            |
+| `snapshot_unreadable`  | The stored snapshot could not be read back.                                                |
+
+After a failed check while a snapshot is in service, the next check waits the
+later of `freshFor` seconds and any hold GitHub set: after a rate limit, its
+`retry-after` or `x-ratelimit-reset` time, or a minute when neither is given;
+after a 403 without rate-limit headers, a minute. With no stored snapshot,
+the source is unavailable: the skills listing fails as a failed downstream
+skills listing does, built-in skills and connector guides stay readable by
+name, and the next skills read tries again (after a rate limit, once its reset
+time has passed).
+
+Credentials. The token is sent only to `https://api.github.com`, as
+`Authorization: Bearer`, and never to a redirect target on another host: such a
+redirect fails the check. It is registered with the request's credential
+redaction, so it reaches no agent output, and it appears in no operator
+record, log, storage key or stored value: a file containing it fails the sync.
+
+Storage. Keys sit under `skill-source:v1:<source-id>:<digest>:`, where the
+digest covers `repo`, `path` and `ref`, so changing any of them starts a new
+snapshot. `snapshot` names the published revision and manifest digest;
+`manifest:<digest>:<n>` holds the manifest in 1 MiB chunks; `file:<git blob
+SHA>` holds each file's bytes as base64; `lease` and `hold` coordinate checks.
+Files and manifest chunks that neither the current nor the previous snapshot
+names are removed when a new snapshot publishes. Removing a source from the
+configuration leaves its rows until they are deleted by prefix.
+
 ### Native Skills extension
 
 The [Skills extension](https://github.com/modelcontextprotocol/ext-skills) is Beta under
@@ -836,7 +999,7 @@ the same registry as `skills` and `connecta.skill`. These methods return
 advertise `ttlMs: 300000` (five minutes); any visible downstream skill source
 keeps `ttlMs: 0`, including reads of local guides on that view. A visible
 skill source that limits how long its content may be cached lowers `ttlMs` to
-its limit; `inlineSkills` sets none. Clients must key
+its limit; `inlineSkills` sets none and `githubSkills` sets `freshFor`. Clients must key
 private caches by endpoint and authenticated caller. No request-bound catalog or
 digest promise is retained across requests. Listing pages
 contain at most five complete skills: usage first, required connector guides

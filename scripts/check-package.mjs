@@ -338,6 +338,8 @@ try {
     "dist/google.d.ts",
     "dist/google-account.js",
     "dist/google-account.d.ts",
+    "dist/github-skills.js",
+    "dist/github-skills.d.ts",
     "dist/json-schema.js",
     "dist/json-schema.d.ts",
     "dist/executors/quickjs.js",
@@ -555,6 +557,8 @@ const quickjs = await import("@zackbart/connecta/quickjs");
 if (typeof clerk.clerkAuth !== "function") throw new Error("missing Clerk adapter");
 if (typeof access.cloudflareAccessAuth !== "function") throw new Error("missing Cloudflare Access adapter");
 if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing QuickJS adapter");
+const githubSkillSource = await import("@zackbart/connecta/github-skills");
+if (typeof githubSkillSource.githubSkills !== "function") throw new Error("missing GitHub skill source");
 const node = await import("@zackbart/connecta/node");
 if (typeof node.listen !== "function") throw new Error("missing Node adapter");
 // A consumer's newer Clerk version must install and authenticate through the
@@ -1431,6 +1435,7 @@ try {
     "@cloudflare/codemode",
     "quickjs-emscripten",
     "undici",
+    "yaml",
   ]) {
     if (existsSync(join(work, "node_modules", dependency))) {
       throw new Error(`Optional peer ${dependency} was installed with core`);
@@ -1466,7 +1471,14 @@ try {
 
   run(
     npm,
-    ["install", "--ignore-scripts", "@clerk/backend@3.23.1", "quickjs-emscripten@^0.32.0", "undici@6.29.1"],
+    [
+      "install",
+      "--ignore-scripts",
+      "@clerk/backend@3.23.1",
+      "quickjs-emscripten@^0.32.0",
+      "undici@6.29.1",
+      "yaml@^2.9.0",
+    ],
     work,
   );
   run(process.execPath, ["optional.mjs"], work);
