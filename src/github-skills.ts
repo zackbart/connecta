@@ -21,6 +21,7 @@ import {
 } from "./skill-source-seam.js";
 import type { SkillSource } from "./skill-sources.js";
 import type { KVStorage } from "./types.js";
+import { SentSecrets } from "./sent-secrets.js";
 import { GITHUB_SKILL_SNAPSHOT_TTL_MS, MAX_GITHUB_SKILL_FILE_BYTES, skillSourceKeys } from "./storage/keys.js";
 
 export { MAX_GITHUB_SKILL_FILE_BYTES };
@@ -79,6 +80,11 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const ROW_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const RESTORE_AGE_MS = 15 * 24 * 60 * 60 * 1000;
 const MAX_REPAIR_BLOBS = 64;
+/**
+ * Files one request fetches and stores while a snapshot is in service, so the request's own storage and
+ * subrequest work stays small enough to end by serving that snapshot.
+ */
+const STEP_FILES = 10;
 
 /** Typed, payload-free reasons a check or sync fails; each is one operator warning code. */
 const WARNING_CODES = [
@@ -129,7 +135,7 @@ interface Pointer {
   /** When the oldest file or chunk this snapshot relies on was written. */
   readonly oldestRow: number;
   /** Files and chunks found missing or corrupt; the next check refetches them, regardless of `freshFor`. */
-  readonly repair?: { readonly blobs: readonly string[]; readonly chunks: boolean };
+  readonly repair?: { readonly blobs: readonly string[]; readonly chunks: boolean; readonly all?: true };
 }
 
 interface ManifestFile {
@@ -224,23 +230,6 @@ function asciiJson(value: unknown): string {
     /[\u007f-￿]/g,
     (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
   );
-}
-
-function containsBytes(haystack: Uint8Array, needle: Uint8Array): boolean {
-  if (needle.length === 0 || needle.length > haystack.length) return false;
-  const first = needle[0]!;
-  for (let index = haystack.indexOf(first); index !== -1; index = haystack.indexOf(first, index + 1)) {
-    if (index + needle.length > haystack.length) return false;
-    let match = true;
-    for (let offset = 1; offset < needle.length; offset++) {
-      if (haystack[index + offset] !== needle[offset]) {
-        match = false;
-        break;
-      }
-    }
-    if (match) return true;
-  }
-  return false;
 }
 
 const digestHex = (algorithm: "SHA-1" | "SHA-256", bytes: Uint8Array) =>
@@ -535,6 +524,7 @@ function parsePointer(raw: string | null): Pointer | undefined {
       (repair === undefined ||
         (isObject(repair) &&
           typeof repair.chunks === "boolean" &&
+          (repair.all === undefined || repair.all === true) &&
           Array.isArray(repair.blobs) &&
           repair.blobs.length <= MAX_REPAIR_BLOBS &&
           repair.blobs.every((blob: unknown) => typeof blob === "string" && GIT_SHA.test(blob))))
@@ -588,9 +578,14 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
   const refPath = config.ref.split("/").map(encodeURIComponent).join("/");
   const configKey = JSON.stringify([config.owner, config.name, config.path, config.ref]);
   let tokenlessPrefix: string | undefined;
-  const prefixes = new Map<string, string>();
-  /** The partition a function token last resolved to, in this process. */
-  let remembered: { token: string; prefix: string } | undefined;
+  /**
+   * Per binding (one deployment's vault key), the partition each token digests to and the partition a function
+   * token last resolved to in this process.
+   */
+  const bindings = new WeakMap<
+    SkillSourceContext["digestSecret"],
+    { prefixes: Map<string, string>; remembered: { token: string; prefix: string } | undefined }
+  >();
   let memo: { prefix: string; digest: string; manifest: Manifest } | undefined;
 
   return defineSkillSource(label, id, description, {
@@ -603,6 +598,9 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
         }),
     snapshot: (ctx: SkillSourceContext) =>
       Effect.gen(function* () {
+        let binding = bindings.get(ctx.digestSecret);
+        if (!binding) bindings.set(ctx.digestSecret, (binding = { prefixes: new Map(), remembered: undefined }));
+        const { prefixes } = binding;
         /** One storage operation. It is uninterruptible, so a deadline waits for it rather than leaving it in flight. */
         const io = <A>(effect: Effect.Effect<A, unknown, Storage>): Effect.Effect<A, SyncFailure> =>
           effect.pipe(
@@ -659,9 +657,10 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
           return yield* partition(yield* partitionFor(config.token), config.token);
         }
         const tokenFunction = config.token;
-        if (remembered) {
-          ctx.secret(remembered.token);
-          const fresh = yield* freshSnapshot(remembered.prefix);
+        const startedWith = binding.remembered;
+        if (startedWith) {
+          ctx.secret(startedWith.token);
+          const fresh = yield* freshSnapshot(startedWith.prefix);
           if (fresh) return fresh;
         }
         const resolved = yield* Effect.result(
@@ -682,13 +681,13 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
         );
         if (Result.isFailure(resolved)) {
           ctx.warn("token_unavailable");
-          if (!remembered) return yield* Effect.fail(resolved.failure);
-          const stored = yield* storedSnapshot(remembered.prefix);
+          if (!startedWith) return yield* Effect.fail(resolved.failure);
+          const stored = yield* storedSnapshot(startedWith.prefix);
           return stored ?? (yield* Effect.fail(resolved.failure));
         }
         ctx.secret(resolved.success);
         const prefix = yield* partitionFor(resolved.success);
-        remembered = { token: resolved.success, prefix };
+        binding.remembered = { token: resolved.success, prefix };
         return yield* partition(prefix, resolved.success);
 
         /** The partition's snapshot when it is stored, fresh and needs no repair. */
@@ -767,11 +766,10 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
             const blobs = new Set(current.repair?.blobs ?? []);
             if (blob !== undefined) blobs.add(blob);
             const next: Pointer =
-              blobs.size > MAX_REPAIR_BLOBS
-                ? { ...current, checkedAt: 0, oldestRow: 0, repair: { blobs: [], chunks: true } }
+              blobs.size > MAX_REPAIR_BLOBS || current.repair?.all
+                ? { ...current, repair: { blobs: [], chunks: true, all: true } }
                 : {
                     ...current,
-                    checkedAt: 0,
                     repair: { blobs: [...blobs], chunks: (current.repair?.chunks ?? false) || blob === undefined },
                   };
             yield* storageCompareAndSet(key, raw, JSON.stringify(next), { expiresAtMs: recordExpiry(current) });
@@ -824,7 +822,22 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
         /** Serves, checks or syncs the snapshot of one storage partition. */
         function partition(prefix: string, token: string | undefined): Effect.Effect<SkillSourceSnapshot, SyncFailure> {
           const keys = keysFor(prefix);
-          const tokenBytes = token === undefined ? undefined : encoder.encode(token);
+          /**
+           * The output boundary's own checker with this sync's token registered: anything it would rewrite, the
+           * token in any form its encoding lattice recognizes, is refused at intake, so stored content needs no
+           * redaction for the token it was synced with.
+           */
+          const intake = token === undefined ? undefined : new SentSecrets();
+          intake?.secret(token!);
+          const holdsToken = (value: unknown) => intake !== undefined && intake.changes(value);
+          /** A file as a reader is served it: valid UTF-8 as text, anything else as a base64 blob. */
+          const served = (bytes: Uint8Array) => {
+            try {
+              return { text: new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes) };
+            } catch {
+              return { blob: encodeBase64(bytes) };
+            }
+          };
           const pointerNow = readPointer(prefix);
 
           const get = (path: string, accept: string, limit: number) =>
@@ -940,15 +953,14 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               return sha as string;
             });
 
-          /** A fetched blob's bytes, checked against its Git SHA and refused when they contain the token. */
+          /** A fetched blob's bytes, checked against its Git SHA and refused when they hold the token in any form. */
           const fetchBlob = (file: { blob: string; size: number }) =>
             get(`${repoPath}/git/blobs/${file.blob}`, RAW_MEDIA, file.size).pipe(
               Effect.flatMap((bytes) =>
                 Effect.gen(function* () {
                   if (bytes.length !== file.size || (yield* gitBlobSha(bytes)) !== file.blob)
                     return yield* Effect.fail(failure("invalid_response"));
-                  if (tokenBytes && containsBytes(bytes, tokenBytes))
-                    return yield* Effect.fail(failure("credential_in_file"));
+                  if (holdsToken(served(bytes))) return yield* Effect.fail(failure("credential_in_file"));
                   return bytes;
                 }),
               ),
@@ -995,7 +1007,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
            * `SKILL.md` documents it did not fetch, and skips manifest chunks already stored for the same manifest.
            * Anything fetched that contains the token fails the sync before it, or anything derived from it, is stored.
            */
-          const prepare = (commit: string, revision: string, repair: Pointer["repair"]) =>
+          const prepare = (commit: string, revision: string, repair: Pointer["repair"], inService: boolean) =>
             Effect.gen(function* () {
               const tree = yield* getTree(`${repoPath}/git/trees/${revision}?recursive=1`);
               if (tree.truncated) return yield* Effect.fail(failure("truncated_tree"));
@@ -1003,7 +1015,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                 try: () => planSkills(tree.entries),
                 catch: (error) => asFailure(error, "invalid_response"),
               });
-              const reuseAfter = Date.now() - RESTORE_AGE_MS;
+              const reuseAfter = repair?.all ? Infinity : Date.now() - RESTORE_AGE_MS;
               const broken = new Set(repair?.blobs ?? []);
               const stored = yield* storedFiles;
               const rows = new Map<string, { digest: string; writtenAt: number }>();
@@ -1037,8 +1049,10 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                   }
                 }
               }
+              const pending = [...missing.values()];
+              const step = inService ? pending.slice(0, STEP_FILES) : pending;
               yield* Effect.forEach(
-                [...missing.values()],
+                step,
                 (file) =>
                   fetchBlob(file).pipe(
                     Effect.flatMap((bytes) =>
@@ -1058,6 +1072,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                   ),
                 { concurrency: BLOB_CONCURRENCY, discard: true },
               );
+              if (step.length < pending.length) return { incomplete: true as const };
               const skills: ManifestSkill[] = [];
               for (const skill of plan) {
                 const frontmatter = yamlFrontmatter(documents.get(skill.document)!);
@@ -1080,7 +1095,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
                 });
               }
               const serialized = asciiJson({ v: 1, skills } satisfies Manifest);
-              if (tokenBytes && containsBytes(encoder.encode(serialized), tokenBytes))
+              if (holdsToken(skills) || holdsToken(serialized))
                 return yield* Effect.fail(failure("credential_in_file"));
               if (serialized.length > MAX_MANIFEST_BYTES) return yield* Effect.fail(failure("manifest_too_large"));
               const digest = yield* digestHex("SHA-256", encoder.encode(serialized));
@@ -1115,7 +1130,7 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               const oldestRow = Math.min(...chunkTimes, ...[...rows.values()].map((row) => row.writtenAt));
               const manifest: Manifest = { v: 1, skills };
               const next: Pointer = { v: 1, commit, revision, digest, chunks, chunkTimes, checkedAt: 0, oldestRow };
-              return { manifest, next };
+              return { incomplete: false as const, manifest, next };
             });
 
           /**
@@ -1131,7 +1146,14 @@ export function githubSkills(id: string, options: GitHubSkillsOptions): SkillSou
               if (current && commit === current.commit) return yield* renew(current);
               const revision = yield* until(checkEnd, directoryTree(commit));
               if (current && revision === current.revision) return yield* renew(current);
-              const prepared = yield* until(budgetEnd, prepare(commit, revision, pointer?.repair));
+              const prepared = yield* until(
+                budgetEnd,
+                prepare(commit, revision, pointer?.repair, pointer !== undefined),
+              );
+              if (prepared.incomplete)
+                return pointer && revision === pointer.revision
+                  ? yield* publish(raw, { ...pointer, commit, checkedAt: Date.now() })
+                  : pointer!;
               const published = yield* publish(raw, { ...prepared.next, checkedAt: Date.now() });
               if (published.digest === prepared.next.digest)
                 memo = { prefix, digest: published.digest, manifest: prepared.manifest };

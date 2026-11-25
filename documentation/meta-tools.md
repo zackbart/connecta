@@ -929,13 +929,14 @@ remain, and the next skills read resumes without fetching them again.
 Requests. Every request goes to `https://api.github.com` with
 `Accept`, `X-GitHub-Api-Version: 2026-03-10` and a generic `User-Agent`.
 
-| Step                                 | GitHub requests                                                                 |
-| ------------------------------------ | ------------------------------------------------------------------------------- |
-| Read within `freshFor`               | 0                                                                               |
-| Check, ref unchanged                 | 1: the ref's commit SHA                                                         |
-| Check, commit changed but not `path` | 2 + the number of `path` segments: the commit's tree, then one tree per segment |
-| Sync of a changed directory          | the check above + 1 recursive tree of `path` + 1 per file not already stored    |
-| First sync                           | 3 + the number of `path` segments + 1 per file                                  |
+| Step                                 | GitHub requests                                                                                                                                           |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Read within `freshFor`               | 0                                                                                                                                                         |
+| Check, ref unchanged                 | 1: the ref's commit SHA                                                                                                                                   |
+| Check, commit changed but not `path` | 2 + the number of `path` segments: the commit's tree, then one tree per segment                                                                           |
+| Sync of a changed directory          | the check above + 1 recursive tree of `path` + 1 per file not already stored                                                                              |
+| First sync                           | 3 + the number of `path` segments + 1 per file                                                                                                            |
+| Re-store, every 15 days              | the changed-commit check above + 1 recursive tree of `path` + 1 per row older than 15 days, at most 10 files per request while the snapshot is in service |
 
 `plugins/team/skills` with 20 skill files makes 26 requests on its first sync.
 No request lists the repository root recursively, so a large monorepo works.
@@ -947,12 +948,18 @@ checks, not typical counts:
 - at most 8 manifest chunk writes, and one batched read of at most 8 chunks
   each time a process loads a manifest;
 - at most 2 key listings: the stored files and the manifest's stored chunks;
-- at most 16 lease, snapshot and hold operations, plus one lease renewal for
-  each 15 seconds of work;
+- at most 12 lease, snapshot and hold operations (a cold sync, an unchanged
+  check, a changed sync and a failed check each measure 8), plus 2 for each
+  second a reader with nothing stored waits on another request's lease, one
+  lease renewal for each 15 seconds of work, and 2 for each missing or corrupt
+  row a read marks for repair;
 - no deletes.
 
-A resumed sync skips files and manifest chunks already stored in the same
-partition, and never reads the body of any stored file except the `SKILL.md`
+While a snapshot is in service, one request fetches and stores at most 10
+files, then ends by serving that snapshot; the next read continues, so a large
+sync or re-store never takes a request's storage and subrequest budget away
+from serving. A resumed sync skips files and manifest chunks already stored in
+the same partition, and never reads the body of any stored file except the `SKILL.md`
 documents it reuses: each file's digest and write time are in its key. On
 Cloudflare Workers each GitHub request and each D1 query is a subrequest: a
 Free plan invocation allows 50 subrequests (and 50 D1 queries), a Paid one
@@ -1023,10 +1030,12 @@ in no operator record, log, storage key or stored value. During a sync,
 anything fetched that contains the token used for that sync fails the sync with
 `credential_in_file` before it is stored: a file's bytes, and every value
 derived from them, the parsed frontmatter and the manifest entries included.
-Files the sync fetched and stored before that failure hold no token; they stay
-until they expire. The check is literal: a file holding an encoded form of the
-token (base64, percent-encoding) passes it and is stored, and responses redact
-those forms while the token is registered for the request.
+The check is the output boundary's own: anything the
+request's credential redaction would rewrite, the token in any encoded form it
+recognizes (see [INV-5 output redaction limits](./auth.md#inv-5-output-redaction-limits)), is refused, so
+stored content never needs redaction for the token it was synced with. Clean
+files the sync fetched and stored before such a failure stay until their
+30-day expiry.
 
 A token needs a credential vault: `createConnecta` throws a `ConfigError`
 naming the source when a source has a token and the deployment has no vault.
@@ -1044,8 +1053,9 @@ usable value, the process serves its remembered partition's snapshot with
 and the source is unavailable for that request. No request reaches GitHub
 without a usable token when one is configured.
 
-The first check after a token changes runs a full sync in the new partition:
-every file is fetched again. Until it publishes, the source is unavailable to
+When a token changes, the first check runs a full sync in the new partition,
+fetching every file again, unless that partition already holds a fresh
+snapshot (for example, after a change back to an earlier token). Until it publishes, the source is unavailable to
 requests that resolved the new token, and if GitHub fails at that moment it
 stays unavailable until a sync succeeds. Use a long-lived token: a function
 that returns a new value often downloads the directory again each time.
@@ -1058,9 +1068,12 @@ each file's bytes as base64; `lease` and `hold` coordinate checks. Nothing is
 ever deleted. Each file and manifest chunk is written with a 30-day expiry, and
 the snapshot record expires seven days after its last check, and never after
 its oldest row. When the oldest row a snapshot relies on is more than 15 days
-old, the next check after `freshFor` stores the whole snapshot again, fetching
-every file and writing every row with a fresh expiry, and the existing snapshot
-keeps serving until that publishes or when it fails. Rows from old revisions,
+old, the next check after `freshFor` stores it again: it fetches the tree and
+fetches again only the rows older than 15 days, writing them with a fresh
+expiry, at most 10 files per request while the existing snapshot keeps
+serving. Each step that leaves the re-store unfinished renews the existing
+record's seven-day expiry, and the snapshot publishes when every row is fresh.
+A failed step keeps serving the existing snapshot. Rows from old revisions,
 old tokens and sources removed from the configuration expire on their own;
 anything that goes missing before then is restored by repair.
 

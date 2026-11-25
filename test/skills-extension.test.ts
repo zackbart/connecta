@@ -1429,6 +1429,7 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}, { va
   const writes: { key: string; expiresAtMs: number | undefined }[] = [];
   const deletes: string[] = [];
   const hooks: {
+    op?: (() => void) | undefined;
     get?: ((key: string) => Promise<void>) | undefined;
     list?: ((prefix: string) => Promise<void>) | undefined;
     set?: ((key: string) => Promise<void>) | undefined;
@@ -1442,26 +1443,31 @@ async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}, { va
   const storage: KVStorage = {
     capabilities: { absoluteExpiry: true },
     async get(key) {
+      hooks.op?.();
       const value = await inner.get(key);
       await hooks.get?.(key);
       return value;
     },
     async set(key, value, options) {
+      hooks.op?.();
       await hooks.set?.(key);
       writes.push({ key, expiresAtMs: options?.expiresAtMs });
       return inner.set(key, value, options);
     },
     async delete(key) {
+      hooks.op?.();
       deletes.push(key);
       await hooks.delete?.(key);
       return inner.delete(key);
     },
     async list(prefix) {
+      hooks.op?.();
       const keys = await inner.list(prefix);
       await hooks.list?.(prefix);
       return keys;
     },
     async compareAndSet(key, expected, next, options) {
+      hooks.op?.();
       await hooks.beforeCompareAndSet?.(key, expected, next, options?.expiresAtMs);
       const swapped = await inner.compareAndSet(key, expected, next, options);
       if (swapped) hooks.committed?.(key, next, options?.expiresAtMs);
@@ -2710,6 +2716,130 @@ it("stores a GitHub snapshot again once its oldest row is 15 days old, serving t
     t.fixture.reset();
     t.advance(301);
     await t.names();
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("refuses a fetched GitHub file holding the token in any form the output redaction would rewrite", async () => {
+  for (const form of [btoa(TOKEN), encodeURIComponent(`?t=${TOKEN}`).replace(/-/g, "%2D")]) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/encoded.md`]: `value: ${form}\n` }));
+      await expect(t.read().list(), form).rejects.toMatchObject({ code: "unavailable" });
+      expect(t.warnings, form).toEqual([
+        ["[connecta] skill source warning", { source: "team", code: "credential_in_file" }],
+      ]);
+      const { keys, values } = await t.stored();
+      for (const [index, key] of keys.entries())
+        if (key.includes(":file:")) expect(atob(String(values[index])), form).not.toContain(form);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("falls back to the GitHub partition a request started with when its token function fails", async () => {
+  let call = 0;
+  let reject!: (error: Error) => void;
+  const t = await githubDeployment({
+    token: () => {
+      call++;
+      if (call === 1) return TOKEN;
+      if (call === 2) return new Promise<string>((_, fail) => (reject = fail));
+      return "other-skills-token-0123456789abcdef";
+    },
+  });
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.read().text("review", "references/checklist.md")).toBe(CHECKLIST);
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/checklist.md`]: "# Checklist v2\n" }));
+    t.advance(301);
+    const waiting = t.read().text("review", "references/checklist.md");
+    await vi.waitFor(() => expect(call).toBe(2));
+    expect(await t.read().text("review", "references/checklist.md")).toBe("# Checklist v2\n");
+    reject(new Error("vault unavailable"));
+    expect(await waiting).toBe(CHECKLIST);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("keeps one GitHub source object's partitions separate per credential vault", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    const source = githubSkills("team", { repo: REPO, path: SKILLS_PATH, ref: "main", token: TOKEN });
+    const registry = (key: number) =>
+      makeRegistry([], {
+        storage: t.storage,
+        logger: silentLogger,
+        credentialVault: new CredentialVault(t.storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(key)))),
+        skillSources: [source],
+      } as never);
+    expect(await t.names(registry(1))).toEqual(TEAM);
+    t.fixture.reset();
+    expect(await t.names(registry(2))).toEqual(TEAM);
+    expect(t.blobs()).toBe(5);
+    expect((await t.storage.list("skill-source:v1:team:")).filter((key) => key.endsWith(":snapshot"))).toHaveLength(2);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("never shortens a GitHub snapshot's expiry when marking repairs while GitHub fails", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    for (const key of await t.storage.list("skill-source:v1:team:"))
+      if (key.includes(":file:") && atob((await t.storage.get(key))!) === CHECKLIST) await t.storage.delete(key);
+    t.fixture.intercept(() => new Response("{}", { status: 503 }));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      t.advance(10);
+      await expect(t.read().text("review", "references/checklist.md")).rejects.toMatchObject({ code: "unavailable" });
+      expect(await t.names()).toEqual(TEAM);
+    }
+    t.advance(6 * 86_400);
+    expect(await t.names()).toEqual(TEAM);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("re-stores a GitHub snapshot in small steps under a 50-operation storage budget, serving the existing one on every read", async () => {
+  const extra = Object.fromEntries(
+    Array.from({ length: 60 }, (_, index) => [`${SKILLS_PATH}/review/notes/${index}.md`, `# Note ${index}\n`]),
+  );
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo(extra));
+    expect(await t.names()).toEqual(TEAM);
+    for (const days of [6, 6]) {
+      t.advance(days * 86_400);
+      expect(await t.names()).toEqual(TEAM);
+    }
+    t.advance(4 * 86_400);
+    t.fixture.reset();
+    let operations = 0;
+    t.hooks.op = () => {
+      if (++operations > 50) throw new Error("too many storage operations for this invocation");
+    };
+    let reads = 0;
+    while (reads < 40) {
+      operations = 0;
+      reads++;
+      expect(await t.names(), `read ${reads}`).toEqual(TEAM);
+      if (t.blobs() >= 65 && t.fixture.paths().at(-1) === "commits/main") break;
+      t.advance(301);
+    }
+    expect(t.blobs()).toBe(65);
+    expect(t.warnings).toEqual([]);
+    t.fixture.reset();
+    t.advance(301);
+    operations = 0;
+    expect(await t.names()).toEqual(TEAM);
     expect(t.fixture.paths()).toEqual(["commits/main"]);
   } finally {
     endGithubDeployment();
