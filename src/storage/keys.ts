@@ -266,6 +266,56 @@ export const responseCacheKeys = {
     validateStorageKey(`${partition}:chunk:${revision}:${index}`),
 } as const satisfies Keyed;
 
+/** A GitHub skill source's snapshot expires this long after its last revalidation. */
+export const GITHUB_SKILL_SNAPSHOT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The largest file a GitHub skill source stores: its base64 value is at most
+ * 1 MiB, the per-value ceiling the catalog chunks keep, well under D1's
+ * 2,000,000-byte row limit.
+ */
+export const MAX_GITHUB_SKILL_FILE_BYTES = 768 * 1024;
+
+/**
+ * A GitHub skill source's snapshots, under the source id and a storage
+ * partition: a digest of the repository, path, ref and token, keyed by the
+ * credential vault's storage digest key when there is a token, so nothing
+ * stored under one token is used under another. `snapshot` names the
+ * published revision, its manifest digest and when each row it relies on was
+ * written; the manifest's chunks sit at `manifest:<digest>:<index>:<written at>`
+ * and each file's base64 bytes at `file:<git blob sha>:<sha-256 hex>:<written
+ * at>`, so a resumed sync learns what an interrupted one stored from one
+ * listing. A snapshot is published by compare-and-set only after every chunk
+ * and file it names is stored. Nothing is deleted: rows expire 30 days after
+ * they are written and a snapshot whose oldest row is 15 days old is stored
+ * again. `lease` arbitrates one checker at a time; `hold` holds back the next
+ * check until an epoch-millisecond time. No key or value carries a token.
+ */
+export const skillSourceKeys = {
+  family: {
+    name: "skill-source",
+    scope: "root",
+    prefixes: ["skill-source:v1:"],
+    version: { number: 1, in: "key" },
+    codec: textCodec,
+    ttl: {
+      kind: "configured",
+      by: "snapshot: seven days after its last revalidation, and never past its oldest row; files and manifest chunks: 30 days after they are written; lease: 30 seconds, extended while its holder makes progress; hold: the next permitted check",
+    },
+    durable: false,
+  },
+  prefix: (sourceId: string, partition: string) => validateStorageKey(`skill-source:v1:${sourceId}:${partition}:`),
+  snapshot: (prefix: string) => validateStorageKey(`${prefix}snapshot`),
+  lease: (prefix: string) => validateStorageKey(`${prefix}lease`),
+  hold: (prefix: string) => validateStorageKey(`${prefix}hold`),
+  manifestDigestPrefix: (prefix: string, digest: string) => validateStorageKey(`${prefix}manifest:${digest}:`),
+  manifest: (prefix: string, digest: string, index: number, writtenAt: number) =>
+    validateStorageKey(`${prefix}manifest:${digest}:${index}:${writtenAt}`),
+  filePrefix: (prefix: string) => validateStorageKey(`${prefix}file:`),
+  file: (prefix: string, blob: string, sha256: string, writtenAt: number) =>
+    validateStorageKey(`${prefix}file:${blob}:${sha256}:${writtenAt}`),
+} as const satisfies Keyed;
+
 /** Seconds an OAuth callback's owner binding stays claimable. */
 export const OAUTH_HANDOFF_TTL_SECONDS = 15 * 60;
 

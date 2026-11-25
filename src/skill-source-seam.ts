@@ -2,6 +2,8 @@ import type { Effect } from "effect";
 import { ConfigError } from "./config-schema.js";
 import { parseFrontmatter, splitFrontmatter } from "./skill-frontmatter.js";
 import type { SkillSource } from "./skill-sources.js";
+import type { CredentialVault } from "./credential-contract.js";
+import { vaultSecretDigest } from "./storage-digest.js";
 import type { KVStorage, Logger } from "./types.js";
 
 export const MAX_SKILLS = 1_024;
@@ -37,7 +39,7 @@ export interface SkillSourceSnapshot {
 }
 
 /** What a source receives for one snapshot or file read, bound to the request performing it. */
-interface SkillSourceContext {
+export interface SkillSourceContext {
   /** The deployment's storage, unpartitioned. */
   readonly storage: KVStorage;
   /** Emits one operator warning carrying the source id and this code; a code the source did not declare logs `unknown`. */
@@ -48,6 +50,8 @@ interface SkillSourceContext {
   readonly deadlineAt: number;
   /** Registers a credential this request sends, so no reader output, log or record carries it. */
   readonly secret: (value: string) => void;
+  /** `hmac:<hex>` of a secret under the deployment's storage digest key, for a stored key or value only. */
+  readonly digestSecret: (value: string) => Promise<string>;
 }
 
 /** The internal seam every source implements; failure means the source has nothing to serve. */
@@ -57,6 +61,8 @@ export interface SkillSourceDefinition {
   readonly warnings?: readonly string[];
   /** How long a reader may cache this source's content, in milliseconds; absent imposes no limit. */
   readonly cacheTtlMs?: number;
+  /** When set, the deployment must have a credential vault; without one, construction throws this message. */
+  readonly credentialVaultRequired?: string;
 }
 
 const definitions = new WeakMap<object, SkillSourceDefinition>();
@@ -109,6 +115,14 @@ export function skillFrontmatter(
   const split = splitFrontmatter(text);
   const frontmatter = split && parseFrontmatter(split.yaml);
   if (!frontmatter) return { invalid: "SKILL.md has no supported YAML frontmatter block" };
+  return checkSkillFrontmatter(directory, frontmatter);
+}
+
+/** A parsed frontmatter mapping's `name` and `description` against the skill's directory. */
+export function checkSkillFrontmatter(
+  directory: string,
+  frontmatter: Record<string, unknown>,
+): { frontmatter: Record<string, unknown> } | { invalid: string } {
   if (frontmatter.name !== directory) return { invalid: "frontmatter name differs from the directory name" };
   const description = frontmatter.description;
   if (typeof description !== "string" || description.trim() === "" || description.length > MAX_SKILL_DESCRIPTION)
@@ -192,7 +206,13 @@ export function bindSkillSources(
   sources: readonly SkillSource[],
   storage: KVStorage,
   logger: Logger,
+  vault?: CredentialVault,
 ): readonly BoundSkillSource[] {
+  const digestSecret = (value: string) => vaultSecretDigest(vault, value);
+  for (const source of sources) {
+    const required = skillSourceDefinition(source)?.credentialVaultRequired;
+    if (required !== undefined && !vault?.storageDigestKey) throw new ConfigError(required);
+  }
   return sources.map((source) => {
     const definition = skillSourceDefinition(source)!;
     const declared = new Set(definition.warnings ?? []);
@@ -211,7 +231,7 @@ export function bindSkillSources(
       description: source.description,
       cacheTtlMs: definition.cacheTtlMs,
     });
-    bindings.set(bound, { definition, context: (request) => ({ ...request, storage, warn }) });
+    bindings.set(bound, { definition, context: (request) => ({ ...request, storage, warn, digestSecret }) });
     return bound;
   });
 }

@@ -1,6 +1,6 @@
 import { META_ROUTES, routeNames } from "./agent-routes.js";
 import { READ_PROGRAM_SOURCE } from "./tool-safety.js";
-import { bytesToHex, utf8Length } from "./bytes.js";
+import { bytesToHex, encodeBase64, utf8Length } from "./bytes.js";
 import { duringViewEffect } from "./runtime/call.js";
 import { RequestScope, requestOwner } from "./runtime/request-scope.js";
 import { upwardStep } from "./upward.js";
@@ -588,13 +588,6 @@ function manifestFiles(record: SkillRecord): Map<string, string> {
   }
   for (const path of ambiguous) files.delete(path);
   return files;
-}
-
-function encodeBase64(bytes: Uint8Array): string {
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += 0x8000)
-    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-  return btoa(binary);
 }
 
 const SOURCE_UNAVAILABLE = () => new ConnectorCallError("unavailable", "Skill source is unavailable.");

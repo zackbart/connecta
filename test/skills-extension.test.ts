@@ -10,14 +10,19 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { sentSecretsFor } from "../src/sent-secrets.js";
 import { SkillsRegistry, downstreamSkillUri } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, KVStorage } from "../src/types.js";
 import extSkillsSchema from "./fixtures/ext-skills/schema.json";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
 import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
 import { Effect } from "effect";
 import { parseFrontmatter } from "../src/skill-frontmatter.js";
-import { defineSkillSource } from "../src/skill-source-seam.js";
+import { defineSkillSource, readSkillSource } from "../src/skill-source-seam.js";
 import { inlineSkills } from "../src/skill-sources.js";
+import { githubSkills, type GitHubSkillsOptions } from "../src/github-skills.js";
+import { ConfigError } from "../src/config-schema.js";
+import { activityHistory } from "../src/activity.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
+import { githubSkillsApi, REPO, type FixtureFile } from "./fixtures/github-skills-api.js";
 
 const BASE = "https://connecta.test";
 const URI = "skill://vendor/review/SKILL.md";
@@ -1388,4 +1393,1538 @@ it("reads a source file under its own live signal and deadline, logs only declar
   expect(() =>
     defineSkillSource("bad", "bad", undefined, { warnings: ["Bad Code"], snapshot: () => Effect.die("unused") }),
   ).toThrow("warning code");
+});
+
+const TOKEN = "test-skills-token-0123456789abcdef";
+const SKILLS_PATH = "plugins/team/skills";
+const skillDocument = (name: string, description: string, body = `# ${name}\n`) =>
+  `---\nname: ${name}\ndescription: ${description}\n---\n\n${body}`;
+function monorepo(extra: Record<string, FixtureFile> = {}): Record<string, FixtureFile> {
+  return {
+    "README.md": "# Monorepo\n",
+    "services/api/index.ts": "export {};\n",
+    [`${SKILLS_PATH}/review/SKILL.md`]: skillDocument(
+      "review",
+      "Review a pull request.",
+      "Read [it](references/checklist.md).\n",
+    ),
+    [`${SKILLS_PATH}/review/references/checklist.md`]: CHECKLIST,
+    [`${SKILLS_PATH}/review/assets/logo.png`]: LOGO,
+    [`${SKILLS_PATH}/release/SKILL.md`]: RELEASE_MD,
+    [`${SKILLS_PATH}/notes.txt`]: "Not a skill.\n",
+    [`${SKILLS_PATH}/drafts/idea.md`]: "No SKILL.md, so not a skill.\n",
+    [`${SKILLS_PATH}/review/nested/SKILL.md`]: skillDocument("nested", "Nested skills are files of their parent."),
+    ...extra,
+  };
+}
+
+/** One deployment's storage behind a fixture GitHub API; `isolate()` is another process sharing it. */
+const VAULT_KEY = btoa(String.fromCharCode(...new Uint8Array(32).fill(7)));
+
+async function githubDeployment(options: Partial<GitHubSkillsOptions> = {}, { vault = true } = {}) {
+  const fixture = githubSkillsApi();
+  vi.stubGlobal("fetch", fixture.fetch);
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.UTC(2026, 10, 1) });
+  const inner = memoryStorage();
+  const writes: { key: string; expiresAtMs: number | undefined }[] = [];
+  const deletes: string[] = [];
+  const hooks: {
+    op?: (() => void) | undefined;
+    get?: ((key: string) => Promise<void>) | undefined;
+    list?: ((prefix: string) => Promise<void>) | undefined;
+    set?: ((key: string) => Promise<void>) | undefined;
+    delete?: ((key: string) => Promise<void>) | undefined;
+    beforeCompareAndSet?:
+      | ((key: string, expected: string | null, next: string | null, expiresAtMs?: number) => Promise<void>)
+      | undefined;
+    committed?: ((key: string, next: string | null, expiresAtMs?: number) => void) | undefined;
+    compareAndSet?: ((key: string, next: string | null) => Promise<void>) | undefined;
+  } = {};
+  const storage: KVStorage = {
+    capabilities: { absoluteExpiry: true },
+    async get(key) {
+      hooks.op?.();
+      const value = await inner.get(key);
+      await hooks.get?.(key);
+      return value;
+    },
+    async set(key, value, options) {
+      hooks.op?.();
+      await hooks.set?.(key);
+      writes.push({ key, expiresAtMs: options?.expiresAtMs });
+      return inner.set(key, value, options);
+    },
+    async delete(key) {
+      hooks.op?.();
+      deletes.push(key);
+      await hooks.delete?.(key);
+      return inner.delete(key);
+    },
+    async list(prefix) {
+      hooks.op?.();
+      const keys = await inner.list(prefix);
+      await hooks.list?.(prefix);
+      return keys;
+    },
+    async compareAndSet(key, expected, next, options) {
+      hooks.op?.();
+      await hooks.beforeCompareAndSet?.(key, expected, next, options?.expiresAtMs);
+      const swapped = await inner.compareAndSet(key, expected, next, options);
+      if (swapped) hooks.committed?.(key, next, options?.expiresAtMs);
+      await hooks.compareAndSet?.(key, next);
+      return swapped;
+    },
+  };
+  const warnings: unknown[][] = [];
+  const logs: unknown[][] = [];
+  const logger = {
+    debug: (...args: unknown[]) => logs.push(args),
+    info: (...args: unknown[]) => logs.push(args),
+    warn: (...args: unknown[]) => {
+      logs.push(args);
+      warnings.push(args);
+    },
+    error: (...args: unknown[]) => logs.push(args),
+  };
+  const credentialVault = vault ? new CredentialVault(inner, VAULT_KEY) : undefined;
+  const isolate = (overrides: Partial<GitHubSkillsOptions> = {}) =>
+    makeRegistry([], {
+      storage,
+      logger,
+      ...(credentialVault ? { credentialVault } : {}),
+      skillSources: [
+        githubSkills("team", { repo: REPO, path: SKILLS_PATH, ref: "main", token: TOKEN, ...options, ...overrides }),
+      ],
+    } as never);
+  const root = isolate();
+  const read = (registry = root, probeTimeoutMs?: number, requestSignal?: AbortSignal) =>
+    new SkillsRegistry(registry, BASE, {
+      ...(probeTimeoutMs === undefined ? {} : { probeTimeoutMs }),
+      ...(requestSignal === undefined ? {} : { requestSignal }),
+    });
+  const names = async (registry = root) => (await read(registry).summaries()).map((skill) => skill.name);
+  const advance = (seconds: number) => vi.setSystemTime(Date.now() + seconds * 1000);
+  const blobs = () => fixture.paths().filter((path) => path.startsWith("git/blobs/")).length;
+  const stored = async () => {
+    const keys = await storage.list("");
+    return { keys, values: await Promise.all(keys.map((key) => storage.get(key))) };
+  };
+  return {
+    fixture,
+    storage,
+    hooks,
+    writes,
+    deletes,
+    warnings,
+    logs,
+    isolate,
+    root,
+    read,
+    names,
+    advance,
+    blobs,
+    stored,
+  };
+}
+
+function endGithubDeployment() {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+}
+
+const TEAM = ["usage", "team:release", "team:review", "investigate"];
+
+it("syncs a GitHub source on first read, then checks only the directory's tree after freshFor", async () => {
+  const t = await githubDeployment();
+  try {
+    const commit = await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    const skills = t.fixture.treeAt(SKILLS_PATH);
+    expect(t.fixture.paths().slice(0, 6)).toEqual([
+      "commits/main",
+      `git/commits/${commit}`,
+      `git/trees/${t.fixture.treeAt("")}`,
+      `git/trees/${t.fixture.treeAt("plugins")}`,
+      `git/trees/${t.fixture.treeAt("plugins/team")}`,
+      `git/trees/${skills}?recursive=1`,
+    ]);
+    expect(t.blobs()).toBe(5);
+    for (const exchange of t.fixture.exchanges) {
+      expect(exchange.url.origin).toBe("https://api.github.com");
+      expect(exchange.headers.get("authorization")).toBe(`Bearer ${TOKEN}`);
+      expect(exchange.headers.get("x-github-api-version")).toBe("2026-03-10");
+      expect(exchange.headers.get("user-agent")).toBe("connecta-skill-source");
+    }
+    expect(t.fixture.exchanges[0]!.headers.get("accept")).toBe("application/vnd.github.sha");
+    expect(t.fixture.exchanges.at(-1)!.headers.get("accept")).toBe("application/vnd.github.raw+json");
+
+    const registry = t.read();
+    const page = await registry.list();
+    expect(extSkillsValidator("ListSkillsResult")(page)).toBe(true);
+    const review = page.skills.find((skill) => skill.uri.endsWith("/team/review/SKILL.md"))!;
+    expect(review.frontmatter).toEqual({ name: "review", description: "Review a pull request." });
+    expect((review.resources as { uri: string }[]).map((file) => file.uri)).toEqual([
+      "skill://connecta/skills/team/review/SKILL.md",
+      "skill://connecta/skills/team/review/assets/logo.png",
+      "skill://connecta/skills/team/review/nested/SKILL.md",
+      "skill://connecta/skills/team/review/references/checklist.md",
+    ]);
+    for (const file of review.resources as { uri: string; digest: string; size: number }[]) {
+      const bytes = served((await registry.read(file.uri)).contents[0]!);
+      expect(bytes.length).toBe(file.size);
+      expect(await sha256(bytes)).toBe(file.digest);
+    }
+    expect(await registry.text("team:review", "references/checklist.md")).toBe(CHECKLIST);
+
+    t.fixture.reset();
+    t.advance(299);
+    expect(await t.names()).toEqual(TEAM);
+    expect(await t.names(t.isolate())).toEqual(TEAM);
+    expect(t.fixture.paths()).toEqual([]);
+
+    t.advance(2);
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+
+    t.fixture.reset();
+    const outside = await t.fixture.commit(monorepo({ "README.md": "# Changed outside the skills\n" }));
+    t.advance(301);
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.fixture.paths()).toEqual([
+      "commits/main",
+      `git/commits/${outside}`,
+      `git/trees/${t.fixture.treeAt("")}`,
+      `git/trees/${t.fixture.treeAt("plugins")}`,
+      `git/trees/${t.fixture.treeAt("plugins/team")}`,
+    ]);
+    t.fixture.reset();
+    t.advance(301);
+    await t.names();
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+
+    t.fixture.reset();
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/checklist.md`]: "# Checklist v2\n" }));
+    t.advance(301);
+    expect(await t.read().text("review", "references/checklist.md")).toBe("# Checklist v2\n");
+    expect(t.fixture.paths()).toContain(`git/trees/${t.fixture.treeAt(SKILLS_PATH)}?recursive=1`);
+    expect(t.blobs()).toBe(1);
+    expect(t.warnings).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("serves byte-identical tools/list and instructions before and after a GitHub source's content changes", async () => {
+  const fixture = githubSkillsApi();
+  vi.stubGlobal("fetch", fixture.fetch);
+  vi.useFakeTimers({ toFake: ["Date"], now: Date.UTC(2026, 10, 1) });
+  const c = createTestConnecta({
+    connectors: [guided("crm")],
+    logger: silentLogger,
+    skills: [
+      githubSkills("team", {
+        repo: REPO,
+        path: SKILLS_PATH,
+        ref: "main",
+        freshFor: 60,
+        description: "Team workflows: review and release.",
+      }),
+    ],
+  });
+  const surface = async () =>
+    JSON.stringify([
+      (await rpc(c, "tools/list")).result,
+      (
+        await rpc(c, "server/discover", {
+          _meta: {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+          },
+        })
+      ).result.instructions,
+    ]);
+  try {
+    await fixture.commit(monorepo());
+    const before = await surface();
+    expect(before).toContain("Sources: team (Team workflows: review and release.).");
+    const listed = (await rpc(c, "skills/list")).result;
+    expect(JSON.stringify(listed)).toContain("skills/team/review");
+    expect(listed.ttlMs).toBe(60_000);
+    expect(await surface()).toBe(before);
+    await fixture.commit(monorepo({ [`${SKILLS_PATH}/triage/SKILL.md`]: skillDocument("triage", "Triage a ticket.") }));
+    vi.setSystemTime(Date.now() + 61_000);
+    expect(JSON.stringify((await rpc(c, "skills/list")).result)).toContain("skills/team/triage");
+    const after = await surface();
+    expect(after).toBe(before);
+    expect(after).not.toContain("triage");
+  } finally {
+    await c.close();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps the previous GitHub snapshot in service with one typed warning for each failed check or sync", async () => {
+  const failures: [string, (t: Awaited<ReturnType<typeof githubDeployment>>) => Promise<void>][] = [
+    [
+      "http_status",
+      async (t) =>
+        t.fixture.intercept((url) =>
+          url.pathname.includes("/commits/") ? new Response("{}", { status: 502 }) : undefined,
+        ),
+    ],
+    [
+      "truncated_tree",
+      async (t) => {
+        await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/triage/SKILL.md`]: skillDocument("triage", "Triage.") }));
+        t.fixture.truncate(t.fixture.treeAt(SKILLS_PATH));
+      },
+    ],
+    [
+      "truncated_tree",
+      async (t) => {
+        await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/triage/SKILL.md`]: skillDocument("triage", "Triage.") }));
+        t.fixture.truncate(t.fixture.treeAt("plugins"));
+      },
+    ],
+    [
+      "name_mismatch",
+      async (t) =>
+        void (await t.fixture.commit(
+          monorepo({ [`${SKILLS_PATH}/triage/SKILL.md`]: skillDocument("other", "Mismatched.") }),
+        )),
+    ],
+    [
+      "invalid_skill",
+      async (t) => void (await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/triage/SKILL.md`]: "No frontmatter.\n" }))),
+    ],
+    [
+      "symlink",
+      async (t) =>
+        void (await t.fixture.commit(
+          monorepo({ [`${SKILLS_PATH}/review/linked.md`]: { symlink: "../../../../README.md" } }),
+        )),
+    ],
+    [
+      "submodule",
+      async (t) => void (await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/vendor`]: { submodule: true } }))),
+    ],
+    [
+      "bound_exceeded",
+      async (t) =>
+        void (await t.fixture.commit(
+          monorepo(
+            Object.fromEntries(
+              Array.from({ length: 512 }, (_, index) => [`${SKILLS_PATH}/review/many/${index}.md`, `${index}\n`]),
+            ),
+          ),
+        )),
+    ],
+    [
+      "file_too_large",
+      async (t) =>
+        void (await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/big.bin`]: new Uint8Array(768 * 1024 + 1) }))),
+    ],
+  ];
+  for (const [code, fail] of failures) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo());
+      expect(await t.names()).toEqual(TEAM);
+      await fail(t);
+      t.advance(301);
+      t.fixture.reset();
+      expect(await t.names(), code).toEqual(TEAM);
+      expect(t.warnings, code).toEqual([["[connecta] skill source warning", { source: "team", code }]]);
+      const blobsBefore = t.blobs();
+      if (code === "symlink" || code === "submodule" || code === "bound_exceeded" || code === "file_too_large")
+        expect(blobsBefore, code).toBe(0);
+      t.fixture.reset();
+      expect(await t.names(), code).toEqual(TEAM);
+      expect(t.fixture.paths(), `${code} holds the next check for freshFor`).toEqual([]);
+      expect(t.warnings.length, code).toBe(1);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("does not contact GitHub again before a rate limit's reset time", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    await t.names();
+    const reset = Math.floor(Date.now() / 1000) + 3_600;
+    t.fixture.intercept(
+      () =>
+        new Response("{}", {
+          status: 403,
+          headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(reset) },
+        }),
+    );
+    t.advance(301);
+    t.fixture.reset();
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "rate_limited" }]]);
+    t.fixture.intercept(undefined);
+    t.fixture.reset();
+    t.advance(3_000);
+    expect(await t.names(t.isolate())).toEqual(TEAM);
+    expect(t.fixture.paths()).toEqual([]);
+    t.advance(601);
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("waits for the later of Retry-After and the rate-limit reset, each on its own", async () => {
+  const t = await githubDeployment({ freshFor: 30 });
+  try {
+    await t.fixture.commit(monorepo());
+    await t.names();
+    const limit = (headers: Record<string, string>) =>
+      t.fixture.intercept(() => new Response("{}", { status: 429, headers }));
+    limit({ "retry-after": "120" });
+    t.advance(31);
+    t.fixture.reset();
+    await t.names();
+    t.fixture.intercept(undefined);
+    t.advance(61);
+    await t.names();
+    expect(t.fixture.paths(), "Retry-After outlasts the 30-second failure wait").toEqual(["commits/main"]);
+    t.advance(60);
+    await t.names();
+    expect(t.fixture.paths()).toEqual(["commits/main", "commits/main"]);
+
+    limit({
+      "retry-after": "60",
+      "x-ratelimit-remaining": "0",
+      "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 3_600),
+    });
+    t.advance(31);
+    t.fixture.reset();
+    await t.names();
+    t.fixture.intercept(undefined);
+    t.advance(61);
+    await t.names();
+    t.advance(1_800);
+    await t.names();
+    expect(t.fixture.paths(), "the later reset wins over Retry-After").toEqual(["commits/main"]);
+    t.advance(1_800);
+    await t.names();
+    expect(t.fixture.paths()).toEqual(["commits/main", "commits/main"]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("fails the listing of a GitHub source with no snapshot while usage stays readable, and expires a snapshot after seven days", async () => {
+  const t = await githubDeployment();
+  try {
+    t.fixture.intercept(() => new Response("{}", { status: 404 }));
+    await expect(t.read().list()).rejects.toMatchObject({ code: "unavailable" });
+    expect((await t.read().read("skill://connecta/usage/SKILL.md")).contents[0]?.text).toContain("# Connecta usage");
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "not_found" }]]);
+    t.fixture.intercept(undefined);
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+
+    t.fixture.intercept(() => new Response("{}", { status: 500 }));
+    for (let day = 0; day < 6; day++) {
+      t.advance(86_400);
+      expect(await t.names()).toEqual(TEAM);
+    }
+    t.advance(86_401);
+    await expect(t.read().list()).rejects.toMatchObject({ code: "unavailable" });
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("publishes nothing from an interrupted GitHub sync and fetches only missing files on the next one", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    let blobRequests = 0;
+    t.fixture.intercept(async (url) => {
+      if (!url.pathname.includes("/git/blobs/") || ++blobRequests !== 5) return undefined;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      return new Response("{}", { status: 500 });
+    });
+    await expect(t.read().list()).rejects.toMatchObject({ code: "unavailable" });
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "http_status" }]]);
+    const partial = (await t.stored()).keys;
+    expect(partial.some((key) => key.endsWith(":snapshot"))).toBe(false);
+    expect(partial.some((key) => key.includes(":manifest:"))).toBe(false);
+    const fetched = partial.filter((key) => key.includes(":file:")).length;
+    expect(fetched).toBe(4);
+
+    t.fixture.intercept(undefined);
+    t.fixture.reset();
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.blobs()).toBe(1);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("lets one caller check a stale GitHub snapshot while concurrent readers serve the stored one", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    await t.names();
+    t.advance(301);
+    t.fixture.reset();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    t.fixture.intercept(async () => {
+      await gate;
+      return undefined;
+    });
+    const checking = t.names();
+    await vi.waitFor(() => expect(t.fixture.paths()).toEqual(["commits/main"]));
+    expect(await t.names(t.isolate())).toEqual(TEAM);
+    expect(await t.names(t.isolate())).toEqual(TEAM);
+    release();
+    expect(await checking).toEqual(TEAM);
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("syncs a GitHub source once when two readers race the first sync, and serves the stored snapshot to a reader arriving mid-sync", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    t.fixture.intercept(async (url) => {
+      if (url.pathname.includes("/git/blobs/")) await gate;
+      return undefined;
+    });
+    const first = t.names();
+    await vi.waitFor(() => expect(t.blobs()).toBeGreaterThan(0));
+    const second = t.names(t.isolate());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    release();
+    expect(await first).toEqual(TEAM);
+    expect(await second).toEqual(TEAM);
+    expect(t.fixture.paths().filter((path) => path === "commits/main")).toHaveLength(1);
+    expect(t.blobs()).toBe(5);
+
+    let resume!: () => void;
+    const held = new Promise<void>((resolve) => (resume = resolve));
+    t.fixture.intercept(async (url) => {
+      if (url.pathname.includes("/git/blobs/")) await held;
+      return undefined;
+    });
+    await t.fixture.commit(
+      monorepo({ [`${SKILLS_PATH}/triage/SKILL.md`]: skillDocument("triage", "Triage a ticket.") }),
+    );
+    t.advance(301);
+    t.fixture.reset();
+    const syncing = t.names();
+    await vi.waitFor(() => expect(t.blobs()).toBe(1));
+    expect(await t.names(t.isolate())).toEqual(TEAM);
+    resume();
+    expect(await syncing).toEqual(["usage", "team:release", "team:review", "team:triage", "investigate"]);
+    expect(t.fixture.paths().filter((path) => path === "commits/main")).toHaveLength(1);
+    expect(t.warnings).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("stores a GitHub rate limit's hold before releasing the lease, and rereads the hold after claiming it", async () => {
+  for (const arrival of ["at release", "between read and claim"] as const) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo());
+      await t.names();
+      t.fixture.intercept(() => new Response("{}", { status: 429, headers: { "retry-after": "600" } }));
+      t.advance(301);
+      t.fixture.reset();
+      let other: Promise<string[]> | undefined;
+      if (arrival === "at release") {
+        t.hooks.compareAndSet = async (key, next) => {
+          if (!key.endsWith(":lease") || next !== null || other) return;
+          other = t.names(t.isolate());
+          await other;
+        };
+        expect(await t.names()).toEqual(TEAM);
+      } else {
+        t.hooks.get = async (key) => {
+          if (!key.endsWith(":hold") || other) return;
+          other = t.names();
+          await other;
+        };
+        expect(await t.names(t.isolate())).toEqual(TEAM);
+      }
+      expect(await other, arrival).toEqual(TEAM);
+      expect(t.fixture.paths(), arrival).toEqual(["commits/main"]);
+      expect(t.warnings, arrival).toEqual([
+        ["[connecta] skill source warning", { source: "team", code: "rate_limited" }],
+      ]);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("never publishes a GitHub snapshot after its request has returned", async () => {
+  for (const stage of ["publish", "manifest"] as const) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo());
+      let resume!: () => void;
+      const gate = new Promise<void>((resolve) => (resume = resolve));
+      let paused!: () => void;
+      const pausing = new Promise<void>((resolve) => (paused = resolve));
+      if (stage === "publish")
+        t.hooks.compareAndSet = async (key, next) => {
+          if (!key.endsWith(":snapshot") || next === null) return;
+          t.hooks.compareAndSet = undefined;
+          paused();
+          await gate;
+        };
+      else
+        t.hooks.set = async (key) => {
+          if (!key.includes(":manifest:")) return;
+          t.hooks.set = undefined;
+          paused();
+          await gate;
+        };
+      let settled = false;
+      const reading = t
+        .read(t.root, 400)
+        .list()
+        .then(
+          (page) => page,
+          (error: unknown) => error,
+        )
+        .finally(() => (settled = true));
+      await pausing;
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      expect(settled, stage).toBe(false);
+      resume();
+      await reading;
+      const published = (await t.stored()).keys.some((key) => key.endsWith(":snapshot"));
+      expect(published, stage).toBe(stage === "publish");
+      const after = (await t.stored()).keys.length;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect((await t.stored()).keys.length, stage).toBe(after);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("does not call a GitHub token function within freshFor, and keeps the snapshot when a slow one misses the deadline", async () => {
+  let calls = 0;
+  let hang = false;
+  let aborted: boolean | undefined;
+  const t = await githubDeployment({
+    token: ({ signal }) => {
+      calls++;
+      if (!hang) return TOKEN;
+      return new Promise<string>((resolve) => {
+        signal.addEventListener("abort", () => {
+          aborted = true;
+          resolve(TOKEN);
+        });
+      });
+    },
+  });
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    expect(calls).toBe(1);
+    hang = true;
+    t.advance(100);
+    expect(await t.names(t.root)).toEqual(TEAM);
+    expect(calls).toBe(1);
+    t.advance(201);
+    t.fixture.reset();
+    expect((await t.read(t.root, 1_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+    expect(calls).toBe(2);
+    expect(aborted).toBe(true);
+    expect(t.fixture.paths()).toEqual([]);
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "token_unavailable" }]]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("refuses a GitHub token function that yields no usable token without contacting GitHub", async () => {
+  for (const value of [undefined, null, 42, ""]) {
+    const t = await githubDeployment({ token: () => value as never });
+    try {
+      await t.fixture.commit(monorepo());
+      await expect(t.read().list(), String(value)).rejects.toMatchObject({ code: "unavailable" });
+      expect(t.fixture.exchanges, String(value)).toEqual([]);
+      expect(t.warnings, String(value)).toEqual([
+        ["[connecta] skill source warning", { source: "team", code: "token_unavailable" }],
+      ]);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("resumes a GitHub sync without reading stored file bodies other than SKILL.md", async () => {
+  const many = Object.fromEntries(
+    Array.from({ length: 400 }, (_, index) => [
+      `${SKILLS_PATH}/${index % 2 ? "review" : "release"}/notes/${index}.md`,
+      `${index}\n`,
+    ]),
+  );
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo(many));
+    t.hooks.set = async (key) => {
+      if (!key.includes(":manifest:")) return;
+      t.hooks.set = undefined;
+      throw new Error("storage refused the chunk");
+    };
+    await expect(t.read().list()).rejects.toMatchObject({ code: "unavailable" });
+    const reads: string[] = [];
+    let operations = 0;
+    t.hooks.get = async (key) => {
+      operations++;
+      reads.push(key);
+    };
+    t.hooks.list = async () => void operations++;
+    t.fixture.reset();
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.blobs()).toBe(0);
+    expect(reads.filter((key) => key.includes(":file:"))).toHaveLength(2);
+    expect(operations).toBeLessThan(16);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("leaves time for GitHub under a one-second discovery timeout", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    t.fixture.intercept(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      return undefined;
+    });
+    expect((await t.read(t.root, 1_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+    expect(t.warnings).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("serves what another reader just published when it claims the lease on a stale view", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    await t.names();
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/checklist.md`]: "# Checklist v2\n" }));
+    t.advance(301);
+    t.fixture.reset();
+    let other: Promise<string[]> | undefined;
+    t.hooks.get = async (key) => {
+      if (!key.endsWith(":hold") || other) return;
+      other = t.names(t.isolate());
+      await other;
+    };
+    expect(await t.read().text("review", "references/checklist.md")).toBe("# Checklist v2\n");
+    expect(await other).toEqual(TEAM);
+    expect(t.fixture.paths().filter((path) => path === "commits/main")).toHaveLength(1);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("lets a reader waiting on an expired lease with nothing stored take the sync over", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    await t.names();
+    const snapshot = (await t.storage.list("skill-source:v1:team:")).find((key) => key.endsWith(":snapshot"))!;
+    const prefix = snapshot.slice(0, -"snapshot".length);
+    for (const key of await t.storage.list(prefix)) await t.storage.delete(key);
+    await t.storage.set(`${prefix}lease`, "another-process", { expiresAtMs: Date.now() + 500 });
+    setTimeout(() => vi.setSystemTime(Date.now() + 1_000), 200);
+    t.fixture.reset();
+    expect(await t.names(t.isolate())).toEqual(TEAM);
+    expect(t.fixture.paths().filter((path) => path === "commits/main")).toHaveLength(1);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("repairs a GitHub snapshot whose stored file or manifest chunk went missing, fetching only what is missing", async () => {
+  for (const lost of ["chunk and file", "file"] as const) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo());
+      expect(await t.names()).toEqual(TEAM);
+      const keys = await t.storage.list("skill-source:v1:team:");
+      const files = keys.filter((key) => key.includes(":file:"));
+      for (const key of files) {
+        const value = await t.storage.get(key);
+        if (value !== null && atob(value) === CHECKLIST) await t.storage.delete(key);
+      }
+      if (lost === "chunk and file")
+        for (const key of keys.filter((key) => key.includes(":manifest:"))) await t.storage.delete(key);
+      t.advance(10);
+      t.fixture.reset();
+      const reader = lost === "file" ? t.root : t.isolate();
+      if (lost === "file") {
+        await expect(t.read(reader).text("review", "references/checklist.md"), lost).rejects.toMatchObject({
+          code: "unavailable",
+        });
+        t.advance(10);
+      }
+      expect(await t.read(reader).text("review", "references/checklist.md"), lost).toBe(CHECKLIST);
+      expect(t.blobs(), lost).toBe(1);
+      expect(await t.names(t.isolate()), lost).toEqual(TEAM);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("never starts a GitHub publish after the deadline or an aborted signal, even when the lease read stalls", async () => {
+  for (const stop of ["deadline", "signal"] as const) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo());
+      const controller = new AbortController();
+      t.hooks.get = async (key) => {
+        if (!key.endsWith(":lease")) return;
+        t.hooks.get = undefined;
+        if (stop === "signal") controller.abort(new Error("caller went away"));
+        else t.advance(30);
+      };
+      const source = t.root.listSkillSources()[0]!;
+      const outcome = await Effect.runPromise(
+        Effect.result(
+          readSkillSource(source as never, {
+            signal: controller.signal,
+            deadlineAt: Date.now() + 20_000,
+            secret: () => undefined,
+          }),
+        ),
+      );
+      expect(outcome._tag, stop).toBe("Failure");
+      expect(
+        (await t.stored()).keys.some((key) => key.endsWith(":snapshot")),
+        stop,
+      ).toBe(false);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("lets a GitHub lease held by an interrupted request lapse within its short lifetime under a five-minute budget", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    let stalled = true;
+    t.fixture.intercept(async (url) => {
+      if (stalled && url.pathname.includes("/git/blobs/")) await new Promise(() => {});
+      return undefined;
+    });
+    const controller = new AbortController();
+    const first = t
+      .read(t.root, 300_000, controller.signal)
+      .list()
+      .catch((error: unknown) => error);
+    await vi.waitFor(() => expect(t.blobs()).toBeGreaterThan(0));
+    controller.abort(new Error("caller went away"));
+    expect(await first).toBeDefined();
+    stalled = false;
+    t.advance(31);
+    expect((await t.read(t.isolate(), 3_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("never shortens a GitHub lease when a delayed renewal lands after a later one", async () => {
+  const t = await githubDeployment();
+  try {
+    const extra = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [`${SKILLS_PATH}/review/notes/${index}.md`, `# Note ${index}\n`]),
+    );
+    await t.fixture.commit(monorepo(extra));
+    let pausing: Promise<unknown> | undefined;
+    t.fixture.intercept(async (url) => {
+      if (!url.pathname.includes("/git/blobs/")) return undefined;
+      await pausing;
+      t.advance(3);
+      return undefined;
+    });
+    const renewals: number[] = [];
+    let held = 0;
+    let later!: () => void;
+    const landed = new Promise<void>((resolve) => (later = resolve));
+    t.hooks.beforeCompareAndSet = async (key, expected, next) => {
+      if (!key.endsWith(":lease") || expected === null || next === null) return;
+      if (++held !== 1) return;
+      pausing = Promise.race([landed, new Promise((resolve) => setTimeout(resolve, 200))]);
+      await pausing;
+    };
+    t.hooks.committed = (key, next, expiresAtMs) => {
+      if (!key.endsWith(":lease") || next === null || expiresAtMs === undefined) return;
+      renewals.push(expiresAtMs);
+      if (renewals.length === 3) later();
+    };
+    expect((await t.read(t.root, 300_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+    expect(renewals.length).toBeGreaterThan(1);
+    for (let index = 1; index < renewals.length; index++) expect(renewals[index]).toBeGreaterThan(renewals[index - 1]!);
+    expect(t.warnings).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("writes no GitHub lease renewal that does not extend the lease", async () => {
+  const t = await githubDeployment();
+  try {
+    const extra = Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [`${SKILLS_PATH}/review/notes/${index}.md`, `# Note ${index}\n`]),
+    );
+    await t.fixture.commit(monorepo(extra));
+    let writes = 0;
+    t.hooks.committed = (key, next) => {
+      if (key.endsWith(":lease") && next !== null) writes++;
+    };
+    expect((await t.read(t.root, 5_000).summaries()).map((skill) => skill.name)).toEqual(TEAM);
+    expect(writes).toBe(1);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it(
+  "refuses a GitHub manifest over 8 MiB and resumes a manifest without rewriting stored chunks",
+  { timeout: 60_000 },
+  async () => {
+    const skillsOf = (count: number) =>
+      Object.fromEntries(
+        Array.from({ length: count }, (_, index) => {
+          const name = `skill-${index}`;
+          return [
+            `${SKILLS_PATH}/${name}/SKILL.md`,
+            `---\nname: ${name}\ndescription: Skill ${index}.\nnotes: "${"n".repeat(30_000)}"\n---\n\nBody.\n`,
+          ];
+        }),
+      );
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit({ "README.md": "# Monorepo\n", ...skillsOf(290) });
+      await expect(t.read().list()).rejects.toMatchObject({ code: "unavailable" });
+      expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "manifest_too_large" }]]);
+    } finally {
+      endGithubDeployment();
+    }
+    const u = await githubDeployment();
+    try {
+      await u.fixture.commit({ "README.md": "# Monorepo\n", ...skillsOf(50) });
+      let chunkWrites = 0;
+      u.hooks.set = async (key) => {
+        if (!key.includes(":manifest:")) return;
+        if (++chunkWrites === 2) throw new Error("storage refused the chunk");
+      };
+      await expect(u.read().list()).rejects.toMatchObject({ code: "unavailable" });
+      const written: string[] = [];
+      u.hooks.set = async (key) => {
+        if (key.includes(":manifest:")) written.push(key);
+      };
+      expect((await u.read().summaries()).length).toBe(52);
+      expect(written).toHaveLength(1);
+      expect(written[0]).toMatch(/:manifest:[0-9a-f]{64}:1:\d+$/);
+    } finally {
+      endGithubDeployment();
+    }
+  },
+);
+
+it("sends a GitHub source's token only to api.github.com and keeps it out of every response, log and stored value", async () => {
+  const t = await githubDeployment();
+  try {
+    const renamed = "/repositories/42/";
+    let moved = false;
+    t.fixture.intercept((url) => {
+      if (url.pathname.startsWith(renamed)) {
+        moved = true;
+        return t.fixture.fetch(new URL(url.pathname.replace(renamed, `/repos/${REPO}/`), url).href);
+      }
+      return url.pathname.startsWith(`/repos/${REPO}/commits/`) && !moved
+        ? new Response(null, { status: 301, headers: { location: `https://api.github.com${renamed}commits/main` } })
+        : undefined;
+    });
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.fixture.paths().slice(0, 3)).toEqual(["commits/main", "/repositories/42/commits/main", "commits/main"]);
+    expect(t.fixture.exchanges[1]!.headers.get("authorization")).toBe(`Bearer ${TOKEN}`);
+
+    t.fixture.intercept((url) =>
+      url.origin === "https://api.github.com" && url.pathname.includes("/commits/")
+        ? new Response(null, { status: 302, headers: { location: "https://objects.example.com/commits/main" } })
+        : undefined,
+    );
+    t.advance(301);
+    t.fixture.reset();
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.fixture.exchanges.map((exchange) => exchange.url.origin)).toEqual(["https://api.github.com"]);
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "redirect_refused" }]]);
+
+    t.fixture.intercept((url) =>
+      url.pathname.includes("/commits/")
+        ? new Response(null, { status: 302, headers: { location: "blob:https://api.github.com/commits/main" } })
+        : undefined,
+    );
+    t.advance(301);
+    t.fixture.reset();
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.fixture.exchanges).toHaveLength(1);
+    expect(t.warnings.at(-1)).toEqual([
+      "[connecta] skill source warning",
+      { source: "team", code: "redirect_refused" },
+    ]);
+
+    t.fixture.intercept(undefined);
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/leak.md`]: `token: ${TOKEN}\n` }));
+    t.advance(301);
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.warnings.at(-1)).toEqual([
+      "[connecta] skill source warning",
+      { source: "team", code: "credential_in_file" },
+    ]);
+
+    const registry = t.read();
+    const page = await registry.list();
+    const outputs = [JSON.stringify(page)];
+    for (const skill of page.skills)
+      for (const file of skill.resources === "dynamic" ? [] : skill.resources)
+        outputs.push(JSON.stringify(await registry.read(file.uri)));
+    outputs.push(JSON.stringify(await createMetaTools(t.root, BASE).skills({ name: "team:review" })));
+    for (const output of outputs) expect(output).not.toContain(TOKEN);
+    expect(JSON.stringify(t.logs)).not.toContain(TOKEN);
+    const { keys, values } = await t.stored();
+    expect(keys.some((key) => key.startsWith("skill-source:v1:team:"))).toBe(true);
+    for (const text of [...keys, ...values.map(String)]) {
+      expect(text).not.toContain(TOKEN);
+      expect(text).not.toContain(btoa(`token: ${TOKEN}`).slice(0, 24));
+    }
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("reads a GitHub skill's frontmatter as full YAML and refuses what JSON or a mapping cannot hold", async () => {
+  const wrapped = `---
+name: review
+description: "Review a pull request
+  against the team checklist."
+hooks:
+  - matcher: Bash
+    command: ./check.sh
+  - matcher: Edit
+metadata: &shared
+  owner: alice
+copy: *shared
+released: 2026-11-01
+---
+
+# Review
+`;
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/SKILL.md`]: wrapped }));
+    const registry = t.read();
+    const review = (await registry.list()).skills.find((skill) => skill.uri.endsWith("/team/review/SKILL.md"))!;
+    const served = (await registry.read(review.uri)).contents[0]!.text!;
+    expect(served).toBe(wrapped);
+    expect(review.frontmatter).toEqual(servedFrontmatter(served));
+    expect(review.frontmatter).toMatchObject({
+      description: "Review a pull request against the team checklist.",
+      hooks: [{ matcher: "Bash", command: "./check.sh" }, { matcher: "Edit" }],
+      released: "2026-11-01",
+    });
+    expect(parseFrontmatter(served.slice(4, served.indexOf("\n---\n", 4)))).toBeUndefined();
+    expect(t.warnings).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+  const bomb = ["a: &a [x, x, x, x, x, x, x, x, x, x]"]
+    .concat(
+      Array.from({ length: 8 }, (_, level) => {
+        const previous = String.fromCharCode(97 + level);
+        return `${String.fromCharCode(98 + level)}: &${String.fromCharCode(98 + level)} [${Array(10).fill(`*${previous}`).join(", ")}]`;
+      }),
+    )
+    .join("\n");
+  for (const frontmatter of [
+    "- review",
+    "name: review\ndescription: Review.\n? [1, 2]\n: pair",
+    "name: review\ndescription: Review.\nlimit: .inf",
+    "name: review\ndescription: Review.\nratio: .nan",
+    "name: review\ndescription: Review.\nname: review",
+    "name: review\ndescription: Review.\nlogo: !!binary aGk=",
+    `name: review\ndescription: Review.\n${bomb}`,
+    `name: review\ndescription: Review.\npad: "${"x".repeat(32 * 1024)}"`,
+    "name: review\ndescription: [not, a, string]",
+  ]) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/SKILL.md`]: `---\n${frontmatter}\n---\n\nBody.\n` }));
+      await expect(t.read().list(), frontmatter.slice(0, 60)).rejects.toMatchObject({ code: "unavailable" });
+      expect(t.warnings, frontmatter.slice(0, 60)).toEqual([
+        ["[connecta] skill source warning", { source: "team", code: "invalid_skill" }],
+      ]);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("keeps a GitHub source's token out of activity records end to end", async () => {
+  const fixture = githubSkillsApi();
+  vi.stubGlobal("fetch", fixture.fetch);
+  const rows: unknown[] = [];
+  const storage = memoryStorage();
+  const c = createTestConnecta({
+    connectors: [guided("crm")],
+    logger: silentLogger,
+    storage,
+    vault: encryptedCredentialVault(storage, VAULT_KEY),
+    activity: activityHistory({ operations: true, store: { record: (event) => void rows.push(event) } }),
+    skills: [githubSkills("team", { repo: REPO, path: SKILLS_PATH, ref: "main", token: TOKEN })],
+  });
+  try {
+    await fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/leak.md`]: `token: ${TOKEN}\n` }));
+    expect(JSON.stringify((await rpc(c, "skills/list")).error)).not.toContain(TOKEN);
+    await fixture.commit(monorepo());
+    const listed = await rpc(c, "skills/list");
+    expect(JSON.stringify(listed.result)).toContain("skills/team/review");
+    const called = await readJsonRpc(
+      await mcpRpc(c, "tools/call", {
+        name: "skills",
+        arguments: { name: "team:review", file: "references/checklist.md" },
+      }),
+    );
+    expect(JSON.stringify(called)).toContain("Checklist");
+    expect(rows.length).toBeGreaterThan(0);
+    expect(JSON.stringify(rows)).not.toContain(TOKEN);
+  } finally {
+    await c.close();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("keeps a separate stored copy of a GitHub source for each token and syncs fresh after a token change", async () => {
+  const other = "other-skills-token-0123456789abcdef";
+  let current = TOKEN;
+  const t = await githubDeployment({ token: () => current });
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    const snapshots = async () =>
+      (await t.storage.list("skill-source:v1:team:")).filter((key) => key.endsWith(":snapshot"));
+    expect(await snapshots()).toHaveLength(1);
+    current = other;
+    t.advance(301);
+    t.fixture.reset();
+    let read = 0;
+    t.hooks.get = async () => void read++;
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.blobs()).toBe(5);
+    expect(await snapshots()).toHaveLength(2);
+
+    t.fixture.reset();
+    const fixed = t.isolate({ token: TOKEN });
+    t.advance(1);
+    expect(await t.names(fixed)).toEqual(TEAM);
+    const another = t.isolate({ token: "third-skills-token-0123456789abcdef" });
+    expect(await t.names(another)).toEqual(TEAM);
+    expect(await snapshots()).toHaveLength(3);
+    expect(t.blobs()).toBe(5);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("serves nothing stored under a GitHub token after the token changes, even when GitHub fails", async () => {
+  let current = TOKEN;
+  const t = await githubDeployment({ token: () => current });
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    current = "other-skills-token-0123456789abcdef";
+    t.fixture.intercept(() => new Response("{}", { status: 503 }));
+    t.advance(301);
+    t.fixture.reset();
+    await expect(t.read().list()).rejects.toMatchObject({ code: "unavailable" });
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "http_status" }]]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("requires a credential vault for a GitHub source with a token, and none without one", async () => {
+  const valid = { repo: REPO, path: SKILLS_PATH, ref: "main" };
+  expect(() => makeRegistry([], { skillSources: [githubSkills("team", { ...valid, token: TOKEN })] } as never)).toThrow(
+    /githubSkills\("team"\) has a token, which needs a credential vault/,
+  );
+  expect(() =>
+    makeRegistry([], { skillSources: [githubSkills("team", { ...valid, token: () => TOKEN })] } as never),
+  ).toThrow(ConfigError);
+  expect(() =>
+    createTestConnecta({
+      connectors: [],
+      logger: silentLogger,
+      skills: [githubSkills("team", { ...valid, token: TOKEN })],
+    }),
+  ).toThrow(ConfigError);
+  const t = await githubDeployment({ token: undefined } as never, { vault: false });
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.fixture.exchanges.every((exchange) => exchange.headers.get("authorization") === null)).toBe(true);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("refuses every fetched GitHub value that holds the token before storing it", async () => {
+  const escaped = TOKEN.replace("k", "\\x6b");
+  for (const variant of ["files", "escaped description"] as const) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(
+        monorepo(
+          variant === "files"
+            ? {
+                [`${SKILLS_PATH}/review/references/a.md`]: `token ${TOKEN}\n`,
+                [`${SKILLS_PATH}/review/references/b.md`]: `again ${TOKEN}\n`,
+                [`${SKILLS_PATH}/release/notes.md`]: `${TOKEN}\n`,
+                [`${SKILLS_PATH}/release/SKILL.md`]: skillDocument("release", `Uses ${TOKEN} to publish.`),
+              }
+            : {
+                [`${SKILLS_PATH}/release/SKILL.md`]: `---\nname: release\ndescription: "Uses ${escaped}."\n---\n\nBody.\n`,
+              },
+        ),
+      );
+      await expect(t.read().list(), variant).rejects.toMatchObject({ code: "unavailable" });
+      expect(t.warnings, variant).toEqual([
+        ["[connecta] skill source warning", { source: "team", code: "credential_in_file" }],
+      ]);
+      const { keys, values } = await t.stored();
+      for (const [index, key] of keys.entries()) {
+        const value = String(values[index]);
+        expect(value, variant).not.toContain(TOKEN);
+        if (key.includes(":file:")) expect(atob(value), variant).not.toContain(TOKEN);
+      }
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("does not call a GitHub token function while its remembered snapshot is fresh, and serves that snapshot when the function fails", async () => {
+  let calls = 0;
+  let failing = false;
+  const t = await githubDeployment({
+    token: () => {
+      calls++;
+      if (failing) throw new Error("vault unavailable");
+      return TOKEN;
+    },
+  });
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    t.advance(299);
+    expect(await t.names()).toEqual(TEAM);
+    expect(calls).toBe(1);
+    failing = true;
+    t.advance(2);
+    t.fixture.reset();
+    expect(await t.names()).toEqual(TEAM);
+    expect(calls).toBe(2);
+    expect(t.fixture.exchanges).toEqual([]);
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "token_unavailable" }]]);
+
+    await expect(t.read(t.isolate()).list()).rejects.toMatchObject({ code: "unavailable" });
+    expect(t.fixture.exchanges).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("writes GitHub file rows and manifest chunks with a 30-day expiry and never deletes them", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    await t.names();
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/checklist.md`]: "# Checklist v2\n" }));
+    t.advance(301);
+    await t.names();
+    const rows = t.writes.filter((write) => /:(file|manifest):/.test(write.key));
+    expect(rows.length).toBeGreaterThan(5);
+    for (const row of rows) expect(row.expiresAtMs).toBe(Number(row.key.split(":").at(-1)) + 30 * 86_400_000);
+    for (const key of await t.storage.list("skill-source:v1:team:"))
+      if (key.includes(":manifest:")) await t.storage.delete(key);
+    t.deletes.length = 0;
+    t.advance(10);
+    expect(await t.names(t.isolate())).toEqual(TEAM);
+    t.advance(301);
+    await t.names();
+    expect(t.deletes).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("stores a GitHub snapshot again once its oldest row is 15 days old, serving the old one until it publishes", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    for (const days of [6, 6]) {
+      t.advance(days * 86_400);
+      expect(await t.names()).toEqual(TEAM);
+    }
+    t.fixture.reset();
+    t.advance(4 * 86_400);
+    t.fixture.intercept((url) =>
+      url.pathname.includes("/git/blobs/") ? new Response("{}", { status: 503 }) : undefined,
+    );
+    expect(await t.names()).toEqual(TEAM);
+    expect(t.warnings).toEqual([["[connecta] skill source warning", { source: "team", code: "http_status" }]]);
+    t.fixture.intercept(undefined);
+    t.fixture.reset();
+    t.advance(301);
+    expect(await t.read().text("review", "references/checklist.md")).toBe(CHECKLIST);
+    expect(t.blobs()).toBe(5);
+    t.fixture.reset();
+    t.advance(301);
+    await t.names();
+    expect(t.fixture.paths()).toEqual(["commits/main"]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("refuses a fetched GitHub file holding the token in any form the output redaction would rewrite", async () => {
+  for (const form of [btoa(TOKEN), encodeURIComponent(`?t=${TOKEN}`).replace(/-/g, "%2D")]) {
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/encoded.md`]: `value: ${form}\n` }));
+      await expect(t.read().list(), form).rejects.toMatchObject({ code: "unavailable" });
+      expect(t.warnings, form).toEqual([
+        ["[connecta] skill source warning", { source: "team", code: "credential_in_file" }],
+      ]);
+      const { keys, values } = await t.stored();
+      for (const [index, key] of keys.entries())
+        if (key.includes(":file:")) expect(atob(String(values[index])), form).not.toContain(form);
+    } finally {
+      endGithubDeployment();
+    }
+  }
+});
+
+it("falls back to the GitHub partition a request started with when its token function fails", async () => {
+  let call = 0;
+  let reject!: (error: Error) => void;
+  const t = await githubDeployment({
+    token: () => {
+      call++;
+      if (call === 1) return TOKEN;
+      if (call === 2) return new Promise<string>((_, fail) => (reject = fail));
+      return "other-skills-token-0123456789abcdef";
+    },
+  });
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.read().text("review", "references/checklist.md")).toBe(CHECKLIST);
+    await t.fixture.commit(monorepo({ [`${SKILLS_PATH}/review/references/checklist.md`]: "# Checklist v2\n" }));
+    t.advance(301);
+    const waiting = t.read().text("review", "references/checklist.md");
+    await vi.waitFor(() => expect(call).toBe(2));
+    expect(await t.read().text("review", "references/checklist.md")).toBe("# Checklist v2\n");
+    reject(new Error("vault unavailable"));
+    expect(await waiting).toBe(CHECKLIST);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("keeps one GitHub source object's partitions separate per credential vault", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    const source = githubSkills("team", { repo: REPO, path: SKILLS_PATH, ref: "main", token: TOKEN });
+    const registry = (key: number) =>
+      makeRegistry([], {
+        storage: t.storage,
+        logger: silentLogger,
+        credentialVault: new CredentialVault(t.storage, btoa(String.fromCharCode(...new Uint8Array(32).fill(key)))),
+        skillSources: [source],
+      } as never);
+    expect(await t.names(registry(1))).toEqual(TEAM);
+    t.fixture.reset();
+    expect(await t.names(registry(2))).toEqual(TEAM);
+    expect(t.blobs()).toBe(5);
+    expect((await t.storage.list("skill-source:v1:team:")).filter((key) => key.endsWith(":snapshot"))).toHaveLength(2);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("never shortens a GitHub snapshot's expiry when marking repairs while GitHub fails", async () => {
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo());
+    expect(await t.names()).toEqual(TEAM);
+    for (const key of await t.storage.list("skill-source:v1:team:"))
+      if (key.includes(":file:") && atob((await t.storage.get(key))!) === CHECKLIST) await t.storage.delete(key);
+    t.fixture.intercept(() => new Response("{}", { status: 503 }));
+    for (let attempt = 0; attempt < 3; attempt++) {
+      t.advance(10);
+      await expect(t.read().text("review", "references/checklist.md")).rejects.toMatchObject({ code: "unavailable" });
+      expect(await t.names()).toEqual(TEAM);
+    }
+    t.advance(6 * 86_400);
+    expect(await t.names()).toEqual(TEAM);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("publishes a GitHub push of 25 files on the first read after freshFor", async () => {
+  const t = await githubDeployment();
+  try {
+    const notes = (version: string) =>
+      Object.fromEntries(
+        Array.from({ length: 25 }, (_, index) => [
+          `${SKILLS_PATH}/review/notes/${index}.md`,
+          `# Note ${index} ${version}\n`,
+        ]),
+      );
+    await t.fixture.commit(monorepo(notes("v1")));
+    expect(await t.names()).toEqual(TEAM);
+    await t.fixture.commit(monorepo(notes("v2")));
+    t.advance(301);
+    t.fixture.reset();
+    expect(await t.read().text("review", "notes/24.md")).toBe("# Note 24 v2\n");
+    expect(t.blobs()).toBe(25);
+    expect(t.warnings).toEqual([]);
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it(
+  "re-stores 325 GitHub files under a 50-operation storage budget and one read a day before the old rows expire",
+  { timeout: 60_000 },
+  async () => {
+    const extra = Object.fromEntries(
+      Array.from({ length: 320 }, (_, index) => [`${SKILLS_PATH}/review/notes/${index}.md`, `# Note ${index}\n`]),
+    );
+    const t = await githubDeployment();
+    try {
+      await t.fixture.commit(monorepo(extra));
+      expect(await t.names()).toEqual(TEAM);
+      let operations = 0;
+      t.hooks.op = () => {
+        if (++operations > 50) throw new Error("too many storage operations for this invocation");
+      };
+      t.fixture.reset();
+      let publishedOn: number | undefined;
+      for (let day = 1; day <= 29; day++) {
+        t.advance(86_400);
+        operations = 0;
+        const before = t.blobs();
+        expect(await t.names(), `day ${day}`).toEqual(TEAM);
+        if (
+          day > 15 &&
+          publishedOn === undefined &&
+          t.blobs() === before &&
+          t.fixture.paths().at(-1) === "commits/main"
+        )
+          publishedOn = day;
+      }
+      expect(publishedOn).toBeDefined();
+      expect(publishedOn!).toBeLessThan(30);
+      expect(t.blobs()).toBeLessThan(325 + 4 * 15);
+    } finally {
+      endGithubDeployment();
+    }
+  },
+);
+
+it("serves the GitHub listing from memory when the storage budget cuts a sync step short, and resumes without refetching", async () => {
+  const notes = (version: string) =>
+    Object.fromEntries(
+      Array.from({ length: 60 }, (_, index) => [
+        `${SKILLS_PATH}/review/notes/${index}.md`,
+        `# Note ${index} ${version}\n`,
+      ]),
+    );
+  const t = await githubDeployment();
+  try {
+    await t.fixture.commit(monorepo(notes("v1")));
+    expect(await t.names()).toEqual(TEAM);
+    await t.fixture.commit(monorepo(notes("v2")));
+    let operations = 0;
+    t.hooks.op = () => {
+      if (++operations > 30) throw new Error("too many storage operations for this invocation");
+    };
+    t.advance(301);
+    t.fixture.reset();
+    operations = 0;
+    expect(await t.names()).toEqual(TEAM);
+    const first = t.blobs();
+    expect(first).toBeGreaterThan(0);
+    expect(first).toBeLessThan(60);
+    t.hooks.op = undefined;
+    const stored = (await t.storage.list("skill-source:v1:team:")).filter((key) => key.includes(":file:")).length;
+    t.advance(31);
+    t.fixture.reset();
+    expect(await t.read().text("review", "notes/59.md")).toBe("# Note 59 v2\n");
+    expect(t.blobs()).toBeLessThanOrEqual(60 - (stored - 65));
+  } finally {
+    endGithubDeployment();
+  }
+});
+
+it("refuses a GitHub source configuration outside its contract", () => {
+  const valid = { repo: REPO, path: SKILLS_PATH, ref: "main" };
+  for (const options of [
+    { ...valid, repo: "example-org" },
+    { ...valid, repo: "example-org/agent-skills/extra" },
+    { ...valid, path: "/plugins" },
+    { ...valid, path: "plugins/" },
+    { ...valid, path: "plugins/../secrets" },
+    { ...valid, ref: "" },
+    { ...valid, ref: "main branch" },
+    { ...valid, ref: "release-\ud800" },
+    { ...valid, token: "" },
+    { ...valid, freshFor: 29 },
+    { ...valid, freshFor: 86_401 },
+    { ...valid, freshFor: 30.5 },
+    { ...valid, description: "" },
+  ])
+    expect(() => githubSkills("team", options as GitHubSkillsOptions), JSON.stringify(options)).toThrow(ConfigError);
+  expect(() => githubSkills("connecta", valid)).toThrow(ConfigError);
+  expect(githubSkills("team", { ...valid, path: "", ref: "release/v1", freshFor: 30, token: () => TOKEN }).id).toBe(
+    "team",
+  );
 });

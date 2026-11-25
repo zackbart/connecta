@@ -11,6 +11,7 @@
         "src/json-schema.ts",
         "src/google.ts",
         "src/google-account.ts",
+        "src/github-skills.ts",
         "src/executors/quickjs.ts",
         "src/executors/quickjs-child.ts",
         "src/auth/clerk.ts",

@@ -8,6 +8,7 @@ import ts from "typescript";
 import { describe, expect, expectTypeOf, it } from "vitest";
 
 import * as d1 from "../src/d1.js";
+import * as githubSkillsModule from "../src/github-skills.js";
 import * as sqlite from "../src/sqlite.js";
 import type { ConnectaConfig, RemoteMcpOptions } from "../src/index.js";
 import { GUEST_API_DECLARATION, GUEST_FUNCTIONS } from "../src/guest-functions.js";
@@ -117,6 +118,12 @@ describe("public package boundary", () => {
     expect(retired.stdout).not.toContain("migrate-state");
   });
 
+  it("publishes githubSkills only from its own subpath", async () => {
+    expect(Object.keys(githubSkillsModule).sort()).toEqual(["MAX_GITHUB_SKILL_FILE_BYTES", "githubSkills"]);
+    expect(packageJson.exports).toHaveProperty("./github-skills");
+    expect(Object.keys(await import("../src/index.js"))).not.toContain("githubSkills");
+  });
+
   it("keeps repository agent instructions and decision history out of the package", () => {
     for (const file of ["AGENTS.md", "CLAUDE.md", "PRINCIPLES.md", "decisions", "spec"]) {
       expect(packageJson.files).not.toContain(file);
@@ -145,6 +152,7 @@ describe("public package boundary", () => {
         "./json-schema",
         "./google",
         "./google-account",
+        "./github-skills",
         "./quickjs",
         "./worker",
         "./auth/clerk",
@@ -178,6 +186,13 @@ describe("public package boundary", () => {
       optional: true,
     });
     expect(packageJson.exports).toHaveProperty("./auth/clerk");
+  });
+
+  it("INV-13: keeps the YAML parser behind the GitHub skill source subpath", () => {
+    expect(packageJson.dependencies).not.toHaveProperty("yaml");
+    expect(packageJson.peerDependencies).toHaveProperty("yaml", "^2.9.0");
+    expect(packageJson.peerDependenciesMeta?.["yaml"]).toEqual({ optional: true });
+    expect(readFileSync(join(ROOT, "src", "github-skills.ts"), "utf8")).toContain('from "yaml"');
   });
 
   it("INV-13: keeps QuickJS behind an optional executor subpath", () => {

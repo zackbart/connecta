@@ -46,6 +46,21 @@ export function attachStorageDigestKey(ctx: ConnectorContext, vault: CredentialV
  * deployment key, so equal inputs still address the same entry.
  */
 export async function secretDigest(ctx: ConnectorContext, value: string): Promise<string> {
-  const key = await (serviceFor(ctx, StorageDigestKey) ?? fallbackKey)();
+  return hmacDigest(await (serviceFor(ctx, StorageDigestKey) ?? fallbackKey)(), value);
+}
+
+/** {@link secretDigest} under the vault's storage digest key directly, for code that holds no connector context. */
+export async function vaultSecretDigest(vault: CredentialVault | undefined, value: string): Promise<string> {
+  const derive = vault?.storageDigestKey;
+  let key = typeof derive === "function" ? vaultKeys.get(vault!) : undefined;
+  if (typeof derive === "function" && !key) {
+    let pending: Promise<CryptoKey> | undefined;
+    key = () => (pending ??= derive.call(vault));
+    vaultKeys.set(vault!, key);
+  }
+  return hmacDigest(await (key ?? fallbackKey)(), value);
+}
+
+async function hmacDigest(key: CryptoKey, value: string): Promise<string> {
   return `hmac:${bytesToHex(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))))}`;
 }
