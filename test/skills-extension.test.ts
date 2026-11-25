@@ -13,6 +13,11 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import extSkillsSchema from "./fixtures/ext-skills/schema.json";
 import { createTestConnecta, makeRegistry, silentLogger } from "./helpers.js";
+import { mcpRpc, readJsonRpc } from "./fixtures/http.js";
+import { Effect } from "effect";
+import { parseFrontmatter } from "../src/skill-frontmatter.js";
+import { defineSkillSource } from "../src/skill-source-seam.js";
+import { inlineSkills } from "../src/skill-sources.js";
 
 const BASE = "https://connecta.test";
 const URI = "skill://vendor/review/SKILL.md";
@@ -803,4 +808,255 @@ it("rejects ambiguous compatibility aliases without losing canonical guides", as
   } finally {
     spy.mockRestore();
   }
+});
+
+const REVIEW_MD =
+  "---\nname: review\ndescription: Review a pull request against the team checklist.\nmetadata:\n  owner: alice\n  tags: [code, quality]\nlicense: 'It''s MIT'\n---\n\n# Review\r\n\nFollow [the checklist](references/checklist.md).\n";
+const CHECKLIST = "# Checklist\n\n- Tests pass.\n";
+const LOGO = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00, 0xfe]);
+const RELEASE_MD = "---\nname: release\ndescription: Cut a release.\n---\n\nTag, then publish.\n";
+function teamSkills(id = "team", description?: string) {
+  return inlineSkills(
+    id,
+    {
+      review: { "SKILL.md": REVIEW_MD, "references/checklist.md": CHECKLIST, "assets/logo.png": LOGO },
+      release: { "SKILL.md": RELEASE_MD },
+    },
+    description === undefined ? {} : { description },
+  );
+}
+const sha256 = async (bytes: Uint8Array) =>
+  "sha256:" +
+  Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) => b.toString(16).padStart(2, "0")).join(
+    "",
+  );
+const served = (content: { text?: string; blob?: string }) =>
+  typeof content.text === "string"
+    ? new TextEncoder().encode(content.text)
+    : Uint8Array.from(atob(content.blob!), (char) => char.charCodeAt(0));
+const toolText = (result: { content: { type: string; text?: string }[] }) => result.content[0]?.text ?? "";
+
+it("serves an inline source skill's complete manifest, byte-exact files and ext-skills results", async () => {
+  const c = createTestConnecta({ connectors: [guided("crm")], skills: [teamSkills()], logger: silentLogger });
+  const validList = extSkillsValidator("ListSkillsResult");
+  const validGet = extSkillsValidator("GetSkillResult");
+  try {
+    const page = await rpc(c, "skills/list");
+    expect(validList(page.result)).toBe(true);
+    expect(page.result.skills.map((skill: { uri: string }) => skill.uri)).toEqual([
+      "skill://connecta/usage/SKILL.md",
+      "skill://connecta/connectors/crm/SKILL.md",
+      "skill://connecta/skills/team/release/SKILL.md",
+      "skill://connecta/skills/team/review/SKILL.md",
+      "skill://connecta/investigate/SKILL.md",
+    ]);
+    const review = page.result.skills[3];
+    expect(review.resources.map((file: { uri: string }) => file.uri)).toEqual([
+      "skill://connecta/skills/team/review/SKILL.md",
+      "skill://connecta/skills/team/review/assets/logo.png",
+      "skill://connecta/skills/team/review/references/checklist.md",
+    ]);
+    for (const file of review.resources) {
+      const read = await rpc(c, "resources/read", { uri: file.uri });
+      expect(read.error).toBeUndefined();
+      const bytes = served(read.result.contents[0]);
+      expect(bytes.length).toBe(file.size);
+      expect(await sha256(bytes)).toBe(file.digest);
+    }
+    const document = (await rpc(c, "resources/read", { uri: review.uri })).result.contents[0];
+    expect(document.text).toBe(REVIEW_MD);
+    expect(servedFrontmatter(document.text)).toEqual(review.frontmatter);
+    expect(review.frontmatter).toEqual({
+      name: "review",
+      description: "Review a pull request against the team checklist.",
+      metadata: { owner: "alice", tags: ["code", "quality"] },
+      license: "It's MIT",
+    });
+    const logo = (await rpc(c, "resources/read", { uri: review.resources[1].uri })).result.contents[0];
+    expect(logo.text).toBeUndefined();
+    expect(served(logo)).toEqual(LOGO);
+    const get = await rpc(c, "skills/get", { uri: review.uri });
+    expect(validGet(get.result)).toBe(true);
+    expect(get.result.skill).toEqual(review);
+    const resources = await rpc(c, "resources/list");
+    expect(resources.result.resources).toContainEqual(
+      expect.objectContaining({ uri: review.uri, name: "review", mimeType: "text/markdown" }),
+    );
+    expect(JSON.stringify(page.result)).not.toContain("Third-party");
+  } finally {
+    await c.close();
+  }
+});
+
+it("reads source skills, their bodies and supporting files on the skills tool and connecta.skill", async () => {
+  const root = makeRegistry([guided("crm")], { skillSources: [teamSkills()] } as never);
+  const tools = createMetaTools(root, BASE);
+  const guest = (await buildSandboxProviders(root, BASE, silentLogger))[0]!.fns;
+  const listing = await tools.skills({});
+  expect(listing.structuredContent).toMatchObject({
+    skills: expect.arrayContaining([
+      { name: "team:review", uri: "skill://connecta/skills/team/review/SKILL.md", description: expect.any(String) },
+    ]),
+  });
+  expect(toolText(listing)).toContain("- `team:review` — Review a pull request against the team checklist.");
+  const body =
+    "# Review\r\n\nFollow [the checklist](references/checklist.md).\n\n\nSupporting files (pass one as file with this skill's name to read it): assets/logo.png, references/checklist.md.";
+  for (const name of ["team:review", "review", "skill://connecta/skills/team/review/SKILL.md"]) {
+    expect(toolText(await tools.skills({ name }))).toBe(body);
+    expect(((await guest.skill!(name)) as { text: string }).text).toBe(body);
+  }
+  expect(toolText(await tools.skills({ name: "release" }))).toBe("Tag, then publish.\n");
+  expect(toolText(await tools.skills({ name: "review", file: "references/checklist.md" }))).toBe(CHECKLIST);
+  expect(((await guest.skill!("team:review", { file: "references/checklist.md" })) as { text: string }).text).toBe(
+    CHECKLIST,
+  );
+  expect(
+    ((await guest.skill!({ name: "team:review", file: "references/checklist.md" })) as { text: string }).text,
+  ).toBe(CHECKLIST);
+  const binary = await tools.skills({ name: "team:review", file: "assets/logo.png" });
+  expect(binary.isError).toBe(true);
+  expect(binary.structuredContent).toMatchObject({ error: { code: "unsupported_capability" } });
+  expect(toolText(binary)).toContain("binary");
+  await expect(guest.skill!("team:review", { file: "assets/logo.png" })).rejects.toMatchObject({
+    code: "unsupported_capability",
+  });
+  for (const file of [
+    "../release/SKILL.md",
+    "/references/checklist.md",
+    "references\\checklist.md",
+    "references//checklist.md",
+    "missing.md",
+  ]) {
+    const refused = await tools.skills({ name: "team:review", file });
+    expect(refused.structuredContent).toMatchObject({ error: { code: "not_found" } });
+  }
+  expect((await tools.skills({ file: "references/checklist.md" })).structuredContent).toMatchObject({
+    error: { code: "invalid_args" },
+  });
+
+  const twice = makeRegistry([], { skillSources: [teamSkills(), teamSkills("ops")] } as never);
+  const ambiguous = await createMetaTools(twice, BASE).skills({ name: "review" });
+  expect(ambiguous.structuredContent).toMatchObject({ error: { code: "invalid_args" } });
+  expect(toolText(ambiguous)).toContain("team:review, ops:review");
+  expect(toolText(await createMetaTools(twice, BASE).skills({ name: "ops:review" }))).toBe(body);
+  const order = (await new SkillsRegistry(twice, BASE).summaries()).map((skill) => skill.name);
+  expect(order).toEqual(["usage", "team:release", "team:review", "ops:release", "ops:review", "investigate"]);
+});
+
+it("INV-4: scopes source skills to pools that list them and serves unknown-skill responses otherwise", async () => {
+  const person = (id: string) => ({ namespace: "https://clerk.skills.test", id });
+  const config = (skills: ReturnType<typeof inlineSkills>[], poolSkills?: string[]) =>
+    createTestConnecta({
+      connectors: [guided("crm")],
+      logger: silentLogger,
+      skills,
+      auth: {
+        kind: "clerk",
+        activityActorNamespace: "https://clerk.skills.test",
+        authorize: (request) => {
+          const id = request.headers.get("Authorization")?.slice(7);
+          return id ? { ok: true, userId: id } : { ok: false, response: new Response(null, { status: 401 }) };
+        },
+      },
+      maintainers: [person("root")],
+      pools: {
+        with: { tools: ["crm"], members: [person("alice")], ...(poolSkills ? { skills: poolSkills } : {}) },
+        without: { tools: ["crm"], members: [person("bob")] },
+      },
+    });
+  const c = config([teamSkills("team", "Team workflows: pull request review."), teamSkills("ops")], ["team"]);
+  const none = config([]);
+  const uri = "skill://connecta/skills/team/review/SKILL.md";
+  const file = "skill://connecta/skills/team/review/references/checklist.md";
+  try {
+    const root = JSON.stringify((await rpc(c, "skills/list", {}, "/mcp", "root")).result);
+    expect(root).toContain("skills/team/review");
+    expect(root).toContain("skills/ops/release");
+    const alice = JSON.stringify((await rpc(c, "skills/list", {}, "/mcp", "alice")).result);
+    expect(alice).toContain("skills/team/review");
+    expect(alice).not.toContain("skills/ops/");
+    expect((await rpc(c, "resources/read", { uri: file }, "/mcp", "alice")).result.contents[0].text).toBe(CHECKLIST);
+    const bob = await rpc(c, "skills/list", {}, "/mcp", "bob");
+    expect(JSON.stringify(bob.result)).not.toContain("skills/");
+    for (const [method, params] of [
+      ["skills/get", { uri }],
+      ["resources/read", { uri }],
+      ["resources/read", { uri: file }],
+    ] as const) {
+      const hidden = await rpc(c, method, params, "/mcp", "bob");
+      expect(hidden.error).toBeDefined();
+      expect(hidden).toEqual(await rpc(none, method, params, "/mcp", "bob"));
+    }
+    const call = async (app: typeof c, token: string, args: Record<string, unknown>) =>
+      (await readJsonRpc(await mcpRpc(app, "tools/call", { name: "skills", arguments: args }, { token }))).result;
+    for (const args of [
+      { name: "team:review" },
+      { name: "review" },
+      { name: uri },
+      { name: "team:review", file: "references/checklist.md" },
+    ])
+      expect(await call(c, "bob", args)).toEqual(await call(none, "bob", args));
+    expect(toolText(await call(c, "alice", { name: "review", file: "references/checklist.md" }))).toBe(CHECKLIST);
+
+    const description = async (app: typeof c, token: string) => {
+      const listed = await readJsonRpc(await mcpRpc(app, "tools/list", {}, { token }));
+      return JSON.stringify(listed.result.tools.find((tool: { name: string }) => tool.name === "skills"));
+    };
+    const first = await description(c, "alice");
+    expect(await description(c, "alice")).toBe(first);
+    expect(first).toContain("Sources: team (Team workflows: pull request review.).");
+    expect(first).not.toContain("ops");
+    expect(first).not.toContain("release");
+    expect(first).not.toContain("checklist");
+    expect(await description(c, "root")).toContain("Sources: team (Team workflows: pull request review.), ops.");
+    expect(await description(c, "bob")).toBe(await description(none, "bob"));
+  } finally {
+    await c.close();
+    await none.close();
+  }
+});
+
+it("fails the skills listing for a source with nothing to serve while local skills stay readable", async () => {
+  const failing = defineSkillSource("broken", "broken", undefined, {
+    snapshot: () => Effect.fail(new Error("upstream detail that must not surface")),
+  });
+  const root = makeRegistry([guided("crm")], { skillSources: [failing] } as never);
+  const registry = new SkillsRegistry(root, BASE);
+  await expect(registry.list()).rejects.toMatchObject({ code: "unavailable" });
+  expect((await registry.read("skill://connecta/usage/SKILL.md")).contents[0]?.text).toContain("# Connecta usage");
+  expect(await registry.text("crm")).toContain("Read crm.");
+  const tools = createMetaTools(root, BASE);
+  const listing = await tools.skills({});
+  expect(listing.isError).toBe(true);
+  expect(JSON.stringify(listing)).not.toContain("upstream detail");
+  expect(toolText(await tools.skills({ name: "usage" }))).toContain("Connecta usage");
+  expect((await tools.skills({ name: "broken:anything" })).structuredContent).toMatchObject({
+    error: { code: "unavailable" },
+  });
+});
+
+it("parses the SKILL.md frontmatter subset exactly as a YAML parser does and refuses the rest", () => {
+  const accepted = [
+    "name: review\ndescription: Review a pull request.",
+    "name: x # comment\ndescription: \"Quoted: \\\"x\\\" \\u00e9 \\n end\"\nlicense: 'It''s MIT'\nversion: 1.0\ncount: 3\nflag: true\nnone: null\ntilde: ~\ndate: 2024-01-01\nallowed-tools: Bash(git:*) Read",
+    'name: x\ndescription: |\n  Line one\n    indented\n  line three\n\nmetadata:\n  author: alice\n  tags:\n    - a\n    - "b c"\n  nested:\n    deep: 1\nlist:\n- one\n- two\nflow: [a, "b", \'c d\', 3]\nempty: []\nemptymap: {}\nfolded: >-\n  one\n  two\n\n  three\nkeep: |+\n  kept\n\nother: x',
+    '{"name": "x", "description": "y"}',
+    "description: >\n  folded\n  text\nname: n",
+  ];
+  for (const source of accepted) expect(parseFrontmatter(source), source).toEqual(parseYaml(source));
+  for (const source of [
+    "name: [a, [b]]",
+    "name: &a x",
+    "name: *a",
+    "a: b: c",
+    "name: x\n  more",
+    "name: 0x1f",
+    "name: .inf",
+    "k: v\nk: w",
+    "- a",
+    "name: !tag x",
+    "x: |2\n  a",
+    'name: "unterminated',
+  ])
+    expect(parseFrontmatter(source), source).toBeUndefined();
 });

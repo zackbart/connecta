@@ -37,6 +37,11 @@ You can also connect another hosted MCP tool server through `remoteMcp()`,
 which discovers the server's live tool catalog, or describe an API Connecta
 should call.
 
+Your team's own Agent Skills, such as how you review a pull request, can be
+served to every agent that connects, with their supporting files, and limited
+to the pools that should see them. See
+[deployment skill sources](./documentation/meta-tools.md#deployment-skill-sources).
+
 ## What it protects
 
 | Boundary         | What Connecta does                                                                                                        |

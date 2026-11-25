@@ -508,6 +508,14 @@ undeclared alias of `connecta.skill` with the same host-call accounting, because
 models copy the `skills` tool's shape into programs. Any other argument is
 `invalid_args`, with a message naming `connecta.skill("usage")`.
 
+`await connecta.skill(name, { file })` returns one file the skill's manifest
+lists, by its relative path, as `{ name, format: "text", text }`; the
+top-level tool's `{ name, file }` object works too. A path the manifest does not
+list, or one with `..`, a leading `/`, a backslash or an empty segment, is
+`not_found`; a file that is not UTF-8 text is `unsupported_capability`. Source
+skill names and the file rules are in
+[deployment skill sources](./meta-tools.md#deployment-skill-sources).
+
 ### Parallel calls
 
 **S7.** Use `Promise.all` for independent calls when any failure should fail the
@@ -1904,17 +1912,17 @@ each bridge call by the entry's budget class and binds it by name to a host
 implementation, and the `execute_code` description joins each entry's compact
 declaration and names the functions that spend no host call.
 
-| Function    | Budget     | Purpose                                                                  |
-| ----------- | ---------- | ------------------------------------------------------------------------ |
-| `search`    | `hostCall` | Searches the catalog and returns one flat page of `{ tools }`.           |
-| `describe`  | `hostCall` | Describes exact addresses, one entry per address in order.               |
-| `call`      | `hostCall` | Calls one tool and inlines transfer pages and native content.            |
-| `read`      | `hostCall` | Reads one advertised resource URI.                                       |
-| `result`    | `hostCall` | Reads a retained result whole, or pages it by page or UTF-8 byte offset. |
-| `skill`     | `hostCall` | Fetches a skill's text by exact name.                                    |
-| `budget`    | `none`     | Reports the run's remaining host calls, writes, and time to send calls.  |
-| `emit`      | `emission` | Forwards a content block to the client; needs no await.                  |
-| `unawaited` | `once`     | Tells the host a program read a result field off an unawaited call.      |
+| Function    | Budget     | Purpose                                                                      |
+| ----------- | ---------- | ---------------------------------------------------------------------------- |
+| `search`    | `hostCall` | Searches the catalog and returns one flat page of `{ tools }`.               |
+| `describe`  | `hostCall` | Describes exact addresses, one entry per address in order.                   |
+| `call`      | `hostCall` | Calls one tool and inlines transfer pages and native content.                |
+| `read`      | `hostCall` | Reads one advertised resource URI.                                           |
+| `result`    | `hostCall` | Reads a retained result whole, or pages it by page or UTF-8 byte offset.     |
+| `skill`     | `hostCall` | Fetches a skill's text by exact name, or one file it lists by relative path. |
+| `budget`    | `none`     | Reports the run's remaining host calls, writes, and time to send calls.      |
+| `emit`      | `emission` | Forwards a content block to the client; needs no await.                      |
+| `unawaited` | `once`     | Tells the host a program read a result field off an unawaited call.          |
 
 A `hostCall` function spends one host call on entry (`L4`, `M7`) and returns a
 Promise whose result fields mark an unawaited read. The runtime wraps

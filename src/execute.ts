@@ -1,5 +1,5 @@
 import { operationActivity } from "./operation-activity.js";
-import { SkillLookupError } from "./skills.js";
+import { SkillLookupError, SkillRequestError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES, routeNames } from "./agent-routes.js";
 import { isWriteLike, READ_PROGRAM_SOURCE } from "./tool-safety.js";
@@ -1366,15 +1366,29 @@ function sandboxProvider(
         catch: (err) => err,
       });
     },
-    skill: (name, _options, utilitySignal) =>
+    skill: (name, options, utilitySignal) =>
       Effect.tryPromise({
         try: async () => {
-          // Accept the top-level skills tool's { name } shape too: models copy it into programs.
-          const skillName = name && typeof name === "object" ? (name as { name?: unknown }).name : name;
+          // Accept the top-level skills tool's { name, file } shape too: models copy it into programs.
+          const shape = name && typeof name === "object" ? (name as { name?: unknown; file?: unknown }) : undefined;
+          const skillName = shape ? shape.name : name;
           if (typeof skillName !== "string")
             throw guestFailure(
               "invalid_args",
               'Use connecta.skill("usage") or connecta.skill("connector:<id>") with an exact skill name; the skills tool lists names.',
+            );
+          const file =
+            shape?.file ??
+            (options && typeof options === "object" && !Array.isArray(options)
+              ? (options as { file?: unknown }).file
+              : undefined);
+          if (
+            (options !== undefined && (options === null || typeof options !== "object")) ||
+            (file !== undefined && typeof file !== "string")
+          )
+            throw guestFailure(
+              "invalid_args",
+              'Use connecta.skill(name, { file: "<relative path>" }) with a path the skill lists.',
             );
           const skills = new SkillsRegistry(registry, baseUrl, {
             readOnly: limits.readOnly,
@@ -1389,14 +1403,16 @@ function sandboxProvider(
             probeTimeoutMs: limits.probeTimeoutMs,
             defer: limits.defer,
           });
-          return { name: skillName, format: "text", text: await skills.text(skillName) };
+          return { name: skillName, format: "text", text: await skills.text(skillName, file as string | undefined) };
         },
         catch: (err) =>
           err instanceof SkillLookupError
             ? new InvocationFailure(skillLookupRecovery(err.message))
-            : err instanceof ConnectorCallError
-              ? guestFailure(err.code, "Skills are unavailable.", err.retryable)
-              : err,
+            : err instanceof SkillRequestError
+              ? guestFailure(err.code, err.message)
+              : err instanceof ConnectorCallError
+                ? guestFailure(err.code, "Skills are unavailable.", err.retryable)
+                : err,
       }),
     read: (uri) =>
       Effect.suspend(() => {

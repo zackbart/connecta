@@ -22,7 +22,7 @@ owns the top-level MCP contract; it does not require reading the core internals.
 | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | Choose a tool or construct its arguments           | [Meta-tool table](#the-meta-tools), [call routing](#routing-between-the-call-surfaces), [downstream input](#downstream-input-on-direct-calls) |
 | Find an operation and its schema                   | [Discovery context](#discovery-context), [TypeScript signatures](#typescript-signatures), [lexical discovery](#lexical-discovery)             |
-| Load provider instructions or native skills        | [Connector guides](#connector-guides-and-skills), [native extension](#native-skills-extension)                                                |
+| Load provider instructions or native skills        | [Connector guides](#connector-guides-and-skills), [skill sources](#deployment-skill-sources), [native extension](#native-skills-extension)    |
 | Interpret a direct response or page a large result | [Representation](#result-representation), [truncation](#truncated-direct-call-results), [paging](#paging-with-connectaresult)                 |
 | Recover a refused or invalid call                  | [Authorization](#authorization-recovery), [routing](#routing-recovery), [arguments](#argument-recovery), [echo budgets](#echo-budgets)        |
 | List downstream tools directly, or connect Eve     | [Native tool surface](#native-tool-surface), [Eve agents](#eve-agents)                                                                        |
@@ -83,7 +83,7 @@ mode returns native `content`. Default-mode successes declare
 | `call_tool`             | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?`                                                   | the downstream result, bounded as [result representation](#result-representation) describes                                                                                                                                                                                                     |
 | `call_destructive_tool` | the same, plus `reason?`                                                                                                            | the same                                                                                                                                                                                                                                                                                        |
 | `authorize_connector`   | `connector`, `force?`                                                                                                               | the class-specific handoff in [authorization recovery](#authorization-recovery)                                                                                                                                                                                                                 |
-| `skills`                | `name?`                                                                                                                             | the listing when `name` is absent, that skill's markdown when it is present                                                                                                                                                                                                                     |
+| `skills`                | `name?`, `file?`                                                                                                                    | the listing when `name` is absent, that skill's markdown when it is present, one supporting file's text with `file` ([skill sources](#deployment-skill-sources))                                                                                                                                |
 
 `limit` defaults to 8 and is capped at 100, as is one `connecta.describe` batch.
 `connecta.result`'s `offset` is a whole number of bytes ≥ 0 defaulting to 0 and
@@ -677,8 +677,9 @@ description would pass that cut-off. The `usage` skill points to those two sourc
 of repeating them.
 
 Tool descriptions and output schemas carry deployment configuration only: the
-connector inventory, budgets, the endpoint's read-only setting, and whether any
-visible connector has a guide. No catalog outcome, call, authorization state,
+connector inventory, budgets, the endpoint's read-only setting, whether any
+visible connector has a guide, and the ids and configured descriptions of the
+[skill sources](#deployment-skill-sources) the caller sees. No catalog outcome, call, authorization state,
 timestamp, version or other live status reaches `tools/list` or the
 instructions, and the inventory follows registry order, so one configuration
 serves identical bytes on every request and in every process or isolate. That
@@ -716,6 +717,101 @@ guides stay scoped to the deployment that listed them even when two deployments
 use identical content, and a deployment with no connector guides receives none of
 the short conditional guide pointers in its tool definitions.
 
+### Deployment skill sources
+
+A deployment publishes Agent Skills of its own, which no connector backs, with
+`skills` on `createConnecta`. Each entry is a skill source; this release ships
+`inlineSkills(id, skills, { description? })` from the package root, which takes
+skills from deployment code as file maps. The source type is opaque: no custom
+source is a published contract.
+
+```ts
+import { createConnecta, inlineSkills } from "@zackbart/connecta";
+
+createConnecta({
+  // ...
+  skills: [
+    inlineSkills(
+      "team",
+      {
+        review: {
+          "SKILL.md": "---\nname: review\ndescription: Review a pull request.\n---\n\nFollow references/checklist.md.\n",
+          "references/checklist.md": "# Checklist\n\n- Tests pass.\n",
+        },
+      },
+      { description: "Team workflows: pull request review." },
+    ),
+  ],
+  pools: {
+    support: { tools: ["tickets"], skills: ["team"], members: supportTeam },
+  },
+});
+```
+
+| Rule        | Contract                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Source id   | Matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters, unique among sources, and not `connector`, `connecta` or `downstream`. `description` is optional: one line of 1 to 120 characters after trimming, with no control characters.                                                                                                                                                       |
+| Skill       | Each key is a directory name and each value its files by relative path, `SKILL.md` included. The directory name equals the frontmatter `name`, and both satisfy the Agent Skills name rule. `SKILL.md` frontmatter carries `name` and a 1 to 1,024 character `description`; other fields pass through unchanged. A string is stored as UTF-8 and a `Uint8Array` is served byte-exact.            |
+| Frontmatter | Block mappings, block and flow sequences of scalars, plain, single- and double-quoted, literal (`\|`) and folded (`>`) scalars, and comments; plain scalars resolve as the YAML 1.2 core schema does. JSON is accepted. Anchors, aliases, tags, explicit indentation indicators, multi-line plain or quoted scalars, nested flow collections and duplicate keys are refused rather than guessed. |
+| Paths       | A relative path with no `.` or `..` segment, leading `/`, backslash, empty segment or control character, at most 1,024 characters.                                                                                                                                                                                                                                                               |
+| Bounds      | At most 1,024 skills per source, 512 files and 16 MiB per skill. The whole skills listing keeps its 1,024-entry and 8 MiB bounds.                                                                                                                                                                                                                                                                |
+| Errors      | `inlineSkills` throws a `ConfigError` naming the source and skill for any rule above; `createConnecta` throws for a repeated source id or an entry not built with `inlineSkills`.                                                                                                                                                                                                                |
+
+Identity. A skill's document is
+`skill://connecta/skills/<source-id>/<skill-name>/SKILL.md`, and each
+supporting file keeps its relative path under
+`skill://connecta/skills/<source-id>/<skill-name>/`, each path segment
+percent-encoded, so relative links inside a skill, and to a sibling skill of
+the same source, resolve. On `skills` and `connecta.skill` the skill's name is
+`<source-id>:<skill-name>`; the bare `<skill-name>` resolves when exactly one
+skill the caller sees has it, and fails as ambiguous, naming the qualified
+names, otherwise. The document URI and its directory root resolve too.
+`usage`, `investigate`, connector guide names, connector ids and
+`connector:<id>` keep their meaning and take priority over a bare source skill
+name.
+
+Readers. One registry serves all readers. Native `skills/list` and `skills/get`
+return a complete manifest: every file's URI, SHA-256 digest and byte size.
+`resources/read` serves each file byte-exact, valid UTF-8 as `text` (with
+`mimeType: "text/markdown"` for a `.md` file) and anything else as a base64
+`blob`; `resources/list` lists the document and supporting files as it does for
+other skills. `skills({})` lists source skills by name with their frontmatter
+description. `skills({ name })` returns `SKILL.md` without its frontmatter; when
+the skill has supporting files, the text ends with
+`Supporting files (pass one as file with this skill's name to read it): …`,
+naming them in path order within 1,000 UTF-8 bytes and then an exact `+N more`
+count. `skills({ name, file })` and `connecta.skill(name, { file })` return one
+listed file's text by its relative path; this works for any skill with a
+manifest, including downstream skills, whose text keeps its third-party origin
+prefix. A path with `..`, a leading `/`, a backslash, an empty segment, or one
+the manifest does not list is refused as `not_found`. A file that is not UTF-8
+text is refused with `unsupported_capability`, saying it is binary; native
+`resources/read` at the file's URI is how a host reads it. `file` without
+`name` is `invalid_args`. Source text takes the request's credential redaction,
+as connector guides do. Source skills are deployment-owned guidance and carry
+no third-party origin label.
+
+Visibility. A maintainer at plain `/mcp` and an open deployment's anonymous
+caller see every source. A pool sees a source only when its
+[`skills`](./auth.md#pools) lists the source id. A skill outside the caller's
+view is indistinguishable from one that does not exist on every reader,
+including by name, URI and error text, and a source outside the view is never
+read.
+
+Failure. A source that fails with nothing to serve fails the skills listing,
+as a failed downstream skills listing does, and a name, URI or file in that
+source fails as `unavailable` with no source detail. Built-in skills and
+connector guides stay readable by name.
+
+Always-loaded surface. For a caller who sees any source, the `skills` tool's
+description adds a second line:
+`Deployment skills are named <source>:<skill>; file reads one supporting file a skill lists. Sources: team (Team workflows: pull request review.).`
+Sources appear in configuration order, each as its id and, when configured,
+its description, within 600 UTF-8 bytes and then an exact `+N more` count. No
+skill name, file, revision or other source content reaches `tools/list` or the
+instructions, so one configuration serves identical bytes on every request. A
+caller who sees no source receives the unchanged description.
+
 ### Native Skills extension
 
 The [Skills extension](https://github.com/modelcontextprotocol/ext-skills) is Beta under
@@ -733,11 +829,14 @@ keeps `ttlMs: 0`, including reads of local guides on that view. Clients must key
 private caches by endpoint and authenticated caller. No request-bound catalog or
 digest promise is retained across requests. Listing pages
 contain at most five complete skills: usage first, required connector guides
-next, other connector guides, downstream skills, then the investigation guide.
+next, other connector guides, [source skills](#deployment-skill-sources) in
+configuration order and then by name, downstream skills, then the
+investigation guide.
 Subsequent pages use `cursor`/`nextCursor`. Local lookup works without listing.
 
-The local document URIs are `skill://connecta/usage/SKILL.md` and
-`skill://connecta/connectors/<slug>/SKILL.md`. A valid Agent Skills connector ID
+The local document URIs are `skill://connecta/usage/SKILL.md`,
+`skill://connecta/connectors/<slug>/SKILL.md` and, for source skills,
+`skill://connecta/skills/<source-id>/<skill-name>/SKILL.md`. A valid Agent Skills connector ID
 is its slug; other IDs use a readable normalized ID slug plus a 12-character
 SHA-256 suffix. Generated slugs reserve every configured connector ID and append
 a deterministic numeric suffix on collision. Avoid a connector ID equal to another

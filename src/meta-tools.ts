@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { operationActivity } from "./operation-activity.js";
-import { SkillLookupError } from "./skills.js";
+import { SkillLookupError, SkillRequestError } from "./skills.js";
 import { skillLookupRecovery, utilityRecovery } from "./utility-recovery.js";
 import { META_ROUTES } from "./agent-routes.js";
 import type { AgentRouteNames } from "./types.js";
@@ -1080,6 +1080,7 @@ interface AuthorizeArgs {
 }
 interface SkillArgs {
   name?: string;
+  file?: string;
 }
 
 /**
@@ -1431,6 +1432,8 @@ function metaToolsForRequest(
     skills: authMethod((args: SkillArgs = {}) =>
       authFlow<ToolResult>(function* () {
         try {
+          if (!args.name && args.file !== undefined)
+            return toolError(utilityRecovery("invalid_args", "file needs the name of the skill that lists it."));
           if (!args.name) {
             const listing = yield* upwardStep(
               authInvoke<{ name: string; uri: string; description: string }[]>(skills, "summaries", []),
@@ -1447,11 +1450,12 @@ function metaToolsForRequest(
               ],
             };
           }
-          const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name]));
+          const text = yield* upwardStep(authInvoke<string>(skills, "text", [args.name, args.file]));
           // Guidance is text-only: a structured copy would double every fetch on the wire (result-representation).
           return { content: [{ type: "text", text }] };
         } catch (error) {
           if (error instanceof SkillLookupError) return toolError(skillLookupRecovery(error.message));
+          if (error instanceof SkillRequestError) return toolError(utilityRecovery(error.code, error.message));
           return toolError(
             utilityRecovery(
               error instanceof ConnectorCallError ? error.code : "unavailable",
@@ -1814,10 +1818,18 @@ Search and describe list writes with callable: false; a read sent here still run
 const AUTHORIZE_DESC = `Request a connector's sign-in or credential handoff after auth_required, when the error carries no link to pass on.
 Also for a fresh link; an error's authorizationUrl or operatorUrl needs no call. Returns an OAuth or operator-credential handoff, or required deployment configuration. A configured credential reports presence only: if a call just failed on authentication or configuration, give the retained handoff to the operator; otherwise proceed with the call. force=true restarts OAuth when the verified user opens the /connect URL. Never accepts credentials.`;
 const NATIVE_GRANTED_MAX_BYTES = 1_024;
-const SKILLS_DESC = (connectorGuides: boolean) =>
-  connectorGuides
+/** Source ids and descriptions in the `skills` description; configuration only. */
+const SKILL_SOURCES_MAX_BYTES = 600;
+const SKILLS_DESC = (connectorGuides: boolean, sources: readonly { id: string; description: string | undefined }[]) =>
+  (connectorGuides
     ? "List or read guidance by name, including connector guides; fetch usage only when guidance is missing or a program fails."
-    : "List or read guidance by name; fetch usage only when guidance is missing or a program needs repair.";
+    : "List or read guidance by name; fetch usage only when guidance is missing or a program needs repair.") +
+  (sources.length === 0
+    ? ""
+    : `\nDeployment skills are named <source>:<skill>; file reads one supporting file a skill lists. Sources: ${connectorList(
+        sources.map((source) => (source.description ? `${source.id} (${source.description})` : source.id)),
+        SKILL_SOURCES_MAX_BYTES,
+      )}.`);
 
 /**
  * Sentences appended to a meta-tool description only when this connection
@@ -1872,7 +1884,7 @@ const CALL_INPUT_SCHEMA = {
 // derived once per process (see advertisedSchema). Nothing here may read
 // deployment configuration or the request's identity: anything that varies
 // belongs in the per-registration description instead.
-const SKILLS_INPUT = advertisedInputSchema(z.object({ name: z.string().optional() }));
+const SKILLS_INPUT = advertisedInputSchema(z.object({ name: z.string().optional(), file: z.string().optional() }));
 
 const SEARCH_INPUT = advertisedInputSchema(
   z.object({
@@ -2007,12 +2019,12 @@ export function registerMetaTools(
   server.registerTool(
     "skills",
     {
-      description: SKILLS_DESC(hasConnectorGuides(registry.listConnectors())),
+      description: SKILLS_DESC(hasConnectorGuides(registry.listConnectors()), registry.listSkillSources()),
       ...(ctx.native ? { _meta: { "dev.connecta/surface": { surface: "native", ...ctx.native } } } : {}),
       inputSchema: SKILLS_INPUT,
       annotations: READ_ONLY_LOCAL,
     },
-    authMethod((args: { name?: string | undefined }, request: ServerContext) =>
+    authMethod((args: { name?: string | undefined; file?: string | undefined }, request: ServerContext) =>
       authFlow<ToolResult>(function* () {
         bindRequest(request);
         return yield* upwardStep(authInvoke<ToolResult>(mt, "skills", [args as SkillArgs]));

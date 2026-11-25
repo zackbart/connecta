@@ -45,13 +45,13 @@ export const GUEST_FUNCTIONS = [
     declaration:
       "result(id: string | Paged, options: { all: true }): Promise<Data>;\nresult(id: string | Paged, options?: { page?: number; offset?: number; maxBytes?: number }): Promise<{ text: string; hasMore: boolean; nextOffset?: number }>;",
   },
-  /** Fetches a skill's text by exact name. */
+  /** Fetches a skill's text by exact name, or one file it lists by relative path. */
   {
     name: "skill",
     budget: "hostCall",
     deadline: "skill lookup",
     alias: { name: "skills", note: "models write connecta.skills, the top-level tool's name." },
-    declaration: "skill(name: string): Promise<{ text: string }>;",
+    declaration: "skill(name: string, options?: { file?: string }): Promise<{ text: string }>;",
   },
   /** Reports the run's remaining host calls, writes, and time to send calls. */
   {
