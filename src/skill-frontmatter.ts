@@ -1,13 +1,17 @@
 /**
  * The YAML subset an Agent Skills `SKILL.md` frontmatter block may use: block
- * mappings, block and flow sequences of scalars, plain, quoted, literal and
- * folded scalars, and comments. Plain scalars resolve as the YAML 1.2 core
- * schema does. Anything outside the subset is refused rather than guessed, so
- * a value served in a manifest always equals what a YAML parser reads from the
- * same bytes. JSON is accepted as the YAML it is.
+ * mappings with identifier keys, block and flow sequences of scalars, plain,
+ * quoted, literal and folded scalars, and comments. Plain scalars resolve as
+ * the YAML 1.2 core schema does. Anything outside the subset is refused rather
+ * than guessed, so a value served in a manifest always equals what a YAML
+ * parser reads from the same bytes. Every path is linear in the block's size,
+ * which is capped at {@link MAX_FRONTMATTER_LENGTH}.
  */
 
 type YamlValue = string | number | boolean | null | YamlValue[] | { [key: string]: YamlValue };
+
+const MAX_FRONTMATTER_LENGTH = 32 * 1024;
+const MAX_DEPTH = 8;
 
 class Unsupported extends Error {}
 
@@ -32,28 +36,52 @@ export function splitFrontmatter(document: string): { yaml: string; body: string
   return { yaml, body };
 }
 
+/** Anything but printable text, space, and line breaks: tabs, controls, Unicode spaces, BOMs and unpaired surrogates. */
+function hasRefusedCharacter(source: string): boolean {
+  for (let index = 0; index < source.length; index++) {
+    const code = source.charCodeAt(index);
+    if (code === 0x0a) continue;
+    if (code === 0x0d) {
+      if (source.charCodeAt(index + 1) !== 0x0a) return true;
+      continue;
+    }
+    if (code < 0x20 || (code >= 0x7f && code <= 0xa0) || code === 0xad) return true;
+    if (code === 0x1680 || (code >= 0x2000 && code <= 0x200f) || (code >= 0x2028 && code <= 0x202f)) return true;
+    if (code === 0x205f || code === 0x3000 || code === 0xfeff || code === 0xfffe || code === 0xffff) return true;
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = source.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      index++;
+    } else if (code >= 0xdc00 && code <= 0xdfff) return true;
+  }
+  return false;
+}
+
 /** The frontmatter as a plain object, or undefined when it is not a mapping in the supported subset. */
 export function parseFrontmatter(source: string): Record<string, unknown> | undefined {
+  if (source.length > MAX_FRONTMATTER_LENGTH || hasRefusedCharacter(source)) return undefined;
   try {
-    if (source.trimStart().startsWith("{")) {
-      const json: unknown = JSON.parse(source);
-      return json && typeof json === "object" && !Array.isArray(json) ? (json as Record<string, unknown>) : undefined;
-    }
     const lines = source.split(/\r?\n/).map((raw): Line => {
-      const indent = raw.length - raw.replace(/^ +/, "").length;
-      if (raw[indent] === "\t") fail();
+      let indent = 0;
+      while (raw.charCodeAt(indent) === 0x20) indent++;
       return { indent, text: raw };
     });
     const parser = new Parser(lines);
-    const value = parser.mapping(0);
+    const value = parser.mapping(0, 0);
     if (parser.next() !== undefined) fail();
     return value;
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (error instanceof Unsupported) return undefined;
+    throw error;
   }
 }
 
-const blank = (line: Line) => /^\s*(?:#.*)?$/.test(line.text);
+function blank(line: Line): boolean {
+  const rest = line.text.slice(line.indent);
+  return rest === "" || rest.startsWith("#");
+}
+
+const isItem = (content: string) => content === "-" || content.startsWith("- ");
 
 class Parser {
   private index = 0;
@@ -64,33 +92,33 @@ class Parser {
     return this.lines[this.index];
   }
 
-  mapping(indent: number): { [key: string]: YamlValue } {
+  mapping(indent: number, depth: number): { [key: string]: YamlValue } {
+    if (depth > MAX_DEPTH) fail();
     const result: { [key: string]: YamlValue } = {};
     for (let line = this.next(); line && line.indent === indent; line = this.next()) {
       const content = line.text.slice(indent);
-      if (content.startsWith("- ") || content === "-") break;
+      if (isItem(content)) break;
       const [key, rest] = splitKey(content);
-      if (Object.hasOwn(result, key) || key === "<<" || key === "__proto__") fail();
+      if (Object.hasOwn(result, key)) fail();
       this.index++;
-      result[key] = this.value(rest, indent);
+      result[key] = this.value(rest, indent, depth);
     }
     const line = this.next();
     if (line && line.indent > indent) fail();
     return result;
   }
 
-  private value(rest: string, indent: number): YamlValue {
+  private value(rest: string, indent: number, depth: number): YamlValue {
     const trimmed = stripComment(rest);
     if (trimmed === "") {
       const line = this.next();
       if (!line) return null;
       const content = line.text.slice(line.indent);
-      const isItem = content.startsWith("- ") || content === "-";
-      if (isItem && line.indent >= indent) return this.sequence(line.indent);
-      if (line.indent > indent) return this.mapping(line.indent);
+      if (isItem(content) && line.indent >= indent) return this.sequence(line.indent);
+      if (line.indent > indent) return this.mapping(line.indent, depth + 1);
       return null;
     }
-    if (/^[|>]/.test(trimmed)) return this.block(trimmed, indent);
+    if (trimmed[0] === "|" || trimmed[0] === ">") return this.block(trimmed, indent);
     const scalar = inlineValue(trimmed);
     const line = this.next();
     if (line && line.indent > indent) fail();
@@ -101,10 +129,11 @@ class Parser {
     const result: YamlValue[] = [];
     for (let line = this.next(); line && line.indent === indent; line = this.next()) {
       const content = line.text.slice(indent);
-      if (!(content.startsWith("- ") || content === "-")) break;
+      if (!isItem(content)) break;
       this.index++;
       const item = stripComment(content.slice(1));
-      if (item === "" || /^[|>]/.test(item) || /^[^'"[{]*:(?:\s|$)/.test(item)) fail();
+      if (item === "" || item[0] === "|" || item[0] === ">" || item[0] === "-") fail();
+      if (item[0] !== '"' && item[0] !== "'" && item[0] !== "[" && (item.includes(": ") || item.endsWith(":"))) fail();
       result.push(inlineValue(item));
       const after = this.next();
       if (after && after.indent > indent) fail();
@@ -113,68 +142,61 @@ class Parser {
   }
 
   private block(header: string, indent: number): string {
-    const match = /^([|>])([+-]?)$/.exec(header);
-    if (!match) fail();
-    const [, style, chomp] = match!;
+    if (header !== "|" && header !== "|-" && header !== ">" && header !== ">-") fail();
     const raw: string[] = [];
     let contentIndent: number | undefined;
-    let widestBlank = 0;
     while (this.index < this.lines.length) {
       const line = this.lines[this.index]!;
-      if (line.text.trim() === "") {
-        if (!/^ *$/.test(line.text)) fail();
-        widestBlank = Math.max(widestBlank, line.text.length);
+      if (line.indent === line.text.length) {
+        if (line.text.length > 0) fail();
         raw.push("");
         this.index++;
         continue;
       }
       if (line.indent <= indent) break;
       contentIndent ??= line.indent;
-      if (line.indent < contentIndent) fail();
-      raw.push(line.text.slice(contentIndent));
+      if (line.indent !== contentIndent) fail();
+      const text = line.text.slice(contentIndent);
+      if (text.endsWith(" ")) fail();
+      raw.push(text);
       this.index++;
     }
-    if (widestBlank > (contentIndent ?? indent)) fail();
-    let trailing = 0;
-    while (raw.length > 0 && raw[raw.length - 1] === "") {
-      raw.pop();
-      trailing++;
-    }
-    if (raw.length === 0) return chomp === "+" ? "\n".repeat(trailing) : "";
-    let text: string;
-    if (style === "|") text = raw.join("\n");
+    while (raw.length > 0 && raw[raw.length - 1] === "") raw.pop();
+    if (raw.length === 0 || raw[0] === "") fail();
+    let text = "";
+    if (header[0] === "|") text = raw.join("\n");
     else {
-      if (raw.some((text) => text.startsWith(" "))) fail();
-      text = "";
       let breaks = 0;
-      let started = false;
       for (const part of raw) {
         if (part === "") {
           breaks++;
           continue;
         }
-        if (started) text += breaks === 0 ? " " : "\n".repeat(breaks);
-        else text += "\n".repeat(breaks);
+        if (text !== "") text += breaks === 0 ? " " : "\n".repeat(breaks);
         text += part;
         breaks = 0;
-        started = true;
       }
     }
-    return chomp === "-" ? text : chomp === "+" ? `${text}\n${"\n".repeat(trailing)}` : `${text}\n`;
+    return header.endsWith("-") ? text : `${text}\n`;
   }
 }
 
+const RESERVED_KEYS = /^(?:null|Null|NULL|true|True|TRUE|false|False|FALSE|__proto__)$/;
+
+/** An identifier key, `-` allowed after the first character, then `:` and a space or the end. */
 function splitKey(content: string): [string, string] {
-  if (content[0] === '"' || content[0] === "'") {
-    const [key, end] = quoted(content, 0);
-    if (content[end] !== ":" || (end + 1 < content.length && content[end + 1] !== " ")) fail();
-    return [key, content.slice(end + 1)];
-  }
-  const match = /^([^\s#'"{}[\],&*!|>%@`?:-][^:#]*?|-[^\s:#][^:#]*?)[ ]*:(?: (.*))?$/.exec(content);
-  if (!match) fail();
-  return [match![1]!, match![2] ?? ""];
+  let end = 0;
+  const first = content.charCodeAt(0);
+  if (!((first >= 0x41 && first <= 0x5a) || (first >= 0x61 && first <= 0x7a) || first === 0x5f)) fail();
+  while (end < content.length && /[A-Za-z0-9_-]/.test(content[end]!)) end++;
+  const key = content.slice(0, end);
+  if (RESERVED_KEYS.test(key) || content[end] !== ":") fail();
+  const after = content.slice(end + 1);
+  if (after !== "" && after[0] !== " ") fail();
+  return [key, after];
 }
 
+/** The value text before a ` #` comment, with surrounding spaces removed. */
 function stripComment(text: string): string {
   let inSingle = false;
   let inDouble = false;
@@ -185,36 +207,34 @@ function stripComment(text: string): string {
       else if (char === '"') inDouble = false;
     } else if (inSingle) {
       if (char === "'") inSingle = false;
-    } else if ((char === '"' || char === "'") && (i === 0 || /[\s[,]/.test(text[i - 1]!))) {
+    } else if ((char === '"' || char === "'") && (i === 0 || text[i - 1] === " " || text[i - 1] === "[")) {
       if (char === '"') inDouble = true;
       else inSingle = true;
-    } else if (char === "#" && (i === 0 || /\s/.test(text[i - 1]!))) return text.slice(0, i).trim();
+    } else if (char === "#" && (i === 0 || text[i - 1] === " ")) return trimSpaces(text.slice(0, i));
   }
-  return text.trim();
+  return trimSpaces(text);
+}
+
+function trimSpaces(text: string): string {
+  let start = 0;
+  let end = text.length;
+  while (start < end && text[start] === " ") start++;
+  while (end > start && text[end - 1] === " ") end--;
+  return text.slice(start, end);
 }
 
 const ESCAPES: Record<string, string> = {
   "0": "\0",
-  a: "\x07",
   b: "\b",
   t: "\t",
-  "\t": "\t",
   n: "\n",
-  v: "\v",
-  f: "\f",
   r: "\r",
-  e: "\x1b",
-  " ": " ",
   '"': '"',
   "/": "/",
   "\\": "\\",
-  N: "\x85",
-  _: "\xa0",
-  L: " ",
-  P: " ",
 };
 
-/** A quoted scalar starting at `start`, and the index after its closing quote. */
+/** A one-line quoted scalar starting at `start`, and the index after its closing quote. */
 function quoted(text: string, start: number): [string, number] {
   const quote = text[start];
   let value = "";
@@ -230,14 +250,14 @@ function quoted(text: string, start: number): [string, number] {
     else if (char !== "\\") value += char;
     else {
       const escape = text[++i];
-      if (escape === undefined) fail();
-      const width = escape === "x" ? 2 : escape === "u" ? 4 : escape === "U" ? 8 : 0;
-      if (width > 0) {
-        const hex = text.slice(i + 1, i + 1 + width);
-        if (!new RegExp(`^[0-9a-fA-F]{${width}}$`).test(hex)) fail();
-        value += String.fromCodePoint(parseInt(hex, 16));
-        i += width;
-      } else if (Object.hasOwn(ESCAPES, escape!)) value += ESCAPES[escape!];
+      if (escape === "u") {
+        const hex = text.slice(i + 1, i + 5);
+        if (!/^[0-9a-fA-F]{4}$/.test(hex)) fail();
+        const code = parseInt(hex, 16);
+        if (code >= 0xd800 && code <= 0xdfff) fail();
+        value += String.fromCharCode(code);
+        i += 4;
+      } else if (escape !== undefined && Object.hasOwn(ESCAPES, escape)) value += ESCAPES[escape];
       else fail();
     }
   }
@@ -247,59 +267,55 @@ function quoted(text: string, start: number): [string, number] {
 function inlineValue(text: string): YamlValue {
   if (text[0] === '"' || text[0] === "'") {
     const [value, end] = quoted(text, 0);
-    if (text.slice(end).trim() !== "") fail();
+    if (end !== text.length) fail();
     return value;
   }
   if (text[0] === "[") return flowSequence(text);
-  if (text === "{}") return {};
   return plain(text);
 }
 
 function flowSequence(text: string): YamlValue[] {
   if (!text.endsWith("]")) fail();
-  const inner = text.slice(1, -1).trim();
+  const inner = trimSpaces(text.slice(1, -1));
   if (inner === "") return [];
   const items: YamlValue[] = [];
   let i = 0;
-  while (i <= inner.length) {
+  for (;;) {
     while (inner[i] === " ") i++;
-    let item: YamlValue;
     if (inner[i] === '"' || inner[i] === "'") {
       const [value, end] = quoted(inner, i);
-      item = value;
+      items.push(value);
       i = end;
       while (inner[i] === " ") i++;
     } else {
-      const end = inner.indexOf(",", i);
-      const raw = inner.slice(i, end === -1 ? inner.length : end).trim();
-      if (raw === "" || /[[\]{}]|: |#/.test(raw)) fail();
-      item = plain(raw);
-      i = end === -1 ? inner.length : end;
+      const comma = inner.indexOf(",", i);
+      const end = comma === -1 ? inner.length : comma;
+      const raw = trimSpaces(inner.slice(i, end));
+      if (raw === "" || /[[\]{}:#'"]/.test(raw)) fail();
+      items.push(plain(raw));
+      i = end;
     }
-    items.push(item);
-    if (i >= inner.length) break;
+    if (i >= inner.length) return items;
     if (inner[i] !== ",") fail();
     i++;
-    if (inner.slice(i).trim() === "") break;
+    while (inner[i] === " ") i++;
+    if (i >= inner.length) fail();
   }
-  return items;
 }
 
 function plain(text: string): YamlValue {
-  if (/^[[\]{}&*!|>%@`#,]/.test(text) || /^[-?:](?:\s|$)/.test(text) || /:(?:\s|$)/.test(text)) fail();
+  if (/^[[\]{}&*!|>%@`#,'"]/.test(text) || /^[-?:](?: |$)/.test(text) || text.includes(": ") || text.endsWith(":"))
+    fail();
+  if (text.startsWith("---") || text.startsWith("...")) fail();
   if (/^(?:null|Null|NULL|~)$/.test(text)) return null;
   if (/^(?:true|True|TRUE)$/.test(text)) return true;
   if (/^(?:false|False|FALSE)$/.test(text)) return false;
-  if (/^[-+]?[0-9]+$/.test(text)) {
+  if (/^[-+]?(?:[0-9]+|(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?)$/.test(text)) {
     const value = Number(text);
-    if (!Number.isSafeInteger(value)) fail();
+    if (!Number.isFinite(value) || Object.is(value, -0) || (/^[-+]?[0-9]+$/.test(text) && !Number.isSafeInteger(value)))
+      fail();
     return value;
   }
-  if (/^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?$/.test(text)) {
-    const value = Number(text);
-    if (!Number.isFinite(value)) fail();
-    return value;
-  }
-  if (/^(?:0o|0x)|^[-+]?\.(?:inf|Inf|INF)$|^\.(?:nan|NaN|NAN)$/.test(text)) fail();
+  if (/^[-+]?(?:0o|0x)|^[-+]?\.(?:inf|Inf|INF)$|^\.(?:nan|NaN|NAN)$/.test(text)) fail();
   return text;
 }

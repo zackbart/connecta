@@ -1104,6 +1104,7 @@ export function createMcpRoute(opts: ServerOptions): {
                     const { access: currentAccess, readOnly: currentReadOnly } = currentScope;
                     const view = opts.registry.scoped({
                       ...currentAccess,
+                      skillSources: currentScope.skillSources,
                       ...(current.subjectKey ? { subjectKey: current.subjectKey } : {}),
                       ...(current.principalKey ? { principalKey: current.principalKey } : {}),
                       caller: callerFor(current.identity, currentScope),
@@ -1121,9 +1122,11 @@ export function createMcpRoute(opts: ServerOptions): {
                         // Skill and resource content requires a whole grant; catalog metadata requires visibility.
                         if (dependency.tool === undefined) {
                           if (
-                            !(dependency.access === "catalog"
-                              ? view.getConnector(dependency.connector)
-                              : view.getResourceConnector(dependency.connector))
+                            !(dependency.access === "skill-source"
+                              ? view.listSkillSources().some((source) => source.id === dependency.connector)
+                              : dependency.access === "catalog"
+                                ? view.getConnector(dependency.connector)
+                                : view.getResourceConnector(dependency.connector))
                           )
                             return false;
                           continue;

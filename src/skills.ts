@@ -29,6 +29,7 @@ import {
   MAX_SKILLS,
   validSkillFilePath,
   validSkillName,
+  readSkillFile,
   readSkillSource,
   type BoundSkillSource,
   type SkillSourceFile,
@@ -544,6 +545,8 @@ const SKILL_PAGE_SIZE = 5;
 const MAX_SKILL_CATALOG_BYTES = 8 * 1024 * 1024;
 const SUPPORTING_FILES_MAX_BYTES = 1_000;
 const SOURCE_ROOT = "skill://connecta/skills/";
+/** Connector ids and former guide names keep their meaning as bare names; a source skill takes its qualified name. */
+const LEGACY_GUIDE_NAME = /^connector-[0-9a-f]{48}$/;
 const encoder = new TextEncoder();
 const PRIVATE = { resultType: "complete" as const, ttlMs: 0, cacheScope: "private" as const };
 
@@ -563,19 +566,27 @@ function sourceFileUri(sourceId: string, skill: string, path: string): string {
 
 const skillRoot = (record: SkillRecord) => record.entry.uri.slice(0, -"SKILL.md".length);
 
-/** A manifest's supporting files by decoded path relative to the skill root. */
-function supportingFiles(record: SkillRecord): Map<string, string> {
-  const files = new Map<string, string>();
+/**
+ * A manifest's files by decoded path relative to the skill root, `SKILL.md`
+ * included. A path two manifest entries decode to selects neither.
+ */
+function manifestFiles(record: SkillRecord): Map<string, string> {
+  const files = new Map<string, string>([["SKILL.md", record.entry.uri]]);
   if (record.entry.resources === "dynamic") return files;
   const root = skillRoot(record);
+  const ambiguous = new Set<string>();
   for (const file of record.entry.resources) {
     if (file.uri === record.entry.uri || !file.uri.startsWith(root)) continue;
+    let path: string;
     try {
-      files.set(file.uri.slice(root.length).split("/").map(decodeURIComponent).join("/"), file.uri);
+      path = file.uri.slice(root.length).split("/").map(decodeURIComponent).join("/");
     } catch {
       continue;
     }
+    if (files.has(path)) ambiguous.add(path);
+    else files.set(path, file.uri);
   }
+  for (const path of ambiguous) files.delete(path);
   return files;
 }
 
@@ -892,6 +903,8 @@ const withManifestNative = /* @__PURE__ */ registerAuth(withManifest, function (
 export interface SkillsRegistryOptions {
   readOnly?: boolean | undefined;
   onRead?: ((connector: Connector, source: "local" | "downstream") => void) | undefined;
+  /** A text reader disclosed content or names from this skill source. */
+  onSourceRead?: ((sourceId: string) => void) | undefined;
   requestScope?: object | undefined;
   requestSignal?: AbortSignal | undefined;
   probeTimeoutMs?: number | undefined;
@@ -920,7 +933,10 @@ export class SkillsRegistry {
     this.scope = options.requestScope ?? {};
     this.cacheHints = {
       ...PRIVATE,
-      ttlMs: registry.listConnectors().some((connector) => connector.downstreamSkills !== undefined) ? 0 : 300_000,
+      ttlMs: Math.min(
+        registry.listConnectors().some((connector) => connector.downstreamSkills !== undefined) ? 0 : 300_000,
+        ...registry.listSkillSources().map((source) => source.cacheTtlMs ?? Infinity),
+      ),
     };
     this.local = authCall<SkillRecord[]>(localRecords, [registry.listConnectors(), options.readOnly === true]);
   }
@@ -986,24 +1002,34 @@ export class SkillsRegistry {
         if (!source) return undefined;
         return (yield* this.sourceLoad(source)).find((record) => record.aliases[0] === key);
       }
-      if (!validSkillName(key)) return undefined;
+      if (!validSkillName(key) || this.registry.getConnector(key) || LEGACY_GUIDE_NAME.test(key)) return undefined;
       const matches: SkillRecord[] = [];
       for (const source of this.registry.listSkillSources())
         matches.push(...(yield* this.sourceLoad(source)).filter((record) => record.source!.name === key));
-      if (matches.length > 1)
+      if (matches.length > 1) {
+        for (const record of matches) this.options.onSourceRead?.(record.source!.id);
         return yield* Effect.fail(
           new SkillRequestError(
             "invalid_args",
             `Ambiguous skill name "${key}"; use one of ${matches.map((record) => record.aliases[0]).join(", ")}.`,
           ),
         );
+      }
       return matches[0];
     });
   }
 
   /** One source file's bytes, checked against the size and digest its manifest lists. */
-  private sourceFile(file: SkillSourceFile): Effect.Effect<Uint8Array, unknown> {
-    return this.deadline(() => file.read).pipe(
+  private sourceFile(source: BoundSkillSource, file: SkillSourceFile): Effect.Effect<Uint8Array, unknown> {
+    const secrets = sentSecretsForRequest(this.scope);
+    const timeoutMs = this.options.probeTimeoutMs ?? 20_000;
+    return this.deadline((signal) =>
+      readSkillFile(source, file, {
+        signal,
+        deadlineAt: Date.now() + timeoutMs,
+        secret: (value) => secrets.secret(value),
+      }),
+    ).pipe(
       Effect.flatMap((bytes) =>
         authFlow<Uint8Array>(function* () {
           if (!(bytes instanceof Uint8Array) || bytes.length !== file.size) throw SOURCE_UNAVAILABLE();
@@ -1172,11 +1198,11 @@ export class SkillsRegistry {
           () =>
             authFlow<string>(function* () {
               const record = yield* upwardStep(authInvoke<SkillRecord>(self, "lookup", [name]));
+              if (record.source) self.options.onSourceRead?.(record.source.id);
               const shown = record.aliases[0] ?? record.entry.uri;
-              const files = supportingFiles(record);
+              const files = manifestFiles(record);
               if (file !== undefined) {
-                const uri =
-                  file === "SKILL.md" ? record.entry.uri : validSkillFilePath(file) ? files.get(file) : undefined;
+                const uri = file === "SKILL.md" || validSkillFilePath(file) ? files.get(file) : undefined;
                 if (uri === undefined)
                   throw new SkillLookupError(
                     "not_found",
@@ -1202,7 +1228,7 @@ export class SkillsRegistry {
                   );
                 }
               }
-              const listed = [...files.keys()];
+              const listed = [...files.keys()].filter((path) => path !== "SKILL.md");
               const note =
                 listed.length === 0
                   ? ""
@@ -1271,7 +1297,7 @@ export class SkillsRegistry {
                   ? (yield* upwardStep(self.sourceLoad(source))).find((record) => record.source!.files.has(uri))
                   : undefined;
                 if (!owner) throw self.missing(uri);
-                const bytes = yield* upwardStep(self.sourceFile(owner.source!.files.get(uri)!));
+                const bytes = yield* upwardStep(self.sourceFile(source!, owner.source!.files.get(uri)!));
                 let text: string | undefined;
                 try {
                   text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);

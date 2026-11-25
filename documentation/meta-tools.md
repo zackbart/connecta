@@ -748,14 +748,14 @@ createConnecta({
 });
 ```
 
-| Rule        | Contract                                                                                                                                                                                                                                                                                                                                                                                         |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Source id   | Matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters, unique among sources, and not `connector`, `connecta` or `downstream`. `description` is optional: one line of 1 to 120 characters after trimming, with no control characters.                                                                                                                                                       |
-| Skill       | Each key is a directory name and each value its files by relative path, `SKILL.md` included. The directory name equals the frontmatter `name`, and both satisfy the Agent Skills name rule. `SKILL.md` frontmatter carries `name` and a 1 to 1,024 character `description`; other fields pass through unchanged. A string is stored as UTF-8 and a `Uint8Array` is served byte-exact.            |
-| Frontmatter | Block mappings, block and flow sequences of scalars, plain, single- and double-quoted, literal (`\|`) and folded (`>`) scalars, and comments; plain scalars resolve as the YAML 1.2 core schema does. JSON is accepted. Anchors, aliases, tags, explicit indentation indicators, multi-line plain or quoted scalars, nested flow collections and duplicate keys are refused rather than guessed. |
-| Paths       | A relative path with no `.` or `..` segment, leading `/`, backslash, empty segment or control character, at most 1,024 characters.                                                                                                                                                                                                                                                               |
-| Bounds      | At most 1,024 skills per source, 512 files and 16 MiB per skill. The whole skills listing keeps its 1,024-entry and 8 MiB bounds.                                                                                                                                                                                                                                                                |
-| Errors      | `inlineSkills` throws a `ConfigError` naming the source and skill for any rule above; `createConnecta` throws for a repeated source id or an entry not built with `inlineSkills`.                                                                                                                                                                                                                |
+| Rule        | Contract                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Source id   | Matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`, at most 64 characters, unique among sources, and not `connector`, `connecta` or `downstream`. `description` is optional: one line of 1 to 120 characters after trimming, with no control characters.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| Skill       | Each key is a directory name and each value its files by relative path, `SKILL.md` included. The directory name equals the frontmatter `name`, and both satisfy the Agent Skills name rule. `SKILL.md` frontmatter carries `name` and a 1 to 1,024 character `description`; other fields pass through unchanged. A string is stored as UTF-8 and a `Uint8Array` is served byte-exact.                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| Frontmatter | At most 32 KiB. Block mappings nested at most eight deep, with keys of letters, digits, `_` and `-` that start with a letter or `_` and are not `null`, `true` or `false`; block and flow sequences of scalars; plain and one-line single- or double-quoted scalars; literal (`\|`, `\|-`) and folded (`>`, `>-`) scalars; and comments. Plain scalars resolve as the YAML 1.2 core schema does. JSON, tabs, control characters, Unicode spaces, byte-order marks, unpaired surrogates, anchors, aliases, tags, keep chomping, explicit indentation indicators, multi-line plain or quoted scalars, nested flow collections, duplicate keys, `-0`, and integers or floats a JavaScript number cannot hold exactly are refused rather than guessed, so the manifest's `frontmatter` always equals what a YAML parser reads from the served `SKILL.md`. |
+| Paths       | A relative path with no `.` or `..` segment, leading `/`, backslash, empty segment, control character or unpaired surrogate, at most 1,024 characters.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| Bounds      | At most 1,024 skills per source, 512 files and 16 MiB per skill. The whole skills listing keeps its 1,024-entry and 8 MiB bounds.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| Errors      | `inlineSkills` throws a `ConfigError` naming the source and skill for any rule above; `createConnecta` throws for a repeated source id or an entry not built with `inlineSkills`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 
 Identity. A skill's document is
 `skill://connecta/skills/<source-id>/<skill-name>/SKILL.md`, and each
@@ -766,9 +766,12 @@ the same source, resolve. On `skills` and `connecta.skill` the skill's name is
 `<source-id>:<skill-name>`; the bare `<skill-name>` resolves when exactly one
 skill the caller sees has it, and fails as ambiguous, naming the qualified
 names, otherwise. The document URI and its directory root resolve too.
-`usage`, `investigate`, connector guide names, connector ids and
-`connector:<id>` keep their meaning and take priority over a bare source skill
-name.
+`usage`, `investigate`, connector guide names, `connector:<id>` and former
+`connector-<48 hex>` guide names keep their meaning and take priority over a
+bare source skill name, and so does the id of any connector the caller sees,
+with or without a guide: `skills({ name: "crm" })` still answers that connector
+`crm` has no usage guide when a source also serves a skill named `crm`, which
+stays reachable as `<source-id>:crm`.
 
 Readers. One registry serves all readers. Native `skills/list` and `skills/get`
 return a complete manifest: every file's URI, SHA-256 digest and byte size.
@@ -783,13 +786,19 @@ naming them in path order within 1,000 UTF-8 bytes and then an exact `+N more`
 count. `skills({ name, file })` and `connecta.skill(name, { file })` return one
 listed file's text by its relative path; this works for any skill with a
 manifest, including downstream skills, whose text keeps its third-party origin
-prefix. A path with `..`, a leading `/`, a backslash, an empty segment, or one
-the manifest does not list is refused as `not_found`. A file that is not UTF-8
+prefix. A path with `..`, a leading `/`, a backslash, an empty segment, one
+the manifest does not list, or one that more than one manifest entry decodes
+to is refused as `not_found`; the supporting-files note leaves out such an
+ambiguous path. A file that is not UTF-8
 text is refused with `unsupported_capability`, saying it is binary; native
 `resources/read` at the file's URI is how a host reads it. `file` without
 `name` is `invalid_args`. Source text takes the request's credential redaction,
 as connector guides do. Source skills are deployment-owned guidance and carry
 no third-party origin label.
+
+A program that returns source skill text binds its retained result to the
+source: `connecta.result` pages it only while the caller's endpoint still sees
+that source, as connector reads bind their grant.
 
 Visibility. A maintainer at plain `/mcp` and an open deployment's anonymous
 caller see every source. A pool sees a source only when its
@@ -825,7 +834,9 @@ serves `skills/list`, `skills/get`, `resources/list` and `resources/read` from
 the same registry as `skills` and `connecta.skill`. These methods return
 `resultType: "complete"` and `cacheScope: "private"`. Local-only caller views
 advertise `ttlMs: 300000` (five minutes); any visible downstream skill source
-keeps `ttlMs: 0`, including reads of local guides on that view. Clients must key
+keeps `ttlMs: 0`, including reads of local guides on that view. A visible
+skill source that limits how long its content may be cached lowers `ttlMs` to
+its limit; `inlineSkills` sets none. Clients must key
 private caches by endpoint and authenticated caller. No request-bound catalog or
 digest promise is retained across requests. Listing pages
 contain at most five complete skills: usage first, required connector guides

@@ -19,7 +19,8 @@ export interface SkillSourceFile {
   /** `sha256:<64 hex>` of the bytes `read` returns. */
   readonly digest: string;
   readonly size: number;
-  readonly read: Effect.Effect<Uint8Array, unknown>;
+  /** The file's bytes, read under the context of the request that reads the file. */
+  read(ctx: SkillSourceContext): Effect.Effect<Uint8Array, unknown>;
 }
 
 export interface SkillSourceSkill {
@@ -35,11 +36,11 @@ export interface SkillSourceSnapshot {
   readonly skills: readonly SkillSourceSkill[];
 }
 
-/** What a source receives for one skills read. */
+/** What a source receives for one snapshot or file read, bound to the request performing it. */
 interface SkillSourceContext {
   /** The deployment's storage, unpartitioned. */
   readonly storage: KVStorage;
-  /** Emits one payload-free operator warning carrying the source id and this typed code. */
+  /** Emits one operator warning carrying the source id and this code; a code the source did not declare logs `unknown`. */
   readonly warn: (code: string) => void;
   /** Aborts when the request ends or the skills deadline passes. */
   readonly signal: AbortSignal;
@@ -52,6 +53,10 @@ interface SkillSourceContext {
 /** The internal seam every source implements; failure means the source has nothing to serve. */
 export interface SkillSourceDefinition {
   snapshot(ctx: SkillSourceContext): Effect.Effect<SkillSourceSnapshot, unknown>;
+  /** The closed set of warning codes `warn` may log, each matching `^[a-z][a-z0-9_]{0,63}$`. */
+  readonly warnings?: readonly string[];
+  /** How long a reader may cache this source's content, in milliseconds; absent imposes no limit. */
+  readonly cacheTtlMs?: number;
 }
 
 const definitions = new WeakMap<object, SkillSourceDefinition>();
@@ -64,9 +69,14 @@ export function validSkillName(name: string): boolean {
   return name.length <= 64 && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name);
 }
 
-/** No `..` or `.` segment, leading `/`, backslash, empty segment or control character. */
+/** No `..` or `.` segment, leading `/`, backslash, empty segment, control character or unpaired surrogate. */
 export function validSkillFilePath(path: string): boolean {
   if (path.length === 0 || path.length > MAX_FILE_PATH || path.includes("\\")) return false;
+  try {
+    encodeURIComponent(path);
+  } catch {
+    return false;
+  }
   for (let index = 0; index < path.length; index++) {
     const code = path.charCodeAt(index);
     if (code <= 0x1f || code === 0x7f) return false;
@@ -134,6 +144,13 @@ export function defineSkillSource(
   definition: SkillSourceDefinition,
 ): SkillSource {
   const trimmed = assertSourceIdentity(label, id, description);
+  if (definition.warnings?.some((code) => !/^[a-z][a-z0-9_]{0,63}$/.test(code)))
+    throw new ConfigError(`${label} declares a warning code that is not lowercase snake case.`);
+  if (
+    definition.cacheTtlMs !== undefined &&
+    (!Number.isSafeInteger(definition.cacheTtlMs) || definition.cacheTtlMs < 0)
+  )
+    throw new ConfigError(`${label} cache lifetime must be a whole number of milliseconds.`);
   const source = Object.freeze({ id, description: trimmed }) as SkillSource;
   definitions.set(source, definition);
   return source;
@@ -142,12 +159,15 @@ export function defineSkillSource(
 /** The per-request part of {@link SkillSourceContext}; the registry binds storage and warnings. */
 type SkillSourceRequest = Pick<SkillSourceContext, "signal" | "deadlineAt" | "secret">;
 
-/** A configured source bound to the deployment's storage and logger, as a registry view lists it. */
-export type BoundSkillSource = Pick<SkillSource, "id" | "description">;
+/** A configured source as a registry view lists it. */
+export interface BoundSkillSource extends Pick<SkillSource, "id" | "description"> {
+  /** The longest a reader may cache this source's content, in milliseconds; undefined imposes no limit. */
+  readonly cacheTtlMs: number | undefined;
+}
 
-const snapshots = new WeakMap<
+const bindings = new WeakMap<
   BoundSkillSource,
-  (request: SkillSourceRequest) => Effect.Effect<SkillSourceSnapshot, unknown>
+  { definition: SkillSourceDefinition; context: (request: SkillSourceRequest) => SkillSourceContext }
 >();
 
 /** The bound source's snapshot for one skills read. */
@@ -155,7 +175,17 @@ export function readSkillSource(
   source: BoundSkillSource,
   request: SkillSourceRequest,
 ): Effect.Effect<SkillSourceSnapshot, unknown> {
-  return snapshots.get(source)!(request);
+  const binding = bindings.get(source)!;
+  return binding.definition.snapshot(binding.context(request));
+}
+
+/** One file of the bound source, read under the request that reads it. */
+export function readSkillFile(
+  source: BoundSkillSource,
+  file: SkillSourceFile,
+  request: SkillSourceRequest,
+): Effect.Effect<Uint8Array, unknown> {
+  return file.read(bindings.get(source)!.context(request));
 }
 
 export function bindSkillSources(
@@ -165,18 +195,23 @@ export function bindSkillSources(
 ): readonly BoundSkillSource[] {
   return sources.map((source) => {
     const definition = skillSourceDefinition(source)!;
+    const declared = new Set(definition.warnings ?? []);
     const warn = (code: string) => {
       try {
         logger.warn("[connecta] skill source warning", {
           source: source.id,
-          code: /^[a-z][a-z0-9_]{0,63}$/.test(code) ? code : "unknown",
+          code: declared.has(code) ? code : "unknown",
         });
       } catch {
         return;
       }
     };
-    const bound: BoundSkillSource = Object.freeze({ id: source.id, description: source.description });
-    snapshots.set(bound, (request) => definition.snapshot({ ...request, storage, warn }));
+    const bound: BoundSkillSource = Object.freeze({
+      id: source.id,
+      description: source.description,
+      cacheTtlMs: definition.cacheTtlMs,
+    });
+    bindings.set(bound, { definition, context: (request) => ({ ...request, storage, warn }) });
     return bound;
   });
 }

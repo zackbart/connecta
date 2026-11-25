@@ -111,7 +111,10 @@ import { bindSkillSources } from "./skill-source-seam.js";
 import type { SkillSource } from "./skill-sources.js";
 
 /** A skill source as a registry view lists it. */
-export type SkillSourceHandle = Pick<SkillSource, "id" | "description">;
+export interface SkillSourceHandle extends Pick<SkillSource, "id" | "description"> {
+  /** The longest a reader may cache this source's content, in milliseconds; undefined imposes no limit. */
+  readonly cacheTtlMs: number | undefined;
+}
 
 const ID_RE = /^[a-z0-9_-]+$/;
 
@@ -296,8 +299,11 @@ export interface ResultIdentity {
 }
 
 export interface ProgramResultDependency {
-  /** Catalog metadata needs visibility, not permission to invoke a write. */
-  access?: "catalog";
+  /**
+   * Catalog metadata needs visibility, not permission to invoke a write.
+   * `"skill-source"` names a skill source in `connector` that must stay visible.
+   */
+  access?: "catalog" | "skill-source";
   connector: string;
   tool?: string;
   classification: "read" | "write";

@@ -1400,6 +1400,8 @@ function sandboxProvider(
                 classification: "read",
                 ...(source === "local" ? { access: "catalog" as const } : {}),
               }),
+            onSourceRead: (sourceId) =>
+              limits.resultDependencies?.push({ connector: sourceId, classification: "read", access: "skill-source" }),
             probeTimeoutMs: limits.probeTimeoutMs,
             defer: limits.defer,
           });

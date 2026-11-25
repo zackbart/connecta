@@ -781,7 +781,12 @@ const guardProgramReturnNative = /* @__PURE__ */ registerAuth(
       const cap = Math.min(
         registry.maxResultBytes,
         ...dependencies.map((dependency) =>
-          resolveMaxResultBytes(registry.getConnector(dependency.connector)?.maxResultBytes, registry.maxResultBytes),
+          resolveMaxResultBytes(
+            dependency.access === "skill-source"
+              ? undefined
+              : registry.getConnector(dependency.connector)?.maxResultBytes,
+            registry.maxResultBytes,
+          ),
         ),
       );
       const results: ResultStash = {
@@ -1604,7 +1609,9 @@ function metaToolsForRequest(
                     typeof dependency.connector !== "string" ||
                     (dependency.tool !== undefined && typeof dependency.tool !== "string") ||
                     (dependency.access !== undefined &&
-                      (dependency.access !== "catalog" || dependency.classification !== "read")) ||
+                      ((dependency.access !== "catalog" && dependency.access !== "skill-source") ||
+                        dependency.classification !== "read" ||
+                        (dependency.access === "skill-source" && dependency.tool !== undefined))) ||
                     !["read", "write"].includes(dependency.classification),
                 )) ||
             !["read", "write"].includes(binding.classification)
@@ -1636,9 +1643,11 @@ function metaToolsForRequest(
                   options.signal?.throwIfAborted();
                   if (dependency.tool === undefined) {
                     if (
-                      dependency.access === "catalog"
-                        ? !registry.getConnector(dependency.connector)
-                        : !registry.getResourceConnector(dependency.connector)
+                      dependency.access === "skill-source"
+                        ? !registry.listSkillSources().some((source) => source.id === dependency.connector)
+                        : dependency.access === "catalog"
+                          ? !registry.getConnector(dependency.connector)
+                          : !registry.getResourceConnector(dependency.connector)
                     )
                       return false;
                     continue;

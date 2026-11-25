@@ -205,12 +205,13 @@ function resolvePoolSkills(name: string, value: readonly unknown[], registry: Re
   if (value.length === 0) throw new ConfigError(`${path} is empty; omit it instead.`);
   const known = new Set(registry.listSkillSources().map((source) => source.id));
   const ids: string[] = [];
-  value.forEach((id, index) => {
+  for (let index = 0; index < value.length; index++) {
+    const id = value[index];
     if (typeof id !== "string" || !known.has(id))
       throw new ConfigError(`${path}[${index}] must be the id of a source in ConnectaConfig.skills.`);
     if (ids.includes(id)) throw new ConfigError(`${path}[${index}] repeats "${id}".`);
     ids.push(id);
-  });
+  }
   return Object.freeze(ids);
 }
 

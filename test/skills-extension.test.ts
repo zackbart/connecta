@@ -1035,16 +1035,212 @@ it("fails the skills listing for a source with nothing to serve while local skil
   });
 });
 
-it("parses the SKILL.md frontmatter subset exactly as a YAML parser does and refuses the rest", () => {
-  const accepted = [
-    "name: review\ndescription: Review a pull request.",
-    "name: x # comment\ndescription: \"Quoted: \\\"x\\\" \\u00e9 \\n end\"\nlicense: 'It''s MIT'\nversion: 1.0\ncount: 3\nflag: true\nnone: null\ntilde: ~\ndate: 2024-01-01\nallowed-tools: Bash(git:*) Read",
-    'name: x\ndescription: |\n  Line one\n    indented\n  line three\n\nmetadata:\n  author: alice\n  tags:\n    - a\n    - "b c"\n  nested:\n    deep: 1\nlist:\n- one\n- two\nflow: [a, "b", \'c d\', 3]\nempty: []\nemptymap: {}\nfolded: >-\n  one\n  two\n\n  three\nkeep: |+\n  kept\n\nother: x',
-    '{"name": "x", "description": "y"}',
-    "description: >\n  folded\n  text\nname: n",
+function frontmatterCorpus(count: number, seed = 1506): string[] {
+  let state = seed;
+  const random = () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  const pick = <T>(items: readonly T[]) => items[Math.floor(random() * items.length)]!;
+  const good = [
+    "x",
+    "Review a pull request.",
+    "1",
+    "0",
+    "+1",
+    "1.5",
+    ".5",
+    "5.",
+    "1e3",
+    "true",
+    "yes",
+    "~",
+    "null",
+    "a:b",
+    "a#c",
+    "'q''s'",
+    '"esc\\n"',
+    '"\\u00e9"',
+    "[a, b]",
+    "[ a ,b ]",
+    "[]",
+    "-x",
+    "12:30",
+    "2024-01-01",
+    "Bash(git:*) Read",
+    "é",
+    "😀",
+    "x, y",
+    "-.5",
+    '""',
+    "''",
   ];
-  for (const source of accepted) expect(parseFrontmatter(source), source).toEqual(parseYaml(source));
+  const goodKeys = ["name", "description", "a-b", "_x", "Key", "metadata", "license"];
+  const scalars = [
+    "x",
+    "Review a pull request.",
+    " x ",
+    "1",
+    "-0",
+    "0",
+    "+1",
+    "1.5",
+    ".5",
+    "5.",
+    "1e3",
+    "1e999",
+    "0x1f",
+    "0o7",
+    "1_000",
+    "true",
+    "True",
+    "yes",
+    "~",
+    "null",
+    "a: b",
+    "a:b",
+    "a #c",
+    "a#c",
+    "'q''s'",
+    '"esc\\n"',
+    '"\\ud800"',
+    '"\\u00e9"',
+    '"\\x41"',
+    "[a, b]",
+    "[a, [b]]",
+    "[ a ,b ]",
+    "[a,]",
+    "[]",
+    "{}",
+    "{a: 1}",
+    "&a x",
+    "*a",
+    "!t x",
+    "- a",
+    "-x",
+    "?x",
+    "x  ",
+    "x\t",
+    '"x" #c',
+    "'x'#c",
+    "12:30",
+    "2024-01-01",
+    ".inf",
+    ".nan",
+    "@x",
+    "`x`",
+    "%x",
+    "x, y",
+    "Bash(git:*) Read",
+    "é",
+    "😀",
+    "x y",
+    "'unterminated",
+    '"a" b',
+    "--- x",
+    "...",
+    "9007199254740993",
+    "-.5",
+    "x # c # d",
+    "#",
+    "x:",
+    ":x",
+    '""',
+    "''",
+  ];
+  const keys = [
+    "name",
+    "description",
+    "a-b",
+    "_x",
+    "x.y",
+    "1",
+    "true",
+    "null",
+    '"q"',
+    "Key",
+    "metadata",
+    "license",
+    "k k",
+    "-k",
+    "k:",
+    "é",
+    "__proto__",
+  ];
+  const docs: string[] = [];
+  const entry = (indent: string, depth: number): string[] => {
+    const key = random() < 0.85 ? pick(goodKeys) : pick(keys);
+    const roll = random();
+    const comment = random() < 0.15 ? pick([" # c", "#c", " #"]) : "";
+    if (roll < 0.55)
+      return [`${indent}${key}:${random() < 0.05 ? "" : " "}${random() < 0.8 ? pick(good) : pick(scalars)}${comment}`];
+    if (roll < 0.7) {
+      const header = pick(["|", "|-", ">", ">-", "|+", ">2", "| # c"]);
+      const lines = Array.from({ length: 1 + Math.floor(random() * 4) }, () =>
+        pick(["text", "more text", "", "  indented", "trailing ", "# not a comment", "a: b"]),
+      );
+      return [
+        `${indent}${key}: ${header}`,
+        ...lines.map((line) => (line === "" ? (random() < 0.2 ? `${indent}  ` : "") : `${indent}  ${line}`)),
+      ];
+    }
+    if (roll < 0.85) {
+      const sub = random() < 0.2 ? indent : `${indent}  `;
+      return [
+        `${indent}${key}:${comment}`,
+        ...Array.from(
+          { length: 1 + Math.floor(random() * 3) },
+          () => `${sub}- ${random() < 0.8 ? pick(good) : pick(scalars)}`,
+        ),
+      ];
+    }
+    if (depth > 2) return [`${indent}${key}: x`];
+    return [
+      `${indent}${key}:`,
+      ...Array.from({ length: 1 + Math.floor(random() * 3) }, () =>
+        entry(`${indent}${random() < 0.1 ? " " : "  "}`, depth + 1),
+      ).flat(),
+    ];
+  };
+  for (let n = 0; n < count; n++) {
+    const lines: string[] = [];
+    for (let i = 0, total = 1 + Math.floor(random() * 5); i < total; i++) {
+      if (random() < 0.1) lines.push(pick(["# comment", "", "  # indented comment", "   "]));
+      lines.push(...entry("", 0));
+    }
+    docs.push(lines.join(random() < 0.1 ? "\r\n" : "\n"));
+  }
+  return docs;
+}
+
+it("parses the SKILL.md frontmatter subset exactly as a YAML parser does and refuses the rest", () => {
+  const same = (source: string) => {
+    const ours = parseFrontmatter(source);
+    if (ours === undefined) return false;
+    expect(ours, source).toEqual(parseYaml(source));
+    expect(JSON.parse(JSON.stringify(ours)), source).toEqual(ours);
+    return true;
+  };
+  expect(
+    same(
+      "name: x\ndescription: |\n  Line one\n  line three\n\nmetadata:\n  author: alice # who\n  tags:\n    - a\n    - \"b c\"\n  nested:\n    deep: 1\nlist:\n- one\nflow: [a, \"b\", 'c d', 3]\nempty: []\nfolded: >-\n  one\n  two\n\n  three\nlicense: 'It''s MIT'\nversion: 1.0",
+    ),
+  ).toBe(true);
+  let accepted = 0;
+  for (const source of frontmatterCorpus(6_000)) if (same(source)) accepted++;
+  expect(accepted).toBeGreaterThan(1_000);
   for (const source of [
+    "name: \u00a0x\u00a0",
+    '{"name": "x", "name": "y"}',
+    '{"name": "x", "description": 1e999}',
+    "1: x",
+    "true: x",
+    "null: x",
+    '"quoted": x',
+    "name: x\t# c",
+    "name: x\tx",
     "name: [a, [b]]",
     "name: &a x",
     "name: *a",
@@ -1052,11 +1248,132 @@ it("parses the SKILL.md frontmatter subset exactly as a YAML parser does and ref
     "name: x\n  more",
     "name: 0x1f",
     "name: .inf",
+    "name: -0",
+    "name: 1e999",
+    "name: 9007199254740993",
     "k: v\nk: w",
     "- a",
     "name: !tag x",
     "x: |2\n  a",
+    "x: |+\n  a\n",
     'name: "unterminated',
+    'name: "\\ud800"',
+    `${"a".repeat(20_000)}`,
+    `name: ${"x".repeat(40_000)}`,
+    Array.from({ length: 12 }, (_, depth) => `${"  ".repeat(depth)}k${depth}:`).join("\n") + " x",
   ])
     expect(parseFrontmatter(source), source).toBeUndefined();
+  const started = performance.now();
+  for (const source of ["a".repeat(32_000), `a: [${"x,".repeat(15_000)}x]`, `a:\n${"- x\n".repeat(7_000)}`])
+    parseFrontmatter(source);
+  expect(performance.now() - started).toBeLessThan(250);
+});
+
+it("refuses a supporting-file selector that more than one manifest entry decodes to", async () => {
+  const files = { "skill://vendor/review/guide.md": "first", "skill://vendor/review/%67uide.md": "second" };
+  const remote = downstream("remote", {
+    list: async (ctx) => [
+      {
+        ...(await downstream().downstreamSkills!.list(ctx))[0]!,
+        resources: [
+          { uri: URI, digest: DIGEST, size: new TextEncoder().encode(TEXT).length },
+          ...Object.entries(files).map(([uri, text]) => ({ uri, digest: DIGEST, size: text.length })),
+          { uri: "skill://vendor/review/notes.md", digest: DIGEST, size: 5 },
+        ],
+      },
+    ],
+    read: async (uri) => [
+      { uri, text: uri === URI ? TEXT : uri.endsWith("notes.md") ? "notes" : files[uri as keyof typeof files] },
+    ],
+  });
+  const tools = createMetaTools(makeRegistry([remote]), BASE);
+  const name = downstreamSkillUri("remote", URI);
+  const listing = toolText(await tools.skills({ name }));
+  expect(listing).toContain("Supporting files (pass one as file with this skill's name to read it): notes.md.");
+  expect(listing).not.toContain("guide.md");
+  expect((await tools.skills({ name, file: "guide.md" })).structuredContent).toMatchObject({
+    error: { code: "not_found" },
+  });
+  expect(toolText(await tools.skills({ name, file: "notes.md" }))).toBe(
+    'Third-party guidance from connector "remote".\n\nnotes',
+  );
+});
+
+it("keeps a visible connector id and a former guide name from resolving to a same-named source skill", async () => {
+  const legacy = `connector-${"a".repeat(48)}`;
+  const document = (name: string) => `---\nname: ${name}\ndescription: Source ${name}.\n---\n\nSource body.\n`;
+  const sources = [
+    inlineSkills("team", { crm: { "SKILL.md": document("crm") }, [legacy]: { "SKILL.md": document(legacy) } }),
+  ];
+  const unguided: Connector = { id: "crm", listTools: async () => [], callTool: async () => null };
+  const tools = createMetaTools(makeRegistry([unguided], { skillSources: sources } as never), BASE);
+  const bare = await tools.skills({ name: "crm" });
+  expect(bare.structuredContent).toMatchObject({
+    error: { code: "not_found", message: expect.stringContaining('Connector "crm" has no usage guide.') },
+  });
+  expect((await tools.skills({ name: legacy })).structuredContent).toMatchObject({ error: { code: "not_found" } });
+  expect(toolText(await tools.skills({ name: "team:crm" }))).toBe("Source body.\n");
+  expect(toolText(await tools.skills({ name: `team:${legacy}` }))).toBe("Source body.\n");
+  const elsewhere = createMetaTools(makeRegistry([], { skillSources: sources } as never), BASE);
+  expect(toolText(await elsewhere.skills({ name: "crm" }))).toBe("Source body.\n");
+});
+
+it("reads a source file under its own live signal and deadline, logs only declared warning codes and caps ttlMs", async () => {
+  const document = "---\nname: notes\ndescription: Notes.\n---\n\nBody.\n";
+  const reference = new TextEncoder().encode("Reference.\n");
+  const seen: { phase: string; aborted: boolean; live: boolean; signal: AbortSignal }[] = [];
+  const file = (path: string, bytes: Uint8Array, digest: string) => ({
+    path,
+    digest,
+    size: bytes.length,
+    read: (ctx: { signal: AbortSignal; deadlineAt: number }) =>
+      Effect.sync(() => {
+        seen.push({ phase: path, aborted: ctx.signal.aborted, live: ctx.deadlineAt > Date.now(), signal: ctx.signal });
+        return bytes;
+      }),
+  });
+  const bytes = new TextEncoder().encode(document);
+  const [documentDigest, referenceDigest] = [await sha256(bytes), await sha256(reference)];
+  const source = defineSkillSource("probe", "probe", undefined, {
+    warnings: ["revision_check_failed"],
+    cacheTtlMs: 60_000,
+    snapshot: (ctx) =>
+      Effect.sync(() => {
+        seen.push({ phase: "snapshot", aborted: false, live: true, signal: ctx.signal });
+        ctx.warn("revision_check_failed");
+        ctx.warn("ghp_looks_like_a_token");
+        ctx.warn("Not A Code");
+        return {
+          skills: [
+            {
+              name: "notes",
+              frontmatter: { name: "notes", description: "Notes." },
+              files: [file("SKILL.md", bytes, documentDigest), file("reference.md", reference, referenceDigest)],
+            },
+          ],
+        };
+      }),
+  });
+  const warnings: unknown[] = [];
+  const logger = { ...silentLogger, warn: (...args: unknown[]) => warnings.push(args) };
+  const root = makeRegistry([], { skillSources: [source], logger } as never);
+  const registry = new SkillsRegistry(root, BASE);
+  expect((await registry.list()).ttlMs).toBe(60_000);
+  expect(await registry.text("probe:notes", "reference.md")).toBe("Reference.\n");
+  const snapshot = seen.find((entry) => entry.phase === "snapshot")!;
+  const read = seen.find((entry) => entry.phase === "reference.md")!;
+  expect(snapshot.signal.aborted).toBe(true);
+  expect(read).toMatchObject({ aborted: false, live: true });
+  expect(read.signal).not.toBe(snapshot.signal);
+  expect(warnings).toEqual([
+    ["[connecta] skill source warning", { source: "probe", code: "revision_check_failed" }],
+    ["[connecta] skill source warning", { source: "probe", code: "unknown" }],
+    ["[connecta] skill source warning", { source: "probe", code: "unknown" }],
+  ]);
+  expect(
+    (await new SkillsRegistry(makeRegistry([], { skillSources: [teamSkills()] } as never), BASE).list()).ttlMs,
+  ).toBe(300_000);
+  expect(() =>
+    defineSkillSource("bad", "bad", undefined, { warnings: ["Bad Code"], snapshot: () => Effect.die("unused") }),
+  ).toThrow("warning code");
 });

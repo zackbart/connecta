@@ -811,11 +811,15 @@ function assertCoherent(config: Parsed): void {
     throw new ConfigError("ConnectaConfig.discovery requires catalogZeroTtlSeconds <= catalogMaxTtlSeconds.");
   }
   const sourceIds = new Set<string>();
-  config.skills?.forEach((source, index) => {
+  const skills = config.skills ?? [];
+  for (let index = 0; index < skills.length; index++) {
+    const source = skills[index];
+    if (!source)
+      throw new ConfigError(`ConnectaConfig.skills[${index}] must be a skill source built with inlineSkills.`);
     if (sourceIds.has(source.id))
       throw new ConfigError(`ConnectaConfig.skills[${index}] repeats the source id "${source.id}".`);
     sourceIds.add(source.id);
-  });
+  }
   const { vault } = config;
   const oauth = config.connectors.find((connector) => connector.startAuth);
   if (oauth && vault && (typeof vault.seal !== "function" || typeof vault.open !== "function")) {

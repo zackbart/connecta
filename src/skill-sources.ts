@@ -96,7 +96,7 @@ export function inlineSkills(
                   path,
                   digest: `sha256:${bytesToHex(new Uint8Array(digest))}`,
                   size: bytes.length,
-                  read: Effect.sync(() => bytes.slice()),
+                  read: () => Effect.sync(() => bytes.slice()),
                 })),
               ),
             ).pipe(
