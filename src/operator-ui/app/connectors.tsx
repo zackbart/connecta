@@ -1,5 +1,5 @@
+import { useLocation, useNavigate, loadOperatorContract } from "./bridge.js";
 import { useEffect, useState } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
 import type { OperatorConnectorOverlay, OperatorTool } from "../contract.js";
 import type { ConnectorHealth } from "../health.js";
 import { formatDate, type OperatorState } from "../view.js";
@@ -9,7 +9,6 @@ import { ProblemAction, verdictFor } from "./problems.js";
 import { ContractState, contractLoading } from "./contract-state.js";
 import { useConnectorHealth } from "./health.js";
 import { ConnectorMatrix } from "./matrix.js";
-import { loadOperatorContract } from "./store.js";
 import { ConnectorCardSkeleton, ConnectorsSkeleton, Skeleton } from "./skeletons.js";
 
 function ConnectorLink({ id, name, tab }: { id: string; name?: string; tab?: string }) {

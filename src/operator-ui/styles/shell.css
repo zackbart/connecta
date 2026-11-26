@@ -352,3 +352,8 @@
     width: 100%;
   }
 }
+
+.operator-content,
+.island {
+  display: contents;
+}

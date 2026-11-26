@@ -1,4 +1,4 @@
-import { useLocation } from "@tanstack/react-router";
+import { useLocation, askConfirm, cancelConfirm, disconnectOAuth, refreshConnector, startOAuth } from "./bridge.js";
 import type { ReactNode } from "react";
 import type { OperatorConnectorOverlay } from "../contract.js";
 import type { UiConnector } from "../model.js";
@@ -18,7 +18,6 @@ import { sinceLabel } from "./connectors.js";
 import { CredentialCard } from "./credentials.js";
 import { Icon } from "./icons.js";
 import { Badge, Callout, ConfirmBar, FixPrompt, NoticeLine, StateBlock, SummaryRow, focusableId } from "./parts.js";
-import { askConfirm, cancelConfirm, disconnectOAuth, refreshConnector, startOAuth } from "./store.js";
 
 function AuthActions({
   connector,

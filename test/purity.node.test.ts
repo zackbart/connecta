@@ -214,6 +214,8 @@ describe("src/index.ts import purity (Workers-clean entry)", { timeout: 30_000 }
 // (src/runtime/run.ts) depends on; see PRINCIPLES.md INV-13.
 
 const RUNNER = join(SRC, "runtime", "run.ts");
+const BROWSER_RUNNER = join(SRC, "operator-ui", "app", "run.ts");
+const BROWSER_ASSETS = join(SRC, "operator-ui", "generated.ts");
 // The root entry may import Effect's core module and nothing else: the
 // area modules such as `effect/http-api` are allowed behind subpaths, where
 // their bytes and any `@stability unstable` API changes are opt-in.
@@ -369,10 +371,12 @@ describe("Effect boundaries", { timeout: 30_000 }, () => {
     }
   });
 
-  it("starts fibers only in the edge runner", () => {
+  it("starts fibers only in the edge runners", () => {
     expect(existsSync(RUNNER)).toBe(true);
+    expect(existsSync(BROWSER_RUNNER)).toBe(true);
+    expect(importGraph(ENTRY).has(BROWSER_RUNNER)).toBe(false);
     for (const file of everySource) {
-      if (file === RUNNER) continue;
+      if (file === RUNNER || file === BROWSER_RUNNER || file === BROWSER_ASSETS) continue;
       const code = codeOnly(file);
       for (const pattern of FIBER_STARTERS) {
         expect(pattern.test(code), `${file} matches ${pattern}`).toBe(false);

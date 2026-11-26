@@ -40,8 +40,9 @@
     "node_modules",
     "examples",
     "src/operator-ui/app",
-    // Imports the browser store, so it typechecks in the DOM-lib program
+    // Import the browser app, so they typecheck in the DOM-lib program
     // (tsconfig.operator-ui.json) rather than this one.
-    "test/operator-store.test.ts"
+    "test/operator-store.test.ts",
+    "test/operator-shell.test.ts"
   ]
 }

@@ -25,7 +25,7 @@ import {
   retryLoad,
   startOAuth,
   testCredential,
-} from "./store.js";
+} from "./bridge.js";
 
 /**
  * A pool member's one page: their endpoints with client setup, the personal

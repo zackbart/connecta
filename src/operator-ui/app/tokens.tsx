@@ -22,7 +22,7 @@ import {
   loadAccessTokens,
   revokeAgentToken,
   rotateAgentToken,
-} from "./store.js";
+} from "./bridge.js";
 
 /**
  * The new secret, once. Closing the dialog by any route drops it from the

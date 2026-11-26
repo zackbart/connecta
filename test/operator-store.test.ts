@@ -1,6 +1,15 @@
+import { Effect, ManagedRuntime, Scheduler } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
 import type { UiData } from "../src/operator-ui/model.js";
+import type { OperatorPage } from "../src/operator-ui/view.js";
+import {
+  OperatorController,
+  type CredentialBody,
+  type OAuthStartMode,
+  type OperatorControllerShape,
+} from "../src/operator-ui/app/services/controller.js";
+import { operatorServicesLayer } from "../src/operator-ui/app/services/layer.js";
 import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./fixtures/operator-contract-v2.js";
 
 const NOW = "2026-10-15T12:00:00.000Z";
@@ -12,7 +21,41 @@ const NOW = "2026-10-15T12:00:00.000Z";
  * flight, so stale data cannot land under another identity.
  */
 
-const stores: Array<{ forgetBearer(): void }> = [];
+const stores: Array<{ forgetBearer(): Promise<void> }> = [];
+const runtimes: Array<{ dispose(): Promise<void> }> = [];
+
+const microtasks = new Scheduler.MixedScheduler("sync");
+const withMicrotasks = <A>(effect: Effect.Effect<A>) => Effect.provideService(effect, Scheduler.Scheduler, microtasks);
+
+/** The store's former Promise surface, over the controller service the shell runs. */
+function controllerHarness(controller: OperatorControllerShape) {
+  const run = (effect: Effect.Effect<void>) => Effect.runPromise(withMicrotasks(effect));
+  return {
+    getState: controller.state,
+    subscribe: controller.subscribe,
+    boot: () => run(controller.boot),
+    routeChanged: (path: string) => run(controller.routeChanged(path)),
+    retryLoad: () => run(controller.retryLoad),
+    signOut: () => run(controller.signOut),
+    forgetBearer: () => run(controller.forgetBearer),
+    setConnectorFilter: (filter: string) => run(controller.setConnectorFilter(filter)),
+    loadOperatorContract: () => run(controller.loadOperatorContract),
+    refreshConnector: (id: string, quiet?: boolean) => run(controller.refreshConnector(id, quiet)),
+    loadActivity: (reset: boolean) => run(controller.loadActivity(reset)),
+    loadAccessTokens: () => run(controller.loadAccessTokens),
+    startOAuth: (connector: string, mode: OAuthStartMode) => run(controller.startOAuth(connector, mode)),
+    disconnectOAuth: (connector: string) => run(controller.disconnectOAuth(connector)),
+    saveCredential: (connector: string, body: CredentialBody, verify?: "test" | "skip") =>
+      run(controller.saveCredential(connector, body, verify)),
+    removeCredential: (connector: string) => run(controller.removeCredential(connector)),
+    testCredential: (connector: string) => run(controller.testCredential(connector)),
+    rotateAgentToken: (name: string) => run(controller.rotateAgentToken(name)),
+    revokeAgentToken: (name: string) => run(controller.revokeAgentToken(name)),
+    confirmTokenAction: () => run(controller.confirmTokenAction),
+    cancelTokenAction: (returnFocusTo?: string) => run(controller.cancelTokenAction(returnFocusTo)),
+    dismissCreatedToken: () => run(controller.dismissCreatedToken),
+  };
+}
 
 const BASE = "https://deployment.example";
 const CONFIG = "/ui/api/config?live=cached";
@@ -173,19 +216,19 @@ async function loadStore(
     }
     return response;
   });
-  vi.resetModules();
-  vi.doMock("../src/operator-ui/app/config.js", () => ({
-    auth: browserAuth,
-    initialPage: page,
-    mcpUrl: PAGE_CONSTANTS.MCP_URL,
-    homeUrl: PAGE_CONSTANTS.HOME_URL,
-    titleSuffix: PAGE_CONSTANTS.TITLE_SUFFIX,
-    productName: PAGE_CONSTANTS.PRODUCT_NAME,
-    productDescription: PAGE_CONSTANTS.PRODUCT_DESCRIPTION,
-    TOKEN_KEY: "connecta:token",
-  }));
-  const store = await import("../src/operator-ui/app/store.js");
+  const runtime = ManagedRuntime.make(
+    operatorServicesLayer({
+      auth: browserAuth as { kind: string },
+      initialPage: page as OperatorPage,
+      productName: PAGE_CONSTANTS.PRODUCT_NAME,
+      tokenKey: "connecta:token",
+    }),
+  );
+  const controller = runtime.runSync(OperatorController.useSync((service) => service));
+  const store = controllerHarness(controller);
+  windowListeners.set("focus", () => void Effect.runFork(withMicrotasks(controller.returnedToTab)));
   stores.push(store);
+  runtimes.push(runtime);
   return {
     store,
     clerk,
@@ -226,8 +269,9 @@ function bearerOf(fetchMock: ReturnType<typeof vi.fn>, index: number): unknown {
   return init?.headers?.Authorization;
 }
 
-afterEach(() => {
-  for (const store of stores.splice(0)) store.forgetBearer();
+afterEach(async () => {
+  for (const store of stores.splice(0)) await store.forgetBearer();
+  for (const runtime of runtimes.splice(0)) await runtime.dispose();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });

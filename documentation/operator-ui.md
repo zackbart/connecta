@@ -363,7 +363,7 @@ sign-in card; the gate shows "Sign in" only when no session is apparent, and
 on a refusal, a denial or a failure. Activity and Tokens keep
 their own permission gates.
 
-The store keeps the last confirmed role through a failed refresh: a
+The browser keeps the last confirmed role through a failed refresh: a
 maintainer's page stays mounted, inert and dimmed, under one shell banner
 ("Couldn't load configuration" with Retry), and sends nothing maintainer-only
 until a contract confirms the role again. Recovery closes the page's dialogs,
@@ -706,7 +706,12 @@ says the snapshot is for maintainers. It requires the UI module and the
 existing doctor authentication environment variables; it runs no diagnostic
 program, follows no redirects, and prints no raw HTTP failure body.
 
-The operator shell uses React, TanStack Router, Radix and cmdk. Esbuild bundles
+The operator shell runs on Effect UI (`@effect/ui` and `@effect/ui-kit`): the
+top bar, page navigation, account menu, sign-in gate, No access page, recovery
+banner and router are Effect UI components mounted with `BrowserHost`, and
+`BrowserRouter` owns the URL. Each page, and the shell's search and Appearance
+dialogs, still render as React islands (React, Radix and cmdk) through a stream
+mount while the migration in issue #1510 continues. Esbuild bundles
 the authored CSS with an explicit browser reset; it generates no utility classes.
 Hanken Grotesk, JetBrains Mono, CSS, JavaScript and dependency notices are hashed assets
 under `/ui/assets/*`, served identically with immutable cache headers on Node
@@ -724,10 +729,14 @@ local and session storage access in the UI tolerates storage that throws, as in
 private browsing: a read finds nothing stored and a write keeps nothing, so a
 bearer token is not remembered there. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
-stays behind `./ui`, outside the root import graph. The identity-fenced store
-owns authenticated reads and existing mutations, with explicit identity and
+stays behind `./ui`, outside the root import graph. Effect services provided by
+one `Layer` own every authenticated read and mutation: `OperatorApi` is the only
+code that sends an operator request, attaches the current session's token
+itself, and drops a response once the identity that asked has changed;
+`OperatorController` keeps the identity-fenced state with explicit identity and
 read-cycle AbortControllers, revision fences, and no query cache or automatic
-mutation replay. Browser-only view models ship inside the hashed bundle, with
+mutation replay. Pages send writes to the shell, which runs each as an Effect UI
+Command. Browser-only view models ship inside the hashed bundle, with
 no duplicate standalone server modules. The shared contract owns the unchanged
 `OperatorPage` union exported from `@zackbart/connecta/ui`. An Access-only shell selects
 Access even when the HTML request has no trusted context; only authenticated
@@ -907,8 +916,17 @@ late answers after cancellation.
 
 ### Source and tests
 
-The browser store reads only v2 and checks `role` before reading a
-maintainer-only field. `test/fixtures/operator-contract-v2.ts` holds
+The browser reads only v2 and checks `role` before reading a
+maintainer-only field. `src/operator-ui/app/services/` holds the Effect
+services (`platform.ts` for configuration, storage, Clerk, the window and the
+transport; `api.ts` for the operator API client and its admission checks;
+`store.ts` for the state cell; `operator.ts` for the controller), and
+`src/operator-ui/app/shell/` the Effect UI shell, routes, Commands and the
+`HostIsland` mount. `src/operator-ui/app/bridge.ts` is the temporary seam the
+React pages read state and the location through, and send writes through;
+it goes away as the pages move to Effect UI. `test/operator-store.test.ts`
+drives the controller service built from its Layer, and
+`test/operator-shell.test.ts` runs the shell components as Effect UI stories. `test/fixtures/operator-contract-v2.ts` holds
 maintainer and member fixtures, and `test/helpers/operator-member-view.ts`
 checks a member response's exact shape and compares its values with a
 projection built from config, membership, the member's own partition status,

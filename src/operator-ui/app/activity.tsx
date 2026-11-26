@@ -1,5 +1,5 @@
+import { useLocation, useNavigate, loadActivity, retryCollection, setActivitySearch } from "./bridge.js";
 import type { ReactNode } from "react";
-import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   activityOutcomeClass,
   activityReadable,
@@ -14,7 +14,6 @@ import { Button, SegmentedControl } from "./primitives.js";
 import { Icon } from "./icons.js";
 import { ConnectorMark } from "./marks.js";
 import { ActivityList } from "./activity-list.js";
-import { loadActivity, retryCollection, setActivitySearch } from "./store.js";
 
 type OutcomeFilter = "" | "failed" | "succeeded";
 

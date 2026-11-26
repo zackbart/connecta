@@ -9,7 +9,7 @@ import {
   removeCredential,
   saveCredential,
   testCredential,
-} from "./store.js";
+} from "./bridge.js";
 import { Callout, ConfirmBar, FixPrompt, focusableId, NoticeLine, Pill } from "./parts.js";
 import { Icon } from "./icons.js";
 

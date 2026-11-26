@@ -12,9 +12,10 @@
     "src/operator-ui/app/**/*.tsx",
     "src/operator-ui/model.ts",
     "src/operator-ui/view.ts",
-    // The store's own suite drives browser globals, so it belongs to the
-    // browser program and is excluded from the server one.
-    "test/operator-store.test.ts"
+    // These suites drive the browser app, so they belong to the browser
+    // program and are excluded from the server one.
+    "test/operator-store.test.ts",
+    "test/operator-shell.test.ts"
   ],
   "exclude": ["node_modules"]
 }

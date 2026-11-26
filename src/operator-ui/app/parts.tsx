@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
 import type { MouseEvent, ReactNode } from "react";
 import type { Notice, OperatorPage, OperatorState, Tone } from "../view.js";
-import { loadFailureCopy, PAGE_META, pageForPath } from "../view.js";
+import { loadFailureCopy, pageForPath } from "../view.js";
 import { fixPrompt, type FixPromptKind } from "../fix-prompts.js";
 import type { AccessChip } from "../endpoints.js";
 import { productName } from "./config.js";
 import { Icon } from "./icons.js";
-import { navigate, retryLoad } from "./store.js";
+import { navigate, retryLoad } from "./bridge.js";
 
 /** The handful of shapes every page repeats: notices, links, copy, and nothing-here. */
 
@@ -306,31 +306,6 @@ export function followLink(event: MouseEvent, href: string, page?: OperatorPage)
   }
   event.preventDefault();
   navigate(page ?? pageForPath(href.replace(/[?#].*$/, "")), href);
-}
-
-/** A nav link to one of the operator's pages. */
-export function PageLink({
-  page,
-  className,
-  current,
-  children,
-}: {
-  page: OperatorPage;
-  className?: string;
-  current?: boolean;
-  children: ReactNode;
-}) {
-  const href = PAGE_META[page].path;
-  return (
-    <a
-      className={className}
-      href={href}
-      {...(current ? { "aria-current": "page" as const } : {})}
-      onClick={(event) => followLink(event, href, page)}
-    >
-      {children}
-    </a>
-  );
 }
 
 /**
