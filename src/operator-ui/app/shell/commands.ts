@@ -1,5 +1,5 @@
 import { Command, Component, Router } from "@effect/ui";
-import { Effect, Predicate, Redacted, Schema } from "effect";
+import { Effect, Predicate, Schema } from "effect";
 import { canonicalOperatorPath, type OperatorPage } from "../../view.js";
 import { OperatorController, type PreparedOAuth } from "../services/controller.js";
 import { LEGACY_CONNECTOR_TABS } from "./routes.js";
@@ -12,10 +12,7 @@ export const Prepared = Schema.declare<PreparedOAuth>(
   (input): input is PreparedOAuth => Predicate.isObject(input) && Predicate.isBoolean(input.refused),
 );
 
-export const CredentialBody = Schema.Union([
-  Schema.Struct({ value: Schema.String }),
-  Schema.Struct({ values: Schema.Record(Schema.String, Schema.String) }),
-]);
+export const CandidateHandle = Schema.String.pipe(Schema.brand("CandidateHandle"));
 
 export class StartOAuth extends Command.Service<StartOAuth>()("operator/StartOAuth", {
   args: { connector: Schema.String, mode: OAuthMode, prepared: Prepared },
@@ -44,14 +41,14 @@ export class DisconnectOAuth extends Command.Service<DisconnectOAuth>()("operato
 }
 
 export class SaveCredential extends Command.Service<SaveCredential>()("operator/SaveCredential", {
-  args: { connector: Schema.String, body: CredentialBody, verify: Schema.Literals(["test", "skip"]) },
+  args: { connector: Schema.String, candidate: CandidateHandle, verify: Schema.Literals(["test", "skip"]) },
   success: Component.Noop,
 }) {
   static readonly layer = this.toLayer(
     OperatorController.useSync(
       (controller) =>
-        ({ connector, body, verify }) =>
-          Effect.as(controller.saveCredential(connector, body, verify), Component.noop),
+        ({ connector, candidate, verify }) =>
+          Effect.as(controller.saveHeldCredential(connector, candidate, verify), Component.noop),
     ),
   );
 }
@@ -131,19 +128,6 @@ export class SignOut extends Command.Service<SignOut>()("operator/SignOut", {
   );
 }
 
-export class SignInWithBearer extends Command.Service<SignInWithBearer>()("operator/SignInWithBearer", {
-  args: { token: Schema.Redacted(Schema.String) },
-  success: Component.Noop,
-}) {
-  static readonly layer = this.toLayer(
-    OperatorController.useSync(
-      (controller) =>
-        ({ token }) =>
-          Effect.as(controller.signInWithBearer(Redacted.value(token)), Component.noop),
-    ),
-  );
-}
-
 export class ForgetBearer extends Command.Service<ForgetBearer>()("operator/ForgetBearer", {
   args: {},
   success: Component.Noop,
@@ -213,7 +197,6 @@ export const commandLayers = [
   BootOperator.layer,
   SignIn.layer,
   SignOut.layer,
-  SignInWithBearer.layer,
   ForgetBearer.layer,
   RetryLoad.layer,
   RecheckOnReturn.layer,

@@ -1,9 +1,11 @@
-import { Context, type Effect, type Stream } from "effect";
+import { Context, type Brand, type Effect, type Stream } from "effect";
 import type { OperatorPage, OperatorState, PendingConfirm } from "../../view.js";
 
 export type OAuthStartMode = "continue" | "restart";
 
 export type CredentialBody = { value: string } | { values: Record<string, string> };
+
+export type CandidateHandle = string & Brand.Brand<"CandidateHandle">;
 
 export type PreparedOAuth = { readonly refused: true } | { readonly refused: false; readonly tab: Window | null };
 
@@ -50,6 +52,12 @@ export interface OperatorControllerShape {
   readonly startOAuth: (connector: string, mode: OAuthStartMode, prepared?: PreparedOAuth) => Effect.Effect<void>;
   readonly disconnectOAuth: (connector: string) => Effect.Effect<void>;
   readonly saveCredential: (connector: string, body: CredentialBody, verify?: "test" | "skip") => Effect.Effect<void>;
+  readonly holdCredentialCandidate: (body: CredentialBody) => CandidateHandle;
+  readonly saveHeldCredential: (
+    connector: string,
+    candidate: CandidateHandle,
+    verify: "test" | "skip",
+  ) => Effect.Effect<void>;
   readonly removeCredential: (connector: string) => Effect.Effect<void>;
   readonly testCredential: (connector: string) => Effect.Effect<void>;
   readonly prepareRotation: (name: string) => "asked" | "issue" | "none";

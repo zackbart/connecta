@@ -9,7 +9,15 @@ import type {
   UiActivityEvent,
 } from "../../view.js";
 import type { AgentSlot } from "../../agents.js";
-import { ClerkClient, BrowserStorage, ShellConfig, Transport } from "./platform.js";
+import {
+  BrowserStorage,
+  ClerkClient,
+  ShellConfig,
+  Transport,
+  type Refusal,
+  type TransportError,
+  type Withheld,
+} from "./platform.js";
 import { OperatorStore } from "./store.js";
 
 export interface OperatorResponse {
@@ -171,19 +179,28 @@ export class OperatorApi extends Context.Service<OperatorApi, OperatorApiShape>(
         ...(body ? { "Content-Type": "application/json" } : {}),
       });
 
-      const send = (path: string, init: RequestInit) => {
+      const admission = (path: string, method: string): Refusal | undefined => {
         const state = store.get();
         const privileged = MAINTAINER_ONLY.some((route) => path === route || path.startsWith(route));
-        if (privileged && !maintainerNow(state)) return null;
-        const write = connectionWrite(path, init.method ?? "GET");
-        if (write && !connectionWriteAllowed(state, write)) return null;
-        return transport.fetch(path, init);
+        if (privileged && !maintainerNow(state)) return "forbidden";
+        const write = connectionWrite(path, method);
+        if (write && !connectionWriteAllowed(state, write)) return "forbidden";
+        return undefined;
       };
+
+      const send = (path: string, init: RequestInit, check: () => Refusal | undefined) =>
+        transport.fetch(path, init, () => check() ?? admission(path, init.method ?? "GET"));
 
       const sessionToken = (session: OperatorSession) => {
         const held = sessions.get(session);
         return held && held.generation === store.get().generation ? held : null;
       };
+
+      const sessionCurrent = (session: OperatorSession) => (): Refusal | undefined =>
+        sessionToken(session) ? undefined : "superseded";
+
+      const refusalOf = (failure: TransportError | Withheld): Refusal | "network" =>
+        failure._tag === "Withheld" ? failure.reason : "network";
 
       return OperatorApi.of({
         sessionPresumed: () => {
@@ -208,14 +225,18 @@ export class OperatorApi extends Context.Service<OperatorApi, OperatorApiShape>(
             const held = sessionToken(session);
             if (!held) return { kind: "network" } as const;
             const response = yield* Effect.result(
-              transport.fetch("/ui/api/config?live=cached", {
-                headers: headers(held.token),
-                credentials: "same-origin",
-                signal,
-              }),
+              send(
+                "/ui/api/config?live=cached",
+                { headers: headers(held.token), credentials: "same-origin", signal },
+                sessionCurrent(session),
+              ),
             );
             if (!sessionToken(session)) return { kind: "superseded" } as const;
-            if (response._tag === "Failure") return { kind: "network" } as const;
+            if (response._tag === "Failure") {
+              return refusalOf(response.failure) === "network"
+                ? ({ kind: "network" } as const)
+                : ({ kind: "superseded" } as const);
+            }
             const { status, ok } = response.success;
             if (status === 401 || status === 403) return { kind: "session", status } as const;
             if (status === 404) return { kind: "denied" } as const;
@@ -230,11 +251,20 @@ export class OperatorApi extends Context.Service<OperatorApi, OperatorApiShape>(
           Effect.gen(function* () {
             const held = sessionToken(session);
             if (!held) return { kind: "withheld" } as const;
-            const sent = send("/ui/data", { signal, headers: headers(held.token), credentials: "same-origin" });
-            if (!sent) return { kind: "withheld" } as const;
-            const response = yield* Effect.result(sent);
+            const response = yield* Effect.result(
+              send(
+                "/ui/data",
+                { signal, headers: headers(held.token), credentials: "same-origin" },
+                sessionCurrent(session),
+              ),
+            );
+            if (response._tag === "Failure") {
+              const refusal = refusalOf(response.failure);
+              if (refusal === "forbidden") return { kind: "withheld" } as const;
+              if (refusal !== "network" || !sessionToken(session)) return { kind: "superseded" } as const;
+              return { kind: "network" } as const;
+            }
             if (!sessionToken(session)) return { kind: "superseded" } as const;
-            if (response._tag === "Failure") return { kind: "network" } as const;
             const { status, ok } = response.success;
             if (status === 401 || status === 403) return { kind: "session", status } as const;
             if (!ok) return { kind: "server" } as const;
@@ -249,13 +279,19 @@ export class OperatorApi extends Context.Service<OperatorApi, OperatorApiShape>(
           Effect.gen(function* () {
             const held = sessionToken(session);
             if (!held) return { kind: "stale" } as const;
-            const sent = send(`/ui/connectors/${encodeURIComponent(id)}${stored ? "?observation=stored" : ""}`, {
-              signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]),
-              headers: headers(held.token),
-              credentials: "same-origin",
-            });
-            if (!sent) return { kind: "stale" } as const;
-            const response = yield* Effect.result(sent);
+            const response = yield* Effect.result(
+              send(
+                `/ui/connectors/${encodeURIComponent(id)}${stored ? "?observation=stored" : ""}`,
+                {
+                  signal: AbortSignal.any([signal, AbortSignal.timeout(35_000)]),
+                  headers: headers(held.token),
+                  credentials: "same-origin",
+                },
+                sessionCurrent(session),
+              ),
+            );
+            if (response._tag === "Failure" && refusalOf(response.failure) !== "network")
+              return { kind: "stale" } as const;
             if (!sessionToken(session)) return { kind: "stale" } as const;
             if (response._tag === "Failure") return { kind: "local", failure: "network" } as const;
             const { status, ok } = response.success;
@@ -296,16 +332,28 @@ export class OperatorApi extends Context.Service<OperatorApi, OperatorApiShape>(
             if (!token.success && auth.kind !== "cloudflare-access") {
               return yield* Effect.fail(new RequestFailure("session"));
             }
-            if (stillValid && !stillValid()) return yield* Effect.fail(new RequestFailure("stale"));
-            const sent = send(path, {
-              method,
-              headers: headers(token.success, Boolean(body)),
-              credentials: "same-origin",
-              ...(body ? { body: JSON.stringify(body) } : {}),
-            });
-            if (!sent) return yield* Effect.fail(new RequestFailure("forbidden"));
-            const response = yield* Effect.result(sent);
-            if (response._tag === "Failure") return yield* Effect.fail(new RequestFailure("network"));
+            const response = yield* Effect.result(
+              send(
+                path,
+                {
+                  method,
+                  headers: headers(token.success, Boolean(body)),
+                  credentials: "same-origin",
+                  ...(body ? { body: JSON.stringify(body) } : {}),
+                },
+                () => {
+                  if (!current() || store.get().generation !== generation) return "superseded";
+                  if (stillValid && !stillValid()) return "stale";
+                  return undefined;
+                },
+              ),
+            );
+            if (response._tag === "Failure") {
+              const refusal = refusalOf(response.failure);
+              return yield* Effect.fail(
+                new RequestFailure(refusal === "superseded" ? "session" : refusal === "stale" ? "stale" : refusal),
+              );
+            }
             const res = response.success;
             if (res.status === 204) return null;
             const parsed = yield* Effect.result(readJson<OperatorResponse>(res));

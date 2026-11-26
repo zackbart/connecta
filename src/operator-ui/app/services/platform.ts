@@ -173,24 +173,43 @@ export class BrowserWindow extends Context.Service<BrowserWindow, BrowserWindowS
   );
 }
 
-class TransportError {
+export type Refusal = "superseded" | "stale" | "forbidden";
+
+export class TransportError {
   readonly _tag = "TransportError";
 }
 
-export interface TransportShape {
-  readonly fetch: (path: string, init: RequestInit) => Effect.Effect<Response, TransportError>;
+export class Withheld {
+  readonly _tag = "Withheld";
+  constructor(readonly reason: Refusal) {}
 }
 
-export class Transport extends Context.Service<Transport, TransportShape>()("connecta/operator-ui/Transport") {
-  static readonly layer = Layer.succeed(
-    Transport,
-    Transport.of({
-      fetch: (path, init) =>
-        Effect.tryPromise({
-          try: (interrupted) =>
-            fetch(path, { ...init, signal: init.signal ? AbortSignal.any([init.signal, interrupted]) : interrupted }),
-          catch: () => new TransportError(),
-        }),
+export interface TransportShape {
+  readonly fetch: (
+    path: string,
+    init: RequestInit,
+    dispatch: () => Refusal | undefined,
+  ) => Effect.Effect<Response, TransportError | Withheld>;
+}
+
+export const fetchTransport: TransportShape = {
+  fetch: (path, init, dispatch) =>
+    Effect.suspend(() => {
+      let refused: Refusal | undefined;
+      return Effect.tryPromise({
+        try: (interrupted) => {
+          refused = dispatch();
+          if (refused) return Promise.reject(refused);
+          return fetch(path, {
+            ...init,
+            signal: init.signal ? AbortSignal.any([init.signal, interrupted]) : interrupted,
+          });
+        },
+        catch: () => (refused ? new Withheld(refused) : new TransportError()),
+      });
     }),
-  );
+};
+
+export class Transport extends Context.Service<Transport, TransportShape>()("connecta/operator-ui/Transport") {
+  static readonly layer = Layer.succeed(Transport, Transport.of(fetchTransport));
 }

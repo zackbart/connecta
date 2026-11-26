@@ -1,4 +1,4 @@
-import { Effect, ManagedRuntime, Scheduler } from "effect";
+import { Effect, Layer, ManagedRuntime, Scheduler } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
 import type { UiData } from "../src/operator-ui/model.js";
@@ -10,6 +10,13 @@ import {
   type OperatorControllerShape,
 } from "../src/operator-ui/app/services/controller.js";
 import { operatorServicesLayer } from "../src/operator-ui/app/services/layer.js";
+import {
+  BrowserWindow,
+  ClerkClient,
+  fetchTransport,
+  Transport,
+  type TransportShape,
+} from "../src/operator-ui/app/services/platform.js";
 import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./fixtures/operator-contract-v2.js";
 
 const NOW = "2026-10-15T12:00:00.000Z";
@@ -216,13 +223,24 @@ async function loadStore(
     }
     return response;
   });
+  let beforeDispatch: ((path: string) => void) | undefined;
+  const transport: TransportShape = {
+    fetch: (path, init, dispatch) =>
+      Effect.andThen(
+        Effect.sync(() => beforeDispatch?.(path)),
+        fetchTransport.fetch(path, init, dispatch),
+      ),
+  };
   const runtime = ManagedRuntime.make(
-    operatorServicesLayer({
-      auth: browserAuth as { kind: string },
-      initialPage: page as OperatorPage,
-      productName: PAGE_CONSTANTS.PRODUCT_NAME,
-      tokenKey: "connecta:token",
-    }),
+    operatorServicesLayer(
+      {
+        auth: browserAuth as { kind: string },
+        initialPage: page as OperatorPage,
+        productName: PAGE_CONSTANTS.PRODUCT_NAME,
+        tokenKey: "connecta:token",
+      },
+      Layer.mergeAll(ClerkClient.layer, BrowserWindow.layer, Layer.succeed(Transport, transport)),
+    ),
   );
   const controller = runtime.runSync(OperatorController.useSync((service) => service));
   const store = controllerHarness(controller);
@@ -241,6 +259,10 @@ async function loadStore(
     /** The connectors the default contract configures, before any `/ui/data` is seen. */
     declare(ids: string[]) {
       declared = ids;
+    },
+    /** Run `hook` after a request is built and before the transport sends it. */
+    beforeDispatch(hook: ((path: string) => void) | undefined) {
+      beforeDispatch = hook;
     },
     /** Hand Clerk's listener a session change, the way Clerk itself would. */
     changeSession(next: FakeSession | null) {
@@ -938,6 +960,27 @@ describe("operator role changes", () => {
 describe("operator connection writes", () => {
   const writes = (paths: string[]) =>
     paths.filter((path) => path.startsWith("/ui/credentials/") || path.startsWith("/ui/oauth/"));
+
+  it("INV-4: an identity change between a write's checks and its dispatch sends nothing", async () => {
+    const loaded = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
+    const { store, fetchMock, configMock, paths } = loaded;
+    configMock.mockImplementation(async () => contract("member"));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "ready", role: "member" });
+    configMock.mockImplementation(() => new Promise<Response>(() => {}));
+    fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+    let dispatched = false;
+    loaded.beforeDispatch((path) => {
+      if (!path.startsWith("/ui/credentials/")) return;
+      dispatched = true;
+      loaded.changeSession({ id: "sess_b", getToken: async () => "token-b" });
+    });
+    await store.saveCredential("notes", { values: { token: "typed" } });
+    expect(dispatched).toBe(true);
+    expect(writes(paths)).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({ session: "gated", credentialNotice: null });
+  });
 
   it("INV-4: a member writes only to their own personal connectors, with the actions manage names", async () => {
     const { store, fetchMock, configMock, paths } = await loadStore({ id: "session", getToken: async () => "token" });

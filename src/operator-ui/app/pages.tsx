@@ -1,4 +1,5 @@
-import { displayRole, pageDescription, PAGE_META, type OperatorState } from "../view.js";
+import { useEffect } from "react";
+import { contractRecovering, displayRole, pageDescription, PAGE_META, type OperatorState } from "../view.js";
 import { productDescription } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
 import { SettingsPage } from "./config-page.js";
@@ -11,7 +12,7 @@ import { MemberPage } from "./member.js";
 import { ContractState, contractLoading } from "./contract-state.js";
 import { PageSkeleton } from "./skeletons.js";
 import { HealthProvider } from "./health.js";
-import { accountLabel, navHint, useOperatorState } from "./bridge.js";
+import { accountLabel, focusHandled, navHint, useOperatorState } from "./bridge.js";
 import { ShellControls } from "./shell.js";
 import { visiblePages } from "./shell/operator-view.js";
 
@@ -46,8 +47,27 @@ function CurrentPage({ state }: { state: OperatorState }) {
   return <OverviewPage state={state} />;
 }
 
+function useSpendFocus(state: OperatorState): void {
+  const recovering = state.session === "ready" && contractRecovering(state);
+  useEffect(() => {
+    if (!state.pendingFocus && !state.focusIfLost) return;
+    if (state.pendingFocus) {
+      const target = document.getElementById(state.pendingFocus);
+      if (target?.closest("[inert]")) return;
+      target?.focus();
+    } else if (state.focusIfLost) {
+      const active = document.activeElement;
+      const lost =
+        !active || active === document.body || !active.isConnected || (active as HTMLButtonElement).disabled === true;
+      if (lost) document.getElementById(state.focusIfLost)?.focus();
+    }
+    focusHandled();
+  }, [state.pendingFocus, state.focusIfLost, recovering]);
+}
+
 export function PageIsland() {
   const state = useOperatorState();
+  useSpendFocus(state);
   return state.session === "ready" ? (
     <HealthProvider state={state}>
       <CurrentPage state={state} />

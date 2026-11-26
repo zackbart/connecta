@@ -1,9 +1,10 @@
 import { Component } from "@effect/ui";
 import { Story } from "@effect/ui/testing";
-import { Effect, Redacted } from "effect";
+import { Effect } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import { initialState, type OperatorState } from "../src/operator-ui/view.js";
-import type { OperatorView } from "../src/operator-ui/app/shell/operator-view.js";
+import { projectView, type OperatorView } from "../src/operator-ui/app/shell/operator-view.js";
+import type { CandidateHandle, OperatorControllerShape } from "../src/operator-ui/app/services/controller.js";
 
 vi.mock("../src/operator-ui/app/config.js", () => ({
   auth: { kind: "bearer" },
@@ -21,19 +22,18 @@ const { AccountMenu } = await import("../src/operator-ui/app/shell/account-menu.
 const commands = await import("../src/operator-ui/app/shell/commands.js");
 const { OperatorContent } = await import("../src/operator-ui/app/shell/content.js");
 const { Gate } = await import("../src/operator-ui/app/shell/gate.js");
+const bridge = await import("../src/operator-ui/app/bridge.js");
 const { OperatorNav } = await import("../src/operator-ui/app/shell/nav.js");
 const { OperatorRoute } = await import("../src/operator-ui/app/shell/routes.js");
 
 const story = (body: Effect.Effect<void, never, import("effect").Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(body));
 
-const view = (patch: Partial<OperatorState> = {}): OperatorView => ({
-  state: { ...initialState("connections"), ...patch },
-  navHint: { activity: false },
-  account: "alice@example.com",
-  sessionPresumed: false,
-  clerkSignedIn: false,
-});
+const view = (patch: Partial<OperatorState> = {}): OperatorView =>
+  projectView(
+    { ...initialState("connections"), ...patch },
+    { navHint: { activity: false }, account: "alice@example.com", sessionPresumed: false, clerkSignedIn: false },
+  );
 
 const route = OperatorRoute.Connectors({ search: {} });
 
@@ -58,7 +58,7 @@ describe("operator content shell", () => {
   it("closes page overlays and moves focus to Retry once, when recovery starts", () =>
     story(
       Effect.gen(function* () {
-        const contract = { role: "maintainer" } as OperatorState["contract"];
+        const contract = { role: "maintainer", agents: [] } as unknown as OperatorState["contract"];
         const data = { connectors: [] } as unknown as OperatorState["data"];
         const s = yield* contentStory(
           view({ session: "ready", role: "maintainer", contract, data, admissionValid: true }),
@@ -73,13 +73,17 @@ describe("operator content shell", () => {
       }),
     ));
 
-  it("spends a focus request only through the focus Command", () =>
+  it("spends a gate focus request through the focus Command, and leaves a page's to the page", () =>
     story(
       Effect.gen(function* () {
         const s = yield* contentStory();
         s.send({ _tag: "ChangedOperatorView", view: view({ pendingFocus: "gateHeading" }) })
           .expectExact(commands.FocusPendingTarget)
           .resolve(commands.FocusPendingTarget, Component.noop);
+        s.send({
+          _tag: "ChangedOperatorView",
+          view: view({ session: "ready", pendingFocus: "confirm-cancel-token-alice" }),
+        }).expectNone();
       }),
     ));
 
@@ -95,7 +99,7 @@ describe("operator content shell", () => {
             tokenPhase,
             admissionValid: true,
             contractPhase: "ready",
-            contract: { role: "maintainer" } as OperatorState["contract"],
+            contract: { role: "maintainer", agents: [] } as unknown as OperatorState["contract"],
             data: { accessTokenManagement: "available" } as OperatorState["data"],
           });
         s.send({ _tag: "ChangedOperatorView", view: tokensPage("idle") })
@@ -110,6 +114,7 @@ describe("operator content shell", () => {
       Effect.gen(function* () {
         const s = yield* contentStory();
         const prepared = { refused: false, tab: null } as const;
+        const candidate = "candidate-1" as CandidateHandle;
         s.send({
           _tag: "RequestedPageWrite",
           request: { _tag: "StartOAuth", connector: "crm", mode: "continue", prepared },
@@ -121,9 +126,9 @@ describe("operator content shell", () => {
           .resolve(commands.ConfirmTokenAction, Component.noop);
         s.send({
           _tag: "RequestedPageWrite",
-          request: { _tag: "SaveCredential", connector: "crm", body: { value: "s3cret" }, verify: "test" },
+          request: { _tag: "SaveCredential", connector: "crm", candidate, verify: "test" },
         }).expectExact(commands.SaveCredential);
-        expect(s.pending[0]!.command.args).toEqual({ connector: "crm", body: { value: "s3cret" }, verify: "test" });
+        expect(s.pending[0]!.command.args).toEqual({ connector: "crm", candidate, verify: "test" });
         s.resolve(commands.SaveCredential, Component.noop);
       }),
     ));
@@ -142,19 +147,67 @@ describe("operator content shell", () => {
     ));
 });
 
-describe("sign-in gate", () => {
-  it("sends a trimmed bearer token once, redacted, and clears the field", () =>
+describe("secrets never enter Effect UI state", () => {
+  const ISSUED = "issued-agent-secret";
+  const CANDIDATE = "candidate-credential-secret";
+  const serialized = (...values: unknown[]) => JSON.stringify(values);
+
+  it("projects an issued agent token out of both shell Models", () =>
+    story(
+      Effect.gen(function* () {
+        const issued = view({
+          session: "ready",
+          role: "maintainer",
+          page: "tokens",
+          createdToken: ISSUED,
+          createdTokenFor: "triage",
+        });
+        expect(serialized(issued)).not.toContain(ISSUED);
+        const content = yield* contentStory();
+        content.send({ _tag: "ChangedOperatorView", view: issued });
+        const nav = yield* Story.make(OperatorNav, { view: view() });
+        nav.send({ _tag: "ChangedOperatorView", view: issued });
+        expect(serialized(content.model, content.pending, nav.model, nav.pending)).not.toContain(ISSUED);
+      }),
+    ));
+
+  it("sends a credential candidate to its Command as an opaque one-shot handle", () =>
+    story(
+      Effect.gen(function* () {
+        const held = new Map<CandidateHandle, unknown>();
+        const requests: unknown[] = [];
+        bridge.installIslandHost({
+          controller: {
+            holdCredentialCandidate: (body: unknown) => {
+              const handle = `candidate-${held.size + 1}` as CandidateHandle;
+              held.set(handle, body);
+              return handle;
+            },
+          } as unknown as OperatorControllerShape,
+          run: () => {},
+          request: (request) => void requests.push(request),
+          navigate: () => {},
+          location: () => ({ url: "/connectors/crm", hash: "" }),
+        });
+        bridge.saveCredential("crm", { values: { token: CANDIDATE } }, "test");
+        bridge.saveCredential("crm", { value: CANDIDATE });
+        expect(serialized(requests)).not.toContain(CANDIDATE);
+        expect(serialized([...held.values()])).toContain(CANDIDATE);
+        const s = yield* contentStory();
+        for (const request of requests) {
+          s.send({ _tag: "RequestedPageWrite", request: request as never }).expectExact(commands.SaveCredential);
+          expect(serialized(s.model, s.pending)).not.toContain(CANDIDATE);
+          s.resolve(commands.SaveCredential, Component.noop);
+        }
+      }),
+    ));
+
+  it("keeps the typed bearer token in the field: the gate has no Model and no message that carries it", () =>
     story(
       Effect.gen(function* () {
         const s = yield* Story.make(Gate, { view: view({ session: "gated" }) });
-        s.send({ _tag: "SubmittedToken" }).expectNone();
-        s.send({ _tag: "UpdatedToken", value: "  op-token  " });
-        s.send({ _tag: "SubmittedToken" }).expectExact(commands.SignInWithBearer);
-        const token = (s.pending[0]!.command.args as { token: Redacted.Redacted<string> }).token;
-        expect(Redacted.value(token)).toBe("op-token");
-        expect(String(token)).not.toContain("op-token");
-        expect(s.model.token).toBe("");
-        s.resolve(commands.SignInWithBearer, Component.noop);
+        expect(s.model).toBeNull();
+        s.send({ _tag: "ClickedRetry" }).expectExact(commands.RetryLoad).resolve(commands.RetryLoad, Component.noop);
       }),
     ));
 });

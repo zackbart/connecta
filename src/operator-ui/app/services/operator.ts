@@ -34,7 +34,13 @@ import {
   type OperatorResponse,
   type OperatorSession,
 } from "./api.js";
-import { OperatorController, type CredentialBody, type OAuthStartMode, type PreparedOAuth } from "./controller.js";
+import {
+  OperatorController,
+  type CandidateHandle,
+  type CredentialBody,
+  type OAuthStartMode,
+  type PreparedOAuth,
+} from "./controller.js";
 import { BrowserStorage, BrowserWindow, ClerkClient, ShellConfig, type ClerkSession } from "./platform.js";
 import { OperatorStore } from "./store.js";
 import { starterIn } from "../run.js";
@@ -160,6 +166,7 @@ export const operatorControllerLayer = Layer.effect(
       cancel(recoveryTimer);
       recoveryTimer = undefined;
       forgetSlotFence();
+      heldCandidates.clear();
       store.replace({ ...resetIdentity(state(), notice), session });
     }
 
@@ -926,6 +933,22 @@ export const operatorControllerLayer = Layer.effect(
         );
       });
 
+    const heldCandidates = new Map<string, CredentialBody>();
+    let candidateSequence = 0;
+
+    function holdCredentialCandidate(body: CredentialBody): CandidateHandle {
+      const handle = `candidate-${++candidateSequence}` as CandidateHandle;
+      heldCandidates.set(handle, body);
+      return handle;
+    }
+
+    const saveHeldCredential = (connector: string, candidate: CandidateHandle, verify: "test" | "skip") =>
+      Effect.suspend(() => {
+        const body = heldCandidates.get(candidate);
+        heldCandidates.delete(candidate);
+        return body ? saveCredential(connector, body, verify) : Effect.void;
+      });
+
     const removeCredential = (connector: string) =>
       Effect.suspend(() => {
         const valid = memberDispatch(connector, "clear");
@@ -1670,6 +1693,8 @@ export const operatorControllerLayer = Layer.effect(
       startOAuth,
       disconnectOAuth,
       saveCredential,
+      holdCredentialCandidate,
+      saveHeldCredential,
       removeCredential,
       testCredential,
       prepareRotation,

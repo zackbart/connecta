@@ -735,8 +735,14 @@ code that sends an operator request, attaches the current session's token
 itself, and drops a response once the identity that asked has changed;
 `OperatorController` keeps the identity-fenced state with explicit identity and
 read-cycle AbortControllers, revision fences, and no query cache or automatic
-mutation replay. Pages send writes to the shell, which runs each as an Effect UI
-Command. Browser-only view models ship inside the hashed bundle, with
+mutation replay. The identity, admission and validity checks run synchronously
+inside the transport, in the same call that hands the request to `fetch`, so a
+write approved under one identity is never dispatched under another. Pages send
+writes to the shell, which runs each as an Effect UI Command. No secret enters
+an Effect UI Model, message or Command argument: the bearer field is an
+uncontrolled input submitted by a mount straight to the controller, a
+credential candidate travels as a one-shot handle the controller holds, and the
+shell receives a projection of the state that carries no issued token. Browser-only view models ship inside the hashed bundle, with
 no duplicate standalone server modules. The shared contract owns the unchanged
 `OperatorPage` union exported from `@zackbart/connecta/ui`. An Access-only shell selects
 Access even when the HTML request has no trusted context; only authenticated

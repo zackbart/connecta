@@ -114,6 +114,7 @@ export const editCredential = (id: string | null) => run((c) => c.editCredential
 export const refuseCredential = (id: string, copy: string) => run((c) => c.refuseCredential(id, copy));
 export const cancelTokenAction = (returnFocusTo?: string) => run((c) => c.cancelTokenAction(returnFocusTo));
 export const dismissCreatedToken = () => run((c) => c.dismissCreatedToken);
+export const focusHandled = () => run((c) => c.focusHandled);
 
 export function startOAuth(connector: string, mode: OAuthStartMode): void {
   const active = current();
@@ -122,8 +123,15 @@ export function startOAuth(connector: string, mode: OAuthStartMode): void {
 }
 
 export const disconnectOAuth = (connector: string) => current().request({ _tag: "DisconnectOAuth", connector });
-export const saveCredential = (connector: string, body: CredentialBody, verify: "test" | "skip" = "skip") =>
-  current().request({ _tag: "SaveCredential", connector, body, verify });
+export function saveCredential(connector: string, body: CredentialBody, verify: "test" | "skip" = "skip"): void {
+  const active = current();
+  active.request({
+    _tag: "SaveCredential",
+    connector,
+    candidate: active.controller.holdCredentialCandidate(body),
+    verify,
+  });
+}
 export const removeCredential = (connector: string) => current().request({ _tag: "RemoveCredential", connector });
 export const testCredential = (connector: string) => current().request({ _tag: "TestCredential", connector });
 export function rotateAgentToken(name: string): void {

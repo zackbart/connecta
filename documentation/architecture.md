@@ -2172,8 +2172,10 @@ services: configuration, storage, Clerk, the window and the transport
 client (`api.ts`) and the controller (`operator.ts`). The API client is the
 only code that reaches the transport, so the two rules the page lives by are
 structural there: every request carries the session token the client reads
-itself (the controller holds an opaque session handle, never a token), and a
-response is dropped once the identity that asked has changed. The client also
+itself (the controller holds an opaque session handle, never a token), the
+identity and admission are checked again synchronously in the call that
+invokes `fetch`, and a response is dropped once the identity that asked has
+changed. The client also
 withholds maintainer-only routes and connection writes the contract on screen
 does not allow. The Effect UI shell in `app/shell/` (top bar, navigation,
 account menu, gate, recovery banner and `BrowserRouter`) reads the controller's

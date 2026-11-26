@@ -6,7 +6,7 @@ import { auth, productName } from "../config.js";
 import { AccountMenu } from "./account-menu.js";
 import { ForgetBearer, NavigateToPage, SignOut, shellCommandLayers, commandLayers } from "./commands.js";
 import { HostIsland } from "./island.js";
-import { OperatorView, viewChanges, visiblePages } from "./operator-view.js";
+import { OperatorView, viewChanges } from "./operator-view.js";
 
 const KeepCurrentInView = Mount.makeStream(
   "KeepCurrentInView",
@@ -67,9 +67,8 @@ const OperatorNavNoDeps = Html.component({
     ),
   ],
   view: (h, { view }) => {
-    const { state } = view;
     const action = NavMessage.RequestedSessionActionAccount();
-    if (state.session === "ready" && state.role === "member") {
+    if (view.session === "ready" && view.role === "member") {
       return h.div.class("mast-actions").children(
         h.div
           .class("session-actions", "member-session")
@@ -77,24 +76,24 @@ const OperatorNavNoDeps = Html.component({
           .children(Account(h, view, "member", action)),
       );
     }
-    const name = state.contract?.role === "maintainer" ? state.contract.config?.server.name : undefined;
+    const name = view.deploymentName;
     const redundant = name?.trim().toLowerCase() === productName.trim().toLowerCase();
-    const ready = state.session === "ready";
+    const ready = view.session === "ready";
     return h.div.class("mast-actions").children(
       name && !redundant ? h.span.class("deployment-name").attr("title", name).children(name) : null,
       h.nav
         .class("page-nav")
         .attr("aria-label", "Operator pages")
-        .onMount(KeepCurrentInView({ page: state.page, session: state.session }))
+        .onMount(KeepCurrentInView({ page: view.page, session: view.session }))
         .children(
-          (ready ? visiblePages(state, view.navHint) : []).map((page) =>
+          view.pages.map((page) =>
             h.a
               .key(page)
               .class("navlink")
               .attr("href", PAGE_META[page].path)
               .attr(
                 "aria-current",
-                state.page === page || (page === "connections" && state.page === "connector") ? "page" : undefined,
+                view.page === page || (page === "connections" && view.page === "connector") ? "page" : undefined,
               )
               .on(
                 "click",

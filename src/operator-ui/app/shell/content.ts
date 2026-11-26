@@ -1,7 +1,8 @@
 import { Component, Head, Router, Subscription, UiSchema } from "@effect/ui";
+import { Button } from "@effect/ui-kit";
 import { Html, HtmlSubscription } from "@effect/ui/html";
 import { Effect, Schema, Stream } from "effect";
-import { activityReadable, contractRecovering, operatorRole, PAGE_META, type OperatorState } from "../../view.js";
+import { PAGE_META } from "../../view.js";
 import { titleSuffix } from "../config.js";
 import {
   BootOperator,
@@ -40,23 +41,11 @@ const ContentMessage = UiSchema.TaggedEnum({
   RequestedPageWrite: { request: IslandRequest },
 });
 
-const recoveringOf = (state: OperatorState) => state.session === "ready" && contractRecovering(state);
-
-const collectionsWanted = (state: OperatorState) =>
-  state.session === "ready" &&
-  ((state.page === "tokens" &&
-    operatorRole(state) === "maintainer" &&
-    state.data?.accessTokenManagement === "available" &&
-    state.tokenPhase === "idle") ||
-    ((state.page === "activity" || state.page === "connector") &&
-      activityReadable(state) &&
-      state.activityPhase === "idle"));
-
 const writeCommand = (request: IslandRequest) =>
   IslandRequest.match(request, {
     StartOAuth: ({ connector, mode, prepared }) => StartOAuth.make({ connector, mode, prepared }),
     DisconnectOAuth: ({ connector }) => DisconnectOAuth.make({ connector }),
-    SaveCredential: ({ connector, body, verify }) => SaveCredential.make({ connector, body, verify }),
+    SaveCredential: ({ connector, candidate, verify }) => SaveCredential.make({ connector, candidate, verify }),
     RemoveCredential: ({ connector }) => RemoveCredential.make({ connector }),
     TestCredential: ({ connector }) => TestCredential.make({ connector }),
     RotateAgentToken: ({ name }) => RotateAgentToken.make({ name }),
@@ -69,9 +58,8 @@ const PageIslandHost = <M>(h: Html.H<M>) =>
     .class("island")
     .onMount(HostIsland({ island: "page" }));
 
-const RecoveryBanner = <M>(h: Html.H<M>, state: OperatorState, retry: M) => {
-  const failed = state.contractPhase === "error" || state.loadFailure !== null;
-  return h.section
+const RecoveryBanner = <M>(h: Html.H<M>, failed: boolean, retry: M) =>
+  h.section
     .key("recoveryBanner")
     .attr("id", "recoveryBanner")
     .class("recovery-banner")
@@ -86,13 +74,11 @@ const RecoveryBanner = <M>(h: Html.H<M>, state: OperatorState, retry: M) => {
           .children(failed ? "Couldn't load configuration" : "Reloading configuration…"),
         h.p.class("meta").children("Showing what last loaded."),
       ),
-      h.button
+      Button(h, { onPress: retry })
         .attr("id", "recoveryRetry")
         .class("btn", "default", "sm")
-        .on("click", retry)
         .children(ShellIcon(h, "refresh", 14), "Retry"),
     );
-};
 
 export const operatorContentProps = Effect.all({ route: Router.currentRoute(OperatorRoute), view: currentView });
 
@@ -104,7 +90,7 @@ const OperatorContentNoDeps = Html.component({
   restore: false,
 }).make({
   init: ($) =>
-    $.set({ route: $.props.route, view: $.props.view, recovering: recoveringOf($.props.view.state) }).run(
+    $.set({ route: $.props.route, view: $.props.view, recovering: $.props.view.recovering }).run(
       BootOperator.make(),
       CanonicalizeLocation.make(),
     ),
@@ -112,13 +98,12 @@ const OperatorContentNoDeps = Html.component({
     ChangedRoute: ($, { route }) =>
       $.evolve({ route }).run(ReportRoute.make({ path: routePath(route) }), CanonicalizeLocation.make()),
     ChangedOperatorView: ($, { view }) => {
-      const { state } = view;
-      const recovering = recoveringOf(state);
-      const entering = recovering && !$.model.recovering;
-      return $.evolve({ view, recovering }).run(
+      const entering = view.recovering && !$.model.recovering;
+      const islandSpendsFocus = view.session === "ready" || (view.session === "loading" && view.sessionPresumed);
+      return $.evolve({ view, recovering: view.recovering }).run(
         ...(entering ? [CloseForRecovery.make(), FocusRecoveryRetry.make()] : []),
-        ...(state.pendingFocus !== null || state.focusIfLost !== null ? [FocusPendingTarget.make()] : []),
-        ...(collectionsWanted(state) ? [LoadPageCollections.make()] : []),
+        ...(!islandSpendsFocus && view.focusRequested ? [FocusPendingTarget.make()] : []),
+        ...(view.collectionsWanted ? [LoadPageCollections.make()] : []),
       );
     },
     FocusedWindow: ($) => $.run(RecheckOnReturn.make()),
@@ -152,15 +137,15 @@ const OperatorContentNoDeps = Html.component({
     ),
   ],
   head: ({ model }) => {
-    const { state } = model.view;
-    const member = state.session === "ready" && state.role === "member";
-    return [Head.title(`${member ? "Your connections" : PAGE_META[state.page].label} · ${titleSuffix}`)];
+    const { view } = model;
+    const member = view.session === "ready" && view.role === "member";
+    return [Head.title(`${member ? "Your connections" : PAGE_META[view.page].label} · ${titleSuffix}`)];
   },
   view: (h, model) => {
-    const { state } = model.view;
-    const ready = state.session === "ready";
+    const { view } = model;
+    const ready = view.session === "ready";
     return h.div.class("operator-content").children(
-      ready && model.recovering ? RecoveryBanner(h, state, ContentMessage.ClickedRecoveryRetry()) : null,
+      ready && model.recovering ? RecoveryBanner(h, view.recoveryFailed, ContentMessage.ClickedRecoveryRetry()) : null,
       ready
         ? h.div
             .key("app")
@@ -168,9 +153,9 @@ const OperatorContentNoDeps = Html.component({
             .attr("inert", model.recovering ? "" : undefined)
             .class(model.recovering && "stale")
             .children(PageIslandHost(h))
-        : state.session === "denied"
+        : view.session === "denied"
           ? NoAccess(h, {})
-          : state.session === "loading" && model.view.sessionPresumed
+          : view.session === "loading" && view.sessionPresumed
             ? PageIslandHost(h)
             : Gate(h, { props: { view: model.view } }),
     );

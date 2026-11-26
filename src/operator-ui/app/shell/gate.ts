@@ -1,17 +1,39 @@
-import { UiSchema } from "@effect/ui";
-import { Input } from "@effect/ui-kit";
+import { Mount, UiSchema } from "@effect/ui";
+import { Button } from "@effect/ui-kit";
 import { Html } from "@effect/ui/html";
-import { Redacted, Schema } from "effect";
+import { Effect, Schema, Stream } from "effect";
 import { checkingCopy, gateCopy, noAccessCopy } from "../../view.js";
 import { auth, brandMark, productName } from "../config.js";
-import { ForgetBearer, RetryLoad, SignIn, SignInWithBearer, SignOut } from "./commands.js";
+import { starterIn } from "../run.js";
+import { OperatorController } from "../services/controller.js";
+import { ForgetBearer, RetryLoad, SignIn, SignOut } from "./commands.js";
 import { ShellIcon } from "./icons.js";
 import { OperatorView } from "./operator-view.js";
 import { NoticeLine, StateBlockBusy } from "./parts.js";
 
+const SubmitBearer = Mount.makeStream("SubmitBearer", { args: {} }, (form: HTMLFormElement) =>
+  Stream.callback<never, never, OperatorController>(() =>
+    Effect.gen(function* () {
+      const controller = yield* OperatorController;
+      const start = starterIn(yield* Effect.context<never>());
+      const onSubmit = (event: SubmitEvent) => {
+        event.preventDefault();
+        const field = form.elements.namedItem("token");
+        if (!(field instanceof HTMLInputElement)) return;
+        const value = field.value.trim();
+        if (!value) return;
+        field.value = "";
+        start(controller.signInWithBearer(value));
+      };
+      yield* Effect.acquireRelease(
+        Effect.sync(() => form.addEventListener("submit", onSubmit)),
+        () => Effect.sync(() => form.removeEventListener("submit", onSubmit)),
+      );
+    }),
+  ),
+);
+
 const GateMessage = UiSchema.TaggedEnum({
-  UpdatedToken: { value: Schema.String },
-  SubmittedToken: {},
   ClickedSignIn: {},
   ClickedSignOut: {},
   ClickedRetry: {},
@@ -27,25 +49,20 @@ const GateMark = <M>(h: Html.H<M>) =>
 export const Gate = Html.component({
   name: "Gate",
   props: Schema.Struct({ view: OperatorView }),
-  model: Schema.Struct({ token: Schema.String }),
+  model: Schema.Null,
   message: GateMessage,
   restore: false,
 }).make({
-  init: () => ({ token: "" }),
+  init: () => null,
   update: {
-    UpdatedToken: ($, { value }) => $.evolve({ token: value }),
-    SubmittedToken: ($) => {
-      const value = $.model.token.trim();
-      return value ? $.evolve({ token: "" }).run(SignInWithBearer.make({ token: Redacted.make(value) })) : $.model;
-    },
     ClickedSignIn: ($) => $.run(SignIn.make()),
     ClickedSignOut: ($) => $.run(SignOut.make()),
     ClickedRetry: ($) => $.run(RetryLoad.make()),
   },
-  view: (h, model) => {
-    const { state, clerkSignedIn } = h.props.view;
+  view: (h) => {
+    const { session, gate, clerkSignedIn } = h.props.view;
     const signedIn = auth.kind === "clerk" && clerkSignedIn;
-    const loading = state.session === "loading";
+    const loading = session === "loading";
     return h.section
       .attr("id", "gate")
       .class("gate")
@@ -65,55 +82,39 @@ export const Gate = Html.component({
                   .class("actions")
                   .children(
                     signedIn
-                      ? h.button
-                          .class("btn")
-                          .attr("type", "button")
-                          .on("click", GateMessage.ClickedSignOut())
-                          .children("Sign out")
-                      : h.button
+                      ? Button(h, { onPress: GateMessage.ClickedSignOut() }).class("btn").children("Sign out")
+                      : Button(h, { onPress: GateMessage.ClickedSignIn() })
                           .attr("id", "signin")
                           .class("btn", "primary")
-                          .attr("type", "button")
-                          .on("click", GateMessage.ClickedSignIn())
                           .children("Team sign in"),
                   )
               : auth.kind === "cloudflare-access"
                 ? h.div
                     .class("actions")
                     .children(
-                      h.button
-                        .class("btn", "primary")
-                        .attr("type", "button")
-                        .on("click", GateMessage.ClickedRetry())
-                        .children("Retry"),
-                      h.button
+                      Button(h, { onPress: GateMessage.ClickedRetry() }).class("btn", "primary").children("Retry"),
+                      Button(h, { onPress: GateMessage.ClickedSignOut() })
                         .class("btn")
-                        .attr("type", "button")
-                        .on("click", GateMessage.ClickedSignOut())
                         .children("Sign out of Cloudflare Access"),
                     )
                 : h.form
                     .attr("id", "tokenGate")
                     .class("row", "gate-form")
-                    .on("submit", GateMessage.SubmittedToken(), { preventDefault: "always" })
+                    .onMount(SubmitBearer())
                     .children(
-                      Input(h, {
-                        props: { value: model.token },
-                        onUpdate: ({ value }) => GateMessage.UpdatedToken({ value }),
-                      })
+                      h.input
                         .attr("id", "token")
                         .class("input")
                         .attr("type", "password")
                         .attr("placeholder", "Bearer token")
                         .attr("autocomplete", "off")
                         .attr("aria-label", "Bearer token"),
-                      h.button
+                      Button(h, { props: { type: "submit" } })
                         .attr("id", "save")
                         .class("btn", "primary")
-                        .attr("type", "submit")
                         .children("Open operator pages"),
                     ),
-          NoticeLine(h, "err", state.gate),
+          NoticeLine(h, "err", gate),
         ),
       );
   },
@@ -150,15 +151,11 @@ export const NoAccess = Html.component({
               .class("actions")
               .children(
                 auth.kind === "clerk" || auth.kind === "cloudflare-access"
-                  ? h.button
+                  ? Button(h, { onPress: NoAccessMessage.ClickedSignOut() })
                       .class("btn", "default")
-                      .attr("type", "button")
-                      .on("click", NoAccessMessage.ClickedSignOut())
                       .children("Sign out")
-                  : h.button
+                  : Button(h, { onPress: NoAccessMessage.ClickedChangeToken() })
                       .class("btn", "default")
-                      .attr("type", "button")
-                      .on("click", NoAccessMessage.ClickedChangeToken())
                       .children("Change token"),
               ),
           ),
