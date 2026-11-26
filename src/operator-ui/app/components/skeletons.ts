@@ -3,8 +3,8 @@ import { Card } from "./parts.js";
 
 type Width = "xs" | "sm" | "md" | "lg" | "full";
 
-export const Skeleton = <M>(h: Html.H<M>, width: Width = "md") =>
-  h.span.class("skeleton", `w-${width}`).attr("aria-hidden", "true");
+export const Skeleton = <M>(h: Html.H<M>, width: Width = "md", className?: string) =>
+  h.span.class("skeleton", `w-${width}`, className).attr("aria-hidden", "true");
 
 const LoadingNote = <M>(h: Html.H<M>) =>
   h.p.class("visually-hidden").attr("role", "status").children("Loading configuration…");

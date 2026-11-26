@@ -56,7 +56,7 @@ function breakable(url: string): ReactNode[] {
 }
 
 /** A pool's name as an identifier; the maintainers' default as a plain word. */
-export function EndpointName({ pool, label }: { pool: string | null; label: string }) {
+function EndpointName({ pool, label }: { pool: string | null; label: string }) {
   return pool === null ? <span className="endpoint-title">{label}</span> : <code>{label}</code>;
 }
 
@@ -263,7 +263,7 @@ function ToolSummary({ endpoint }: { endpoint: EndpointRow }) {
 }
 
 /** A runs-as label with its kind ("Shared", "Personal", …) set apart from the detail, when it has one. */
-export function RunsAs({ label }: { label: string }) {
+function RunsAs({ label }: { label: string }) {
   const at = label.indexOf(" · ");
   if (at < 0) return <>{label}</>;
   return (

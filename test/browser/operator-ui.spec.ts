@@ -313,6 +313,32 @@ test("closes the opened tab when the identity changes mid-request", async ({ pag
   await expect.poll(() => tab.isClosed()).toBe(true);
 });
 
+test("an OAuth start left mid-request still settles, so its connector is never stuck opening", async ({ page }) => {
+  let release!: () => void;
+  oauthStartBarrier = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await openAuthenticated(page);
+  const crm = await openRow(page, "CRM");
+  const popup = page.waitForEvent("popup");
+  await crm.getByRole("button", { name: "Connect CRM" }).click();
+  await expect(crm.getByRole("button", { name: "Connect CRM" })).toHaveText("Opening…");
+  const tab = await popup;
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Settings", exact: true })).toBeVisible();
+  release();
+  await expect.poll(() => tab.url()).toContain("/connect/oauth");
+  await page.goBack();
+  await expect(page.getByRole("heading", { name: "CRM", exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Connection", exact: true }).click();
+  await expect(page.locator("#oauthNotice-oauth")).toHaveText("Finish in the new tab.");
+  await expect(page.getByRole("button", { name: "Connect CRM" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Connect CRM" })).toHaveText("Connect account");
+  expect(requests.filter((request) => request.method === "POST" && request.path.startsWith("/ui/oauth/"))).toHaveLength(
+    1,
+  );
+});
+
 test("Change token returns to the gate with focus on the field, which sends each bearer and keeps none", async ({
   page,
 }) => {

@@ -4,6 +4,9 @@
  * hatches its whole column.
  */
 
+.matrix-view {
+  display: contents;
+}
 .matrix-legend {
   color: var(--text-2);
   display: flex;

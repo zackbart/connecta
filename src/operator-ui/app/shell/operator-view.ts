@@ -14,7 +14,7 @@ import { OperatorController, type OperatorControllerShape } from "../services/co
 
 const Page = Schema.Literals(OPERATOR_PAGES);
 
-const CONTENT_OWNERS = ["gate", "denied", "overview", "island"] as const;
+const CONTENT_OWNERS = ["gate", "denied", "overview", "connectors", "connector", "island"] as const;
 export type ContentOwner = (typeof CONTENT_OWNERS)[number];
 
 export const OperatorView = Schema.Struct({
@@ -46,20 +46,27 @@ const collectionsWanted = (state: OperatorState) =>
       activityReadable(state) &&
       state.activityPhase === "idle"));
 
-const overviewWhilePending = (state: OperatorState) => contractLoading(state) && state.page === "overview";
+const ownerWhilePending = (state: OperatorState): ContentOwner =>
+  contractLoading(state) && state.page === "overview"
+    ? "overview"
+    : contractLoading(state) && state.page === "connections"
+      ? "connectors"
+      : "island";
+
+const MAINTAINER_PAGES: Partial<Record<OperatorPage, ContentOwner>> = {
+  overview: "overview",
+  connections: "connectors",
+  connector: "connector",
+};
 
 function contentOwner(state: OperatorState, sessionPresumed: boolean): ContentOwner {
   if (state.session === "denied") return "denied";
   if (state.session !== "ready")
-    return state.session === "loading" && sessionPresumed
-      ? overviewWhilePending(state)
-        ? "overview"
-        : "island"
-      : "gate";
+    return state.session === "loading" && sessionPresumed ? ownerWhilePending(state) : "gate";
   const role = displayRole(state);
   if (role === "member" || state.role === "member") return "island";
-  if (role !== "maintainer") return overviewWhilePending(state) ? "overview" : "island";
-  return state.page === "overview" ? "overview" : "island";
+  if (role !== "maintainer") return ownerWhilePending(state);
+  return MAINTAINER_PAGES[state.page] ?? "island";
 }
 
 export const islandOwnsFocus = (state: OperatorState, sessionPresumed: boolean): boolean =>

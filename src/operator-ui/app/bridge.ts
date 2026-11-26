@@ -104,12 +104,9 @@ export function navigate(page: OperatorPage, href: string): void {
 
 export const retryLoad = () => run((c) => c.retryLoad);
 export const retryCollection = () => run((c) => c.retryCollection);
-export const loadOperatorContract = () => run((c) => c.loadOperatorContract);
 export const loadActivity = (reset: boolean) => run((c) => c.loadActivity(reset));
 export const loadAccessTokens = () => run((c) => c.loadAccessTokens);
 export const setActivitySearch = (search: string) => run((c) => c.setActivitySearch(search));
-export const refreshConnector = (id: string) => run((c) => c.refreshConnector(id));
-export const stopConnectorReads = (id: string) => run((c) => c.stopConnectorReads(id));
 export const askConfirm = (id: string, action: PendingConfirm["action"]) => run((c) => c.askConfirm(id, action));
 export const cancelConfirm = (returnFocusTo: string) => run((c) => c.cancelConfirm(returnFocusTo));
 export const editCredential = (id: string | null) => run((c) => c.editCredential(id));

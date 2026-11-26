@@ -2,6 +2,7 @@ import { Command, Component, Router } from "@effect/ui";
 import { Effect, Predicate, Schema } from "effect";
 import { canonicalOperatorPath, type OperatorPage } from "../../view.js";
 import { OperatorController, type PreparedOAuth } from "../services/controller.js";
+import { islandOwnsFocus } from "./operator-view.js";
 import { LEGACY_CONNECTOR_TABS } from "./routes.js";
 
 const afterCommit = Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 0)));
@@ -255,6 +256,7 @@ export class FocusPendingTarget extends Command.Service<FocusPendingTarget>()("o
           yield* afterCommit;
           const state = controller.state();
           if (!state.pendingFocus && !state.focusIfLost) return Component.noop;
+          if (islandOwnsFocus(state, controller.sessionPresumed())) return Component.noop;
           if (state.pendingFocus) {
             const target = document.getElementById(state.pendingFocus);
             if (target?.closest("[inert]")) return Component.noop;

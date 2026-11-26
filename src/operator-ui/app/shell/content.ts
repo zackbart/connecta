@@ -29,6 +29,7 @@ import { Icon } from "../components/icons.js";
 import { HostIsland, islandRequests } from "./island.js";
 import { IslandRequest } from "./island-request.js";
 import { OverviewData, OverviewPage, overviewProjection } from "../pages/overview.js";
+import { PageData, PageView, pageProjection } from "../pages/page-data.js";
 import { OperatorController } from "../services/controller.js";
 import { ConnectorHealth } from "../services/health.js";
 import { OperatorView, viewOf } from "./operator-view.js";
@@ -36,7 +37,11 @@ import { OperatorRoute, routePath } from "./routes.js";
 
 const ContentMessage = UiSchema.TaggedEnum({
   ChangedRoute: { route: OperatorRoute },
-  ChangedOperatorView: { view: OperatorView, overview: Schema.NullOr(OverviewData) },
+  ChangedOperatorView: {
+    view: OperatorView,
+    overview: Schema.NullOr(OverviewData),
+    page: Schema.NullOr(PageData),
+  },
   FocusedWindow: {},
   ChangedVisibility: {},
   ChangedHash: {},
@@ -86,12 +91,22 @@ const RecoveryBanner = <M>(h: Html.H<M>, failed: boolean, retry: M) =>
 const contentSource = Effect.gen(function* () {
   const controller = yield* OperatorController;
   const health = yield* ConnectorHealth;
+  const router = yield* Router.Router;
   const overview = overviewProjection();
+  const pages = pageProjection();
   const project = (state = controller.state()) => {
     const view = viewOf(controller, state);
-    return { view, overview: view.content === "overview" ? overview(state, health.steady(state)) : null };
+    return {
+      view,
+      overview: view.content === "overview" ? overview(state, health.steady(state)) : null,
+      page: pages(view.content, state, health.steady, router.location()),
+    };
   };
-  return { current: project(), changes: Stream.map(controller.changes, project) };
+  const moves = Stream.suspend(() =>
+    Stream.merge(Stream.fromEventListener(window, "popstate"), Stream.fromEventListener(window, "hashchange")),
+  );
+  const locations = Stream.map(Stream.merge(router.changes, moves), () => controller.state());
+  return { current: project(), changes: Stream.map(Stream.merge(controller.changes, locations), project) };
 });
 
 const contentChanges = Stream.unwrap(Effect.map(contentSource, (source) => source.changes));
@@ -102,16 +117,24 @@ export const operatorContentProps = Effect.gen(function* () {
   return { route, ...current };
 });
 
-const PageContent = <M>(h: Html.H<M>, view: OperatorView, overview: OverviewData | null) =>
-  view.content === "overview" && overview ? OverviewPage(h, { props: { overview } }) : PageIslandHost(h);
+const PageContent = <M>(h: Html.H<M>, view: OperatorView, overview: OverviewData | null, page: PageData | null) =>
+  view.content === "overview" && overview
+    ? OverviewPage(h, { props: { overview } })
+    : (page && PageView(h, page, view.content)) || PageIslandHost(h);
 
 const OperatorContentNoDeps = Html.component({
   name: "OperatorContent",
-  props: Schema.Struct({ route: OperatorRoute, view: OperatorView, overview: Schema.NullOr(OverviewData) }),
+  props: Schema.Struct({
+    route: OperatorRoute,
+    view: OperatorView,
+    overview: Schema.NullOr(OverviewData),
+    page: Schema.NullOr(PageData),
+  }),
   model: Schema.Struct({
     route: OperatorRoute,
     view: OperatorView,
     overview: Schema.NullOr(OverviewData),
+    page: Schema.NullOr(PageData),
     recovering: Schema.Boolean,
   }),
   message: ContentMessage,
@@ -122,14 +145,15 @@ const OperatorContentNoDeps = Html.component({
       route: $.props.route,
       view: $.props.view,
       overview: $.props.overview,
+      page: $.props.page,
       recovering: $.props.view.recovering,
     }).run(BootOperator.make(), CanonicalizeLocation.make()),
   update: {
     ChangedRoute: ($, { route }) =>
       $.evolve({ route }).run(ReportRoute.make({ path: routePath(route) }), CanonicalizeLocation.make()),
-    ChangedOperatorView: ($, { view, overview }) => {
+    ChangedOperatorView: ($, { view, overview, page }) => {
       const entering = view.recovering && !$.model.recovering;
-      return $.evolve({ view, overview, recovering: view.recovering }).run(
+      return $.evolve({ view, overview, page, recovering: view.recovering }).run(
         ...(entering ? [CloseForRecovery.make(), FocusRecoveryRetry.make()] : []),
         ...(!view.islandOwnsFocus && view.focusRequested ? [FocusPendingTarget.make()] : []),
         ...(view.collectionsWanted ? [LoadPageCollections.make()] : []),
@@ -145,7 +169,9 @@ const OperatorContentNoDeps = Html.component({
     Router.subscription(OperatorRoute, model.route, (route) => ContentMessage.ChangedRoute({ route })),
     Subscription.make(
       "operatorView",
-      Stream.map(contentChanges, ({ view, overview }) => ContentMessage.ChangedOperatorView({ view, overview })),
+      Stream.map(contentChanges, ({ view, overview, page }) =>
+        ContentMessage.ChangedOperatorView({ view, overview, page }),
+      ),
     ),
     Subscription.make(
       "pageWrites",
@@ -181,12 +207,12 @@ const OperatorContentNoDeps = Html.component({
             .attr("id", "app")
             .attr("inert", model.recovering ? "" : undefined)
             .class(model.recovering && "stale")
-            .children(PageContent(h, view, model.overview))
+            .children(PageContent(h, view, model.overview, model.page))
         : view.content === "denied"
           ? NoAccess(h, {})
           : view.content === "gate"
             ? Gate(h, { props: { view: model.view } })
-            : PageContent(h, view, model.overview),
+            : PageContent(h, view, model.overview, model.page),
     );
   },
 });

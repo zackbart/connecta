@@ -1,12 +1,10 @@
 import { useEffect } from "react";
 import { contractRecovering, displayRole, pageDescription, PAGE_META, type OperatorState } from "../view.js";
 import { productDescription } from "./config.js";
-import { ConnectorsPage } from "./connectors.js";
 import { SettingsPage } from "./config-page.js";
 import { EndpointsPage } from "./endpoints.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
-import { ConnectorDetailPage } from "./connector-detail.js";
 import { MemberPage } from "./member.js";
 import { ContractState } from "./contract-state.js";
 import { contractLoading } from "./components/contract-state.js";
@@ -16,7 +14,6 @@ import { ShellControls } from "./shell.js";
 import { islandOwnsFocus, visiblePages } from "./shell/operator-view.js";
 
 function RolePending({ state }: { state: OperatorState }) {
-  if (contractLoading(state) && state.page === "connections") return <ConnectorsPage state={state} />;
   return (
     <section id="rolePending" aria-busy={contractLoading(state) ? "true" : "false"}>
       <div className="page-heading">
@@ -37,8 +34,6 @@ function CurrentPage({ state }: { state: OperatorState }) {
   if (role === "member" || state.role === "member") return <MemberPage state={state} account={accountLabel()} />;
   if (role !== "maintainer") return <RolePending state={state} />;
   if (state.page === "settings") return <SettingsPage state={state} />;
-  if (state.page === "connector") return <ConnectorDetailPage state={state} />;
-  if (state.page === "connections") return <ConnectorsPage state={state} />;
   if (state.page === "endpoints") return <EndpointsPage state={state} />;
   if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;

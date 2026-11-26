@@ -155,3 +155,48 @@ test("a principal refusal has caller-specific copy and no secret fix prompt", as
   await expect(page.getByRole("button", { name: /Copy fix prompt/ })).toHaveCount(0);
   await expect(page.getByText("Its secret is set in deployment config", { exact: false })).toHaveCount(0);
 });
+
+test("each page's heading takes focus across the Overview, island pages and connector pages", async ({ page }) => {
+  await install(page, maintainer());
+  await page.goto(VISUAL_ORIGIN + "/");
+  const nav = page.getByRole("navigation", { name: "Operator pages" });
+  await expect(page.locator("#overviewHeading")).toBeVisible();
+  await nav.getByRole("link", { name: "Endpoints", exact: true }).click();
+  await expect(page.locator("#endpointsHeading")).toBeFocused();
+  await nav.getByRole("link", { name: "Overview", exact: true }).click();
+  await expect(page.locator("#overviewHeading")).toBeFocused();
+  await nav.getByRole("link", { name: "Connectors", exact: true }).click();
+  await expect(page.locator("#connectionsHeading")).toBeFocused();
+  await page.getByRole("link", { name: "GitHub", exact: true }).click();
+  await expect(page.locator("#connectorHeading")).toBeFocused();
+  await page.goBack();
+  await expect(page.locator("#connectionsHeading")).toBeFocused();
+  await nav.getByRole("link", { name: "Endpoints", exact: true }).click();
+  await expect(page.locator("#endpointsHeading")).toBeFocused();
+  await checks(page);
+});
+
+test("a matrix cell opens its tools beside it and hands focus back when it closes", async ({ page }) => {
+  await install(page, maintainer());
+  await page.goto(VISUAL_ORIGIN + "/connectors?view=matrix");
+  const chip = page.locator(".matrix-chip").first();
+  const popover = page.locator(".matrix-popover");
+  await chip.click();
+  await expect(chip).toHaveAttribute("aria-expanded", "true");
+  await expect(popover).toBeFocused();
+  await expect(popover).toHaveAttribute("data-placement", /^(below|above|inline)$/);
+  await expect(popover.locator(".matrix-popover-runs")).toContainText("Runs as");
+  await page.keyboard.press("Escape");
+  await expect(popover).toHaveCount(0);
+  await expect(chip).toBeFocused();
+  await expect(chip).toHaveAttribute("aria-expanded", "false");
+  await chip.click();
+  await expect(popover).toBeFocused();
+  await page.getByRole("heading", { name: "Connectors", exact: true, level: 1 }).click();
+  await expect(popover).toHaveCount(0);
+  await chip.click();
+  await expect(popover).toBeVisible();
+  await chip.click();
+  await expect(popover).toHaveCount(0);
+  await checks(page);
+});
