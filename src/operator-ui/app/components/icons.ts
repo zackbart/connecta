@@ -27,9 +27,24 @@ const SHAPES = {
     ["path", "M21 12a9 9 0 1 1-3-6.7L21 8"],
     ["path", "M21 3v5h-5"],
   ],
+  copy: [
+    ["rect", "9", "9", "12", "12", "2.5"],
+    ["path", "M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"],
+  ],
+  check: [["path", "M20 6 9 17l-5-5"]],
+  back: [["path", "m15 18-6-6 6-6"]],
+  plug: [
+    ["path", "M9 3v5M15 3v5"],
+    ["path", "M6 8h12v3a6 6 0 0 1-12 0z"],
+    ["path", "M12 17v4"],
+  ],
+  agent: [
+    ["rect", "4", "8", "16", "12", "3"],
+    ["path", "M12 8V4.5M9.5 13.5v1M14.5 13.5v1"],
+  ],
 } satisfies Record<string, ReadonlyArray<Shape>>;
 
-export type ShellIconName = keyof typeof SHAPES;
+export type IconName = keyof typeof SHAPES;
 
 const shape = <M>(h: Html.H<M>, item: Shape) =>
   item[0] === "path"
@@ -38,7 +53,7 @@ const shape = <M>(h: Html.H<M>, item: Shape) =>
       ? h.el("circle").attrs({ cx: item[1], cy: item[2], r: item[3] })
       : h.el("rect").attrs({ x: item[1], y: item[2], width: item[3], height: item[4], rx: item[5] });
 
-export const ShellIcon = <M>(h: Html.H<M>, name: ShellIconName, size = 16) =>
+export const Icon = <M>(h: Html.H<M>, name: IconName, size = 16) =>
   h
     .el("svg")
     .attrs({

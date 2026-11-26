@@ -4,20 +4,18 @@ import { productDescription } from "./config.js";
 import { ConnectorsPage } from "./connectors.js";
 import { SettingsPage } from "./config-page.js";
 import { EndpointsPage } from "./endpoints.js";
-import { OverviewPage } from "./overview.js";
 import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { ConnectorDetailPage } from "./connector-detail.js";
 import { MemberPage } from "./member.js";
-import { ContractState, contractLoading } from "./contract-state.js";
+import { ContractState } from "./contract-state.js";
+import { contractLoading } from "./components/contract-state.js";
 import { PageSkeleton } from "./skeletons.js";
-import { HealthProvider } from "./health.js";
 import { accountLabel, focusHandled, navHint, sessionPresumed, useOperatorState } from "./bridge.js";
 import { ShellControls } from "./shell.js";
 import { islandOwnsFocus, visiblePages } from "./shell/operator-view.js";
 
 function RolePending({ state }: { state: OperatorState }) {
-  if (contractLoading(state) && state.page === "overview") return <OverviewPage state={state} />;
   if (contractLoading(state) && state.page === "connections") return <ConnectorsPage state={state} />;
   return (
     <section id="rolePending" aria-busy={contractLoading(state) ? "true" : "false"}>
@@ -44,7 +42,7 @@ function CurrentPage({ state }: { state: OperatorState }) {
   if (state.page === "endpoints") return <EndpointsPage state={state} />;
   if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
-  return <OverviewPage state={state} />;
+  return null;
 }
 
 function useSpendFocus(state: OperatorState): void {
@@ -69,13 +67,8 @@ function useSpendFocus(state: OperatorState): void {
 export function PageIsland() {
   const state = useOperatorState();
   useSpendFocus(state);
-  return state.session === "ready" ? (
-    <HealthProvider state={state}>
-      <CurrentPage state={state} />
-    </HealthProvider>
-  ) : (
-    <RolePending state={state} />
-  );
+  if (!islandOwnsFocus(state, sessionPresumed())) return null;
+  return state.session === "ready" ? <CurrentPage state={state} /> : <RolePending state={state} />;
 }
 
 export function ControlsIsland() {

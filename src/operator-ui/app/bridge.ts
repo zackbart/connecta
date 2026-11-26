@@ -1,11 +1,13 @@
 import { useSyncExternalStore } from "react";
 import type { Effect } from "effect";
+import type { SteadyHealth } from "../health.js";
 import type { OperatorPage, OperatorState, PendingConfirm } from "../view.js";
 import type { CredentialBody, OAuthStartMode, OperatorControllerShape } from "./services/controller.js";
 import type { IslandRequest } from "./shell/island-request.js";
 
 export interface IslandHost {
   readonly controller: OperatorControllerShape;
+  readonly steadyHealth: (state: OperatorState) => SteadyHealth;
   readonly run: (effect: Effect.Effect<void>) => void;
   readonly request: (request: IslandRequest) => void;
   readonly navigate: (href: string, replace: boolean) => void;
@@ -141,6 +143,10 @@ export function rotateAgentToken(name: string): void {
 
 export const revokeAgentToken = (name: string) => run((c) => c.revokeAgentToken(name));
 export const confirmTokenAction = () => current().request({ _tag: "ConfirmTokenAction" });
+
+export function steadyHealthOf(state: OperatorState): SteadyHealth {
+  return current().steadyHealth(state);
+}
 
 export function accountLabel(): string | null {
   return current().controller.accountLabel();

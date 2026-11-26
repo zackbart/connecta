@@ -1,7 +1,7 @@
 import { Mount, UiSchema } from "@effect/ui";
 import { Html } from "@effect/ui/html";
 import { Effect, Queue, Schema, Stream } from "effect";
-import { ShellIcon } from "./icons.js";
+import { Icon } from "../components/icons.js";
 
 const TrackOutside = Mount.makeStream(
   "TrackOutside",
@@ -87,7 +87,7 @@ export const AccountMenu = Html.component({
             h.span
               .class("account-avatar")
               .attr("aria-hidden", "true")
-              .children(initial ? initial : ShellIcon(h, "user", 15)),
+              .children(initial ? initial : Icon(h, "user", 15)),
           ),
         h.div
           .attr("id", panel)
@@ -102,7 +102,7 @@ export const AccountMenu = Html.component({
                 .class("btn", "quiet", "session-action")
                 .on("click", AccountMenuMessage.ClickedSessionAction())
                 .children(
-                  ShellIcon(h, action === "signOut" ? "logout" : "key", 15),
+                  Icon(h, action === "signOut" ? "logout" : "key", 15),
                   action === "signOut" ? "Sign out" : "Change token",
                 ),
             ),

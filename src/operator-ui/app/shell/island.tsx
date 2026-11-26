@@ -1,11 +1,13 @@
-import { Router } from "@effect/ui";
-import { Context, Effect, Layer, Queue, Schema, Stream } from "effect";
-import { Mount } from "@effect/ui";
+import { Mount, Router } from "@effect/ui";
+import { Context, Effect, Layer, Predicate, Queue, Schema, Stream } from "effect";
 import { createRoot } from "react-dom/client";
+import type { ConnectionMap } from "../../connection-map.js";
 import { installIslandHost, locationChanged } from "../bridge.js";
+import { ConnectionMapView } from "../connection-map.js";
 import { runNow, starterIn } from "../run.js";
 import { ControlsIsland, PageIsland } from "../pages.js";
 import { OperatorController } from "../services/controller.js";
+import { ConnectorHealth } from "../services/health.js";
 import type { IslandRequest } from "./island-request.js";
 
 export class IslandRequests extends Context.Service<
@@ -25,43 +27,76 @@ export class IslandRequests extends Context.Service<
 
 export const islandRequests = Stream.unwrap(IslandRequests.useSync((islands) => islands.requests));
 
+let hosts = 0;
+
+const installHost = Effect.gen(function* () {
+  const controller = yield* OperatorController;
+  const health = yield* ConnectorHealth;
+  const islands = yield* IslandRequests;
+  const router = yield* Router.Router;
+  const start = starterIn(yield* Effect.context<never>());
+  installIslandHost({
+    controller,
+    steadyHealth: health.steady,
+    run: (effect) => void start(effect),
+    request: islands.offer,
+    navigate: (href, replace) => void runNow(router.navigate(href, { replace })),
+    location: () => router.location(),
+  });
+  yield* Stream.runForEach(router.changes, () => Effect.sync(locationChanged)).pipe(Effect.forkScoped);
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      if (hosts++ > 0) return;
+      window.addEventListener("popstate", locationChanged);
+      window.addEventListener("hashchange", locationChanged);
+    }),
+    () =>
+      Effect.sync(() => {
+        if (--hosts > 0) return;
+        window.removeEventListener("popstate", locationChanged);
+        window.removeEventListener("hashchange", locationChanged);
+      }),
+  );
+});
+
 const ISLANDS = { page: PageIsland, controls: ControlsIsland } as const;
 
 export const HostIsland = Mount.makeStream(
   "HostIsland",
   { args: { island: Schema.Literals(["page", "controls"]) } },
   (node: HTMLElement, { island }) =>
-    Stream.callback<never, never, OperatorController | IslandRequests | Router.Router>(() =>
+    Stream.callback<never, never, OperatorController | ConnectorHealth | IslandRequests | Router.Router>(() =>
       Effect.gen(function* () {
-        const controller = yield* OperatorController;
-        const islands = yield* IslandRequests;
-        const router = yield* Router.Router;
-        const services = yield* Effect.context<never>();
-        const start = starterIn(services);
-        installIslandHost({
-          controller,
-          run: (effect) => void start(effect),
-          request: islands.offer,
-          navigate: (href, replace) => void runNow(router.navigate(href, { replace })),
-          location: () => router.location(),
-        });
-        yield* Stream.runForEach(router.changes, () => Effect.sync(locationChanged)).pipe(Effect.forkScoped);
+        yield* installHost;
+        const View = ISLANDS[island];
         yield* Effect.acquireRelease(
           Effect.sync(() => {
-            window.addEventListener("popstate", locationChanged);
-            window.addEventListener("hashchange", locationChanged);
             const root = createRoot(node);
-            const View = ISLANDS[island];
             root.render(<View />);
             return root;
           }),
-          (root) =>
-            Effect.sync(() => {
-              window.removeEventListener("popstate", locationChanged);
-              window.removeEventListener("hashchange", locationChanged);
-              root.unmount();
-            }),
+          (root) => Effect.sync(() => root.unmount()),
         );
+      }),
+    ),
+);
+
+const MapArg = Schema.declare<ConnectionMap>((input): input is ConnectionMap => Predicate.isObject(input));
+
+export const HostConnectionMap = Mount.makeStream(
+  "HostConnectionMap",
+  { args: { map: MapArg } },
+  (node: HTMLElement, _args, changes) =>
+    Stream.callback<never, never, OperatorController | ConnectorHealth | IslandRequests | Router.Router>(() =>
+      Effect.gen(function* () {
+        yield* installHost;
+        const root = yield* Effect.acquireRelease(
+          Effect.sync(() => createRoot(node)),
+          (root) => Effect.sync(() => root.unmount()),
+        );
+        yield* Stream.runForEach(changes, ({ map }) =>
+          Effect.sync(() => root.render(<ConnectionMapView map={map} />)),
+        ).pipe(Effect.forkScoped);
       }),
     ),
 );

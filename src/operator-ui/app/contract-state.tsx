@@ -1,17 +1,7 @@
-import type { OperatorUiContractV2 } from "../contract.js";
 import { useEffect } from "react";
 import { contractRecovering, type OperatorState } from "../view.js";
 import { LoadFailure, StateBlock } from "./parts.js";
 import { retryLoad } from "./bridge.js";
-
-/**
- * The maintainer contract once `/ui/data` has answered too. Maintainer pages
- * render from it and show `ContractState` while it is null, so a failed
- * `/ui/data` read shows its own retry rather than half a page.
- */
-export function maintainerContract(state: OperatorState): OperatorUiContractV2 | null {
-  return state.contract?.role === "maintainer" && state.data ? state.contract : null;
-}
 
 /**
  * Close a page-owned dialog, drawer or popover the moment the page's contract
@@ -24,10 +14,6 @@ export function useCloseOnRecovery(state: OperatorState, close: () => void): voi
     // Only the transition matters; `close` is a fresh closure every render.
     if (recovering) close();
   }, [recovering]);
-}
-
-export function contractLoading(state: OperatorState): boolean {
-  return !contractRecovering(state) && !state.loadFailure && !state.recoveryPending && state.contractPhase !== "error";
 }
 
 export function ContractState({ state }: { state: OperatorState }) {

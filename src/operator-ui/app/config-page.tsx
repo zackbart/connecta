@@ -1,7 +1,8 @@
 import type { OperatorState } from "../view.js";
 import { configSummary } from "../config-summary.js";
 import { accessChips } from "../endpoints.js";
-import { ContractState, maintainerContract } from "./contract-state.js";
+import { ContractState } from "./contract-state.js";
+import { maintainerContract } from "./components/contract-state.js";
 import {
   DefaultLimits,
   FactChips,

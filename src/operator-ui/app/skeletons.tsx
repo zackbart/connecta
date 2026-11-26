@@ -69,60 +69,6 @@ export function ConnectorsSkeleton() {
   );
 }
 
-function StatSkeleton({ label }: { label: string }) {
-  return (
-    <Card className="overview-stat" aria-label={label}>
-      <div className="stat-head">
-        <h2 className="stat-label">{label}</h2>
-      </div>
-      <p className="stat-number">
-        <Skeleton width="sm" />
-      </p>
-      <div className="stat-bar" aria-hidden="true">
-        <span className="skeleton" />
-      </div>
-      <ul className="stat-legend" aria-hidden="true">
-        <li>
-          <Skeleton width="md" />
-        </li>
-      </ul>
-    </Card>
-  );
-}
-
-export function PendingLine({ children }: { children: ReactNode }) {
-  return (
-    <div className="attention-pending" role="status">
-      <span className="attention-icon" aria-hidden="true">
-        <span className="spinner" />
-      </span>
-      <h3>{children}</h3>
-    </div>
-  );
-}
-
-export function OverviewSkeleton() {
-  return (
-    <div aria-busy="true">
-      <LoadingNote />
-      <div className="overview-stats">
-        <StatSkeleton label="Connectors" />
-        <StatSkeleton label="Endpoints" />
-        <StatSkeleton label="People · Agents" />
-      </div>
-      <Card className="overview-section overview-attention" title="Needs attention" titleId="attentionHeading">
-        <div className="attention-pending" aria-hidden="true">
-          <span className="attention-icon skeleton" />
-          <Skeleton width="lg" />
-        </div>
-      </Card>
-      <Card className="overview-section overview-map" title="Who reaches what" titleId="mapHeading">
-        <div className="skeleton skeleton-map" aria-hidden="true" />
-      </Card>
-    </div>
-  );
-}
-
 export function PageSkeleton() {
   return (
     <Card className="skeleton-page" aria-busy="true">
