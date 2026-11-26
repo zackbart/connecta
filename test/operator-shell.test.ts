@@ -2,6 +2,7 @@ import { Component } from "@effect/ui";
 import { Tabs } from "@effect/ui-kit";
 import { HtmlLocator } from "@effect/ui/html/testing";
 import { Locator, Scene, Story } from "@effect/ui/testing";
+import { Dialog } from "@effect/ui-kit";
 import { Context, Effect, Fiber, Layer, Option, Stream } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
@@ -10,7 +11,12 @@ import { steadyHealth } from "../src/operator-ui/health.js";
 import type { UiData } from "../src/operator-ui/model.js";
 import { initialState, type OperatorState } from "../src/operator-ui/view.js";
 import { projectView, type OperatorView } from "../src/operator-ui/app/shell/operator-view.js";
-import type { CandidateHandle, OperatorControllerShape } from "../src/operator-ui/app/services/controller.js";
+import type {
+  CandidateHandle,
+  IssuedTokenHandle,
+  OperatorControllerShape,
+} from "../src/operator-ui/app/services/controller.js";
+import type { AgentRow } from "../src/operator-ui/agents.js";
 
 vi.mock("../src/operator-ui/app/config.js", () => ({
   auth: { kind: "bearer" },
@@ -33,8 +39,13 @@ const { OperatorNav } = await import("../src/operator-ui/app/shell/nav.js");
 const { OperatorRoute } = await import("../src/operator-ui/app/shell/routes.js");
 const { OverviewPageNoDeps, overviewProjection } = await import("../src/operator-ui/app/pages/overview.js");
 const { CopyButton, CopyText, WaitBeforeReset } = await import("../src/operator-ui/app/components/copy-button.js");
-const { HostConnectionMap, HostConnectorConfig } = await import("../src/operator-ui/app/shell/island.js");
+const { HostConnectorConfig } = await import("../src/operator-ui/app/shell/island.js");
 const { ConnectorHealth } = await import("../src/operator-ui/app/services/health.js");
+const endpointsPage = await import("../src/operator-ui/app/pages/endpoints.js");
+const tokensPage = await import("../src/operator-ui/app/pages/tokens.js");
+const { ConnectionMapViewNoDeps } = await import("../src/operator-ui/app/components/connection-map.js");
+const { DrawMapNodes } = await import("../src/operator-ui/app/components/map-nodes.js");
+const { OperatorController } = await import("../src/operator-ui/app/services/controller.js");
 const { OperatorStore } = await import("../src/operator-ui/app/services/store.js");
 const connectorCommands = await import("../src/operator-ui/app/pages/connector-commands.js");
 const { pageProjection } = await import("../src/operator-ui/app/pages/page-data.js");
@@ -179,9 +190,6 @@ describe("operator content shell", () => {
         }).expectExact(commands.StartOAuth);
         expect(s.pending[0]!.command.args).toEqual({ connector: "crm", mode: "continue", prepared });
         s.resolve(commands.StartOAuth, Component.noop);
-        s.send({ _tag: "RequestedPageWrite", request: { _tag: "ConfirmTokenAction" } })
-          .expectExact(commands.ConfirmTokenAction)
-          .resolve(commands.ConfirmTokenAction, Component.noop);
         s.send({
           _tag: "RequestedPageWrite",
           request: { _tag: "SaveCredential", connector: "crm", candidate, verify: "test" },
@@ -213,10 +221,13 @@ describe("overview page", () => {
         const shell = { navHint: { activity: false }, account: null, sessionPresumed: false, clerkSignedIn: false };
         const overview = projectView(state, shell);
         expect([overview.content, overview.islandOwnsFocus]).toEqual(["overview", false]);
-        expect(projectView({ ...state, page: "endpoints" }, shell)).toMatchObject({
+        expect(projectView({ ...state, page: "connections" }, shell)).toMatchObject({
           content: "island",
           islandOwnsFocus: true,
         });
+        for (const page of ["endpoints", "tokens"] as const) {
+          expect(projectView({ ...state, page }, shell)).toMatchObject({ content: page, islandOwnsFocus: false });
+        }
         const pending = {
           ...state,
           session: "loading" as const,
@@ -305,8 +316,7 @@ describe("overview page", () => {
         const overview = overviewOf(maintainerState());
         if (overview._tag !== "Ready") throw new Error("expected a ready overview");
         const s = yield* Scene.make(OverviewPageNoDeps, { overview });
-        s.expectMount(HostConnectionMap({ map: overview.map }))
-          .expect(HtmlLocator.role("heading", { name: "Overview" }))
+        s.expect(HtmlLocator.role("heading", { name: "Overview" }))
           .toExist()
           .expect(Locator.text("4 need attention"))
           .toExist()
@@ -374,7 +384,14 @@ const pageOf = (
   hash = "",
   project = pageProjection(),
   steady = steadyHealth(state, null),
-) => project(projectView(state, shellFacts).content, state, () => steady, locationOf(url, hash));
+) =>
+  project(
+    projectView(state, shellFacts).content,
+    state,
+    () => steady,
+    locationOf(url, hash),
+    () => null,
+  );
 
 const listData = (state: OperatorState, url = "/connectors") => {
   const page = pageOf(state, url);
@@ -444,7 +461,7 @@ describe("connector pages", () => {
     expect(detailData(state, "slack", "#nope").tab).toBe("tools");
     const handoff = pageOf({ ...state, page: "connector" }, "/connectors/slack?h=signed", "#connection");
     expect(handoff?._tag === "Connector" && handoff.data.auth?.handoff).toBe("signed");
-    expect(pageOf({ ...state, page: "endpoints" }, "/endpoints")).toBeNull();
+    expect(pageOf({ ...state, page: "settings" }, "/settings")).toBeNull();
   });
 
   it("filters the list, switches to the matrix, refreshes and follows a connector through the controller", () =>
@@ -608,6 +625,180 @@ describe("connector pages", () => {
     ));
 });
 
+describe("connection map", () => {
+  const overview = overviewOf(maintainerState());
+  if (overview._tag !== "Ready") throw new Error("expected a ready overview");
+  const { map } = overview;
+  const callers = map.nodes.filter((node) => node.column === 0);
+
+  it("lights what a hovered or focused node reaches, moves by arrow key and follows a node's link", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Story.make(ConnectionMapViewNoDeps, { map });
+        s.send({ _tag: "HoveredMapNode", id: callers[0]!.id });
+        expect(s.model.hovered).toBe(callers[0]!.id);
+        s.send({ _tag: "HoveredMapNode", id: null }).send({ _tag: "FocusedMapNode", id: callers[0]!.id });
+        expect(s.model).toMatchObject({ focused: callers[0]!.id, current: callers[0]!.id, moveTo: null });
+        s.send({ _tag: "PressedMapKey", key: "ArrowDown" });
+        expect(s.model).toMatchObject({ current: callers[1]!.id, moveTo: callers[1]!.id });
+        s.send({ _tag: "FocusedMapNode", id: callers[1]!.id });
+        expect(s.model.moveTo).toBeNull();
+        s.send({ _tag: "FocusedMapNode", id: null });
+        expect(s.model).toMatchObject({ focused: null, current: callers[1]!.id });
+        s.send({ _tag: "ClickedLink", href: "/endpoints#pool:team" })
+          .expectExact(commands.NavigateToPage.make({ page: "endpoints", href: "/endpoints#pool:team" }))
+          .resolve(commands.NavigateToPage, Component.noop);
+      }),
+    ));
+
+  it("draws its nodes through a mount with the lit set and one tab stop, and its edges and list natively", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Scene.make(ConnectionMapViewNoDeps, { map });
+        s.expectMount(DrawMapNodes({ nodes: map.nodes, lit: null, tabStop: map.nodes[0]!.id, moveTo: null }))
+          .expect(HtmlLocator.role("group", { name: /^Connection map/ }))
+          .toExist()
+          .expect(HtmlLocator.role("list", { name: "Connections by endpoint" }))
+          .toExist()
+          .expect(HtmlLocator.role("list", { name: "Map legend" }))
+          .toHaveText(/Healthy.*Write/);
+      }),
+    ));
+});
+
+const agentRow = (patch: Partial<AgentRow> = {}): AgentRow => ({
+  name: "triage",
+  pools: ["team"],
+  credentialTypes: ["access_token"],
+  slot: { name: "triage", state: "issued", issuedAt: "2026-10-15T12:00:00.000Z", revision: "r1" },
+  live: true,
+  blocked: null,
+  lastSeenAt: null,
+  actions: ["rotate", "revoke"],
+  ...patch,
+});
+
+const tokensData = (patch: Partial<import("../src/operator-ui/app/pages/tokens.js").TokensData> = {}) => ({
+  available: true,
+  recovering: false,
+  unavailable: "",
+  rows: [agentRow()],
+  phase: "ready" as const,
+  busy: false,
+  notice: null,
+  confirm: null,
+  issued: null,
+  ...patch,
+});
+
+describe("endpoints page", () => {
+  const { endpointsProjection } = endpointsPage;
+
+  it("projects the contract state or ready rows, reusing one projection until its inputs change", () => {
+    const projectRows = endpointsProjection();
+    const state = maintainerState({ page: "endpoints" });
+    const steady = steadyHealth(state, null);
+    const ready = projectRows(state, steady);
+    expect(ready._tag).toBe("Ready");
+    if (ready._tag !== "Ready") return;
+    expect(ready.rows.map((row) => row.key)).toContain("default");
+    expect(projectRows({ ...state, tokenBusy: true }, steady)).toBe(ready);
+    expect(projectRows({ ...state, contract: null, data: null, contractPhase: "loading" }, steady)._tag).toBe(
+      "Contract",
+    );
+  });
+
+  it("opens rows, follows a linked endpoint, and closes the setup drawer when recovery starts", () =>
+    story(
+      Effect.gen(function* () {
+        const data = endpointsProjection()(
+          maintainerState({ page: "endpoints" }),
+          steadyHealth(maintainerState(), null),
+        );
+        const s = yield* Story.make(endpointsPage.EndpointsPageNoDeps, { data, recovering: false });
+        expect(s.subscriptions).toEqual(["linkedEndpoint"]);
+        s.send({ _tag: "ClickedEndpointToggle", key: "default" });
+        expect(s.model.open).toEqual(["default"]);
+        s.send({ _tag: "ClickedEndpointToggle", key: "default" });
+        expect(s.model.open).toEqual([]);
+        s.send({ _tag: "ChangedLocationHash", hash: "#pool:team" });
+        expect(s.model).toMatchObject({ open: ["pool:team"], linked: "pool:team" });
+        s.send({ _tag: "ChangedLocationHash", hash: "#tools" });
+        expect(s.model).toMatchObject({ open: ["pool:team"], linked: null });
+        s.send({ _tag: "ClickedShowMoreAccess", key: "default" });
+        expect(s.model.expanded).toEqual(["default"]);
+        const target = { label: "team", url: "https://deployment.example/mcp", name: "production" };
+        s.send({ _tag: "ClickedSetup", target }).send({ _tag: "PickedClient", client: "codex" });
+        expect(s.model).toMatchObject({ setup: target, client: "codex" });
+        s.props({ data, recovering: true });
+        expect(s.subscriptions).toEqual(["linkedEndpoint", "recovery"]);
+        s.subscription("recovery", { _tag: "StartedRecovery" });
+        expect(s.model.setup).toBeNull();
+        s.send({ _tag: "ClickedRetryLoad" })
+          .expectExact(endpointsPage.RetryEndpointsLoad)
+          .resolve(endpointsPage.RetryEndpointsLoad, Component.noop);
+      }),
+    ));
+});
+
+describe("tokens page", () => {
+  it("runs each token request as its own Command; asking and cancelling stay in the row", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Story.make(tokensPage.TokensPageNoDeps, { data: tokensData() });
+        s.send({ _tag: "PressedIssueToken", name: "triage" }).expectExact(
+          tokensPage.IssueAgentToken.make({ name: "triage" }),
+        );
+        s.resolve(tokensPage.IssueAgentToken, Component.noop);
+        s.send({ _tag: "ClickedConfirm" })
+          .expectExact(tokensPage.ConfirmTokenAction)
+          .resolve(tokensPage.ConfirmTokenAction, Component.noop);
+        s.send({ _tag: "ClickedCancel", name: "triage", action: "revoke" }).expectExact(
+          tokensPage.CancelTokenAction.make({ name: "triage", action: "revoke" }),
+        );
+        s.resolve(tokensPage.CancelTokenAction, Component.noop);
+        s.send({ _tag: "ClickedRefresh" })
+          .expectExact(tokensPage.LoadAccessTokens)
+          .resolve(tokensPage.LoadAccessTokens, Component.noop);
+      }),
+    ));
+
+  it("asks in the row with each trigger's own mount, and confirms from the question", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Scene.make(tokensPage.TokensPageNoDeps, {
+          data: tokensData({ confirm: { name: "triage", action: "revoke" } }),
+        });
+        s.expectMount(tokensPage.AskTokenQuestion({ name: "triage", action: "rotate" }))
+          .expectMount(tokensPage.AskTokenQuestion({ name: "triage", action: "revoke" }))
+          .expect(HtmlLocator.role("group", { name: /^Revoke triage's token\?/ }))
+          .toExist()
+          .click(HtmlLocator.role("button", { name: /^Revoke$/ }))
+          .expectExact(tokensPage.ConfirmTokenAction)
+          .resolve(tokensPage.ConfirmTokenAction, Component.noop)
+          .click(HtmlLocator.role("button", { name: "Cancel" }))
+          .expectExact(tokensPage.CancelTokenAction.make({ name: "triage", action: "revoke" }))
+          .resolve(tokensPage.CancelTokenAction, Component.noop);
+      }),
+    ));
+
+  it("offers Retry only while the shell's banner doesn't own it", () =>
+    story(
+      Effect.gen(function* () {
+        const failed = yield* Scene.make(tokensPage.TokensPageNoDeps, { data: tokensData({ phase: "error" }) });
+        failed
+          .click(HtmlLocator.role("button", { name: "Retry" }))
+          .expectExact(tokensPage.LoadAccessTokens)
+          .resolve(tokensPage.LoadAccessTokens, Component.noop);
+        const recovering = yield* Scene.make(tokensPage.TokensPageNoDeps, {
+          data: tokensData({ phase: "error", recovering: true }),
+        });
+        recovering.expect(HtmlLocator.role("button", { name: "Retry" })).toBeAbsent();
+        recovering.expect(HtmlLocator.role("button", { name: "Refresh" })).toBeAbsent();
+      }),
+    ));
+});
+
 describe("secrets never enter Effect UI state", () => {
   const ISSUED = "issued-agent-secret";
   const CANDIDATE = "candidate-credential-secret";
@@ -659,7 +850,6 @@ describe("secrets never enter Effect UI state", () => {
               return handle;
             },
           } as unknown as OperatorControllerShape,
-          steadyHealth: () => ({ generation: 0, rows: {} }),
           run: () => {},
           request: (request) => void requests.push(request),
           navigate: () => {},
@@ -790,6 +980,107 @@ describe("secrets never enter Effect UI state", () => {
         expect(serialized(emitted)).not.toContain(CANDIDATE);
       }),
     ));
+
+  const HANDLE = "issued-1" as IssuedTokenHandle;
+  const controllerHolding = (secret: string | null) =>
+    ({
+      issuedTokenHandle: () => (secret ? HANDLE : null),
+      issuedToken: (handle: IssuedTokenHandle) => (secret && handle === HANDLE ? secret : null),
+    }) as unknown as OperatorControllerShape;
+
+  it("passes an issued agent token to the tokens page, its dialog and its copy button only as a handle", () =>
+    story(
+      Effect.gen(function* () {
+        const shell = { navHint: { activity: false }, account: null, sessionPresumed: false, clerkSignedIn: false };
+        const project = tokensPage.tokensProjection();
+        for (const action of ["issue", "rotate"] as const) {
+          const state = maintainerState({
+            page: "tokens",
+            tokenPhase: "ready",
+            createdToken: `${ISSUED}-${action}`,
+            createdTokenFor: "triage",
+            tokenNotice: { message: `Token ${action === "issue" ? "issued" : "rotated"} for triage.`, tone: "info" },
+          });
+          const data = project(state, HANDLE);
+          expect(data.issued).toEqual({ handle: HANDLE, name: "triage" });
+          expect(serialized(data)).not.toContain(ISSUED);
+          const content = yield* contentStory();
+          content.send({
+            _tag: "ChangedOperatorView",
+            view: projectView(state, shell),
+            overview: null,
+            page: { _tag: "Tokens", data },
+          });
+          expect(content.model.page?._tag).toBe("Tokens");
+          const page = yield* Story.make(tokensPage.TokensPageNoDeps, { data });
+          page.send({ _tag: "PressedIssueToken", name: "triage" });
+          expect(serialized(content.model, content.pending, page.model, page.pending)).not.toContain(ISSUED);
+          page.resolve(tokensPage.IssueAgentToken, Component.noop);
+        }
+      }),
+    ));
+
+  it('shows, copies and dismisses an issued token by handle, by Escape or by "I stored it"', () =>
+    story(
+      Effect.gen(function* () {
+        const issued = { handle: HANDLE, name: "triage" };
+        const copy = yield* Story.make(tokensPage.IssuedTokenCopy, {
+          handle: HANDLE,
+          label: "Copy token",
+          className: "btn primary",
+        });
+        copy.send({ _tag: "ClickedCopy" }).expectExact(tokensPage.CopyIssuedToken.make({ handle: HANDLE }));
+        copy.resolve(tokensPage.CopyIssuedToken, { _tag: "SucceededCopyText" }).expectExact(WaitBeforeReset);
+        expect(copy.model.status).toBe("copied");
+        expect(serialized(copy.model, copy.pending)).not.toContain(ISSUED);
+        copy.resolve(WaitBeforeReset, { _tag: "CompletedWaitBeforeReset" });
+
+        const escaped = yield* Scene.make(tokensPage.IssuedTokenDialogNoDeps, { issued });
+        escaped
+          .expectMount(tokensPage.ShowIssuedToken({ handle: HANDLE }))
+          .childEmit(Dialog, "issuedToken", { _tag: "RequestedClose", reason: "escape-key" })
+          .expectExact(tokensPage.DismissIssuedToken)
+          .resolve(tokensPage.DismissIssuedToken, Component.noop);
+        expect(serialized(escaped.current.props, escaped.current.pending, escaped.root)).not.toContain(ISSUED);
+
+        const stored = yield* Story.make(tokensPage.IssuedTokenDialogNoDeps, { issued });
+        stored
+          .send({ _tag: "RequestedCloseIssuedToken" })
+          .expectExact(tokensPage.DismissIssuedToken)
+          .resolve(tokensPage.DismissIssuedToken, Component.noop);
+        stored.props({ issued: null });
+        stored
+          .send({ _tag: "ClosedIssuedToken" })
+          .expectExact(tokensPage.FocusAfterIssuedToken.make({ name: "triage" }))
+          .resolve(tokensPage.FocusAfterIssuedToken, Component.noop);
+        stored.send({ _tag: "ClosedIssuedToken" }).expectNone();
+        expect(serialized(stored.model, stored.pending)).not.toContain(ISSUED);
+      }),
+    ));
+
+  it("reads the issued token from the controller only inside the copy Command, and refuses a stale handle", async () => {
+    const written: string[] = [];
+    vi.stubGlobal("navigator", { clipboard: { writeText: async (value: string) => void written.push(value) } });
+    try {
+      const copyWith = (secret: string | null, handle: IssuedTokenHandle) =>
+        Effect.runPromise(
+          Effect.provide(
+            tokensPage.CopyIssuedToken.make({ handle }).effect,
+            Layer.provide(
+              tokensPage.CopyIssuedToken.layer,
+              Layer.succeed(OperatorController, controllerHolding(secret)),
+            ),
+          ),
+        );
+      expect(await copyWith(ISSUED, HANDLE)).toEqual({ _tag: "SucceededCopyText" });
+      expect(written).toEqual([ISSUED]);
+      expect(await copyWith(ISSUED, "issued-2" as IssuedTokenHandle)).toEqual({ _tag: "FailedCopyText" });
+      expect(await copyWith(null, HANDLE)).toEqual({ _tag: "FailedCopyText" });
+      expect(written).toEqual([ISSUED]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 
   it("keeps the typed bearer token in the field: the gate has no Model and no message that carries it", () =>
     story(

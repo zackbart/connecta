@@ -33,6 +33,10 @@ const SHAPES = {
   ],
   check: [["path", "M20 6 9 17l-5-5"]],
   back: [["path", "m15 18-6-6 6-6"]],
+  chevron: [["path", "m9 18 6-6-6-6"]],
+  close: [["path", "M18 6 6 18M6 6l12 12"]],
+  pencil: [["path", "M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"]],
+  terminal: [["path", "m5 8 4 4-4 4M12 17h7"]],
   plug: [
     ["path", "M9 3v5M15 3v5"],
     ["path", "M6 8h12v3a6 6 0 0 1-12 0z"],
@@ -42,7 +46,6 @@ const SHAPES = {
     ["rect", "4", "8", "16", "12", "3"],
     ["path", "M12 8V4.5M9.5 13.5v1M14.5 13.5v1"],
   ],
-  close: [["path", "M18 6 6 18M6 6l12 12"]],
   activity: [["path", "M22 12h-4l-3 9L9 3l-3 9H2"]],
   shield: [["path", "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"]],
   box: [

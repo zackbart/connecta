@@ -2,12 +2,10 @@ import { Mount, Router } from "@effect/ui";
 import { Context, Effect, Layer, Predicate, Queue, Schema, Stream } from "effect";
 import { createRoot } from "react-dom/client";
 import type { ConnectorSummary } from "../../config-summary.js";
-import type { ConnectionMap } from "../../connection-map.js";
 import { installIslandHost, locationChanged, useOperatorState } from "../bridge.js";
 import { ActivityPage } from "../activity.js";
 import { BadgeRow, StatTiles } from "../config-tiles.js";
 import { Card } from "../primitives.js";
-import { ConnectionMapView } from "../connection-map.js";
 import { runNow, starterIn } from "../run.js";
 import { ControlsIsland, PageIsland } from "../pages.js";
 import { OperatorController } from "../services/controller.js";
@@ -35,13 +33,11 @@ let hosts = 0;
 
 const installHost = Effect.gen(function* () {
   const controller = yield* OperatorController;
-  const health = yield* ConnectorHealth;
   const islands = yield* IslandRequests;
   const router = yield* Router.Router;
   const start = starterIn(yield* Effect.context<never>());
   installIslandHost({
     controller,
-    steadyHealth: health.steady,
     run: (effect) => void start(effect),
     request: islands.offer,
     navigate: (href, replace) => void runNow(router.navigate(href, { replace })),
@@ -81,26 +77,6 @@ export const HostIsland = Mount.makeStream(
           }),
           (root) => Effect.sync(() => root.unmount()),
         );
-      }),
-    ),
-);
-
-const MapArg = Schema.declare<ConnectionMap>((input): input is ConnectionMap => Predicate.isObject(input));
-
-export const HostConnectionMap = Mount.makeStream(
-  "HostConnectionMap",
-  { args: { map: MapArg } },
-  (node: HTMLElement, _args, changes) =>
-    Stream.callback<never, never, OperatorController | ConnectorHealth | IslandRequests | Router.Router>(() =>
-      Effect.gen(function* () {
-        yield* installHost;
-        const root = yield* Effect.acquireRelease(
-          Effect.sync(() => createRoot(node)),
-          (root) => Effect.sync(() => root.unmount()),
-        );
-        yield* Stream.runForEach(changes, ({ map }) =>
-          Effect.sync(() => root.render(<ConnectionMapView map={map} />)),
-        ).pipe(Effect.forkScoped);
       }),
     ),
 );

@@ -189,6 +189,65 @@ test.describe("agent tokens", () => {
   });
 });
 
+test.describe("agent tokens across navigation", () => {
+  /** Holds one request until `release` runs, then answers it. */
+  async function hold(page: Page, method: string, path: string, answer: () => unknown) {
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let arrived!: () => void;
+    const entered = new Promise<void>((resolve) => (arrived = resolve));
+    const answered: string[] = [];
+    await page.route(`${VISUAL_ORIGIN}${path}`, async (route) => {
+      if (route.request().method() !== method) return route.fallback();
+      arrived();
+      await released;
+      await route.fulfill({ json: answer() });
+      answered.push(`${method} ${path}`);
+    });
+    return { entered, release, answered };
+  }
+
+  test("an issue started before leaving Tokens still completes, and the page is usable on return", async ({ page }) => {
+    await install(page, crowdedMaintainer());
+    const issued = { name: "triage", state: "issued", issuedAt: VISUAL_NOW, revision: "triageIssuedRevision" };
+    const slow = await hold(page, "POST", "/ui/access-tokens/triage", () => ({ token: SECRET, agent: issued }));
+    await page.goto(VISUAL_ORIGIN + "/tokens");
+    await page.getByRole("button", { name: "Issue triage's token", exact: true }).click();
+    await slow.entered;
+    await page.getByRole("link", { name: "Overview", exact: true }).click();
+    await expect(page.locator("#overviewHeading")).toBeFocused();
+    slow.release();
+    await expect.poll(() => slow.answered).toEqual(["POST /ui/access-tokens/triage"]);
+    await page.getByRole("link", { name: "Tokens", exact: true }).click();
+    await expect(page.locator('tr[data-agent="triage"] .badge')).toHaveText("Issued");
+    await expect(page.getByRole("button", { name: "Rotate triage's token", exact: true })).toBeEnabled();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(await page.content()).not.toContain(SECRET);
+    await noCsp(page);
+  });
+
+  test("a token list read started before leaving Tokens still settles", async ({ page }) => {
+    await install(page, crowdedMaintainer());
+    const listed = page.waitForResponse(
+      (response) => response.url().endsWith("/ui/access-tokens") && response.request().method() === "GET",
+    );
+    await page.goto(VISUAL_ORIGIN + "/tokens");
+    await listed;
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+    const slow = await hold(page, "GET", "/ui/access-tokens", () => OPERATOR_V2_SLOTS);
+    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await slow.entered;
+    await page.getByRole("link", { name: "Endpoints", exact: true }).click();
+    await expect(page.locator("#endpointsHeading")).toBeFocused();
+    slow.release();
+    await page.getByRole("link", { name: "Tokens", exact: true }).click();
+    await expect(page.locator("#tokenList")).toHaveAttribute("aria-busy", "false");
+    await expect(page.locator('tr[data-agent="triage"]')).toBeVisible();
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+    await noCsp(page);
+  });
+});
+
 test("endpoints and matrix columns are told apart by pool, each with the URL its callers use", async ({ page }) => {
   await install(page, crowdedMaintainer());
   await page.goto(VISUAL_ORIGIN + "/endpoints#pool:team");

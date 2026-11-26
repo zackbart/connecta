@@ -37,6 +37,7 @@ import {
 import {
   OperatorController,
   type CandidateHandle,
+  type IssuedTokenHandle,
   type CredentialBody,
   type OAuthStartMode,
   type PreparedOAuth,
@@ -167,6 +168,7 @@ export const operatorControllerLayer = Layer.effect(
       recoveryTimer = undefined;
       forgetSlotFence();
       heldCandidates.clear();
+      issued = null;
       store.replace({ ...resetIdentity(state(), notice), session });
     }
 
@@ -1587,6 +1589,22 @@ export const operatorControllerLayer = Layer.effect(
       return "asked";
     }
 
+    let issued: { readonly secret: string; readonly handle: IssuedTokenHandle } | null = null;
+    let issuedSequence = 0;
+
+    function issuedTokenHandle(): IssuedTokenHandle | null {
+      const secret = state().createdToken;
+      if (!secret) issued = null;
+      else if (issued?.secret !== secret)
+        issued = { secret, handle: `issued-${++issuedSequence}` as IssuedTokenHandle };
+      return issued?.handle ?? null;
+    }
+
+    function issuedToken(handle: IssuedTokenHandle): string | null {
+      const secret = state().createdToken;
+      return secret && issued?.secret === secret && issued.handle === handle ? secret : null;
+    }
+
     const revokeAgentToken = (name: string) =>
       Effect.sync(() => {
         const checked = slotCheck(name, ["revoke"]);
@@ -1654,7 +1672,8 @@ export const operatorControllerLayer = Layer.effect(
           set({ pendingFocus: null, focusIfLost: null });
       }),
       closeForRecovery: Effect.sync(() => {
-        if (state().confirming) set({ confirming: null });
+        tokenConfirmChecked = null;
+        if (state().confirming || state().tokenConfirm) set({ confirming: null, tokenConfirm: null });
       }),
       setConnectorFilter: (connectorFilter) => Effect.sync(() => set({ connectorFilter })),
       setActivitySearch: (activitySearch) => Effect.sync(() => set({ activitySearch })),
@@ -1682,7 +1701,10 @@ export const operatorControllerLayer = Layer.effect(
           if (state().tokenConfirm)
             set({ tokenConfirm: null, ...(returnFocusTo ? { pendingFocus: returnFocusTo } : {}) });
         }),
-      dismissCreatedToken: Effect.sync(() => set({ createdToken: null, createdTokenFor: null })),
+      dismissCreatedToken: Effect.sync(() => {
+        issued = null;
+        set({ createdToken: null, createdTokenFor: null });
+      }),
       loadOperatorContract,
       refreshConnector,
       stopConnectorReads,
@@ -1698,6 +1720,8 @@ export const operatorControllerLayer = Layer.effect(
       removeCredential,
       testCredential,
       prepareRotation,
+      issuedTokenHandle,
+      issuedToken,
       rotateAgentToken,
       revokeAgentToken,
       confirmTokenAction,

@@ -1,7 +1,7 @@
 import { Component, UiSchema } from "@effect/ui";
 import { Html } from "@effect/ui/html";
 import { Predicate, Schema } from "effect";
-import { connectionMap, type ConnectionMap, type MapNode } from "../../connection-map.js";
+import { connectionMap, type MapNode } from "../../connection-map.js";
 import type { OperatorUiContractV2 } from "../../contract.js";
 import { fixPrompt } from "../../fix-prompts.js";
 import { shownHealth, type SteadyHealth } from "../../health.js";
@@ -14,12 +14,12 @@ import {
   contractStateView,
   maintainerContract,
 } from "../components/contract-state.js";
+import { ConnectionMapView, MapData } from "../components/connection-map.js";
 import { CopyButton } from "../components/copy-button.js";
 import { Icon } from "../components/icons.js";
 import { Card, MemberMark, PageLink, Pill } from "../components/parts.js";
 import { OverviewSkeleton, PendingLine, Skeleton } from "../components/skeletons.js";
 import { NavigateToPage, RetryLoad } from "../shell/commands.js";
-import { HostConnectionMap } from "../shell/island.js";
 
 const opaque = <A>(name: string) =>
   Schema.declare<A>((input): input is A => Predicate.isObject(input), { identifier: name });
@@ -31,7 +31,7 @@ export const OverviewData = UiSchema.TaggedEnum({
     headline: opaque<OverviewHeadline>("OverviewHeadline"),
     items: opaque<ReadonlyArray<AttentionItem>>("AttentionItems"),
     callers: opaque<ReadonlyArray<MapNode>>("MapCallers"),
-    map: opaque<ConnectionMap>("ConnectionMap"),
+    map: MapData,
   },
 });
 export type OverviewData = typeof OverviewData.Type;
@@ -329,7 +329,7 @@ export const OverviewPageNoDeps = Html.component({
             className: "overview-section overview-map",
             title: "Who reaches what",
             titleId: "mapHeading",
-            children: [h.div.class("island").onMount(HostConnectionMap({ map }))],
+            children: [ConnectionMapView(h, { props: { map } })],
           }),
         ],
       }),

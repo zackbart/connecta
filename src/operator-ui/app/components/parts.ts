@@ -242,3 +242,35 @@ export const SegmentedControl = <M, T extends string>(
           ),
       ),
     );
+
+export const MemberChip = <M>(
+  h: Html.H<M>,
+  chip: AccessChip,
+  options: {
+    readonly muted?: boolean;
+    readonly link?: { readonly href: string; readonly follow: (href: string) => M } | null;
+  } = {},
+) => {
+  const body = [
+    MemberMark(h, chip, options.muted === true),
+    chip.kind === "agent" ? h.span.class("visually-hidden").children("Agent ") : null,
+    h.span.class("access-chip-text").children(chip.text),
+  ];
+  return h.li
+    .class("access-chip", chip.kind)
+    .children(
+      options.link
+        ? PageLink(h, options.link.href, options.link.follow).class("access-chip-link").children(body)
+        : body,
+    );
+};
+
+export const Unavailable = <M>(h: Html.H<M>) => h.div.class("unavailable");
+
+export const focusableId = (...ids: ReadonlyArray<string>): string => {
+  for (const id of ids) {
+    const element = document.getElementById(id) as HTMLButtonElement | null;
+    if (element && !element.disabled) return id;
+  }
+  return ids[ids.length - 1] ?? "";
+};

@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import type { MouseEvent, ReactNode } from "react";
-import type { Notice, OperatorPage, OperatorState, Tone } from "../view.js";
-import { loadFailureCopy, pageForPath } from "../view.js";
+import type { ReactNode } from "react";
+import type { Notice, OperatorState, Tone } from "../view.js";
+import { loadFailureCopy } from "../view.js";
 import { fixPrompt, type FixPromptKind } from "../fix-prompts.js";
 import type { AccessChip } from "../endpoints.js";
 import { productName } from "./config.js";
 import { Icon } from "./icons.js";
-import { navigate, retryLoad } from "./bridge.js";
+import { retryLoad } from "./bridge.js";
 
 /** The handful of shapes every page repeats: notices, links, copy, and nothing-here. */
 
@@ -180,10 +180,6 @@ export function LoadFailure({ state }: { state: OperatorState }) {
   );
 }
 
-export function Empty({ children }: { children: ReactNode }) {
-  return <StateBlock>{children}</StateBlock>;
-}
-
 export function Unavailable({ children }: { children: ReactNode }) {
   return <div className="unavailable">{children}</div>;
 }
@@ -242,27 +238,6 @@ export function focusableId(...ids: string[]): string {
     if (element && !element.disabled) return id;
   }
   return ids[ids.length - 1] ?? "";
-}
-
-/**
- * Follow a same-origin operator link in place. Anything a browser would treat
- * as "open elsewhere" — a modifier key, a middle click — is left to the
- * browser, which is also why every such link carries a real href. The page
- * comes from the href's path unless the caller names it.
- */
-export function followLink(event: MouseEvent, href: string, page?: OperatorPage): void {
-  if (
-    event.defaultPrevented ||
-    event.button !== 0 ||
-    event.metaKey ||
-    event.ctrlKey ||
-    event.shiftKey ||
-    event.altKey
-  ) {
-    return;
-  }
-  event.preventDefault();
-  navigate(page ?? pageForPath(href.replace(/[?#].*$/, "")), href);
 }
 
 /**
@@ -336,39 +311,5 @@ export function MemberMark({ chip, muted }: { chip: Pick<AccessChip, "kind" | "i
     <span className={`avatar hue-${chip.hue}`} aria-hidden="true">
       {chip.initials}
     </span>
-  );
-}
-
-/** A person by avatar and name, or an agent by name with an agent mark. */
-export function MemberChip({
-  chip,
-  muted,
-  href,
-  children,
-}: {
-  chip: AccessChip;
-  muted?: boolean;
-  /** Makes the mark and name one link, as a map node is. */
-  href?: string | null;
-  children?: ReactNode;
-}) {
-  const body = (
-    <>
-      <MemberMark chip={chip} muted={Boolean(muted)} />
-      {chip.kind === "agent" ? <span className="visually-hidden">Agent </span> : null}
-      <span className="access-chip-text">{chip.text}</span>
-    </>
-  );
-  return (
-    <li className={`access-chip ${chip.kind}`}>
-      {href ? (
-        <a className="access-chip-link" href={href} onClick={(event) => followLink(event, href)}>
-          {body}
-        </a>
-      ) : (
-        body
-      )}
-      {children}
-    </li>
   );
 }

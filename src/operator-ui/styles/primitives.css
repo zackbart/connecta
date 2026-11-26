@@ -839,6 +839,11 @@ details[open] > .disclosure::before {
   display: contents;
 }
 
+dialog:has(> .dialog-content) {
+  height: 100% !important;
+  width: 100% !important;
+}
+
 .dialog-overlay {
   animation: fade-in 0.18s ease-out;
   backdrop-filter: blur(3px);

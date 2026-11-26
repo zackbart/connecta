@@ -1,13 +1,11 @@
 import { useSyncExternalStore } from "react";
 import type { Effect } from "effect";
-import type { SteadyHealth } from "../health.js";
 import type { OperatorPage, OperatorState, PendingConfirm } from "../view.js";
 import type { CredentialBody, OAuthStartMode, OperatorControllerShape } from "./services/controller.js";
 import type { IslandRequest } from "./shell/island-request.js";
 
 export interface IslandHost {
   readonly controller: OperatorControllerShape;
-  readonly steadyHealth: (state: OperatorState) => SteadyHealth;
   readonly run: (effect: Effect.Effect<void>) => void;
   readonly request: (request: IslandRequest) => void;
   readonly navigate: (href: string, replace: boolean) => void;
@@ -105,14 +103,11 @@ export function navigate(page: OperatorPage, href: string): void {
 export const retryLoad = () => run((c) => c.retryLoad);
 export const retryCollection = () => run((c) => c.retryCollection);
 export const loadActivity = (reset: boolean) => run((c) => c.loadActivity(reset));
-export const loadAccessTokens = () => run((c) => c.loadAccessTokens);
 export const setActivitySearch = (search: string) => run((c) => c.setActivitySearch(search));
 export const askConfirm = (id: string, action: PendingConfirm["action"]) => run((c) => c.askConfirm(id, action));
 export const cancelConfirm = (returnFocusTo: string) => run((c) => c.cancelConfirm(returnFocusTo));
 export const editCredential = (id: string | null) => run((c) => c.editCredential(id));
 export const refuseCredential = (id: string, copy: string) => run((c) => c.refuseCredential(id, copy));
-export const cancelTokenAction = (returnFocusTo?: string) => run((c) => c.cancelTokenAction(returnFocusTo));
-export const dismissCreatedToken = () => run((c) => c.dismissCreatedToken);
 export const focusHandled = () => run((c) => c.focusHandled);
 
 export function startOAuth(connector: string, mode: OAuthStartMode): void {
@@ -133,17 +128,6 @@ export function saveCredential(connector: string, body: CredentialBody, verify: 
 }
 export const removeCredential = (connector: string) => current().request({ _tag: "RemoveCredential", connector });
 export const testCredential = (connector: string) => current().request({ _tag: "TestCredential", connector });
-export function rotateAgentToken(name: string): void {
-  const active = current();
-  if (active.controller.prepareRotation(name) === "issue") active.request({ _tag: "RotateAgentToken", name });
-}
-
-export const revokeAgentToken = (name: string) => run((c) => c.revokeAgentToken(name));
-export const confirmTokenAction = () => current().request({ _tag: "ConfirmTokenAction" });
-
-export function steadyHealthOf(state: OperatorState): SteadyHealth {
-  return current().steadyHealth(state);
-}
 
 export function accountLabel(): string | null {
   return current().controller.accountLabel();

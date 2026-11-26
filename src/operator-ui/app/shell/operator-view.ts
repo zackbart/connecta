@@ -14,7 +14,16 @@ import { OperatorController, type OperatorControllerShape } from "../services/co
 
 const Page = Schema.Literals(OPERATOR_PAGES);
 
-const CONTENT_OWNERS = ["gate", "denied", "overview", "connectors", "connector", "island"] as const;
+const CONTENT_OWNERS = [
+  "gate",
+  "denied",
+  "overview",
+  "connectors",
+  "connector",
+  "endpoints",
+  "tokens",
+  "island",
+] as const;
 export type ContentOwner = (typeof CONTENT_OWNERS)[number];
 
 export const OperatorView = Schema.Struct({
@@ -57,6 +66,8 @@ const MAINTAINER_PAGES: Partial<Record<OperatorPage, ContentOwner>> = {
   overview: "overview",
   connections: "connectors",
   connector: "connector",
+  endpoints: "endpoints",
+  tokens: "tokens",
 };
 
 function contentOwner(state: OperatorState, sessionPresumed: boolean): ContentOwner {

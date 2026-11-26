@@ -8,7 +8,6 @@ import {
   BootOperator,
   CloseForRecovery,
   commandLayers,
-  ConfirmTokenAction,
   DisconnectOAuth,
   FocusPendingTarget,
   FocusRecoveryRetry,
@@ -18,7 +17,6 @@ import {
   ReportRoute,
   RetryLoad,
   CanonicalizeLocation,
-  RotateAgentToken,
   SaveCredential,
   shellCommandLayers,
   StartOAuth,
@@ -30,6 +28,7 @@ import { HostIsland, islandRequests } from "./island.js";
 import { IslandRequest } from "./island-request.js";
 import { OverviewData, OverviewPage, overviewProjection } from "../pages/overview.js";
 import { PageData, PageView, pageProjection } from "../pages/page-data.js";
+import { IssuedTokenDialog } from "../pages/tokens.js";
 import { OperatorController } from "../services/controller.js";
 import { ConnectorHealth } from "../services/health.js";
 import { OperatorView, viewOf } from "./operator-view.js";
@@ -56,8 +55,6 @@ const writeCommand = (request: IslandRequest) =>
     SaveCredential: ({ connector, candidate, verify }) => SaveCredential.make({ connector, candidate, verify }),
     RemoveCredential: ({ connector }) => RemoveCredential.make({ connector }),
     TestCredential: ({ connector }) => TestCredential.make({ connector }),
-    RotateAgentToken: ({ name }) => RotateAgentToken.make({ name }),
-    ConfirmTokenAction: () => ConfirmTokenAction.make(),
   });
 
 const PageIslandHost = <M>(h: Html.H<M>) =>
@@ -99,7 +96,7 @@ const contentSource = Effect.gen(function* () {
     return {
       view,
       overview: view.content === "overview" ? overview(state, health.steady(state)) : null,
-      page: pages(view.content, state, health.steady, router.location()),
+      page: pages(view.content, state, health.steady, router.location(), controller.issuedTokenHandle),
     };
   };
   const moves = Stream.suspend(() =>
@@ -213,6 +210,9 @@ const OperatorContentNoDeps = Html.component({
           : view.content === "gate"
             ? Gate(h, { props: { view: model.view } })
             : PageContent(h, view, model.overview, model.page),
+      ready && model.page?._tag === "Tokens"
+        ? IssuedTokenDialog(h, { props: { issued: model.page.data.issued } })
+        : null,
     );
   },
 });

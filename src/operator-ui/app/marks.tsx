@@ -11,42 +11,6 @@ import { Icon } from "./icons.js";
  */
 
 /**
- * A connector's colored initial. One connector keeps one tint everywhere. The
- * letter is drawn by CSS, so the connector's name stays the only text beside it.
- */
-export function Monogram({ id, title, size = "md" }: { id: string; title: string; size?: "sm" | "md" }) {
-  return (
-    <span
-      className={`monogram ${size} hue-${hueOf(`connector:${id}`)}`}
-      data-letter={(title.trim()[0] ?? id[0] ?? "?").toUpperCase()}
-      aria-hidden="true"
-    />
-  );
-}
-
-/** An agent's square mark at row size, where a person has a round avatar. */
-export function AgentMark() {
-  return (
-    <span className="agent-mark md" aria-hidden="true">
-      <Icon name="agent" size={12} />
-    </span>
-  );
-}
-
-/** Read tools then write tools as one bar. An empty bar is a track alone. */
-export function SplitBar({ read, write }: { read: number; write: number }) {
-  const total = read + write;
-  const readWidth = total ? (read / total) * 100 : 0;
-  return (
-    <svg className="split-bar" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-      <rect className="split-track" width="100" height="6" />
-      {read ? <rect className="split-read" width={readWidth} height="6" /> : null}
-      {write ? <rect className="split-write" x={readWidth} width={100 - readWidth} height="6" /> : null}
-    </svg>
-  );
-}
-
-/**
  * Who and what, drawn small: a connector's monogram and a caller's chip. A
  * connector is a rounded square with its first letter, a person a round
  * avatar, an agent a square agent glyph, so the three never read alike. Each

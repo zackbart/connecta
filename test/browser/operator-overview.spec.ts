@@ -200,3 +200,43 @@ test("a matrix cell opens its tools beside it and hands focus back when it close
   await expect(popover).toHaveCount(0);
   await checks(page);
 });
+
+test("the map lights a node's paths, moves focus by arrow key and follows a node's link", async ({ page }) => {
+  await install(page, maintainer());
+  await page.goto(VISUAL_ORIGIN + "/");
+  const svg = page.locator("svg.map-svg");
+  const notes = mapNode(page, "connector:notes");
+  await notes.locator(".map-box").first().hover();
+  await expect(svg).toHaveClass(/tracing/);
+  await expect(notes).toHaveClass(/lit/);
+  await expect(page.locator("#mapTrace")).toHaveText((await notes.getAttribute("aria-label"))!);
+  await page.mouse.move(0, 0);
+  await expect(svg).not.toHaveClass(/tracing/);
+  await expect(page.locator("#mapTrace")).toHaveClass(/idle/);
+
+  const stops = page.locator('[data-node][tabindex="0"]');
+  await expect(stops).toHaveCount(1);
+  const callers = await page
+    .locator("[data-node]")
+    .evaluateAll((all) =>
+      all.map((node) => node.getAttribute("data-node")!).filter((id) => /^(person|agent):/.test(id)),
+    );
+  await stops.focus();
+  await expect(mapNode(page, callers[0]!)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(mapNode(page, callers[1]!)).toBeFocused();
+  await expect(mapNode(page, callers[1]!)).toHaveAttribute("tabindex", "0");
+  await expect(stops).toHaveCount(1);
+  await page.keyboard.press("ArrowRight");
+  const endpoint = page.locator('[data-node^="endpoint:"]:focus');
+  await expect(endpoint).toHaveCount(1);
+  const href = (await endpoint.getAttribute("href"))!;
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(VISUAL_ORIGIN + href);
+  await expect(page.locator("#endpointsHeading")).toBeFocused();
+  const key = href.split("#")[1]!;
+  await expect(page.locator(`[data-endpoint="${key}"] .endpoint-toggle`)).toHaveAttribute("aria-expanded", "true");
+  await page.goBack();
+  await expect(page.locator(".map-node")).toHaveCount(17);
+  await checks(page);
+});

@@ -80,28 +80,6 @@ export class TestCredential extends Command.Service<TestCredential>()("operator/
   );
 }
 
-export class RotateAgentToken extends Command.Service<RotateAgentToken>()("operator/RotateAgentToken", {
-  args: { name: Schema.String },
-  success: Component.Noop,
-}) {
-  static readonly layer = this.toLayer(
-    OperatorController.useSync(
-      (controller) =>
-        ({ name }) =>
-          Effect.as(controller.rotateAgentToken(name), Component.noop),
-    ),
-  );
-}
-
-export class ConfirmTokenAction extends Command.Service<ConfirmTokenAction>()("operator/ConfirmTokenAction", {
-  args: {},
-  success: Component.Noop,
-}) {
-  static readonly layer = this.toLayer(
-    OperatorController.useSync((controller) => () => Effect.as(controller.confirmTokenAction, Component.noop)),
-  );
-}
-
 export class BootOperator extends Command.Service<BootOperator>()("operator/BootOperator", {
   args: {},
   success: Component.Noop,
@@ -193,8 +171,6 @@ export const commandLayers = [
   SaveCredential.layer,
   RemoveCredential.layer,
   TestCredential.layer,
-  RotateAgentToken.layer,
-  ConfirmTokenAction.layer,
   BootOperator.layer,
   SignIn.layer,
   SignOut.layer,

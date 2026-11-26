@@ -61,6 +61,9 @@ function controllerHarness(controller: OperatorControllerShape) {
     confirmTokenAction: () => run(controller.confirmTokenAction),
     cancelTokenAction: (returnFocusTo?: string) => run(controller.cancelTokenAction(returnFocusTo)),
     dismissCreatedToken: () => run(controller.dismissCreatedToken),
+    closeForRecovery: () => run(controller.closeForRecovery),
+    issuedTokenHandle: controller.issuedTokenHandle,
+    issuedToken: controller.issuedToken,
   };
 }
 
@@ -1298,7 +1301,14 @@ describe("round 5 independent review probes", () => {
       tokens: [revoked],
       unresolvedSlots: ["triage"],
     });
+    const handle = store.issuedTokenHandle()!;
+    expect(handle).not.toContain("cta_once");
+    expect(store.issuedTokenHandle()).toBe(handle);
+    expect(store.issuedToken(handle)).toBe("cta_once");
+    expect(store.issuedToken("issued-0" as typeof handle)).toBeNull();
     store.dismissCreatedToken();
+    expect(store.issuedTokenHandle()).toBeNull();
+    expect(store.issuedToken(handle)).toBeNull();
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
     await store.loadAccessTokens();
     store.routeChanged("/connections");
@@ -1334,6 +1344,12 @@ describe("token confirmations live in the row", () => {
     // Cancel sends nothing.
     store.cancelTokenAction("token-revoke-simon-ada");
     expect(store.getState()).toMatchObject({ tokenConfirm: null, pendingFocus: "token-revoke-simon-ada" });
+    // Recovery closes the question too, and its confirm then has nothing to send.
+    await store.revokeAgentToken("simon-ada");
+    await store.closeForRecovery();
+    expect(store.getState().tokenConfirm).toBeNull();
+    await store.confirmTokenAction();
+    expect(writes(fetchMock)).toEqual([]);
     // Asked again; a list read lands before the confirm: the slot moved, so nothing is sent.
     await store.rotateAgentToken("simon-ada");
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [simon] }));
