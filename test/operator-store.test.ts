@@ -1,6 +1,22 @@
+import { Effect, Layer, ManagedRuntime, Scheduler } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
 import type { UiData } from "../src/operator-ui/model.js";
+import type { OperatorPage } from "../src/operator-ui/view.js";
+import {
+  OperatorController,
+  type CredentialBody,
+  type OAuthStartMode,
+  type OperatorControllerShape,
+} from "../src/operator-ui/app/services/controller.js";
+import { operatorServicesLayer } from "../src/operator-ui/app/services/layer.js";
+import {
+  BrowserWindow,
+  ClerkClient,
+  fetchTransport,
+  Transport,
+  type TransportShape,
+} from "../src/operator-ui/app/services/platform.js";
 import { OPERATOR_V2_MAINTAINER, OPERATOR_V2_MEMBER } from "./fixtures/operator-contract-v2.js";
 
 const NOW = "2026-10-15T12:00:00.000Z";
@@ -12,7 +28,41 @@ const NOW = "2026-10-15T12:00:00.000Z";
  * flight, so stale data cannot land under another identity.
  */
 
-const stores: Array<{ forgetBearer(): void }> = [];
+const stores: Array<{ forgetBearer(): Promise<void> }> = [];
+const runtimes: Array<{ dispose(): Promise<void> }> = [];
+
+const microtasks = new Scheduler.MixedScheduler("sync");
+const withMicrotasks = <A>(effect: Effect.Effect<A>) => Effect.provideService(effect, Scheduler.Scheduler, microtasks);
+
+/** The store's former Promise surface, over the controller service the shell runs. */
+function controllerHarness(controller: OperatorControllerShape) {
+  const run = (effect: Effect.Effect<void>) => Effect.runPromise(withMicrotasks(effect));
+  return {
+    getState: controller.state,
+    subscribe: controller.subscribe,
+    boot: () => run(controller.boot),
+    routeChanged: (path: string) => run(controller.routeChanged(path)),
+    retryLoad: () => run(controller.retryLoad),
+    signOut: () => run(controller.signOut),
+    forgetBearer: () => run(controller.forgetBearer),
+    setConnectorFilter: (filter: string) => run(controller.setConnectorFilter(filter)),
+    loadOperatorContract: () => run(controller.loadOperatorContract),
+    refreshConnector: (id: string, quiet?: boolean) => run(controller.refreshConnector(id, quiet)),
+    loadActivity: (reset: boolean) => run(controller.loadActivity(reset)),
+    loadAccessTokens: () => run(controller.loadAccessTokens),
+    startOAuth: (connector: string, mode: OAuthStartMode) => run(controller.startOAuth(connector, mode)),
+    disconnectOAuth: (connector: string) => run(controller.disconnectOAuth(connector)),
+    saveCredential: (connector: string, body: CredentialBody, verify?: "test" | "skip") =>
+      run(controller.saveCredential(connector, body, verify)),
+    removeCredential: (connector: string) => run(controller.removeCredential(connector)),
+    testCredential: (connector: string) => run(controller.testCredential(connector)),
+    rotateAgentToken: (name: string) => run(controller.rotateAgentToken(name)),
+    revokeAgentToken: (name: string) => run(controller.revokeAgentToken(name)),
+    confirmTokenAction: () => run(controller.confirmTokenAction),
+    cancelTokenAction: (returnFocusTo?: string) => run(controller.cancelTokenAction(returnFocusTo)),
+    dismissCreatedToken: () => run(controller.dismissCreatedToken),
+  };
+}
 
 const BASE = "https://deployment.example";
 const CONFIG = "/ui/api/config?live=cached";
@@ -173,19 +223,30 @@ async function loadStore(
     }
     return response;
   });
-  vi.resetModules();
-  vi.doMock("../src/operator-ui/app/config.js", () => ({
-    auth: browserAuth,
-    initialPage: page,
-    mcpUrl: PAGE_CONSTANTS.MCP_URL,
-    homeUrl: PAGE_CONSTANTS.HOME_URL,
-    titleSuffix: PAGE_CONSTANTS.TITLE_SUFFIX,
-    productName: PAGE_CONSTANTS.PRODUCT_NAME,
-    productDescription: PAGE_CONSTANTS.PRODUCT_DESCRIPTION,
-    TOKEN_KEY: "connecta:token",
-  }));
-  const store = await import("../src/operator-ui/app/store.js");
+  let beforeDispatch: ((path: string) => void) | undefined;
+  const transport: TransportShape = {
+    fetch: (path, init, dispatch) =>
+      Effect.andThen(
+        Effect.sync(() => beforeDispatch?.(path)),
+        fetchTransport.fetch(path, init, dispatch),
+      ),
+  };
+  const runtime = ManagedRuntime.make(
+    operatorServicesLayer(
+      {
+        auth: browserAuth as { kind: string },
+        initialPage: page as OperatorPage,
+        productName: PAGE_CONSTANTS.PRODUCT_NAME,
+        tokenKey: "connecta:token",
+      },
+      Layer.mergeAll(ClerkClient.layer, BrowserWindow.layer, Layer.succeed(Transport, transport)),
+    ),
+  );
+  const controller = runtime.runSync(OperatorController.useSync((service) => service));
+  const store = controllerHarness(controller);
+  windowListeners.set("focus", () => void Effect.runFork(withMicrotasks(controller.returnedToTab)));
   stores.push(store);
+  runtimes.push(runtime);
   return {
     store,
     clerk,
@@ -198,6 +259,10 @@ async function loadStore(
     /** The connectors the default contract configures, before any `/ui/data` is seen. */
     declare(ids: string[]) {
       declared = ids;
+    },
+    /** Run `hook` after a request is built and before the transport sends it. */
+    beforeDispatch(hook: ((path: string) => void) | undefined) {
+      beforeDispatch = hook;
     },
     /** Hand Clerk's listener a session change, the way Clerk itself would. */
     changeSession(next: FakeSession | null) {
@@ -226,8 +291,9 @@ function bearerOf(fetchMock: ReturnType<typeof vi.fn>, index: number): unknown {
   return init?.headers?.Authorization;
 }
 
-afterEach(() => {
-  for (const store of stores.splice(0)) store.forgetBearer();
+afterEach(async () => {
+  for (const store of stores.splice(0)) await store.forgetBearer();
+  for (const runtime of runtimes.splice(0)) await runtime.dispose();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -894,6 +960,27 @@ describe("operator role changes", () => {
 describe("operator connection writes", () => {
   const writes = (paths: string[]) =>
     paths.filter((path) => path.startsWith("/ui/credentials/") || path.startsWith("/ui/oauth/"));
+
+  it("INV-4: an identity change between a write's checks and its dispatch sends nothing", async () => {
+    const loaded = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
+    const { store, fetchMock, configMock, paths } = loaded;
+    configMock.mockImplementation(async () => contract("member"));
+    await store.boot();
+    expect(store.getState()).toMatchObject({ session: "ready", role: "member" });
+    configMock.mockImplementation(() => new Promise<Response>(() => {}));
+    fetchMock.mockImplementation(async () => Response.json({ state: "ok" }));
+    let dispatched = false;
+    loaded.beforeDispatch((path) => {
+      if (!path.startsWith("/ui/credentials/")) return;
+      dispatched = true;
+      loaded.changeSession({ id: "sess_b", getToken: async () => "token-b" });
+    });
+    await store.saveCredential("notes", { values: { token: "typed" } });
+    expect(dispatched).toBe(true);
+    expect(writes(paths)).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(store.getState()).toMatchObject({ session: "gated", credentialNotice: null });
+  });
 
   it("INV-4: a member writes only to their own personal connectors, with the actions manage names", async () => {
     const { store, fetchMock, configMock, paths } = await loadStore({ id: "session", getToken: async () => "token" });

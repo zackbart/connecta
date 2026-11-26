@@ -2150,7 +2150,7 @@ discovery, the executor contract, invocation, permissions, and OAuth callback
 verification; an omitted module contributes no runtime work at all.
 
 The operator UI — `src/ui.ts` (data-free shell and `/ui/data` payload),
-`src/routes/ui.ts`, `src/operator-ui/` (the React app, owned Radix primitives and its pure rules) —
+`src/routes/ui.ts`, `src/operator-ui/` (the Effect UI shell over Effect services, the React page islands it still hosts, and its pure rules) —
 shows a human what a deployment exposes and manages only the authentication
 material code explicitly permitted; it never edits the connector set, catalog,
 annotations, scopes, or permission rules. Two invariants shape it: a status read
@@ -2165,6 +2165,23 @@ credential Test notices keep the same rule: those routes answer failures in
 fixed words (a Test answers only `{ ok }`), log checked facts, and let the page
 pick a sentence by outcome. Credential handoff URLs exist only while the UI is
 mounted; OAuth callbacks never need it.
+
+The browser app is Effect inside, like the core. One `Layer` provides its
+services: configuration, storage, Clerk, the window and the transport
+(`app/services/platform.ts`), the state cell (`store.ts`), the operator API
+client (`api.ts`) and the controller (`operator.ts`). The API client is the
+only code that reaches the transport, so the two rules the page lives by are
+structural there: every request carries the session token the client reads
+itself (the controller holds an opaque session handle, never a token), the
+identity and admission are checked again synchronously in the call that
+invokes `fetch`, and a response is dropped once the identity that asked has
+changed. The client also
+withholds maintainer-only routes and connection writes the contract on screen
+does not allow. The Effect UI shell in `app/shell/` (top bar, navigation,
+account menu, gate, recovery banner and `BrowserRouter`) reads the controller's
+state through a Subscription and runs every write as a Command. Pages still
+render as React islands through the `HostIsland` stream mount and a temporary
+bridge (`app/bridge.ts`) until issue #1510 moves them to Effect UI.
 
 Its appearance is one token layer, and it is not the UI's alone: every page
 connecta shows a person — the operator shell, the OAuth callback, a browser's

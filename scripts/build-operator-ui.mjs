@@ -23,7 +23,7 @@ const result = await build({
   entryNames: "[name]-[hash]",
   assetNames: "[name]-[hash]",
   entryPoints: {
-    script: "src/operator-ui/app/main.tsx",
+    script: "src/operator-ui/app/main.ts",
     // Blocking in <head>: applies the saved color scheme before first paint.
     scheme: "src/operator-ui/app/scheme-init.ts",
     styles: "src/operator-ui/browser.css",
@@ -52,6 +52,7 @@ const result = await build({
   publicPath: "/ui/assets",
   outdir: "operator-ui-build",
   platform: "browser",
+  conditions: ["production"],
   target: "es2022",
   treeShaking: true,
   write: false,

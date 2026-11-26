@@ -41,7 +41,7 @@
         "src/providers/stripe/index.ts",
         "src/providers/tithely/index.ts",
         "src/providers/vercel/index.ts",
-        "src/operator-ui/app/main.tsx",
+        "src/operator-ui/app/main.ts",
         "src/operator-ui/browser.css",
         "examples/*/src/index.ts",
         "examples/*/alchemy.run.ts",

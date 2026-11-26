@@ -2,7 +2,7 @@ import type { OperatorUiContractV2 } from "../contract.js";
 import { useEffect } from "react";
 import { contractRecovering, type OperatorState } from "../view.js";
 import { LoadFailure, StateBlock } from "./parts.js";
-import { retryLoad } from "./store.js";
+import { retryLoad } from "./bridge.js";
 
 /**
  * The maintainer contract once `/ui/data` has answered too. Maintainer pages

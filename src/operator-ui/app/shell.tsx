@@ -1,8 +1,8 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Command } from "cmdk";
 import { Dialog, Tabs } from "./primitives.js";
 import { PAGE_META, type OperatorPage, type OperatorState } from "../view.js";
-import { navigate } from "./store.js";
+import { navigate } from "./bridge.js";
 import { useCloseOnRecovery } from "./contract-state.js";
 import { schemePinned } from "./config.js";
 import { SCHEME_KEY } from "./scheme.js";
@@ -207,79 +207,5 @@ export function ShellControls({ pages, state }: { pages: OperatorPage[]; state: 
         </Command>
       </Dialog>
     </>
-  );
-}
-
-/**
- * The account in the top bar: who is signed in, and the way out. A
- * disclosure, not a menu widget: its contents are a line of text and one or
- * two plain buttons, reachable with Tab. Escape, a click elsewhere, and focus
- * leaving it close it.
- */
-export function AccountMenu({
-  account,
-  role,
-  children,
-}: {
-  /** The signed-in email, where the sign-in exposes one. */
-  account: string | null;
-  role: string;
-  /** The session action: Sign out or Change token. */
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  const panel = useId();
-  const root = useRef<HTMLDivElement | null>(null);
-  const trigger = useRef<HTMLButtonElement | null>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onPointer = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      setOpen(false);
-      trigger.current?.focus();
-    };
-    document.addEventListener("pointerdown", onPointer);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onPointer);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-  const initial = account?.trim().charAt(0).toUpperCase();
-  return (
-    <div
-      className="account-menu"
-      ref={root}
-      onBlur={(event) => {
-        // Tabbing past the panel's last button closes it, as a click elsewhere does.
-        const next = event.relatedTarget as Node | null;
-        if (open && next && !root.current?.contains(next)) setOpen(false);
-      }}
-    >
-      <button
-        ref={trigger}
-        type="button"
-        className="account-trigger"
-        aria-label="Account"
-        title="Account"
-        aria-expanded={open}
-        aria-controls={panel}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="account-avatar" aria-hidden="true">
-          {initial ? initial : <Icon name="user" size={15} />}
-        </span>
-      </button>
-      <div id={panel} className="account-panel" hidden={!open}>
-        <div className="account-who">
-          <p className="account-label">{account ?? "Signed in"}</p>
-          <p className="meta">{role}</p>
-        </div>
-        <div className="account-session">{children}</div>
-      </div>
-    </div>
   );
 }

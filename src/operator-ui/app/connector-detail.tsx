@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { useLocation, useNavigate, refreshConnector, stopConnectorReads } from "./bridge.js";
 import { useEffect } from "react";
 import type { OperatorState } from "../view.js";
 import { activityReadable } from "../view.js";
@@ -14,7 +14,6 @@ import { ConnectorAuth, ConnectorDiagnostics } from "./connections.js";
 import { ActivityPage } from "./activity.js";
 import { AuthScopeBadge, StoredStatus, storedTools, ToolSplit } from "./connectors.js";
 import { verdictFor } from "./problems.js";
-import { refreshConnector, stopConnectorReads } from "./store.js";
 
 const TABS = ["tools", "connection", "activity"];
 export function ConnectorDetailPage({ state }: { state: OperatorState }) {

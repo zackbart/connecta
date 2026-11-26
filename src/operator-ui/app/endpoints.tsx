@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { useLocation } from "@tanstack/react-router";
+import { useLocation } from "./bridge.js";
 import { endpointFromHash } from "../connection-map.js";
 import {
   endpointRows,
