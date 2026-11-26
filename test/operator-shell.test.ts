@@ -21,7 +21,7 @@ vi.mock("../src/operator-ui/app/config.js", () => ({
 const { AccountMenu } = await import("../src/operator-ui/app/shell/account-menu.js");
 const commands = await import("../src/operator-ui/app/shell/commands.js");
 const { OperatorContent } = await import("../src/operator-ui/app/shell/content.js");
-const { Gate } = await import("../src/operator-ui/app/shell/gate.js");
+const { Gate, GateMessage } = await import("../src/operator-ui/app/shell/gate.js");
 const bridge = await import("../src/operator-ui/app/bridge.js");
 const { OperatorNav } = await import("../src/operator-ui/app/shell/nav.js");
 const { OperatorRoute } = await import("../src/operator-ui/app/shell/routes.js");
@@ -73,7 +73,7 @@ describe("operator content shell", () => {
       }),
     ));
 
-  it("spends a gate focus request through the focus Command, and leaves a page's to the page", () =>
+  it("spends a focus request through the focus Command only while no page island owns focus", () =>
     story(
       Effect.gen(function* () {
         const s = yield* contentStory();
@@ -84,6 +84,9 @@ describe("operator content shell", () => {
           _tag: "ChangedOperatorView",
           view: view({ session: "ready", pendingFocus: "confirm-cancel-token-alice" }),
         }).expectNone();
+        s.send({ _tag: "ChangedOperatorView", view: view({ session: "gated", pendingFocus: "token" }) })
+          .expectExact(commands.FocusPendingTarget)
+          .resolve(commands.FocusPendingTarget, Component.noop);
       }),
     ));
 
@@ -207,6 +210,9 @@ describe("secrets never enter Effect UI state", () => {
       Effect.gen(function* () {
         const s = yield* Story.make(Gate, { view: view({ session: "gated" }) });
         expect(s.model).toBeNull();
+        for (const [tag, message] of Object.entries(GateMessage.cases)) {
+          expect([tag, Object.keys(message.fields)]).toEqual([tag, ["_tag"]]);
+        }
         s.send({ _tag: "ClickedRetry" }).expectExact(commands.RetryLoad).resolve(commands.RetryLoad, Component.noop);
       }),
     ));

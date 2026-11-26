@@ -313,6 +313,29 @@ test("closes the opened tab when the identity changes mid-request", async ({ pag
   await expect.poll(() => tab.isClosed()).toBe(true);
 });
 
+test("Change token returns to the gate with focus on the field, which sends each bearer and keeps none", async ({
+  page,
+}) => {
+  await openAuthenticated(page);
+  await expect(page.getByRole("link", { name: "CRM", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Account", exact: true }).click();
+  await page.getByRole("button", { name: "Change token" }).click();
+  await expect(page.locator("#gate")).toBeVisible();
+  await expect(page.locator("#token")).toBeFocused();
+  requests = [];
+  await page.locator("#token").fill("  not-the-token  ");
+  await page.locator("#token").press("Enter");
+  await expect(page.locator("#err")).toHaveText("Token not accepted. Paste a valid operator token.");
+  await expect(page.locator("#token")).toHaveValue("");
+  expect(requests.map((request) => request.authorization)).toContain("Bearer not-the-token");
+  requests = [];
+  await page.locator("#token").fill(TOKEN);
+  await page.getByRole("button", { name: "Open operator pages" }).click();
+  await expect(page.locator("#app")).toBeVisible();
+  expect(requests.length).toBeGreaterThan(0);
+  expect(requests.every((request) => request.authorization === `Bearer ${TOKEN}`)).toBe(true);
+});
+
 for (const path of ["/ui/api/config?live=cached", "/ui/connectors/oauth"]) {
   test(`INV-4 INV-7: switching identity aborts a slow ${path} and publishes only the next viewer`, async ({ page }) => {
     await openAuthenticated(page);

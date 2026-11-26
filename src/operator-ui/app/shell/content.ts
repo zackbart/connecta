@@ -99,10 +99,9 @@ const OperatorContentNoDeps = Html.component({
       $.evolve({ route }).run(ReportRoute.make({ path: routePath(route) }), CanonicalizeLocation.make()),
     ChangedOperatorView: ($, { view }) => {
       const entering = view.recovering && !$.model.recovering;
-      const islandSpendsFocus = view.session === "ready" || (view.session === "loading" && view.sessionPresumed);
       return $.evolve({ view, recovering: view.recovering }).run(
         ...(entering ? [CloseForRecovery.make(), FocusRecoveryRetry.make()] : []),
-        ...(!islandSpendsFocus && view.focusRequested ? [FocusPendingTarget.make()] : []),
+        ...(!view.islandOwnsFocus && view.focusRequested ? [FocusPendingTarget.make()] : []),
         ...(view.collectionsWanted ? [LoadPageCollections.make()] : []),
       );
     },

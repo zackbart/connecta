@@ -33,7 +33,7 @@ const SubmitBearer = Mount.makeStream("SubmitBearer", { args: {} }, (form: HTMLF
   ),
 );
 
-const GateMessage = UiSchema.TaggedEnum({
+export const GateMessage = UiSchema.TaggedEnum({
   ClickedSignIn: {},
   ClickedSignOut: {},
   ClickedRetry: {},

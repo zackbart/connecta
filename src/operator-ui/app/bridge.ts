@@ -146,6 +146,10 @@ export function accountLabel(): string | null {
   return current().controller.accountLabel();
 }
 
+export function sessionPresumed(): boolean {
+  return current().controller.sessionPresumed();
+}
+
 export function navHint(): { activity: boolean } {
   return current().controller.navHint();
 }

@@ -12,9 +12,9 @@ import { MemberPage } from "./member.js";
 import { ContractState, contractLoading } from "./contract-state.js";
 import { PageSkeleton } from "./skeletons.js";
 import { HealthProvider } from "./health.js";
-import { accountLabel, focusHandled, navHint, useOperatorState } from "./bridge.js";
+import { accountLabel, focusHandled, navHint, sessionPresumed, useOperatorState } from "./bridge.js";
 import { ShellControls } from "./shell.js";
-import { visiblePages } from "./shell/operator-view.js";
+import { islandOwnsFocus, visiblePages } from "./shell/operator-view.js";
 
 function RolePending({ state }: { state: OperatorState }) {
   if (contractLoading(state) && state.page === "overview") return <OverviewPage state={state} />;
@@ -49,8 +49,9 @@ function CurrentPage({ state }: { state: OperatorState }) {
 
 function useSpendFocus(state: OperatorState): void {
   const recovering = state.session === "ready" && contractRecovering(state);
+  const owned = islandOwnsFocus(state, sessionPresumed());
   useEffect(() => {
-    if (!state.pendingFocus && !state.focusIfLost) return;
+    if (!owned || (!state.pendingFocus && !state.focusIfLost)) return;
     if (state.pendingFocus) {
       const target = document.getElementById(state.pendingFocus);
       if (target?.closest("[inert]")) return;
@@ -62,7 +63,7 @@ function useSpendFocus(state: OperatorState): void {
       if (lost) document.getElementById(state.focusIfLost)?.focus();
     }
     focusHandled();
-  }, [state.pendingFocus, state.focusIfLost, recovering]);
+  }, [state.pendingFocus, state.focusIfLost, recovering, owned]);
 }
 
 export function PageIsland() {

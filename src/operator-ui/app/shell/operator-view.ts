@@ -19,6 +19,7 @@ export const OperatorView = Schema.Struct({
   page: Page,
   gate: Schema.NullOr(Schema.Struct({ message: Schema.String, tone: Schema.Literals(["info", "error"]) })),
   focusRequested: Schema.Boolean,
+  islandOwnsFocus: Schema.Boolean,
   recovering: Schema.Boolean,
   recoveryFailed: Schema.Boolean,
   pages: Schema.Array(Page),
@@ -40,6 +41,9 @@ const collectionsWanted = (state: OperatorState) =>
       activityReadable(state) &&
       state.activityPhase === "idle"));
 
+export const islandOwnsFocus = (state: Pick<OperatorState, "session">, sessionPresumed: boolean): boolean =>
+  state.session === "ready" || (state.session === "loading" && sessionPresumed);
+
 export function projectView(
   state: OperatorState,
   shell: {
@@ -56,12 +60,15 @@ export function projectView(
     page: state.page,
     gate: state.gate ? { message: state.gate.message, tone: state.gate.tone } : null,
     focusRequested: state.pendingFocus !== null || state.focusIfLost !== null,
+    islandOwnsFocus: islandOwnsFocus(state, shell.sessionPresumed),
     recovering: state.session === "ready" && contractRecovering(state),
     recoveryFailed: state.contractPhase === "error" || state.loadFailure !== null,
     pages: state.session === "ready" ? visiblePages(state, shell.navHint) : [],
     deploymentName: name,
     collectionsWanted: collectionsWanted(state),
-    ...shell,
+    account: shell.account,
+    sessionPresumed: shell.sessionPresumed,
+    clerkSignedIn: shell.clerkSignedIn,
   };
 }
 
