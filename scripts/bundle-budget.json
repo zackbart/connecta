@@ -1,6 +1,6 @@
 {
   "notes": [
-    "2026-11-26: Effect 4.1.5 (#1510) replaces the 4.0.5 pin, with @effect/platform-node in lockstep. A local build measures the root at 471,115 B, ./ui at 353,590 B and examples/worker at 856,464 B gzip, 7,040 B, 4,206 B and 9,094 B past their caps. The root cap moves 464,075 to 471,465 B, the ./ui cap 349,384 to 353,940 B and the examples/worker cap 847,370 to 856,815 B, each about 350 B over the measurement.",
+    "2026-11-26: Effect 4.1.5 (#1510) replaces the 4.0.5 pin, with @effect/platform-node in lockstep. CI at 86943510 (run 45881431667, build (package)) measures the root at 470,581 B, ./ui at 351,267 B and examples/worker at 853,674 B gzip. The root cap moves 464,075 to 470,930 B, the ./ui cap 349,384 to 351,620 B and the examples/worker cap 847,370 to 854,020 B, each about 350 B over CI.",
     "2026-11-25: The GitHub skill source (#1506, #1508) adds the ./github-skills entry: githubSkills, its storage family and the shared source seam, with the optional yaml peer outside the bundle. CI at 7531aceb (run 45558683376, build (package)) measures it at 41,361 B gzip; its cap leaves 60,000 B, as other subpath entries' caps do.",
     "2026-11-25: Deployment skill sources (#1506, #1507) add inlineSkills, the SKILL.md frontmatter subset parser, the source seam and source records, file reads, result bindings and pool scoping to the skills registry. CI at fb151825 (run 45548260906, build (package)) measured the root at 463,262 B and examples/worker at 846,781 B; CI at a1df25d9, with the review fixes (run 45553245709, build (package)), measures the root at 463,725 B and examples/worker at 847,019 B. The root cap moves 458,540 to 464,075 B and the examples/worker cap 845,350 to 847,370 B, about 350 B over CI. ./ui measures 349,094 B and keeps its 349,384 B cap.",
     "2026-11-24: Serving a program's reads from run memory (#1499, #1504) adds TransferMemory, memory transfer pages and the keep path beside the result stash. CI at 9e514d5d (run 45496577086, build (package)) measures the root at 458,185 B and examples/worker at 844,998 B gzip, 365 B and 328 B past their caps. The root cap moves 457,820 to 458,540 B and the examples/worker cap 844,670 to 845,350 B, each about 350 B over CI. ./ui measures 349,094 B and keeps its 349,384 B cap.",
@@ -127,7 +127,7 @@
   "entries": {
     ".": {
       "baselineGzip": 339882,
-      "maxGzip": 471465
+      "maxGzip": 470930
     },
     "./json-schema": {
       "baselineGzip": 5870,
@@ -206,7 +206,7 @@
     },
     "./ui": {
       "baselineGzip": 272943,
-      "maxGzip": 353940
+      "maxGzip": 351620
     },
     "./credentials": {
       "baselineGzip": 1459,
@@ -222,7 +222,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 856815
+      "maxGzip": 854020
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,

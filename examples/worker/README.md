@@ -65,8 +65,9 @@ the Worker script and every binding, the one D1 database, the Worker Loader,
 the vars and secrets, the Worker-level Access application with Managed OAuth,
 and [the agent bypass](#let-agents-through-access). Each deploy reconciles all
 of them, so change the stack and redeploy instead of editing these resources in
-the dashboard. Install `alchemy@2.0.0-beta.83`, `effect@4.1.5`, and
-`@effect/platform-node@4.1.5` at exact versions. Effect must be connecta's own
+the dashboard. Install `alchemy@2.0.0-beta.87`, `@alchemy.run/cloudflare@2.0.0-beta.87`,
+`effect@4.1.5`, `@effect/platform-node@4.1.5`, and `@effect/sql-d1@4.1.5` at
+exact versions. Effect and every `@effect/*` package must match connecta's own
 exact pin; check `npm ls effect` for one resolved copy. Alchemy's CLI needs
 Node 24.11.1 or later, although the deployed Worker does not. Inside the connecta
 repository these are already development dependencies; a copied deployment
@@ -339,7 +340,7 @@ secret file to it. Then install Connecta, the separately installed
 ```sh
 npm install --save-exact @zackbart/connecta@<version>
 npm install @cloudflare/codemode
-npm install --save-dev --save-exact alchemy@2.0.0-beta.83 effect@4.1.5 @effect/platform-node@4.1.5
+npm install --save-dev --save-exact alchemy@2.0.0-beta.87 @alchemy.run/cloudflare@2.0.0-beta.87 effect@4.1.5 @effect/platform-node@4.1.5 @effect/sql-d1@4.1.5
 npm install --save-dev wrangler @cloudflare/workers-types typescript @types/node
 npm ls effect   # one resolved copy
 ```
@@ -347,9 +348,8 @@ npm ls effect   # one resolved copy
 The deployment tooling runs on the operator's machine with the account API
 token; none of it is bundled into the Worker. Connecta's own dependency audit
 checks only what the published package installs for a deployment (`--prod`),
-so it says nothing about this tooling, and `alchemy@2.0.0-beta.83` pulls in
-local tooling (dev servers, bundlers, a local database) with published
-advisories, some rated high. Run `npm audit` in the deployment and review what
+so it says nothing about this tooling, and Alchemy pulls in local tooling
+(dev servers, bundlers) that can carry published advisories. Run `npm audit` in the deployment and review what
 it reports, run Alchemy and Wrangler only on a trusted machine, keep
 `alchemy dev` and `wrangler dev` bound to localhost, and give the API token
 only the four permissions in [Deploy](#deploy) and a short expiry.
