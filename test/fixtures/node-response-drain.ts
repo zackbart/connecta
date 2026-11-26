@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { fork } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import type { Connecta } from "../../src/index.js";
 import { listen } from "../../src/node.js";
 

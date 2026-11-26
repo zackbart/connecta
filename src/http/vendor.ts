@@ -3,7 +3,7 @@
 // A vendor is an `HttpApi`: endpoints with Schemas for path params, query,
 // and payload, from which requests are encoded and the endpoint manifest is
 // derived. This is the only kit module that imports effect/http-api, which
-// 4.0.5 annotates unstable; providers declare operations through the names
+// 4.1.5 annotates unstable; providers declare operations through the names
 // re-exported here, so an upstream change is absorbed in this file.
 // Re-exporting confines those modules; it does not make them stable.
 //

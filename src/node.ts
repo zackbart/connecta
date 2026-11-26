@@ -127,7 +127,7 @@ async function writeResponse(res: ServerResponse, response: Response): Promise<v
   // Stream rather than buffer: a connector-served route may return a large
   // proxied file body, and materializing it would hold the whole thing in
   // memory before the first byte reaches the client.
-  await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]), res);
+  await pipeline(Readable.fromWeb(response.body as unknown as Parameters<typeof Readable.fromWeb>[0]), res);
 }
 
 class ClosingServer extends Server {

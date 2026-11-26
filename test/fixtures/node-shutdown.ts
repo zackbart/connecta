@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { readFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { createConnection } from "node:net";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { promisify } from "node:util";
 import { AccessTokenManager, accessTokens } from "../../src/access-tokens.js";
 import { api } from "../../src/connectors/api.js";

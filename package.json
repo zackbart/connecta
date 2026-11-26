@@ -256,7 +256,7 @@
     "@modelcontextprotocol/client": "2.4.0",
     "@modelcontextprotocol/server": "2.4.0",
     "acorn": "^8.19.0",
-    "effect": "4.0.5",
+    "effect": "4.1.5",
     "zod": "^4.6.6"
   },
   "peerDependencies": {
@@ -288,7 +288,7 @@
     "@cloudflare/codemode": "^0.5.0",
     "@cloudflare/vitest-plugin": "^1.4.3",
     "@cloudflare/workers-types": "5.20260804.1",
-    "@effect/platform-node": "4.0.5",
+    "@effect/platform-node": "4.1.5",
     "@fontsource-variable/hanken-grotesk": "^5.3.0",
     "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@playwright/test": "^1.64.1",

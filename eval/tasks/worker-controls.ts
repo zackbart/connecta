@@ -18,6 +18,7 @@ import {
 } from "node:net";
 import { networkInterfaces, tmpdir } from "node:os";
 import { join, sep } from "node:path";
+import { URL } from "node:url";
 import { playReference } from "../agent/reference.js";
 import { gradeTask } from "./grading.js";
 import { crossTarget, compare } from "../compare.js";

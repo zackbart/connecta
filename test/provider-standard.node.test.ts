@@ -3,7 +3,7 @@ import { generatedProblems } from "../scripts/drift-validate.mjs";
 // Applies the current provider standard to every maintained provider folder.
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL, URL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { memoryStorage } from "../src/storage/memory.js";
 import { ConnectorCallError } from "../src/errors.js";

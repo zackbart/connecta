@@ -1,5 +1,6 @@
 // Node-only: reads the MCP coverage record from the checkout.
 import { existsSync, readFileSync } from "node:fs";
+import { URL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const coverage = JSON.parse(readFileSync(new URL("../spec/coverage.json", import.meta.url), "utf8")) as {

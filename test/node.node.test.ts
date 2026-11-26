@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { connect, type Socket } from "node:net";
 import { spawnSync } from "node:child_process";
 import { request as httpRequest } from "node:http";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { listen } from "../src/node.js";

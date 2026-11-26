@@ -15,7 +15,7 @@ import { AsyncResource } from "node:async_hooks";
 import { Buffer } from "node:buffer";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { Deferred, Duration, Effect, Exit, Schedule, Scope } from "effect";
 import { AdmissionController, ExecutorAdmissionError, ExecutorExecutionError } from "../executor-admission.js";
 import { msg, tokenPrefix } from "../errors.js";

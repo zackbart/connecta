@@ -55,6 +55,7 @@ import type { TrialResult } from "./agent/run.js";
 import { BADGE_PNG, LEGACY_BADGE_PNG } from "./fakes/prerequisites.js";
 import { spawnSync } from "node:child_process";
 import { inflateSync } from "node:zlib";
+import { URL } from "node:url";
 import {
   portCollisionControls,
   comparatorTargetControls,

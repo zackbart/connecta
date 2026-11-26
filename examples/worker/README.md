@@ -65,8 +65,8 @@ the Worker script and every binding, the one D1 database, the Worker Loader,
 the vars and secrets, the Worker-level Access application with Managed OAuth,
 and [the agent bypass](#let-agents-through-access). Each deploy reconciles all
 of them, so change the stack and redeploy instead of editing these resources in
-the dashboard. Install `alchemy@2.0.0-beta.83`, `effect@4.0.5`, and
-`@effect/platform-node@4.0.5` at exact versions. Effect must be connecta's own
+the dashboard. Install `alchemy@2.0.0-beta.83`, `effect@4.1.5`, and
+`@effect/platform-node@4.1.5` at exact versions. Effect must be connecta's own
 exact pin; check `npm ls effect` for one resolved copy. Alchemy's CLI needs
 Node 24.11.1 or later, although the deployed Worker does not. Inside the connecta
 repository these are already development dependencies; a copied deployment
@@ -339,7 +339,7 @@ secret file to it. Then install Connecta, the separately installed
 ```sh
 npm install --save-exact @zackbart/connecta@<version>
 npm install @cloudflare/codemode
-npm install --save-dev --save-exact alchemy@2.0.0-beta.83 effect@4.0.5 @effect/platform-node@4.0.5
+npm install --save-dev --save-exact alchemy@2.0.0-beta.83 effect@4.1.5 @effect/platform-node@4.1.5
 npm install --save-dev wrangler @cloudflare/workers-types typescript @types/node
 npm ls effect   # one resolved copy
 ```

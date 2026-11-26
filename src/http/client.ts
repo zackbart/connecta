@@ -15,7 +15,7 @@ import { guardedTransport, sendGuarded } from "../guarded-transport.js";
 // before `fetch`, with its method, any idempotency key it carries, and its
 // status once answered: the facts `api()`'s boundary decides a write from.
 //
-// effect/http is annotated unstable in 4.0.5. Only client.ts, oauth.ts and
+// effect/http is annotated unstable in 4.1.5. Only client.ts, oauth.ts and
 // vendor.ts import the HTTP area modules; providers never do.
 
 import { Context, Effect, Stream } from "effect";
