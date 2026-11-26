@@ -2232,7 +2232,7 @@ shape from building, in someone else's repository rather than this one.
 
 ## Effect inside
 
-The core runs on Effect v4, pinned to exactly `4.0.5`; no API a deployment
+The core runs on Effect v4, pinned to exactly `4.1.5`; no API a deployment
 touches does. `createConnecta`,
 `remoteMcp()`, `api()`, the `Connector` contract, and every shipped `.d.ts`
 are Promise-shaped and name no Effect type, so a connector author never meets a
@@ -2427,7 +2427,7 @@ request fixture and native-output suites supply runtime parity evidence.
 as Effects. Public factories retain their Promise contracts;
 custom Promise SQL drivers retain the fallback lift.
 
-`src/storage/sql-driver.ts` constructs a public Effect 4.0.5 `SqlClient`
+`src/storage/sql-driver.ts` constructs a public Effect 4.1.5 `SqlClient`
 service inside each operation. Reads execute SQL `Statement` Effects and writes
 execute their raw operations through that service, including its connection
 borrowing, statement-transformer context, and tracing semantics. Internal
@@ -2440,7 +2440,7 @@ failure. Neither path retries a dispatched write. The D1 binding's
 `meta.changes` is retained for every statement, including zero; no `RETURNING`
 payload, extra metadata statement, or D1 transaction is needed. The dependency
 is the existing exact `effect` pin. Connecta does not adopt `@effect/sql-d1`:
-its 4.0.5 batch API drops metadata and its binding contract is wider than
+its 4.1.5 batch API drops metadata and its binding contract is wider than
 Connecta's published structural interface.
 
 Bundle caps and baselines are authoritative in
@@ -4193,7 +4193,7 @@ Existing wire, cache and OAuth suites remain the compatibility evidence.
 `routes/mcp.ts` composes server preparation, native catalog selection, exchange,
 output redaction and response-owned request cleanup as native programs. The
 pinned SDK's modern `createMcpHandler` and a fresh stateless legacy JSON transport
-remain the protocol implementations. Effect 4.0.5's public MCP adapters cannot
+remain the protocol implementations. Effect 4.0.5's public MCP adapters could not
 serve the required fresh legacy contract; this implementation does not adopt
 Effect McpServer. Each inbound request constructs fresh servers and keeps its
 admission scope until its response body ends, fails, is cancelled or reaches its

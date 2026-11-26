@@ -13,7 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const script = fileURLToPath(new URL("../scripts/generate-providers.mjs", import.meta.url));

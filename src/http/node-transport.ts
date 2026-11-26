@@ -6,6 +6,7 @@ import { learnedUrlRefusal } from "../url-safety.js";
 import { OAuthRequestNotSentError } from "../auth/oauth-request-not-sent.js";
 import { Readable } from "node:stream";
 import { isIP } from "node:net";
+import type { URL as NodeURL } from "node:url";
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Client, ProxyAgent, type Dispatcher, type buildConnector } from "undici";
 import { ConnectorCallError } from "../errors.js";
@@ -184,7 +185,7 @@ export function createNodeGuardedTransport(
             ...clientOptions,
             interceptors: { Agent: [], Client: [] },
             // Neither side of CONNECT uses a Pool, interceptor or global dispatcher.
-            clientFactory: (origin, options) => {
+            clientFactory: (origin: NodeURL, options) => {
               const connect = (options as { connect: buildConnector.connector }).connect;
               return (tunnelClient = new Client(origin, {
                 ...options,
@@ -265,7 +266,7 @@ export function createNodeGuardedTransport(
               : init.body instanceof URLSearchParams
                 ? init.body.toString()
                 : framed.body
-                  ? Readable.fromWeb(framed.body as Parameters<typeof Readable.fromWeb>[0])
+                  ? Readable.fromWeb(framed.body as unknown as Parameters<typeof Readable.fromWeb>[0])
                   : null,
           signal: framed.signal,
           idempotent: false,

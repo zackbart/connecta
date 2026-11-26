@@ -114,7 +114,7 @@ export default async function setup(project: TestProject) {
           return;
         }
         outgoing.writeHead(answer.status, Object.fromEntries(answer.headers));
-        if (answer.body) await pipeline(Readable.fromWeb(answer.body as Parameters<typeof Readable.fromWeb>[0]), outgoing);
+        if (answer.body) await pipeline(Readable.fromWeb(answer.body as unknown as Parameters<typeof Readable.fromWeb>[0]), outgoing);
         else outgoing.end();
       } catch {
         outgoing.destroy();

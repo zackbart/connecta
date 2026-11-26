@@ -1,6 +1,7 @@
 /** Frozen Workspace universe. Only owned in-memory routes; never a real Google account. */
 import { createHash, generateKeyPairSync, randomBytes, verify } from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
+import { URL } from "node:url";
 import { routeFakeVendor } from "./transport.js";
 import type { ConnectorSpec } from "./world.js";
 import type { Ledger, CallRecord } from "./service.js";

@@ -66,6 +66,7 @@ export function effectSqlDriver(leaves: {
   // This Effect constructs a fresh client and its services inside every
   // operation. No request-owned object, scope or promise is memoized here.
   const client = SqlClient.make({
+    driver: "connecta",
     acquirer: Effect.succeed(connection),
     borrower: (use) => use(connection),
     transactionAcquirer: Effect.fail(sqlError(new Error("Use an atomic SQL batch"))),

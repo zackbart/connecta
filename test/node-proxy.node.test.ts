@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, URL } from "node:url";
 import { once } from "node:events";
 import { gzipSync } from "node:zlib";
 import { Agent, RetryAgent, getGlobalDispatcher, setGlobalDispatcher } from "undici";

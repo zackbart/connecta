@@ -5,7 +5,7 @@ import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL, URL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { contractDigest } from "../scripts/drift-contract.mjs";
 import {

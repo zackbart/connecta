@@ -118,7 +118,7 @@ export async function serveFetch(handler: (request: Request) => Promise<Response
           res.end();
           return;
         }
-        await pipeline(Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]), res);
+        await pipeline(Readable.fromWeb(response.body as unknown as Parameters<typeof Readable.fromWeb>[0]), res);
       } catch (error) {
         if (!res.headersSent) {
           res.statusCode = 500;
