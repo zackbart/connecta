@@ -1,5 +1,6 @@
 import { Layer } from "effect";
 import { OperatorApi } from "./api.js";
+import { ConnectorHealth } from "./health.js";
 import { operatorControllerLayer } from "./operator.js";
 import {
   BrowserStorage,
@@ -19,5 +20,8 @@ export const operatorServicesLayer = (
 ) => {
   const base = Layer.mergeAll(Layer.succeed(ShellConfig, config), platform);
   const state = Layer.mergeAll(BrowserStorage.layer, OperatorStore.layer).pipe(Layer.provideMerge(base));
-  return operatorControllerLayer.pipe(Layer.provideMerge(OperatorApi.layer.pipe(Layer.provideMerge(state))));
+  const controller = operatorControllerLayer.pipe(
+    Layer.provideMerge(OperatorApi.layer.pipe(Layer.provideMerge(state))),
+  );
+  return ConnectorHealth.layer.pipe(Layer.provideMerge(controller));
 };

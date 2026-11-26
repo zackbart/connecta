@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-26: The Overview page and the shared parts it uses move to Effect UI (#1510, item 2); its connection map stays a React island until item 4. Local measurement against main on the same toolchain grows operator-ui/assets by 1,848 B gzip (to 463,347 B, raw 1,327,074 B), ./ui by 1,834 B (to 542,034 B) and examples/worker by 1,976 B (to 1,044,225 B); the root is unchanged. The operator-ui/assets cap moves 461,890 to 463,700 B (raw 1,322,070 to 1,327,420 B), the ./ui cap 537,080 to 542,380 B and the examples/worker cap 1,039,640 to 1,044,580 B, local measurement plus about 350 B, to be reset from CI.",
     "2026-11-26: The operator shell moves to Effect UI (#1510, item 1) while every page still ships as a React island, so the browser bundle carries Effect, @effect/ui and React together until item 7. CI at a390d072 (run 45895252840, build (package)) measures operator-ui/assets at 461,536 B, ./ui at 536,734 B and examples/worker at 1,039,288 B gzip. The operator-ui/assets cap moves 283,000 to 461,890 B, the ./ui cap 351,620 to 537,080 B and the examples/worker cap 854,020 to 1,039,640 B, each about 350 B over CI. The raw operator-ui/assets cap moves 785,000 to 1,322,070 B, local measurement plus about 350 B.",
     "2026-11-26: Effect 4.1.5 (#1510) replaces the 4.0.5 pin, with @effect/platform-node in lockstep. CI at 86943510 (run 45881431667, build (package)) measures the root at 470,581 B, ./ui at 351,267 B and examples/worker at 853,674 B gzip. The root cap moves 464,075 to 470,930 B, the ./ui cap 349,384 to 351,620 B and the examples/worker cap 847,370 to 854,020 B, each about 350 B over CI.",
     "2026-11-25: The GitHub skill source (#1506, #1508) adds the ./github-skills entry: githubSkills, its storage family and the shared source seam, with the optional yaml peer outside the bundle. CI at 7531aceb (run 45558683376, build (package)) measures it at 41,361 B gzip; its cap leaves 60,000 B, as other subpath entries' caps do.",
@@ -207,7 +208,7 @@
     },
     "./ui": {
       "baselineGzip": 272943,
-      "maxGzip": 537080
+      "maxGzip": 542380
     },
     "./credentials": {
       "baselineGzip": 1459,
@@ -223,7 +224,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 1039640
+      "maxGzip": 1044580
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
@@ -235,8 +236,8 @@
     },
     "operator-ui/assets": {
       "baselineGzip": 218702,
-      "maxGzip": 461890,
-      "maxRaw": 1322070
+      "maxGzip": 463700,
+      "maxRaw": 1327420
     },
     "./google": {
       "baselineGzip": 62229,

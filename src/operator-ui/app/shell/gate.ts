@@ -7,9 +7,9 @@ import { auth, brandMark, productName } from "../config.js";
 import { starterIn } from "../run.js";
 import { OperatorController } from "../services/controller.js";
 import { ForgetBearer, RetryLoad, SignIn, SignOut } from "./commands.js";
-import { ShellIcon } from "./icons.js";
+import { Icon } from "../components/icons.js";
 import { OperatorView } from "./operator-view.js";
-import { NoticeLine, StateBlockBusy } from "./parts.js";
+import { NoticeLine, StateBlock } from "../components/parts.js";
 
 const SubmitBearer = Mount.makeStream("SubmitBearer", { args: {} }, (form: HTMLFormElement) =>
   Stream.callback<never, never, OperatorController>(() =>
@@ -72,7 +72,7 @@ export const Gate = Html.component({
         h.h1.attr("id", "gateHeading").attr("tabindex", "-1").children("Sign in"),
         h.div.class("gate-card").children(
           loading
-            ? StateBlockBusy(h, "gateCopy", checkingCopy())
+            ? StateBlock(h, { busy: true, id: "gateCopy", copy: checkingCopy() })
             : h.p.attr("id", "gateCopy").class("meta").children(gateCopy(auth.kind, signedIn)),
           loading
             ? null
@@ -141,7 +141,7 @@ export const NoAccess = Html.component({
         h.span
           .class("gate-mark", "locked")
           .attr("aria-hidden", "true")
-          .children(ShellIcon(h, "lock", 22)),
+          .children(Icon(h, "lock", 22)),
         h.h1.attr("id", "gateHeading").attr("tabindex", "-1").children("No access"),
         h.div
           .class("gate-card")

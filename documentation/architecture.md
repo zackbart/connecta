@@ -2179,9 +2179,16 @@ changed. The client also
 withholds maintainer-only routes and connection writes the contract on screen
 does not allow. The Effect UI shell in `app/shell/` (top bar, navigation,
 account menu, gate, recovery banner and `BrowserRouter`) reads the controller's
-state through a Subscription and runs every write as a Command. Pages still
-render as React islands through the `HostIsland` stream mount and a temporary
-bridge (`app/bridge.ts`) until issue #1510 moves them to Effect UI.
+state through a Subscription and runs every write as a Command. The content
+root renders the Overview (`app/pages/overview.ts`, with shared Effect UI parts
+in `app/components/`) as an Effect UI component from a projection of the
+controller's state, and every other page as a React island through the
+`HostIsland` stream mount and a temporary bridge (`app/bridge.ts`) until issue
+#1510 moves them to Effect UI. One predicate in `app/shell/operator-view.ts`
+decides which of the gate, No access, the Overview or the island owns the
+content and its focus requests. Steady connector health is a service
+(`app/services/health.ts`) that both sides read, so a connector being read
+again keeps its last verdict across navigation.
 
 Its appearance is one token layer, and it is not the UI's alone: every page
 connecta shows a person — the operator shell, the OAuth callback, a browser's

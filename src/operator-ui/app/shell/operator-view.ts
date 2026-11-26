@@ -9,9 +9,13 @@ import {
   type OperatorPage,
   type OperatorState,
 } from "../../view.js";
+import { contractLoading } from "../components/contract-state.js";
 import { OperatorController, type OperatorControllerShape } from "../services/controller.js";
 
 const Page = Schema.Literals(OPERATOR_PAGES);
+
+const CONTENT_OWNERS = ["gate", "denied", "overview", "island"] as const;
+export type ContentOwner = (typeof CONTENT_OWNERS)[number];
 
 export const OperatorView = Schema.Struct({
   session: Schema.Literals(["loading", "gated", "ready", "denied"]),
@@ -19,6 +23,7 @@ export const OperatorView = Schema.Struct({
   page: Page,
   gate: Schema.NullOr(Schema.Struct({ message: Schema.String, tone: Schema.Literals(["info", "error"]) })),
   focusRequested: Schema.Boolean,
+  content: Schema.Literals(CONTENT_OWNERS),
   islandOwnsFocus: Schema.Boolean,
   recovering: Schema.Boolean,
   recoveryFailed: Schema.Boolean,
@@ -41,8 +46,24 @@ const collectionsWanted = (state: OperatorState) =>
       activityReadable(state) &&
       state.activityPhase === "idle"));
 
-export const islandOwnsFocus = (state: Pick<OperatorState, "session">, sessionPresumed: boolean): boolean =>
-  state.session === "ready" || (state.session === "loading" && sessionPresumed);
+const overviewWhilePending = (state: OperatorState) => contractLoading(state) && state.page === "overview";
+
+function contentOwner(state: OperatorState, sessionPresumed: boolean): ContentOwner {
+  if (state.session === "denied") return "denied";
+  if (state.session !== "ready")
+    return state.session === "loading" && sessionPresumed
+      ? overviewWhilePending(state)
+        ? "overview"
+        : "island"
+      : "gate";
+  const role = displayRole(state);
+  if (role === "member" || state.role === "member") return "island";
+  if (role !== "maintainer") return overviewWhilePending(state) ? "overview" : "island";
+  return state.page === "overview" ? "overview" : "island";
+}
+
+export const islandOwnsFocus = (state: OperatorState, sessionPresumed: boolean): boolean =>
+  contentOwner(state, sessionPresumed) === "island";
 
 export function projectView(
   state: OperatorState,
@@ -60,6 +81,7 @@ export function projectView(
     page: state.page,
     gate: state.gate ? { message: state.gate.message, tone: state.gate.tone } : null,
     focusRequested: state.pendingFocus !== null || state.focusIfLost !== null,
+    content: contentOwner(state, shell.sessionPresumed),
     islandOwnsFocus: islandOwnsFocus(state, shell.sessionPresumed),
     recovering: state.session === "ready" && contractRecovering(state),
     recoveryFailed: state.contractPhase === "error" || state.loadFailure !== null,
@@ -72,7 +94,7 @@ export function projectView(
   };
 }
 
-const viewOf = (controller: OperatorControllerShape, state = controller.state()): OperatorView =>
+export const viewOf = (controller: OperatorControllerShape, state = controller.state()): OperatorView =>
   projectView(state, {
     navHint: controller.navHint(),
     account: controller.accountLabel(),

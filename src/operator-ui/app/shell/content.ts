@@ -25,15 +25,18 @@ import {
   TestCredential,
 } from "./commands.js";
 import { Gate, NoAccess } from "./gate.js";
-import { ShellIcon } from "./icons.js";
+import { Icon } from "../components/icons.js";
 import { HostIsland, islandRequests } from "./island.js";
 import { IslandRequest } from "./island-request.js";
-import { currentView, OperatorView, viewChanges } from "./operator-view.js";
+import { OverviewData, OverviewPage, overviewProjection } from "../pages/overview.js";
+import { OperatorController } from "../services/controller.js";
+import { ConnectorHealth } from "../services/health.js";
+import { OperatorView, viewOf } from "./operator-view.js";
 import { OperatorRoute, routePath } from "./routes.js";
 
 const ContentMessage = UiSchema.TaggedEnum({
   ChangedRoute: { route: OperatorRoute },
-  ChangedOperatorView: { view: OperatorView },
+  ChangedOperatorView: { view: OperatorView, overview: Schema.NullOr(OverviewData) },
   FocusedWindow: {},
   ChangedVisibility: {},
   ChangedHash: {},
@@ -66,7 +69,7 @@ const RecoveryBanner = <M>(h: Html.H<M>, failed: boolean, retry: M) =>
     .attr("role", "alert")
     .attr("aria-labelledby", "recoveryTitle")
     .children(
-      h.span.class("recovery-mark").attr("aria-hidden", "true").children(ShellIcon(h, "alert")),
+      h.span.class("recovery-mark").attr("aria-hidden", "true").children(Icon(h, "alert")),
       h.div.children(
         h.p
           .attr("id", "recoveryTitle")
@@ -77,29 +80,56 @@ const RecoveryBanner = <M>(h: Html.H<M>, failed: boolean, retry: M) =>
       Button(h, { onPress: retry })
         .attr("id", "recoveryRetry")
         .class("btn", "default", "sm")
-        .children(ShellIcon(h, "refresh", 14), "Retry"),
+        .children(Icon(h, "refresh", 14), "Retry"),
     );
 
-export const operatorContentProps = Effect.all({ route: Router.currentRoute(OperatorRoute), view: currentView });
+const contentSource = Effect.gen(function* () {
+  const controller = yield* OperatorController;
+  const health = yield* ConnectorHealth;
+  const overview = overviewProjection();
+  const project = (state = controller.state()) => {
+    const view = viewOf(controller, state);
+    return { view, overview: view.content === "overview" ? overview(state, health.steady(state)) : null };
+  };
+  return { current: project(), changes: Stream.map(controller.changes, project) };
+});
+
+const contentChanges = Stream.unwrap(Effect.map(contentSource, (source) => source.changes));
+
+export const operatorContentProps = Effect.gen(function* () {
+  const route = yield* Router.currentRoute(OperatorRoute);
+  const { current } = yield* contentSource;
+  return { route, ...current };
+});
+
+const PageContent = <M>(h: Html.H<M>, view: OperatorView, overview: OverviewData | null) =>
+  view.content === "overview" && overview ? OverviewPage(h, { props: { overview } }) : PageIslandHost(h);
 
 const OperatorContentNoDeps = Html.component({
   name: "OperatorContent",
-  props: Schema.Struct({ route: OperatorRoute, view: OperatorView }),
-  model: Schema.Struct({ route: OperatorRoute, view: OperatorView, recovering: Schema.Boolean }),
+  props: Schema.Struct({ route: OperatorRoute, view: OperatorView, overview: Schema.NullOr(OverviewData) }),
+  model: Schema.Struct({
+    route: OperatorRoute,
+    view: OperatorView,
+    overview: Schema.NullOr(OverviewData),
+    recovering: Schema.Boolean,
+  }),
   message: ContentMessage,
   restore: false,
 }).make({
   init: ($) =>
-    $.set({ route: $.props.route, view: $.props.view, recovering: $.props.view.recovering }).run(
-      BootOperator.make(),
-      CanonicalizeLocation.make(),
-    ),
+    $.set({
+      route: $.props.route,
+      view: $.props.view,
+      overview: $.props.overview,
+      recovering: $.props.view.recovering,
+    }).run(BootOperator.make(), CanonicalizeLocation.make()),
   update: {
     ChangedRoute: ($, { route }) =>
       $.evolve({ route }).run(ReportRoute.make({ path: routePath(route) }), CanonicalizeLocation.make()),
-    ChangedOperatorView: ($, { view }) => {
+    ChangedOperatorView: ($, { view, overview }) => {
       const entering = view.recovering && !$.model.recovering;
-      return $.evolve({ view, recovering: view.recovering }).run(
+      return $.evolve({ view, overview, recovering: view.recovering }).run(
         ...(entering ? [CloseForRecovery.make(), FocusRecoveryRetry.make()] : []),
         ...(!view.islandOwnsFocus && view.focusRequested ? [FocusPendingTarget.make()] : []),
         ...(view.collectionsWanted ? [LoadPageCollections.make()] : []),
@@ -115,7 +145,7 @@ const OperatorContentNoDeps = Html.component({
     Router.subscription(OperatorRoute, model.route, (route) => ContentMessage.ChangedRoute({ route })),
     Subscription.make(
       "operatorView",
-      Stream.map(viewChanges, (view) => ContentMessage.ChangedOperatorView({ view })),
+      Stream.map(contentChanges, ({ view, overview }) => ContentMessage.ChangedOperatorView({ view, overview })),
     ),
     Subscription.make(
       "pageWrites",
@@ -151,12 +181,12 @@ const OperatorContentNoDeps = Html.component({
             .attr("id", "app")
             .attr("inert", model.recovering ? "" : undefined)
             .class(model.recovering && "stale")
-            .children(PageIslandHost(h))
-        : view.session === "denied"
+            .children(PageContent(h, view, model.overview))
+        : view.content === "denied"
           ? NoAccess(h, {})
-          : view.session === "loading" && view.sessionPresumed
-            ? PageIslandHost(h)
-            : Gate(h, { props: { view: model.view } }),
+          : view.content === "gate"
+            ? Gate(h, { props: { view: model.view } })
+            : PageContent(h, view, model.overview),
     );
   },
 });
