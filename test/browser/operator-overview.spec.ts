@@ -156,7 +156,7 @@ test("a principal refusal has caller-specific copy and no secret fix prompt", as
   await expect(page.getByText("Its secret is set in deployment config", { exact: false })).toHaveCount(0);
 });
 
-test("each page's heading takes focus across the Overview, island pages and connector pages", async ({ page }) => {
+test("each page's heading takes focus across the Overview, Endpoints and the connector pages", async ({ page }) => {
   await install(page, maintainer());
   await page.goto(VISUAL_ORIGIN + "/");
   const nav = page.getByRole("navigation", { name: "Operator pages" });

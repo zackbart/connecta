@@ -124,6 +124,9 @@ test("INV-4 INV-6: a member gets their own page on every path and never asks for
   const rows = page.locator("#memberView .member-endpoint");
   await expect(rows.locator(".endpoint code")).toHaveText([VISUAL_ORIGIN + "/mcp"]);
   await expect(navLinks(page)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Search ⌘K" })).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
   const trigger = page.getByRole("button", { name: "Client setup for team", exact: true });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Client setup", exact: true });

@@ -2150,7 +2150,7 @@ discovery, the executor contract, invocation, permissions, and OAuth callback
 verification; an omitted module contributes no runtime work at all.
 
 The operator UI — `src/ui.ts` (data-free shell and `/ui/data` payload),
-`src/routes/ui.ts`, `src/operator-ui/` (the Effect UI shell over Effect services, the React page islands it still hosts, and its pure rules) —
+`src/routes/ui.ts`, `src/operator-ui/` (the Effect UI shell and pages over Effect services, and its pure rules) —
 shows a human what a deployment exposes and manages only the authentication
 material code explicitly permitted; it never edits the connector set, catalog,
 annotations, scopes, or permission rules. Two invariants shape it: a status read
@@ -2181,11 +2181,11 @@ does not allow. The Effect UI shell in `app/shell/` (top bar, navigation,
 account menu, gate, recovery banner and `BrowserRouter`) reads the controller's
 state through a Subscription and runs every write as a Command. The content
 root renders the Overview, the Connectors page, connector detail, Endpoints,
-Tokens, Activity and Settings (`app/pages/`, with shared Effect UI parts in
-`app/components/`) as Effect UI components from projections of the
-controller's state, and every other page as a React island through the
-`HostIsland` stream mount and a temporary bridge (`app/bridge.ts`) until issue
-#1510 moves them to Effect UI.
+Tokens, Activity, Settings, the member page and the page shown while a role is
+pending (`app/pages/`, with shared Effect UI parts in `app/components/`) as
+Effect UI components from projections of the controller's state. The top bar's
+search palette (ui-kit `Autocomplete`) and Appearance dialog are Effect UI
+components too; no React page remains.
 Page writes travel to the content root, whose Commands outlive the page that
 asked; a credential candidate reaches it only as an opaque handle the
 controller holds, and an OAuth tab opens in a native click listener. An issued
@@ -2193,8 +2193,8 @@ agent token stays in the controller too; the Tokens page shows and copies it
 through an opaque handle. Activity's filters live in the URL, written with
 `Router.patchSearch`, and its reads run on a controller fiber, so leaving the
 page never strands one. One predicate in `app/shell/operator-view.ts` decides
-which of the gate, No access, an Effect UI page or the island owns the content
-and its focus requests. Steady connector health is a service
+which of the gate, No access or a page owns the content, and the content root
+spends every focus request. Steady connector health is a service
 (`app/services/health.ts`) that both sides read, so a connector being read
 again keeps its last verdict across navigation.
 

@@ -5,7 +5,7 @@ import { PAGE_META, type OperatorPage } from "../../view.js";
 import { auth, productName } from "../config.js";
 import { AccountMenu } from "./account-menu.js";
 import { ForgetBearer, NavigateToPage, SignOut, shellCommandLayers, commandLayers } from "./commands.js";
-import { HostIsland } from "./island.js";
+import { Scheme, ShellControls } from "./controls.js";
 import { OperatorView, viewChanges } from "./operator-view.js";
 
 const KeepCurrentInView = Mount.makeStream(
@@ -27,6 +27,7 @@ const KeepCurrentInView = Mount.makeStream(
 
 const NavMessage = UiSchema.TaggedEnum({
   ChangedOperatorView: { view: OperatorView },
+  ChangedScheme: { scheme: Scheme },
   ClickedPageLink: { page: Schema.String },
   RequestedSessionActionAccount: {},
 });
@@ -49,14 +50,15 @@ const Account = <M>(h: Html.H<M>, view: OperatorView, role: "maintainer" | "memb
 
 const OperatorNavNoDeps = Html.component({
   name: "OperatorNav",
-  props: Schema.Struct({ view: OperatorView }),
-  model: Schema.Struct({ view: OperatorView }),
+  props: Schema.Struct({ view: OperatorView, scheme: Scheme }),
+  model: Schema.Struct({ view: OperatorView, scheme: Scheme }),
   message: NavMessage,
   restore: false,
 }).make({
-  init: ($) => ({ view: $.props.view }),
+  init: ($) => ({ view: $.props.view, scheme: $.props.scheme }),
   update: {
     ChangedOperatorView: ($, { view }) => $.evolve({ view }),
+    ChangedScheme: ($, { scheme }) => $.evolve({ scheme }),
     ClickedPageLink: ($, { page }) => $.run(NavigateToPage.make({ page, href: PAGE_META[page as OperatorPage].path })),
     RequestedSessionActionAccount: ($) => $.run(sessionAction() === "signOut" ? SignOut.make() : ForgetBearer.make()),
   },
@@ -66,7 +68,7 @@ const OperatorNavNoDeps = Html.component({
       Stream.map(viewChanges, (view) => NavMessage.ChangedOperatorView({ view })),
     ),
   ],
-  view: (h, { view }) => {
+  view: (h, { view, scheme }) => {
     const action = NavMessage.RequestedSessionActionAccount();
     if (view.session === "ready" && view.role === "member") {
       return h.div.class("mast-actions").children(
@@ -112,10 +114,11 @@ const OperatorNavNoDeps = Html.component({
         .attr("aria-label", "Session actions")
         .children(
           ready
-            ? h.div
-                .key("controls")
-                .class("island")
-                .onMount(HostIsland({ island: "controls" }))
+            ? ShellControls(h, {
+                key: "controls",
+                props: { pages: view.pages, recovering: view.recovering, scheme },
+                onEmit: { ChangedScheme: ({ scheme }) => NavMessage.ChangedScheme({ scheme }) },
+              })
             : null,
           Account(h, view, "maintainer", action),
         ),

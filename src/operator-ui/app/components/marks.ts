@@ -74,9 +74,9 @@ export const SplitBar = <M>(h: Html.H<M>, read: number, write: number) => {
     );
 };
 
-export const ConnectorMark = <M>(h: Html.H<M>, id: string, title: string, size?: "sm" | "lg") =>
+export const ConnectorMark = <M>(h: Html.H<M>, id: string, title: string, size?: "sm" | "lg", hue?: number) =>
   h.span
-    .class("connector-mark", "avatar", `hue-${hueOf(`connector:${id}`) % 6}`, size)
+    .class("connector-mark", "avatar", `hue-${(hue ?? hueOf(`connector:${id}`)) % 6}`, size)
     .attr("aria-hidden", "true")
     .children(monogram(title || id));
 

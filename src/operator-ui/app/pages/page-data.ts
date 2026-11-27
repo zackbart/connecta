@@ -11,6 +11,8 @@ import { ConnectorData, ConnectorDetailPage, connectorProjection } from "./conne
 import { ConnectorsData, ConnectorsPage, connectorsProjection } from "./connectors.js";
 import { EndpointsData, EndpointsPage, endpointsProjection } from "./endpoints.js";
 import { SettingsData, SettingsPage, settingsProjection } from "./settings.js";
+import { MemberData, MemberPage, memberProjection } from "./member.js";
+import { PendingData, PendingPage, pendingProjection } from "./pending.js";
 import { TokensData, TokensPage, tokensProjection } from "./tokens.js";
 
 export const PageData = UiSchema.TaggedEnum({
@@ -20,6 +22,8 @@ export const PageData = UiSchema.TaggedEnum({
   Tokens: { data: TokensData },
   Activity: { data: ActivityData, route: OperatorRoute },
   Settings: { data: SettingsData },
+  Member: { data: MemberData, account: Schema.NullOr(Schema.String) },
+  Pending: { data: PendingData },
 });
 export type PageData = typeof PageData.Type;
 
@@ -40,6 +44,8 @@ export const pageProjection = () => {
   const tokens = tokensProjection();
   const activity = activityProjection();
   const settings = settingsProjection();
+  const member = memberProjection();
+  const pending = pendingProjection();
   let last: PageData | null = null;
   const keep = (next: PageData): PageData =>
     last?._tag === next._tag &&
@@ -53,6 +59,7 @@ export const pageProjection = () => {
     steady: (state: OperatorState) => SteadyHealth,
     location: Router.Location,
     issuedToken: () => IssuedTokenHandle | null,
+    account: string | null = null,
   ): PageData | null => {
     if (content === "connectors")
       return keep(
@@ -79,6 +86,8 @@ export const pageProjection = () => {
         PageData.Activity({ data: activity(state), route: routeOf(location.route, "Activity") ?? NO_FILTERS }),
       );
     if (content === "settings") return keep(PageData.Settings({ data: settings(state) }));
+    if (content === "member") return PageData.Member({ data: member(state), account });
+    if (content === "pending") return keep(PageData.Pending({ data: pending(state) }));
     return null;
   };
 };
@@ -96,4 +105,8 @@ export const PageView = <M>(h: Html.H<M>, page: PageData, view: ContentOwner) =>
             ? ActivityView(h, { props: { route: page.route, activity: page.data, connectorId: null } })
             : page._tag === "Settings" && view === "settings"
               ? SettingsPage(h, { props: { settings: page.data } })
-              : null;
+              : page._tag === "Member" && view === "member"
+                ? MemberPage(h, { props: { data: page.data, account: page.account } })
+                : page._tag === "Pending" && view === "pending"
+                  ? PendingPage(h, { props: { data: page.data } })
+                  : null;

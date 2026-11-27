@@ -261,9 +261,7 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await clean(page);
 });
 
-test("page headings take focus across Effect UI and island pages, and Activity's Retry returns to its heading", async ({
-  page,
-}) => {
+test("page headings take focus across every page, and Activity's Retry returns to its heading", async ({ page }) => {
   await session(page);
   await page.goto(origin + "/connectors");
   for (const [link, heading] of [

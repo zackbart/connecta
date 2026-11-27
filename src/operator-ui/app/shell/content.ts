@@ -24,8 +24,7 @@ import {
 } from "./commands.js";
 import { Gate, NoAccess } from "./gate.js";
 import { Icon } from "../components/icons.js";
-import { HostIsland, islandRequests } from "./island.js";
-import { IslandRequest } from "./island-request.js";
+import { PageWrite, pageWrites } from "./page-writes.js";
 import { OverviewData, OverviewPage, overviewProjection } from "../pages/overview.js";
 import { PageData, PageView, pageProjection } from "../pages/page-data.js";
 import { IssuedTokenDialog } from "../pages/tokens.js";
@@ -45,23 +44,17 @@ const ContentMessage = UiSchema.TaggedEnum({
   ChangedVisibility: {},
   ChangedHash: {},
   ClickedRecoveryRetry: {},
-  RequestedPageWrite: { request: IslandRequest },
+  RequestedPageWrite: { request: PageWrite },
 });
 
-const writeCommand = (request: IslandRequest) =>
-  IslandRequest.match(request, {
+const writeCommand = (request: PageWrite) =>
+  PageWrite.match(request, {
     StartOAuth: ({ connector, mode, prepared }) => StartOAuth.make({ connector, mode, prepared }),
     DisconnectOAuth: ({ connector }) => DisconnectOAuth.make({ connector }),
     SaveCredential: ({ connector, candidate, verify }) => SaveCredential.make({ connector, candidate, verify }),
     RemoveCredential: ({ connector }) => RemoveCredential.make({ connector }),
     TestCredential: ({ connector }) => TestCredential.make({ connector }),
   });
-
-const PageIslandHost = <M>(h: Html.H<M>) =>
-  h.div
-    .key("page")
-    .class("island")
-    .onMount(HostIsland({ island: "page" }));
 
 const RecoveryBanner = <M>(h: Html.H<M>, failed: boolean, retry: M) =>
   h.section
@@ -96,7 +89,7 @@ const contentSource = Effect.gen(function* () {
     return {
       view,
       overview: view.content === "overview" ? overview(state, health.steady(state)) : null,
-      page: pages(view.content, state, health.steady, router.location(), controller.issuedTokenHandle),
+      page: pages(view.content, state, health.steady, router.location(), controller.issuedTokenHandle, view.account),
     };
   };
   const moves = Stream.suspend(() =>
@@ -117,7 +110,7 @@ export const operatorContentProps = Effect.gen(function* () {
 const PageContent = <M>(h: Html.H<M>, view: OperatorView, overview: OverviewData | null, page: PageData | null) =>
   view.content === "overview" && overview
     ? OverviewPage(h, { props: { overview } })
-    : (page && PageView(h, page, view.content)) || PageIslandHost(h);
+    : page && PageView(h, page, view.content);
 
 const OperatorContentNoDeps = Html.component({
   name: "OperatorContent",
@@ -152,7 +145,7 @@ const OperatorContentNoDeps = Html.component({
       const entering = view.recovering && !$.model.recovering;
       return $.evolve({ view, overview, page, recovering: view.recovering }).run(
         ...(entering ? [CloseForRecovery.make(), FocusRecoveryRetry.make()] : []),
-        ...(!view.islandOwnsFocus && view.focusRequested ? [FocusPendingTarget.make()] : []),
+        ...(view.focusRequested ? [FocusPendingTarget.make()] : []),
         ...(view.collectionsWanted ? [LoadPageCollections.make()] : []),
       );
     },
@@ -172,7 +165,7 @@ const OperatorContentNoDeps = Html.component({
     ),
     Subscription.make(
       "pageWrites",
-      Stream.map(islandRequests, (request) => ContentMessage.RequestedPageWrite({ request })),
+      Stream.map(pageWrites, (request) => ContentMessage.RequestedPageWrite({ request })),
     ),
     HtmlSubscription.onWindow("focus", ContentMessage.FocusedWindow()),
     Subscription.make(

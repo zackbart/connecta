@@ -64,11 +64,11 @@ export const endpointsProjection = () => {
 
 export const endpointUrl = (path: string): string => new URL(path, mcpUrl).href;
 
-const SetupTarget = Schema.Struct({ label: Schema.String, url: Schema.String, name: Schema.String });
-type SetupTarget = typeof SetupTarget.Type;
+export const SetupTarget = Schema.Struct({ label: Schema.String, url: Schema.String, name: Schema.String });
+export type SetupTarget = typeof SetupTarget.Type;
 
-const ClientId = Schema.Literals(["claude", "codex", "json"]);
-type ClientId = ClientSetupCommand["id"];
+export const ClientId = Schema.Literals(["claude", "codex", "json"]);
+export type ClientId = ClientSetupCommand["id"];
 
 const CLIENT_LABELS: Record<ClientId, string> = { claude: "Claude Code", codex: "Codex", json: "JSON" };
 
@@ -129,7 +129,7 @@ const locationHashes = Stream.unwrap(
   ),
 );
 
-const EndpointLine = (h: H, key: string, url: string, label: string, kind?: EndpointAudience) =>
+export const EndpointLine = <M>(h: Html.H<M>, key: string, url: string, label: string, kind?: EndpointAudience) =>
   h.div.class("endpoint", kind === "agents" && "endpoint-agent").children(
     kind ? h.span.class("endpoint-kind").children(kind === "agents" ? "Agents" : "People") : null,
     h.code.children(url.split(/(?<=\/)(?!\/)/).flatMap((part, index) => (index ? [h.wbr, part] : [part]))),
@@ -341,7 +341,17 @@ const EndpointTools = (h: H, endpoint: EndpointRow, signals: Readonly<Record<str
     : StateBlock(h, { copy: "No connectors" }),
 ];
 
-const SetupDrawer = (h: H, target: SetupTarget | null, client: ClientId, open: boolean) => {
+export const SetupDrawer = <M>(
+  h: Html.H<M>,
+  options: {
+    readonly target: SetupTarget | null;
+    readonly client: ClientId;
+    readonly open: boolean;
+    readonly onClose: M;
+    readonly pick: (client: ClientId) => M;
+  },
+) => {
+  const { target, client, open } = options;
   const commands = target ? clientSetupCommands(target.name, target.url) : [];
   const command = commands.find((candidate) => candidate.id === client) ?? commands[0];
   return Dialog(h, {
@@ -350,7 +360,7 @@ const SetupDrawer = (h: H, target: SetupTarget | null, client: ClientId, open: b
     drawer: true,
     title: "Client setup",
     description: target?.label ?? "",
-    onClose: EndpointsPageMessage.RequestedCloseSetup(),
+    onClose: options.onClose,
     children: [
       target && command
         ? h.section.class("setup-list").children(
@@ -359,7 +369,7 @@ const SetupDrawer = (h: H, target: SetupTarget | null, client: ClientId, open: b
               label: "Client",
               value: command.id,
               options: commands.map((candidate) => ({ value: candidate.id, label: CLIENT_LABELS[candidate.id] })),
-              select: (picked) => EndpointsPageMessage.PickedClient({ client: picked }),
+              select: options.pick,
             }),
             h.div
               .class("setup-item")
@@ -532,7 +542,13 @@ export const EndpointsPageNoDeps = Html.component({
               ready.rows.map((endpoint, index) => EndpointEntry(h, endpoint, index, ready, model)),
             ),
       }),
-      SetupDrawer(h, model.setup, model.client, model.setup !== null && !recovering),
+      SetupDrawer(h, {
+        target: model.setup,
+        client: model.client,
+        open: model.setup !== null && !recovering,
+        onClose: EndpointsPageMessage.RequestedCloseSetup(),
+        pick: (client) => EndpointsPageMessage.PickedClient({ client }),
+      }),
     );
   },
 });
