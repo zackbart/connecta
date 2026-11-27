@@ -2,8 +2,7 @@ import { Command, Component, Router } from "@effect/ui";
 import { Effect, Schema } from "effect";
 import { starterIn } from "../run.js";
 import { OperatorController, type OperatorControllerShape } from "../services/controller.js";
-import { IslandRequests } from "../shell/island.js";
-import { IslandRequest } from "../shell/island-request.js";
+import { PageWrite, PageWrites } from "../shell/page-writes.js";
 
 const ConfirmAction = Schema.Literals(["oauth_disconnect", "oauth_restart", "credential_remove"]);
 
@@ -19,15 +18,15 @@ const run = <A extends object>(body: (controller: OperatorControllerShape, args:
   });
 
 export class RequestPageWrite extends Command.Service<RequestPageWrite>()("operator/RequestPageWrite", {
-  args: { request: IslandRequest },
+  args: { request: PageWrite },
   success: Component.Noop,
 }) {
   static readonly layer = this.toLayer(
-    IslandRequests.useSync(
-      (islands) =>
+    PageWrites.useSync(
+      (writes) =>
         ({ request }) =>
           Effect.sync(() => {
-            islands.offer(request);
+            writes.offer(request);
             return Component.noop;
           }),
     ),

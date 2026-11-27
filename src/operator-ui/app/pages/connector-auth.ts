@@ -30,11 +30,12 @@ import {
   StateBlock,
   SummaryRow,
 } from "../components/parts.js";
+import { CredentialForm } from "../components/credential-form.js";
 import { opaque } from "../components/projection.js";
-import type { CandidateHandle as Handle, CredentialBody, PreparedOAuth } from "../services/controller.js";
+import type { PreparedOAuth } from "../services/controller.js";
 import { OperatorController } from "../services/controller.js";
 import { CandidateHandle, Prepared } from "../shell/commands.js";
-import { IslandRequest } from "../shell/island-request.js";
+import { PageWrite } from "../shell/page-writes.js";
 import {
   AskConfirm,
   CancelConfirm,
@@ -46,7 +47,6 @@ import {
 
 const OAuthMode = Schema.Literals(["continue", "restart"]);
 const Verify = Schema.Literals(["test", "skip"]);
-type Verify = typeof Verify.Type;
 const Action = Schema.Literals(["oauth_disconnect", "oauth_restart", "credential_remove"]);
 
 export const PrepareOAuth = Mount.makeStream(
@@ -67,64 +67,6 @@ export const PrepareOAuth = Mount.makeStream(
     ),
 );
 
-type Submission =
-  | { readonly _tag: "Held"; readonly candidate: Handle }
-  | { readonly _tag: "Refused"; readonly copy: string };
-
-const SubmitArgs = { connector: Schema.String, fields: Schema.Array(Schema.String) };
-type SubmitArgs = { readonly connector: string; readonly fields: ReadonlyArray<string> };
-
-export const credentialSubmissions = (
-  button: EventTarget,
-  hold: (body: CredentialBody) => Handle,
-  read: (id: string) => string,
-  initial: SubmitArgs,
-  changes: Stream.Stream<SubmitArgs>,
-) =>
-  Stream.callback<Submission>((queue) =>
-    Effect.gen(function* () {
-      let args = initial;
-      yield* Stream.runForEach(changes, (next) => Effect.sync(() => (args = next))).pipe(Effect.forkScoped);
-      const submit = (): Submission => {
-        const { connector, fields } = args;
-        if (!fields.length) {
-          const value = read(`credential-input-${connector}`).trim();
-          return value
-            ? { _tag: "Held", candidate: hold({ value }) }
-            : { _tag: "Refused", copy: "Paste a credential before saving." };
-        }
-        const values: Record<string, string> = {};
-        for (const [index, name] of fields.entries()) {
-          const value = read(`credential-input-${connector}-${index}`).trim();
-          if (!value) return { _tag: "Refused", copy: "Fill every field before saving." };
-          values[name] = value;
-        }
-        return { _tag: "Held", candidate: hold({ values }) };
-      };
-      const onClick = () => void Queue.offerUnsafe(queue, submit());
-      yield* Effect.acquireRelease(
-        Effect.sync(() => button.addEventListener("click", onClick)),
-        () => Effect.sync(() => button.removeEventListener("click", onClick)),
-      );
-    }),
-  );
-
-const readField = (id: string) => {
-  const field = document.getElementById(id);
-  return field instanceof HTMLInputElement ? field.value : "";
-};
-
-export const SubmitCredential = Mount.makeStream(
-  "SubmitCredential",
-  { args: SubmitArgs },
-  (button: HTMLElement, initial, changes) =>
-    Stream.unwrap(
-      OperatorController.useSync((controller) =>
-        credentialSubmissions(button, controller.holdCredentialCandidate, readField, initial, changes),
-      ),
-    ),
-);
-
 export const ConnectorAuthMessage = UiSchema.TaggedEnum({
   CompletedPrepareOAuth: { mode: OAuthMode, prepared: Prepared },
   ClickedAskConfirm: { action: Action },
@@ -140,20 +82,11 @@ export const ConnectorAuthMessage = UiSchema.TaggedEnum({
 type Message = typeof ConnectorAuthMessage.Type;
 type H = Html.H<Message>;
 
-const write = (request: IslandRequest) => RequestPageWrite.make({ request });
+const write = (request: PageWrite) => RequestPageWrite.make({ request });
 
 const prepared = (connector: string, mode: typeof OAuthMode.Type) =>
   PrepareOAuth({ connector, mode }).pipe(
     Mount.map((tab) => ConnectorAuthMessage.CompletedPrepareOAuth({ mode, prepared: tab })),
-  );
-
-const submitted = (connector: string, fields: ReadonlyArray<string>, verify: Verify) =>
-  SubmitCredential({ connector, fields }).pipe(
-    Mount.map((submission) =>
-      submission._tag === "Held"
-        ? ConnectorAuthMessage.HeldCredentialCandidate({ candidate: submission.candidate, verify })
-        : ConnectorAuthMessage.RefusedCredentialCandidate({ copy: submission.copy }),
-    ),
   );
 
 export const ConnectorAuthProps = Schema.Struct({
@@ -264,96 +197,6 @@ const Masked = (h: H, lastFour: string | undefined, updatedAt: string | undefine
           updatedAt ? h.span.class("meta").children(`Updated ${formatDate(updatedAt)}`) : null,
         );
 
-const CredentialForm = (
-  h: H,
-  options: {
-    readonly connector: string;
-    readonly credential: Credential;
-    readonly busy: boolean;
-    readonly untested: boolean;
-  },
-) => {
-  const { connector, credential, busy } = options;
-  const testable = credential.testable === true;
-  const fields = credential.fields ?? [];
-  const names = fields.map((field) => field.name);
-  const inputId = `credential-input-${connector}`;
-  return h.div
-    .key("credential-form")
-    .class("credential-form")
-    .attr("data-credential-form", connector)
-    .children(
-      fields.length === 0
-        ? [
-            h.label.key("label").class("visually-hidden").attr("for", inputId).children(credential.label),
-            h.input
-              .key("input")
-              .attr("id", inputId)
-              .attr("type", "password")
-              .attr("aria-label", credential.label)
-              .attr("placeholder", credential.placeholder || "Paste credential")
-              .attr("autocomplete", "new-password")
-              .attr("autocapitalize", "none")
-              .attr("spellcheck", "false"),
-          ]
-        : h.div
-            .key("fields")
-            .class("credential-fields")
-            .children(
-              fields.map((field, index) => {
-                const id = `${inputId}-${index}`;
-                const kind = field.inputType ?? "password";
-                return h.div
-                  .key(field.name)
-                  .class("credential-field")
-                  .children(
-                    h.label.attr("for", id).children(field.label),
-                    field.description
-                      ? h.p.class("meta").attr("id", `${id}-description`).children(field.description)
-                      : null,
-                    h.input
-                      .attr("id", id)
-                      .attr("aria-describedby", field.description ? `${id}-description` : undefined)
-                      .attr("type", field.inputType || "password")
-                      .attr("placeholder", field.placeholder || field.label)
-                      .attr("autocomplete", kind === "password" ? "new-password" : "off")
-                      .attr("autocapitalize", "none")
-                      .attr("spellcheck", "false"),
-                  );
-              }),
-            ),
-      h.div
-        .key("actions")
-        .class("actions")
-        .children(
-          h.button
-            .key("save")
-            .class("btn", "primary")
-            .attr("type", "button")
-            .disabled(busy)
-            .onMount(submitted(connector, names, testable ? "test" : "skip"))
-            .children(busy ? (testable ? "Testing…" : "Saving…") : testable ? "Test and save" : "Save"),
-          testable && options.untested
-            ? h.button
-                .key("untested")
-                .class("btn")
-                .attr("type", "button")
-                .attr("data-save-untested", connector)
-                .disabled(busy)
-                .onMount(submitted(connector, names, "skip"))
-                .children("Save without testing")
-            : null,
-          h.button
-            .key("cancel")
-            .class("btn", "quiet")
-            .attr("type", "button")
-            .disabled(busy)
-            .on("click", ConnectorAuthMessage.ClickedEditCredential({ connector: null }))
-            .children("Cancel"),
-        ),
-    );
-};
-
 const CredentialCard = (h: H, props: ConnectorAuthProps, credential: Credential) => {
   const { connector } = props;
   const id = connector.id;
@@ -451,7 +294,17 @@ const CredentialCard = (h: H, props: ConnectorAuthProps, credential: Credential)
             }),
           }).key("confirm")
         : null,
-      props.editing ? CredentialForm(h, { connector: id, credential, busy, untested: props.untested }) : null,
+      props.editing
+        ? CredentialForm(h, {
+            connector: id,
+            credential,
+            busy,
+            untested: props.untested,
+            held: (candidate, verify) => ConnectorAuthMessage.HeldCredentialCandidate({ candidate, verify }),
+            refused: (copy) => ConnectorAuthMessage.RefusedCredentialCandidate({ copy }),
+            cancel: ConnectorAuthMessage.ClickedEditCredential({ connector: null }),
+          })
+        : null,
       NoticeWithFix(h, `credentialNotice-${id}`, props.credentialNotice),
     );
 };
@@ -483,16 +336,16 @@ export const ConnectorAuthNoDeps = Html.component({
   init: () => null,
   update: {
     CompletedPrepareOAuth: ($, { mode, prepared }) =>
-      $.run(write(IslandRequest.StartOAuth({ connector: $.props.connector.id, mode, prepared }))),
+      $.run(write(PageWrite.StartOAuth({ connector: $.props.connector.id, mode, prepared }))),
     ClickedAskConfirm: ($, { action }) => $.run(AskConfirm.make({ connector: $.props.connector.id, action })),
-    ClickedDisconnect: ($) => $.run(write(IslandRequest.DisconnectOAuth({ connector: $.props.connector.id }))),
+    ClickedDisconnect: ($) => $.run(write(PageWrite.DisconnectOAuth({ connector: $.props.connector.id }))),
     ClickedCancelConfirm: ($, { focus }) => $.run(CancelConfirm.make({ focus })),
     ClickedRefresh: ($) => $.run(RefreshConnector.make({ connector: $.props.connector.id })),
     ClickedEditCredential: ($, { connector }) => $.run(EditCredential.make({ connector })),
-    ClickedTestCredential: ($) => $.run(write(IslandRequest.TestCredential({ connector: $.props.connector.id }))),
-    ClickedRemoveCredential: ($) => $.run(write(IslandRequest.RemoveCredential({ connector: $.props.connector.id }))),
+    ClickedTestCredential: ($) => $.run(write(PageWrite.TestCredential({ connector: $.props.connector.id }))),
+    ClickedRemoveCredential: ($) => $.run(write(PageWrite.RemoveCredential({ connector: $.props.connector.id }))),
     HeldCredentialCandidate: ($, { candidate, verify }) =>
-      $.run(write(IslandRequest.SaveCredential({ connector: $.props.connector.id, candidate, verify }))),
+      $.run(write(PageWrite.SaveCredential({ connector: $.props.connector.id, candidate, verify }))),
     RefusedCredentialCandidate: ($, { copy }) =>
       $.run(RefuseCredential.make({ connector: $.props.connector.id, copy })),
   },

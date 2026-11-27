@@ -1017,16 +1017,16 @@ dialog:has(> .dialog-content) {
   overflow: auto;
   padding: 0.375rem;
 }
-[cmdk-group]:not([hidden]) + [cmdk-group] {
+.command-group + .command-group {
   margin-top: 0.25rem;
 }
-[cmdk-group-heading] {
+.command-group-heading {
   color: var(--text-3);
   font-size: var(--text-2xs);
   font-weight: var(--weight-semibold);
   padding: 0.375rem 0.625rem 0.25rem;
 }
-[cmdk-item] {
+.command-item {
   align-items: center;
   border-radius: var(--radius-sm);
   color: var(--text);
@@ -1038,22 +1038,22 @@ dialog:has(> .dialog-content) {
   min-width: 0;
   padding: 0.375rem 0.625rem;
 }
-[cmdk-item] > .icon {
+.command-item > .icon {
   color: var(--text-3);
 }
-[cmdk-item] > code {
+.command-item > code {
   font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-[cmdk-item][data-selected="true"] {
+.command-item[data-highlighted] {
   background: var(--hover);
 }
-[cmdk-item][data-selected="true"] > .icon {
+.command-item[data-highlighted] > .icon {
   color: var(--text);
 }
-[cmdk-empty] {
+.command-empty {
   color: var(--text-3);
   font-size: var(--text-sm);
   padding: 0.75rem 0.625rem;

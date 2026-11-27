@@ -24,7 +24,8 @@ const CONTENT_OWNERS = [
   "tokens",
   "activity",
   "settings",
-  "island",
+  "member",
+  "pending",
 ] as const;
 export type ContentOwner = (typeof CONTENT_OWNERS)[number];
 
@@ -35,7 +36,6 @@ export const OperatorView = Schema.Struct({
   gate: Schema.NullOr(Schema.Struct({ message: Schema.String, tone: Schema.Literals(["info", "error"]) })),
   focusRequested: Schema.Boolean,
   content: Schema.Literals(CONTENT_OWNERS),
-  islandOwnsFocus: Schema.Boolean,
   recovering: Schema.Boolean,
   recoveryFailed: Schema.Boolean,
   pages: Schema.Array(Page),
@@ -62,9 +62,9 @@ const ownerWhilePending = (state: OperatorState): ContentOwner =>
     ? "overview"
     : contractLoading(state) && state.page === "connections"
       ? "connectors"
-      : "island";
+      : "pending";
 
-const MAINTAINER_PAGES: Partial<Record<OperatorPage, ContentOwner>> = {
+const MAINTAINER_PAGES: Record<OperatorPage, ContentOwner> = {
   overview: "overview",
   connections: "connectors",
   connector: "connector",
@@ -79,13 +79,10 @@ function contentOwner(state: OperatorState, sessionPresumed: boolean): ContentOw
   if (state.session !== "ready")
     return state.session === "loading" && sessionPresumed ? ownerWhilePending(state) : "gate";
   const role = displayRole(state);
-  if (role === "member" || state.role === "member") return "island";
+  if (role === "member" || state.role === "member") return "member";
   if (role !== "maintainer") return ownerWhilePending(state);
-  return MAINTAINER_PAGES[state.page] ?? "island";
+  return MAINTAINER_PAGES[state.page];
 }
-
-export const islandOwnsFocus = (state: OperatorState, sessionPresumed: boolean): boolean =>
-  contentOwner(state, sessionPresumed) === "island";
 
 export function projectView(
   state: OperatorState,
@@ -104,7 +101,6 @@ export function projectView(
     gate: state.gate ? { message: state.gate.message, tone: state.gate.tone } : null,
     focusRequested: state.pendingFocus !== null || state.focusIfLost !== null,
     content: contentOwner(state, shell.sessionPresumed),
-    islandOwnsFocus: islandOwnsFocus(state, shell.sessionPresumed),
     recovering: state.session === "ready" && contractRecovering(state),
     recoveryFailed: state.contractPhase === "error" || state.loadFailure !== null,
     pages: state.session === "ready" ? visiblePages(state, shell.navHint) : [],
@@ -130,7 +126,7 @@ export const viewChanges = Stream.unwrap(
   OperatorController.useSync((controller) => Stream.map(controller.changes, (state) => viewOf(controller, state))),
 );
 
-export function visiblePages(state: OperatorState, navHint: { readonly activity: boolean }): OperatorPage[] {
+function visiblePages(state: OperatorState, navHint: { readonly activity: boolean }): OperatorPage[] {
   if (displayRole(state) !== "maintainer") return [];
   const activity = state.data ? activityReadable(state) : navHint.activity && activityAllowed(state);
   return OPERATOR_PAGES.filter((page) => {

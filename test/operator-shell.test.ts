@@ -32,7 +32,6 @@ const { AccountMenu } = await import("../src/operator-ui/app/shell/account-menu.
 const commands = await import("../src/operator-ui/app/shell/commands.js");
 const { OperatorContent, operatorContentProps } = await import("../src/operator-ui/app/shell/content.js");
 const { Gate, GateMessage } = await import("../src/operator-ui/app/shell/gate.js");
-const bridge = await import("../src/operator-ui/app/bridge.js");
 const { OperatorNav } = await import("../src/operator-ui/app/shell/nav.js");
 const { OperatorRoute } = await import("../src/operator-ui/app/shell/routes.js");
 const { OverviewPageNoDeps, overviewProjection } = await import("../src/operator-ui/app/pages/overview.js");
@@ -52,8 +51,14 @@ const { pageProjection } = await import("../src/operator-ui/app/pages/page-data.
 const { ConnectorsPageNoDeps } = await import("../src/operator-ui/app/pages/connectors.js");
 const { ConnectorMatrixNoDeps, TrackPopover } = await import("../src/operator-ui/app/pages/connector-matrix.js");
 const { ConnectorDetailPageNoDeps } = await import("../src/operator-ui/app/pages/connector.js");
-const { ConnectorAuthMessage, ConnectorAuthNoDeps, PrepareOAuth, SubmitCredential, credentialSubmissions } =
+const { ConnectorAuthMessage, ConnectorAuthNoDeps, PrepareOAuth } =
   await import("../src/operator-ui/app/pages/connector-auth.js");
+const { SubmitCredential, credentialSubmissions, readField } =
+  await import("../src/operator-ui/app/components/credential-form.js");
+const memberPage = await import("../src/operator-ui/app/pages/member.js");
+const pendingPage = await import("../src/operator-ui/app/pages/pending.js");
+const controls = await import("../src/operator-ui/app/shell/controls.js");
+const { memberWithNotes } = await import("./fixtures/operator-console.js");
 const { TakeRequestedFocus } = await import("../src/operator-ui/app/components/focus.js");
 const { Catalog } = await import("../src/operator-ui/app/pages/catalog.js");
 const serverFixture = "./fixtures/operator-visual.js";
@@ -83,6 +88,16 @@ const maintainerState = (patch: Partial<OperatorState> = {}): OperatorState => (
   role: "maintainer",
   contract: fixture.contract,
   data: fixture.data,
+  contractPhase: "ready",
+  admissionValid: true,
+  ...patch,
+});
+
+const memberState = (patch: Partial<OperatorState> = {}): OperatorState => ({
+  ...initialState("overview"),
+  session: "ready",
+  role: "member",
+  contract: memberWithNotes(["save"]),
   contractPhase: "ready",
   admissionValid: true,
   ...patch,
@@ -126,7 +141,7 @@ describe("operator content shell", () => {
       }),
     ));
 
-  it("spends a focus request through the focus Command only while no page island owns focus", () =>
+  it("spends every focus request through the focus Command, whichever page owns the content", () =>
     story(
       Effect.gen(function* () {
         const s = yield* contentStory();
@@ -140,10 +155,15 @@ describe("operator content shell", () => {
           .resolve(commands.FocusPendingTarget, Component.noop);
         s.send({
           _tag: "ChangedOperatorView",
-          view: view({ session: "ready", page: "tokens", pendingFocus: "confirm-cancel-token-alice" }),
+          view: projectView(
+            maintainerState({ page: "activity", activityPhase: "ready", pendingFocus: "activityHeading" }),
+            shellFacts,
+          ),
           overview: null,
           page: null,
-        }).expectNone();
+        })
+          .expectExact(commands.FocusPendingTarget)
+          .resolve(commands.FocusPendingTarget, Component.noop);
         s.send({
           _tag: "ChangedOperatorView",
           view: view({ session: "gated", pendingFocus: "token" }),
@@ -224,15 +244,12 @@ describe("overview page", () => {
         const state = maintainerState({ pendingFocus: "overviewHeading" });
         const shell = { navHint: { activity: false }, account: null, sessionPresumed: false, clerkSignedIn: false };
         const overview = projectView(state, shell);
-        expect([overview.content, overview.islandOwnsFocus]).toEqual(["overview", false]);
+        expect(overview.content).toBe("overview");
         expect(
-          projectView({ ...state, role: "member", contract: { ...fixture.contract, role: "member" } }, shell),
-        ).toMatchObject({
-          content: "island",
-          islandOwnsFocus: true,
-        });
+          projectView({ ...state, role: "member", contract: { ...fixture.contract, role: "member" } }, shell).content,
+        ).toBe("member");
         for (const page of ["endpoints", "tokens"] as const) {
-          expect(projectView({ ...state, page }, shell)).toMatchObject({ content: page, islandOwnsFocus: false });
+          expect(projectView({ ...state, page }, shell).content).toBe(page);
         }
         const pending = {
           ...state,
@@ -251,7 +268,7 @@ describe("overview page", () => {
       }),
     ));
 
-  it("holds a connector's evidence while it is read again, for the overview and the island pages alike", () =>
+  it("holds a connector's evidence while it is read again, for the overview and the other pages alike", () =>
     story(
       Effect.gen(function* () {
         let state = maintainerState();
@@ -414,11 +431,8 @@ const detailData = (state: OperatorState, id: string, hash = "") => {
 describe("connector pages", () => {
   it("are the content root's own components, while contracts load and once they have", () => {
     const state = maintainerState({ page: "connections" });
-    expect(projectView(state, shellFacts)).toMatchObject({ content: "connectors", islandOwnsFocus: false });
-    expect(projectView({ ...state, page: "connector" }, shellFacts)).toMatchObject({
-      content: "connector",
-      islandOwnsFocus: false,
-    });
+    expect(projectView(state, shellFacts).content).toBe("connectors");
+    expect(projectView({ ...state, page: "connector" }, shellFacts).content).toBe("connector");
     const pending = {
       ...state,
       session: "loading" as const,
@@ -428,11 +442,11 @@ describe("connector pages", () => {
     };
     expect(projectView(pending, { ...shellFacts, sessionPresumed: true }).content).toBe("connectors");
     expect(projectView({ ...pending, page: "connector" }, { ...shellFacts, sessionPresumed: true }).content).toBe(
-      "island",
+      "pending",
     );
     expect(
       projectView({ ...state, role: "member", contract: { ...fixture.contract, role: "member" } }, shellFacts).content,
-    ).toBe("island");
+    ).toBe("member");
   });
 
   it("spends the connector page's focus requests through the content root", () =>
@@ -824,10 +838,10 @@ describe("activity and settings pages", () => {
     story(
       Effect.gen(function* () {
         const activity = projectView(activityState({ pendingFocus: "activityHeading" }), shell);
-        expect([activity.content, activity.islandOwnsFocus]).toEqual(["activity", false]);
+        expect(activity.content).toBe("activity");
         const settings = projectView(maintainerState({ page: "settings" }), shell);
-        expect([settings.content, settings.islandOwnsFocus]).toEqual(["settings", false]);
-        expect(projectView({ ...activityState(), role: "member" }, shell).content).toBe("island");
+        expect(settings.content).toBe("settings");
+        expect(projectView({ ...activityState(), role: "member" }, shell).content).toBe("member");
         const s = yield* contentStory();
         s.send({
           _tag: "ChangedOperatorView",
@@ -988,10 +1002,231 @@ describe("activity and settings pages", () => {
     ));
 });
 
+describe("member page", () => {
+  const ready = (patch: Partial<OperatorState> = {}) => memberPage.memberProjection()(memberState(patch));
+
+  it("is the content root's own component, as is the page shown while a role is pending", () => {
+    expect(projectView(memberState(), shellFacts).content).toBe("member");
+    expect(projectView({ ...memberState(), contract: null, contractPhase: "loading" }, shellFacts).content).toBe(
+      "member",
+    );
+    const loading = { ...initialState("endpoints"), session: "loading" as const };
+    expect(projectView(loading, { ...shellFacts, sessionPresumed: true }).content).toBe("pending");
+  });
+
+  it("projects pending, failed and ready states, reusing one projection until its inputs change", () => {
+    const project = memberPage.memberProjection();
+    expect(project({ ...memberState(), contract: null, contractPhase: "loading" })).toEqual({
+      _tag: "Pending",
+      failed: false,
+      network: false,
+    });
+    expect(project({ ...memberState(), contract: null, contractPhase: "error", loadFailure: "network" })).toEqual({
+      _tag: "Pending",
+      failed: true,
+      network: true,
+    });
+    const state = memberState({ oauthBusy: "slack" });
+    const first = project(state);
+    expect(first._tag).toBe("Ready");
+    expect(project({ ...state, pendingFocus: "memberHeading" })).toBe(first);
+    const next = project({ ...state, oauthBusy: null });
+    expect(next).not.toBe(first);
+    expect(next._tag === "Ready" && next.rows.slack?.oauthBusy).toBe(false);
+  });
+
+  it("asks before taking an account away, runs each write at the content root, and backs out to its trigger", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Story.make(memberPage.MemberPageNoDeps, { data: ready(), account: null });
+        s.send({ _tag: "ClickedControl", connector: "slack", control: "restart" }).expectExact(
+          connectorCommands.AskConfirm.make({ connector: "slack", action: "oauth_restart" }),
+        );
+        s.resolve(connectorCommands.AskConfirm, Component.noop);
+        s.send({ _tag: "ClickedControl", connector: "notes", control: "save" }).expectExact(
+          connectorCommands.EditCredential.make({ connector: "notes" }),
+        );
+        s.resolve(connectorCommands.EditCredential, Component.noop);
+        s.send({ _tag: "ClickedControl", connector: "notes", control: "test" }).expectExact(
+          connectorCommands.RequestPageWrite.make({ request: { _tag: "TestCredential", connector: "notes" } }),
+        );
+        s.resolve(connectorCommands.RequestPageWrite, Component.noop);
+        s.send({ _tag: "ClickedConfirmDisconnect", connector: "slack" }).expectExact(
+          connectorCommands.RequestPageWrite.make({ request: { _tag: "DisconnectOAuth", connector: "slack" } }),
+        );
+        s.resolve(connectorCommands.RequestPageWrite, Component.noop);
+        s.send({ _tag: "ClickedCancelConfirm", focus: ["reconnect-slack", "memberHeading"] }).expectExact(
+          connectorCommands.CancelConfirm.make({ focus: ["reconnect-slack", "memberHeading"] }),
+        );
+        s.resolve(connectorCommands.CancelConfirm, Component.noop);
+        s.send({ _tag: "ClickedRetryLoad" })
+          .expectExact(connectorCommands.RetryOperatorLoad)
+          .resolve(connectorCommands.RetryOperatorLoad, Component.noop);
+      }),
+    ));
+
+  it("opens a connect's tab in its own click and asks with the trigger's focus fallbacks", () =>
+    story(
+      Effect.gen(function* () {
+        const contract = memberWithNotes(["save"]);
+        const slack = contract.connectors.find((connector) => connector.id === "slack")!;
+        slack.connection = { state: "auth_required", problem: "oauth_required" };
+        const data = memberPage.memberProjection()(
+          memberState({ contract, confirming: { connectorId: "slack", action: "oauth_disconnect" } }),
+        );
+        const prepared = { refused: false, tab: null } as const;
+        const s = yield* Scene.make(memberPage.MemberPageNoDeps, { data, account: "alice@example.com" });
+        s.expectMount(PrepareOAuth({ connector: "slack", mode: "continue" }))
+          .expectMount(TakeRequestedFocus())
+          .expect(Locator.attr("id", "memberHeading"))
+          .toExist()
+          .expect(Locator.attr("id", "confirm-cancel-slack"))
+          .toExist()
+          .mounted(PrepareOAuth, prepared)
+          .expectExact(
+            connectorCommands.RequestPageWrite.make({
+              request: { _tag: "StartOAuth", connector: "slack", mode: "continue", prepared },
+            }),
+          )
+          .resolve(connectorCommands.RequestPageWrite, Component.noop);
+      }),
+    ));
+
+  it("opens and closes client setup for an endpoint", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Story.make(memberPage.MemberPageNoDeps, { data: ready(), account: null });
+        const target = { label: "team", url: "https://deployment.example/mcp", name: "connecta" };
+        s.send({ _tag: "ClickedSetup", target });
+        expect(s.model.setup).toEqual(target);
+        s.send({ _tag: "PickedClient", client: "codex" }).send({ _tag: "RequestedCloseSetup" });
+        expect(s.model).toEqual({ setup: null, client: "codex" });
+      }),
+    ));
+});
+
+describe("pending page", () => {
+  it("shows the page's heading, a skeleton while the contract loads and Retry once it fails", () =>
+    story(
+      Effect.gen(function* () {
+        const project = pendingPage.pendingProjection();
+        const loading = { ...initialState("endpoints"), session: "loading" as const };
+        const first = project(loading);
+        expect(first).toMatchObject({ page: "endpoints", loading: true });
+        expect(project({ ...loading })).toBe(first);
+        const failed = project({ ...loading, session: "ready", contractPhase: "error" });
+        expect(failed).toMatchObject({ loading: false, contract: { _tag: "Waiting", failed: true, retry: true } });
+        const s = yield* Scene.make(pendingPage.PendingPageNoDeps, { data: first });
+        s.expect(Locator.attr("id", "endpointsHeading"))
+          .toExist()
+          .expect(Locator.attr("id", "rolePending"))
+          .toHaveAttribute("aria-busy", "true");
+        const story = yield* Story.make(pendingPage.PendingPageNoDeps, { data: failed });
+        story
+          .send({ _tag: "ClickedRetryLoad" })
+          .expectExact(connectorCommands.RetryOperatorLoad)
+          .resolve(connectorCommands.RetryOperatorLoad, Component.noop);
+      }),
+    ));
+});
+
+describe("shell controls", () => {
+  const props = { pages: ["overview", "endpoints", "activity"] as const, recovering: false, scheme: "light" as const };
+  const pageLabel = (value: string) => `\u0000${value}`;
+
+  it("ranks matches by how closely they fit, keeping each group together", () => {
+    expect(controls.commandScore("Activity", "act")).toBeGreaterThan(controls.commandScore("Connectors", "cts"));
+    expect(controls.commandScore("Connectors", "act")).toBe(0);
+    const entries = controls.paletteEntries()(maintainerState());
+    expect(entries.some((entry) => entry.group === "Connectors")).toBe(true);
+    expect(controls.paletteEntries()({ ...maintainerState(), session: "gated" })).toEqual([]);
+    const ranked = controls.rankEntries(entries, entries[0]!.text);
+    expect(ranked[0]).toBe(entries[0]);
+    const groups = ranked.map((entry) => entry.group);
+    expect(groups).toEqual([...groups].sort((a, b) => groups.indexOf(a) - groups.indexOf(b)));
+  });
+
+  it("opens the palette by its button or ⌘K, filters as typed and goes to a picked page with focus left to it", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Story.make(controls.ShellControlsNoDeps, props);
+        expect(s.subscriptions).toEqual(expect.arrayContaining(["paletteEntries"]));
+        s.send({ _tag: "ClickedSearch" });
+        expect(s.model).toMatchObject({ palette: true, returnFocus: true });
+        s.send({ _tag: "PressedShortcut" });
+        expect(s.model.palette).toBe(false);
+        s.send({ _tag: "PressedShortcut" }).send({ _tag: "UpdatedQuery", value: "act", reason: "input-change" });
+        expect(s.model).toMatchObject({ palette: true, query: "act" });
+        s.send({ _tag: "UpdatedQuery", value: `act${pageLabel("page:activity")}`, reason: "item-press" }).expectExact(
+          commands.NavigateToPage.make({ page: "activity", href: "/activity" }),
+        );
+        expect(s.model).toMatchObject({ palette: false, appearance: false, returnFocus: false, query: "" });
+        s.resolve(commands.NavigateToPage, Component.noop);
+      }),
+    ));
+
+  it("opens Appearance from the palette once the palette has given focus back, and keeps the scheme it picks", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Story.make(controls.ShellControlsNoDeps, props);
+        s.send({ _tag: "ClickedSearch" }).send({
+          _tag: "UpdatedQuery",
+          value: pageLabel("appearance"),
+          reason: "item-press",
+        });
+        expect(s.model).toMatchObject({ palette: false, appearance: false, queued: true });
+        s.send({ _tag: "SettledPalette" }).expectExact(controls.AwaitFocusReturn);
+        s.resolve(controls.AwaitFocusReturn, { _tag: "CompletedFocusReturn" });
+        expect(s.model).toMatchObject({ appearance: true, queued: false });
+        s.send({ _tag: "SelectedScheme", value: "dark" })
+          .expectExact(controls.ApplyScheme.make({ scheme: "dark" }))
+          .emitted({ _tag: "ChangedScheme", scheme: "dark" });
+        s.resolve(controls.ApplyScheme, Component.noop);
+        s.send({ _tag: "SelectedScheme", value: "sepia" }).expectNone();
+      }),
+    ));
+
+  it("closes both dialogs without returning focus when recovery starts", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Story.make(controls.ShellControlsNoDeps, { ...props, recovering: true });
+        expect(s.subscriptions).toEqual(expect.arrayContaining(["recovery"]));
+        s.send({ _tag: "ClickedAppearance" }).send({ _tag: "PressedShortcut" });
+        expect(s.model).toMatchObject({ palette: true, appearance: true });
+        s.send({ _tag: "StartedRecovery" });
+        expect(s.model).toMatchObject({ palette: false, appearance: false, returnFocus: false });
+      }),
+    ));
+
+  it("keeps the picked scheme in the top bar, which outlives the controls", () =>
+    story(
+      Effect.gen(function* () {
+        const s = yield* Story.make(OperatorNav, {
+          view: view({ session: "ready", role: "maintainer" }),
+          scheme: "light",
+        });
+        s.send({ _tag: "ChangedScheme", scheme: "dark" });
+        expect(s.model.scheme).toBe("dark");
+      }),
+    ));
+});
+
 describe("secrets never enter Effect UI state", () => {
   const ISSUED = "issued-agent-secret";
   const CANDIDATE = "candidate-credential-secret";
   const serialized = (...values: unknown[]) => JSON.stringify(values);
+  const KEYSTROKE = "keystroke-credential-secret";
+  const typedInto = (
+    scene: { readonly fire: (locator: Locator.Locator, event: string, payload?: unknown) => unknown },
+    id: string,
+  ): boolean => {
+    try {
+      scene.fire(Locator.attr("id", id), "input", { value: KEYSTROKE, composing: false, inputType: "insertText" });
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   it("keeps an issued agent token out of the activity and settings props, and Settings carries only its summary", () =>
     story(
@@ -1039,7 +1274,7 @@ describe("secrets never enter Effect UI state", () => {
         expect(serialized(issued)).not.toContain(ISSUED);
         const content = yield* contentStory();
         content.send({ _tag: "ChangedOperatorView", view: issued, overview: null, page: null });
-        const nav = yield* Story.make(OperatorNav, { view: view() });
+        const nav = yield* Story.make(OperatorNav, { view: view(), scheme: "light" });
         nav.send({ _tag: "ChangedOperatorView", view: issued });
         expect(serialized(content.model, content.pending, nav.model, nav.pending)).not.toContain(ISSUED);
       }),
@@ -1059,33 +1294,126 @@ describe("secrets never enter Effect UI state", () => {
       }),
     ));
 
-  it("sends a credential candidate to its Command as an opaque one-shot handle", () =>
+  it("reads a member's typed credential from the field in its own click and sends only a one-shot handle", () =>
     story(
       Effect.gen(function* () {
         const held = new Map<CandidateHandle, unknown>();
-        const requests: unknown[] = [];
-        bridge.installIslandHost({
-          controller: {
-            holdCredentialCandidate: (body: unknown) => {
-              const handle = `candidate-${held.size + 1}` as CandidateHandle;
-              held.set(handle, body);
-              return handle;
-            },
-          } as unknown as OperatorControllerShape,
-          run: () => {},
-          request: (request) => void requests.push(request),
-          navigate: () => {},
-        });
-        bridge.saveCredential("crm", { values: { token: CANDIDATE } }, "test");
-        bridge.saveCredential("crm", { value: CANDIDATE });
-        expect(serialized(requests)).not.toContain(CANDIDATE);
-        expect(serialized([...held.values()])).toContain(CANDIDATE);
-        const s = yield* contentStory();
-        for (const request of requests) {
-          s.send({ _tag: "RequestedPageWrite", request: request as never }).expectExact(commands.SaveCredential);
-          expect(serialized(s.model, s.pending)).not.toContain(CANDIDATE);
-          s.resolve(commands.SaveCredential, Component.noop);
+        const hold = (body: unknown) => {
+          const handle = `candidate-${held.size + 1}` as CandidateHandle;
+          held.set(handle, body);
+          return handle;
+        };
+        class FakeInput {
+          constructor(readonly value: string) {}
         }
+        const fields: Record<string, FakeInput> = {
+          "credential-input-notes-0": new FakeInput(" acme "),
+          "credential-input-notes-1": new FakeInput(`  ${CANDIDATE}  `),
+        };
+        vi.stubGlobal("HTMLInputElement", FakeInput);
+        vi.stubGlobal("document", { getElementById: (id: string) => fields[id] ?? null });
+        yield* Effect.addFinalizer(() => Effect.sync(() => vi.unstubAllGlobals()));
+
+        const state = memberState({ credentialEditing: "notes", createdToken: ISSUED, createdTokenFor: "triage" });
+        const data = memberPage.memberProjection()(state);
+        expect(serialized(data)).not.toContain(ISSUED);
+        const notes = data._tag === "Ready" ? data.page.accounts.find((account) => account.id === "notes") : undefined;
+        const names = notes?.manage.kind === "credential" ? notes.manage.fields!.map((field) => field.name) : [];
+        expect(names).toEqual(["workspace", "token"]);
+
+        const button = new EventTarget();
+        const clicks = yield* Stream.runCollect(
+          Stream.take(
+            credentialSubmissions(button, hold, readField, { connector: "notes", fields: names }, Stream.empty),
+            1,
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        button.dispatchEvent(new Event("click"));
+        const [submitted] = yield* Fiber.join(clicks);
+        expect(submitted).toEqual({ _tag: "Held", candidate: "candidate-1" });
+        expect(held.get("candidate-1" as CandidateHandle)).toEqual({
+          values: { workspace: "acme", token: CANDIDATE },
+        });
+
+        const typing = yield* Scene.make(memberPage.MemberPageNoDeps, { data, account: "alice@example.com" });
+        typing.expectMount(SubmitCredential({ connector: "notes", fields: names }));
+        for (const id of ["credential-input-notes-0", "credential-input-notes-1"]) {
+          typing.expect(Locator.attr("id", id)).toExist();
+          expect([id, typedInto(typing, id)]).toEqual([id, false]);
+        }
+        expect(serialized(typing.pending, typing.props)).not.toContain(KEYSTROKE);
+
+        const s = yield* Scene.make(memberPage.MemberPageNoDeps, { data, account: "alice@example.com" });
+        s.expectMount(SubmitCredential({ connector: "notes", fields: names }))
+          .expect(Locator.attr("id", "credential-input-notes-1"))
+          .toHaveAttribute("type", "password")
+          .expect(Locator.attr("id", "credential-input-notes-1"))
+          .toHaveAttribute("value", false)
+          .mounted(SubmitCredential, submitted!)
+          .expectExact(
+            connectorCommands.RequestPageWrite.make({
+              request: {
+                _tag: "SaveCredential",
+                connector: "notes",
+                candidate: "candidate-1" as CandidateHandle,
+                verify: "skip",
+              },
+            }),
+          );
+        expect(serialized(s.pending, s.props)).not.toContain(CANDIDATE);
+        expect(serialized(s.pending, s.props)).not.toContain(ISSUED);
+        const request = (s.pending[0]!.command.args as { request: unknown }).request;
+        s.resolve(connectorCommands.RequestPageWrite, Component.noop);
+
+        const content = yield* contentStory();
+        content.send({ _tag: "RequestedPageWrite", request: request as never }).expectExact(commands.SaveCredential);
+        expect(serialized(content.model, content.pending)).not.toContain(CANDIDATE);
+        content.resolve(commands.SaveCredential, Component.noop);
+
+        const fieldsOf = Object.fromEntries(
+          Object.entries(memberPage.MemberMessage.cases).map(([tag, message]) => [
+            tag,
+            Object.keys(message.fields).sort(),
+          ]),
+        );
+        expect(fieldsOf.HeldCredentialCandidate).toEqual(["_tag", "candidate", "connector", "verify"]);
+        expect(fieldsOf.RefusedCredentialCandidate).toEqual(["_tag", "connector", "copy"]);
+      }),
+    ));
+
+  it("builds the content root's props for a member from a controller holding an issued token, without it", () =>
+    story(
+      Effect.gen(function* () {
+        const state = memberState({ createdToken: ISSUED, createdTokenFor: "triage" });
+        const controller = {
+          state: () => state,
+          changes: Stream.empty,
+          navHint: () => ({ activity: false }),
+          accountLabel: () => "alice@example.com",
+          sessionPresumed: () => false,
+          clerkSignedIn: () => false,
+          issuedTokenHandle: () => "issued-1" as IssuedTokenHandle,
+        } as unknown as OperatorControllerShape;
+        const props = yield* operatorContentProps.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(OperatorController, controller),
+              Layer.succeed(ConnectorHealth, { steady: (current: OperatorState) => steadyHealth(current, null) }),
+              Router.memory({ routes: OperatorRoute, url: "/" }),
+            ),
+          ),
+        );
+        expect(props.view.content).toBe("member");
+        expect(props.page).toMatchObject({ _tag: "Member", account: "alice@example.com", data: { _tag: "Ready" } });
+        expect(serialized(props)).not.toContain(ISSUED);
+        const content = yield* Story.make(OperatorContent, props);
+        content
+          .expectExact(commands.BootOperator, commands.CanonicalizeLocation)
+          .resolve(commands.BootOperator, Component.noop)
+          .resolve(commands.CanonicalizeLocation, Component.noop);
+        expect(content.model.page?._tag).toBe("Member");
+        expect(serialized(content.model, content.pending)).not.toContain(ISSUED);
       }),
     ));
 
@@ -1126,6 +1454,12 @@ describe("secrets never enter Effect UI state", () => {
         expect(refused).toEqual({ _tag: "Refused", copy: "Paste a credential before saving." });
         expect(held.get("candidate-1" as CandidateHandle)).toEqual({ value: CANDIDATE });
         expect(serialized(submitted, refused)).not.toContain(CANDIDATE);
+
+        const typing = yield* Scene.make(ConnectorAuthNoDeps, data.auth!);
+        typing.expectMount(SubmitCredential({ connector: "slot", fields: [] }));
+        typing.expect(Locator.attr("id", "credential-input-slot")).toExist();
+        expect(typedInto(typing, "credential-input-slot")).toBe(false);
+        expect(serialized(typing.pending, typing.props)).not.toContain(KEYSTROKE);
 
         const s = yield* Scene.make(ConnectorAuthNoDeps, data.auth!);
         s.expectMount(SubmitCredential({ connector: "slot", fields: [] }))
@@ -1360,7 +1694,10 @@ describe("top bar", () => {
   it("navigates a page link through the controller and the router", () =>
     story(
       Effect.gen(function* () {
-        const s = yield* Story.make(OperatorNav, { view: view({ session: "ready", role: "maintainer" }) });
+        const s = yield* Story.make(OperatorNav, {
+          view: view({ session: "ready", role: "maintainer" }),
+          scheme: "light",
+        });
         s.send({ _tag: "ClickedPageLink", page: "activity" }).expectExact(commands.NavigateToPage);
         expect(s.pending[0]!.command.args).toEqual({ page: "activity", href: "/activity" });
         s.resolve(commands.NavigateToPage, Component.noop);

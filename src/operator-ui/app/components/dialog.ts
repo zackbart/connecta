@@ -11,13 +11,15 @@ export const Dialog = <M, C extends View.Children<M>>(
     readonly title: string;
     readonly description: string;
     readonly drawer?: boolean;
+    readonly palette?: boolean;
     readonly returnFocus?: boolean;
     readonly onClose: M;
     readonly onClosed?: M;
     readonly children: C;
   },
-) =>
-  KitDialog(h, {
+) => {
+  const palette = options.palette === true;
+  return KitDialog(h, {
     key: options.key,
     props: { open: options.open, finalFocus: options.returnFocus !== false },
     onEmit: {
@@ -34,15 +36,18 @@ export const Dialog = <M, C extends View.Children<M>>(
             ?.children(
               dialog.backdrop(h.div.class("dialog-overlay")),
               dialog
-                .popup(h.div.class("dialog-content", options.drawer === true && "drawer-content"))
+                .popup(h.div.class("dialog-content", options.drawer === true && "drawer-content", palette && "palette"))
                 .children(
-                  dialog.title(h.h2.class("dialog-title")).children(options.title),
-                  dialog.description(h.p.class("dialog-description")).children(options.description),
+                  dialog.title(h.h2.class(palette ? "visually-hidden" : "dialog-title")).children(options.title),
+                  dialog
+                    .description(h.p.class(palette ? "visually-hidden" : "dialog-description"))
+                    .children(options.description),
                   options.children,
                   dialog
                     .close(h.button.class("btn", "quiet", "dialog-close").attr("aria-label", "Close dialog"))
-                    .children(Icon(h, "close", 18)),
+                    .children(palette ? h.kbd.children("esc") : Icon(h, "close", 18)),
                 ),
             ),
         ),
   });
+};

@@ -57,3 +57,14 @@ export const OverviewSkeleton = <M>(h: Html.H<M>) =>
       children: [h.div.class("skeleton", "skeleton-map").attr("aria-hidden", "true")],
     }),
   );
+
+export const PageSkeleton = <M>(h: Html.H<M>) =>
+  Card(h, {
+    className: "skeleton-page",
+    children: [
+      LoadingNote(h),
+      ...(["lg", "md", "full", "md"] as const).map((width, index) =>
+        h.div.key(String(index)).class("skeleton-row").attr("aria-hidden", "true").children(Skeleton(h, width)),
+      ),
+    ],
+  }).attr("aria-busy", "true");

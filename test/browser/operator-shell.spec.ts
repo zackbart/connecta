@@ -177,3 +177,114 @@ test("configured Clerk loader and its child script work under self CSP; inline a
   expect(violations).toEqual(expect.arrayContaining(["inline", "https://foreign.invalid/script.js"]));
   expect(await page.evaluate("window.__inlineRan")).toBeUndefined();
 });
+
+test("command palette filters, traps focus and restores its trigger", async ({ page }) => {
+  await openShell(page);
+  const trigger = page.getByRole("button", { name: "Search" });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Search" });
+  await expect(dialog).toBeVisible();
+  const input = page.getByPlaceholder("Search pages, connectors, tools…");
+  await expect(input).toBeFocused();
+  await input.fill("Act");
+  await expect(page.getByRole("option", { name: "Activity" })).toBeVisible();
+  await expect(page.getByRole("option", { name: "Connectors" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(dialog).toBeVisible();
+  await expect(input).toHaveValue("");
+  await page.keyboard.press("Shift+Tab");
+  await expect(page.getByRole("button", { name: "Close dialog" })).toBeFocused();
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
+
+test("command palette finds connectors by id and moves through results with the arrow keys", async ({ page }) => {
+  await openShell(page);
+  await page.keyboard.press("ControlOrMeta+k");
+  const input = page.getByPlaceholder("Search pages, connectors, tools…");
+  await input.fill("linear");
+  await expect(page.getByRole("option", { name: "Linear" })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(origin + "/connectors/linear#tools");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(input).toHaveValue("");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await expect(page).toHaveURL(origin + "/endpoints");
+  await expect(page.getByRole("heading", { name: "Endpoints", exact: true })).toBeFocused();
+});
+
+for (const fromAppearance of [false, true]) {
+  test(`palette page selection leaves focus at the destination heading${fromAppearance ? " from Appearance" : ""}`, async ({
+    page,
+  }) => {
+    await page.route("**/ui/api/activity*", (route) => route.fulfill({ json: { events: [] } }));
+    await openShell(page);
+    if (fromAppearance) {
+      await page.getByRole("button", { name: "Appearance", exact: true }).click();
+      await page.keyboard.press("ControlOrMeta+k");
+    } else await page.getByRole("button", { name: "Search" }).click();
+    await page.getByPlaceholder("Search pages, connectors, tools…").fill("Activity");
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(origin + "/activity");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Activity", exact: true })).toBeFocused();
+  });
+}
+
+for (const alreadyOpen of [false, true]) {
+  test(`palette Appearance action focuses its tab${alreadyOpen ? " when already open" : ""}`, async ({ page }) => {
+    await openShell(page);
+    const trigger = page.getByRole("button", { name: alreadyOpen ? "Appearance" : "Search", exact: alreadyOpen });
+    await trigger.click();
+    if (alreadyOpen) {
+      await page.getByRole("tab", { name: "Light", exact: true }).focus();
+      await page.keyboard.press("ControlOrMeta+k");
+    }
+    await page.getByPlaceholder("Search pages, connectors, tools…").fill("Appearance");
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("dialog", { name: "Search" })).toHaveCount(0);
+    await expect(page.getByRole("tab", { name: "Light", exact: true })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+  });
+}
+
+test("appearance tabs use arrow keys and persist the selected scheme", async ({ page }) => {
+  await openShell(page);
+  const trigger = page.getByRole("button", { name: "Appearance", exact: true });
+  await trigger.click();
+  await expect(page.getByRole("dialog", { name: "Appearance" })).toBeVisible();
+  await page.getByRole("tab", { name: "Light", exact: true }).click();
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Dark", exact: true })).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator("html")).toHaveAttribute("data-scheme", "dark");
+  await expect(page.getByRole("tabpanel")).toHaveText("Dark surfaces");
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  const fresh = await page.context().newPage();
+  await fresh.goto(origin);
+  await expect(fresh.locator("html")).toHaveAttribute("data-scheme", "dark");
+  await fresh.close();
+});
+
+test("closing a palette above Appearance restores both focus targets", async ({ page }) => {
+  await openShell(page);
+  const trigger = page.getByRole("button", { name: "Appearance", exact: true });
+  await trigger.click();
+  await page.getByRole("tab", { name: "Light", exact: true }).focus();
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(page.getByPlaceholder("Search pages, connectors, tools…")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog", { name: "Appearance" })).toBeVisible();
+  await expect(page.getByRole("tab", { name: "Light", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+});
