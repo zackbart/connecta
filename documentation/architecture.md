@@ -2170,10 +2170,14 @@ The browser app is Effect inside, like the core, and built on
 [Effect UI](https://github.com/Effect-TS/ui) (`@effect/ui` and
 `@effect/ui-kit`), bundled into the hashed `/ui/assets` script so a deployment
 never installs it. Two rules shape it: every operator request carries the
-current session's token, attached by the one service that sends requests, and
-a response from an identity that has since changed is dropped. No secret (a
-bearer token, a credential being entered, an issued agent token) enters Effect
-UI state. [Operator UI browser app](#operator-ui-browser-app-contributor) maps
+current session's credentials, attached by the one service that sends requests,
+and a response from an identity the browser has since seen change is dropped.
+The browser can fence only identity changes it has observed. Under Cloudflare
+Access the browser sends same-origin cookies and learns of a viewer switch only
+from a response tagged with the new viewer, so a request sent before that
+response is not fenced; the server still authorizes every request as the
+viewer it admits. No secret (a bearer token, a credential being entered, an
+issued agent token) enters Effect UI state. [Operator UI browser app](#operator-ui-browser-app-contributor) maps
 the services, pages and tests.
 
 Its appearance is one token layer, and it is not the UI's alone: every page
@@ -2227,42 +2231,64 @@ flight's deadline, never touching the owner's signal or response.
 `BrowserHost`: the navigation (`app/shell/nav.ts`) and the content root
 (`app/shell/content.ts`). Both run on one Layer built by
 `operatorServicesLayer` in `app/services/layer.ts`, with `BrowserRouter` and
-the `PageWrites` queue beside it. `app/run.ts` is the browser bundle's only
-fiber starter, the counterpart of `src/runtime/run.ts`, and
-`test/purity.node.test.ts` keeps it out of the root import graph.
+the `PageWrites` queue beside it. `app/run.ts` holds the only calls that run
+Effect from outside it (`launch` at boot, the controller's `starterIn` and
+`runNow`); code already inside an Effect may still fork, as the Tokens page's
+`forkDetach` and the mounts' `forkScoped` do. `test/purity.node.test.ts`
+exempts `app/run.ts` from the runner rule and keeps it out of the root import
+graph.
 
 **Services.** `app/services/platform.ts` provides `ShellConfig`,
 `BrowserStorage`, `ClerkClient`, `BrowserWindow` and `Transport`;
 `store.ts` the `OperatorStore` state cell; `api.ts` `OperatorApi`;
 `operator.ts` the `OperatorController` whose shape `controller.ts` declares;
-and `health.ts` `ConnectorHealth`, the steady connector verdicts both the nav
-and the content root read, so a connector being read again keeps its last
-verdict across navigation. Tests swap the platform Layer for fakes and keep
-the rest real.
+and `health.ts` `ConnectorHealth`, the steady connector verdicts the content
+root reads into its projections, so a connector being read again keeps its last
+verdict across navigation.
 
-**`OperatorApi`** is the only code that reaches `Transport`. It reads the
-session token itself and attaches it, withholds maintainer-only routes and
-connection writes the contract on screen does not allow, and drops a response
-once the identity that asked has changed. The identity, admission and validity
-checks run again synchronously in the same call that hands the request to
-`fetch`, so a write approved under one identity is never dispatched under
-another.
+**`OperatorApi`** is the only code that reaches `Transport`. Under Clerk or a
+bearer token it reads the session token itself and attaches it; under
+Cloudflare Access it attaches nothing and the browser sends the Access cookie.
+It withholds maintainer-only routes and connection writes the contract on
+screen does not allow, and drops a response once the identity generation that
+asked has changed. The `Transport` dispatch callback runs the session,
+admission and validity checks again synchronously in the same call that hands
+the request to `fetch`, so a write approved under one observed identity is
+never dispatched after the browser has observed another. It cannot fence a
+change the browser has not observed: an Access viewer switch becomes visible
+only when a response tagged with the new viewer arrives
+([Operator UI](./operator-ui.md#operator-data-contract)), and the server's own
+authorization is what binds such a request to the viewer.
 
 **`OperatorController`** owns the identity-fenced `OperatorState`: identity
 and read-cycle AbortControllers, revision fences, and no query cache or
 automatic mutation replay. It holds an opaque session handle, never a token.
-Its reads and writes run detached, on fibers it starts from its own service
-context, so a page that unmounts or a Command that is interrupted never
-strands a request or leaves a collection loading. Activity's reads run the
-same way; its filters live in the URL, written with `Router.patchSearch`.
+Request lifetimes fall into three classes:
+
+- **Detached reads.** Connector reads, recovery reads (`guardedRecoveryRead`) and
+  Activity reads run on fibers the controller starts from its own service
+  context (`starterIn`). The caller only joins them, so an interrupted Command
+  or an unmounted page never cancels the read or leaves a collection loading.
+  Activity's filters live in the URL, written with `Router.patchSearch`.
+- **Connection writes.** The controller's `mutate` awaits the request inline.
+  These writes are owned by the content root's Commands through `PageWrite`
+  (below), so they survive navigation away from the page that asked, but
+  interrupting the content root's Command itself would interrupt the request.
+- **Token actions.** The Tokens page's Commands (load, issue or rotate, and
+  the confirmed rotate or revoke) hand the controller's effect to
+  `Effect.forkDetach`, so they outlive both the page and the Command.
+  Endpoints' Retry does the same with the recovery read.
 
 **Content root.** `contentOwner` in `app/shell/operator-view.ts` is the one
 predicate that decides whether the gate, No access, the pending page, the
 member page or a maintainer page owns the content. The content root projects
 the controller's state through `pageProjection` in `app/pages/page-data.ts`
-into one `PageData` case per page, keeping the previous value when a page's
-memoised projection is unchanged, and `PageView` renders the page that owns
-the content. The root spends every focus request through `FocusPendingTarget`.
+into one `PageData` case per page, and `PageView` renders the page that owns
+the content. The Connectors, connector detail, Activity, Settings and pending
+cases keep the previous `PageData` when the page's memoised projection is
+unchanged; Endpoints, Tokens and Member build a fresh wrapper on every change.
+The Overview has its own projection (`overviewProjection`) and render path
+beside `PageData`. The root spends every focus request through `FocusPendingTarget`.
 Pages live in `app/pages/`, and the parts they share (icons, marks, skeletons,
 contract states, dialogs, the copy button, the credential form, the connection
 map) in `app/components/`. Accessible primitives come from `@effect/ui-kit`:
@@ -2270,8 +2296,8 @@ Dialog, Tabs, and Autocomplete for the ⌘K palette (`app/shell/controls.ts`).
 
 **Page writes.** A page sends a connection write (start or disconnect OAuth,
 save, remove or test a credential) as a `PageWrite` to the `PageWrites` queue
-(`app/shell/page-writes.ts`). The content root turns each into a Command, so
-the write outlives the page that asked. An OAuth tab opens inside the native
+(`app/shell/page-writes.ts`). The content root turns each into one of its own
+Commands, so the write outlives the page that asked. An OAuth tab opens inside the native
 click through the `PrepareOAuth` mount, before any Command runs.
 
 **No secrets in Effect UI state.** No bearer token, credential candidate or
@@ -2285,12 +2311,15 @@ and copies it through an `IssuedTokenHandle`, and the copy Command reads the
 value only when it runs. `CopyButton` receives only endpoint URLs and setup
 commands.
 
-**Tests.** `test/operator-store.test.ts` drives the controller built from its
-Layer over a fake platform: identity changes, superseded responses, dispatch-time
-revalidation, token issuance lifetimes and slot revisions.
-`test/operator-shell.test.ts` runs the shell, content root and pages as Effect
-UI Story and Scene tests; its "secrets never enter Effect UI state" cases build
-the content root's props and Models from a controller holding an issued token,
+**Tests.** `test/operator-store.test.ts` is the real-controller evidence: it
+builds the production `operatorServicesLayer` over a fake browser and `fetch`
+(the platform services are real, with a `Transport` that wraps the real one)
+and drives identity changes, superseded responses, dispatch-time revalidation,
+token issuance lifetimes and slot revisions. `test/operator-shell.test.ts`
+runs the shell, content root and pages as Effect UI Story and Scene tests over
+projected fixtures and fake controllers; its "secrets never enter Effect UI
+state" cases build the content root's props and Models from a fake controller
+holding an issued token,
 send keystrokes carrying a sentinel through every credential field, and assert
 that none reaches a handler, a pending Command or props. `test/browser/`
 checks the built bundle in Chromium, including visual snapshots.

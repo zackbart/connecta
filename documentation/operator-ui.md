@@ -706,12 +706,9 @@ says the snapshot is for maintainers. It requires the UI module and the
 existing doctor authentication environment variables; it runs no diagnostic
 program, follows no redirects, and prints no raw HTTP failure body.
 
-The operator shell runs on Effect UI (`@effect/ui` and `@effect/ui-kit`): the
-top bar, page navigation, account menu, search palette, Appearance dialog,
-sign-in gate, No access page, recovery banner, router, the member page and the
-Overview (with its connection map), Connectors, connector detail, Endpoints,
-Tokens, Activity and Settings pages are Effect UI components mounted with
-`BrowserHost`, and `BrowserRouter` owns the URL. Esbuild bundles
+The operator UI is a browser app built on Effect UI (`@effect/ui` and
+`@effect/ui-kit`), bundled into the hashed script, so a deployment installs
+neither package. Esbuild bundles
 the authored CSS with an explicit browser reset; it generates no utility classes.
 Hanken Grotesk, JetBrains Mono, CSS, JavaScript and dependency notices are hashed assets
 under `/ui/assets/*`, served identically with immutable cache headers on Node
@@ -729,22 +726,21 @@ local and session storage access in the UI tolerates storage that throws, as in
 private browsing: a read finds nothing stored and a write keeps nothing, so a
 bearer token is not remembered there. `generated.ts` is ignored and generated before build and
 test; `check:operator-ui` detects stale assets and shared page styles. The UI
-stays behind `./ui`, outside the root import graph. Effect services provided by
-one `Layer` own every authenticated read and mutation: `OperatorApi` is the only
-code that sends an operator request, attaches the current session's token
-itself, and drops a response once the identity that asked has changed;
-`OperatorController` keeps the identity-fenced state with explicit identity and
-read-cycle AbortControllers, revision fences, and no query cache or automatic
-mutation replay. The identity, admission and validity checks run synchronously
-inside the transport, in the same call that hands the request to `fetch`, so a
-write approved under one identity is never dispatched under another. Pages send
-connection writes to the content root, which runs each as an Effect UI Command
-that outlives the page. No secret enters an Effect UI Model, message, Command
-argument or props: the bearer field is an uncontrolled input submitted by a
-mount straight to the controller, a credential candidate travels as a one-shot
-handle the controller holds, and an issued agent token is shown and copied
-through a handle, so the shell and pages receive projections that carry no
-token. Browser-only view models ship inside the hashed bundle, with
+stays behind `./ui`, outside the root import graph. One part of the browser
+app sends every authenticated read and write. It attaches the current
+session's bearer or Clerk token itself (under Cloudflare Access the browser
+sends the Access cookie instead), refuses maintainer-only reads and connection
+writes the contract on screen does not allow, and drops a response once the
+browser has seen the identity change. It checks again at the moment it sends,
+so a write approved under one observed identity is never sent after the
+browser has observed another. It cannot act on a change it has not seen: an
+Access viewer switch becomes visible only through a response tagged with the
+new viewer, as described above, and the server authorizes every request as
+the viewer it admits. A connection write the operator started keeps running
+when they navigate to another page. The UI keeps no query cache and never
+replays a write. Bearer tokens, credentials being entered and issued agent
+tokens are held only by that request layer, never in the page's rendered
+state. Browser-only view models ship inside the hashed bundle, with
 no duplicate standalone server modules. The shared contract owns the unchanged
 `OperatorPage` union exported from `@zackbart/connecta/ui`. An Access-only shell selects
 Access even when the HTML request has no trusted context; only authenticated
@@ -936,7 +932,22 @@ parts. [Operator UI browser app](./architecture.md#operator-ui-browser-app-contr
 maps how they fit together, the no-secrets rule and the `@effect/ui` snapshot
 pin. `test/operator-store.test.ts` drives the controller service built from
 its Layer, and `test/operator-shell.test.ts` runs the shell, content root and
-pages as Effect UI Story and Scene tests. `test/fixtures/operator-contract-v2.ts` holds
+pages as Effect UI Story and Scene tests.
+
+The request layer is `OperatorApi`; `OperatorController` keeps the
+identity-fenced state with identity and read-cycle AbortControllers and
+revision fences. Its `Transport` dispatch callback runs the session, admission
+and validity checks in the call that invokes `fetch`. Connection writes travel
+from a page to the content root as `PageWrite`s and run as the content root's
+Commands; token actions are forked detached by the Tokens page's Commands. No
+secret enters an Effect UI Model, message, Command argument or props: the
+bearer field is an uncontrolled input a mount submits straight to the
+controller, a credential candidate travels as a one-shot `CandidateHandle`,
+and an issued agent token is shown and copied through an `IssuedTokenHandle`.
+[Operator UI browser app](./architecture.md#operator-ui-browser-app-contributor)
+gives each request's lifetime.
+
+`test/fixtures/operator-contract-v2.ts` holds
 maintainer and member fixtures, and `test/helpers/operator-member-view.ts`
 checks a member response's exact shape and compares its values with a
 projection built from config, membership, the member's own partition status,
