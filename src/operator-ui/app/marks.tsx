@@ -46,38 +46,6 @@ export function SplitBar({ read, write }: { read: number; write: number }) {
   );
 }
 
-/** A pie: full is everything, a slice is part, an empty ring is nothing. */
-export function SharePie({ share }: { share: number | null }) {
-  const r = 7;
-  const c = 8;
-  let slice = null;
-  if (share !== null && share >= 0.999) slice = <circle className="share-fill" cx={c} cy={c} r={r} />;
-  else if (share !== null && share > 0) {
-    const angle = share * 2 * Math.PI;
-    const x = c + r * Math.sin(angle);
-    const y = c - r * Math.cos(angle);
-    slice = (
-      <path
-        className="share-fill"
-        d={`M${c} ${c}V${c - r}A${r} ${r} 0 ${share > 0.5 ? 1 : 0} 1 ${x.toFixed(3)} ${y.toFixed(3)}Z`}
-      />
-    );
-  }
-  return (
-    <svg
-      className={share === null ? "share-pie unknown" : "share-pie"}
-      viewBox="0 0 16 16"
-      width="16"
-      height="16"
-      aria-hidden="true"
-      focusable="false"
-    >
-      <circle className="share-track" cx={c} cy={c} r={r} />
-      {slice}
-    </svg>
-  );
-}
-
 /**
  * Who and what, drawn small: a connector's monogram and a caller's chip. A
  * connector is a rounded square with its first letter, a person a round

@@ -2180,13 +2180,16 @@ withholds maintainer-only routes and connection writes the contract on screen
 does not allow. The Effect UI shell in `app/shell/` (top bar, navigation,
 account menu, gate, recovery banner and `BrowserRouter`) reads the controller's
 state through a Subscription and runs every write as a Command. The content
-root renders the Overview (`app/pages/overview.ts`, with shared Effect UI parts
-in `app/components/`) as an Effect UI component from a projection of the
-controller's state, and every other page as a React island through the
-`HostIsland` stream mount and a temporary bridge (`app/bridge.ts`) until issue
-#1510 moves them to Effect UI. One predicate in `app/shell/operator-view.ts`
-decides which of the gate, No access, the Overview or the island owns the
-content and its focus requests. Steady connector health is a service
+root renders the Overview, the Connectors page and connector detail
+(`app/pages/`, with shared Effect UI parts in `app/components/`) as Effect UI
+components from projections of the controller's state, and every other page as
+a React island through the `HostIsland` stream mount and a temporary bridge
+(`app/bridge.ts`) until issue #1510 moves them to Effect UI. Page writes travel
+to the content root, whose Commands outlive the page that asked; a credential
+candidate reaches it only as an opaque handle the controller holds, and an
+OAuth tab opens in a native click listener. One predicate in
+`app/shell/operator-view.ts` decides which of the gate, No access, an Effect UI
+page or the island owns the content and its focus requests. Steady connector health is a service
 (`app/services/health.ts`) that both sides read, so a connector being read
 again keeps its last verdict across navigation.
 

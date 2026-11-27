@@ -18,9 +18,6 @@ export function Button({
 }) {
   return <button className={classes("btn", variant, size, className)} {...props} />;
 }
-export function Input({ className, ...props }: ComponentProps<"input">) {
-  return <input className={classes("input", className)} {...props} />;
-}
 export function Dialog({
   open,
   onOpenChange,

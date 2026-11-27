@@ -50,7 +50,7 @@ export function NoticeLine({
  * disclosure: the sentence explaining what the prompt is sits inside the
  * preview, so a page of failing rows does not repeat it on every one.
  */
-export function FixPrompt({ kind, connectorId, name }: { kind: FixPromptKind; connectorId: string; name?: string }) {
+function FixPrompt({ kind, connectorId, name }: { kind: FixPromptKind; connectorId: string; name?: string }) {
   return (
     <div className="fix-prompt" data-fix-prompt={kind}>
       <FixPromptButton kind={kind} connectorId={connectorId} {...(name ? { name } : {})} />
@@ -77,18 +77,6 @@ function FixPromptPreview({ kind, connectorId }: { kind: FixPromptKind; connecto
       <p className="meta">For a coding agent. No error details or secrets.</p>
       <pre className="fix-prompt-text">{fixPrompt(kind, connectorId)}</pre>
     </details>
-  );
-}
-
-/** A short tag: a mode, a classification, where a value came from. */
-export function Badge({ tone = "neutral", children }: { tone?: Tone; children: ReactNode }) {
-  return (
-    <span
-      className={tone === "neutral" ? "badge tag" : `badge tag ${tone}`}
-      title={typeof children === "string" ? children : undefined}
-    >
-      {children}
-    </span>
   );
 }
 
@@ -127,37 +115,6 @@ export function Pill({ status = "neutral", children }: { status?: PillStatus; ch
       <span className="pill-dot" aria-hidden="true" />
       <span className="pill-label">{children}</span>
     </span>
-  );
-}
-
-/**
- * A message the reader has to act on or know: a problem (red) or a notice
- * (amber). The caller's attributes land on the box, so data hooks stay.
- */
-export function Callout({
-  tone = "problem",
-  children,
-  ...props
-}: { tone?: "problem" | "notice"; children: ReactNode } & Record<`data-${string}`, string | undefined>) {
-  return (
-    <div className={tone === "notice" ? "msg callout warn" : "msg callout"} {...props}>
-      <Icon name="alert" />
-      <p>{children}</p>
-    </div>
-  );
-}
-
-/** Label and value pairs read across one line, wrapping on a narrow screen. */
-export function SummaryRow({ items, className }: { items: { label: string; value: ReactNode }[]; className?: string }) {
-  return (
-    <dl className={className ? `summary-row ${className}` : "summary-row"}>
-      {items.map((item) => (
-        <div key={item.label}>
-          <dt>{item.label}</dt>
-          <dd>{item.value}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 

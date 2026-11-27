@@ -42,6 +42,22 @@ const SHAPES = {
     ["rect", "4", "8", "16", "12", "3"],
     ["path", "M12 8V4.5M9.5 13.5v1M14.5 13.5v1"],
   ],
+  close: [["path", "M18 6 6 18M6 6l12 12"]],
+  activity: [["path", "M22 12h-4l-3 9L9 3l-3 9H2"]],
+  shield: [["path", "M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"]],
+  box: [
+    ["path", "M21 8 12 3 3 8v8l9 5 9-5V8z"],
+    ["path", "m3 8 9 5 9-5M12 13v8"],
+  ],
+  globe: [
+    ["circle", "12", "12", "9.5"],
+    ["path", "M2.5 12h19M12 2.5a14.5 14.5 0 0 1 0 19M12 2.5a14.5 14.5 0 0 0 0 19"],
+  ],
+  users: [
+    ["circle", "9", "8", "3.5"],
+    ["path", "M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6"],
+  ],
+  book: [["path", "M4 19.5V5a2 2 0 0 1 2-2h14v15H6.5a2.5 2.5 0 0 0 0 5H20"]],
 } satisfies Record<string, ReadonlyArray<Shape>>;
 
 export type IconName = keyof typeof SHAPES;

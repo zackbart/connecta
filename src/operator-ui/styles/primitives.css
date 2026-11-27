@@ -835,6 +835,10 @@ details[open] > .disclosure::before {
 
 /* Dialogs and drawers */
 
+.dialog-host {
+  display: contents;
+}
+
 .dialog-overlay {
   animation: fade-in 0.18s ease-out;
   backdrop-filter: blur(3px);
