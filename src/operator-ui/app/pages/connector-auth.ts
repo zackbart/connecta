@@ -31,7 +31,7 @@ import {
   SummaryRow,
 } from "../components/parts.js";
 import { opaque } from "../components/projection.js";
-import type { CandidateHandle as Handle, PreparedOAuth } from "../services/controller.js";
+import type { CandidateHandle as Handle, CredentialBody, PreparedOAuth } from "../services/controller.js";
 import { OperatorController } from "../services/controller.js";
 import { CandidateHandle, Prepared } from "../shell/commands.js";
 import { IslandRequest } from "../shell/island-request.js";
@@ -71,45 +71,61 @@ type Submission =
   | { readonly _tag: "Held"; readonly candidate: Handle }
   | { readonly _tag: "Refused"; readonly copy: string };
 
+const SubmitArgs = { connector: Schema.String, fields: Schema.Array(Schema.String) };
+type SubmitArgs = { readonly connector: string; readonly fields: ReadonlyArray<string> };
+
+export const credentialSubmissions = (
+  button: EventTarget,
+  hold: (body: CredentialBody) => Handle,
+  read: (id: string) => string,
+  initial: SubmitArgs,
+  changes: Stream.Stream<SubmitArgs>,
+) =>
+  Stream.callback<Submission>((queue) =>
+    Effect.gen(function* () {
+      let args = initial;
+      yield* Stream.runForEach(changes, (next) => Effect.sync(() => (args = next))).pipe(Effect.forkScoped);
+      const submit = (): Submission => {
+        const { connector, fields } = args;
+        if (!fields.length) {
+          const value = read(`credential-input-${connector}`).trim();
+          return value
+            ? { _tag: "Held", candidate: hold({ value }) }
+            : { _tag: "Refused", copy: "Paste a credential before saving." };
+        }
+        const values: Record<string, string> = {};
+        for (const [index, name] of fields.entries()) {
+          const value = read(`credential-input-${connector}-${index}`).trim();
+          if (!value) return { _tag: "Refused", copy: "Fill every field before saving." };
+          values[name] = value;
+        }
+        return { _tag: "Held", candidate: hold({ values }) };
+      };
+      const onClick = () => void Queue.offerUnsafe(queue, submit());
+      yield* Effect.acquireRelease(
+        Effect.sync(() => button.addEventListener("click", onClick)),
+        () => Effect.sync(() => button.removeEventListener("click", onClick)),
+      );
+    }),
+  );
+
+const readField = (id: string) => {
+  const field = document.getElementById(id);
+  return field instanceof HTMLInputElement ? field.value : "";
+};
+
 export const SubmitCredential = Mount.makeStream(
   "SubmitCredential",
-  { args: { connector: Schema.String, fields: Schema.Array(Schema.String) } },
+  { args: SubmitArgs },
   (button: HTMLElement, initial, changes) =>
-    Stream.callback<Submission, never, OperatorController>((queue) =>
-      Effect.gen(function* () {
-        const controller = yield* OperatorController;
-        let args = initial;
-        yield* Stream.runForEach(changes, (next) => Effect.sync(() => (args = next))).pipe(Effect.forkScoped);
-        const read = (id: string) => {
-          const field = document.getElementById(id);
-          return field instanceof HTMLInputElement ? field.value.trim() : "";
-        };
-        const submit = (): Submission => {
-          const { connector, fields } = args;
-          if (!fields.length) {
-            const value = read(`credential-input-${connector}`);
-            return value
-              ? { _tag: "Held", candidate: controller.holdCredentialCandidate({ value }) }
-              : { _tag: "Refused", copy: "Paste a credential before saving." };
-          }
-          const values: Record<string, string> = {};
-          for (const [index, name] of fields.entries()) {
-            const value = read(`credential-input-${connector}-${index}`);
-            if (!value) return { _tag: "Refused", copy: "Fill every field before saving." };
-            values[name] = value;
-          }
-          return { _tag: "Held", candidate: controller.holdCredentialCandidate({ values }) };
-        };
-        const onClick = () => void Queue.offerUnsafe(queue, submit());
-        yield* Effect.acquireRelease(
-          Effect.sync(() => button.addEventListener("click", onClick)),
-          () => Effect.sync(() => button.removeEventListener("click", onClick)),
-        );
-      }),
+    Stream.unwrap(
+      OperatorController.useSync((controller) =>
+        credentialSubmissions(button, controller.holdCredentialCandidate, readField, initial, changes),
+      ),
     ),
 );
 
-const ConnectorAuthMessage = UiSchema.TaggedEnum({
+export const ConnectorAuthMessage = UiSchema.TaggedEnum({
   CompletedPrepareOAuth: { mode: OAuthMode, prepared: Prepared },
   ClickedAskConfirm: { action: Action },
   ClickedDisconnect: {},

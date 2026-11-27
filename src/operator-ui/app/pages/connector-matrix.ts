@@ -77,7 +77,8 @@ export const TrackPopover = Mount.makeStream(
           focused = true;
           const attempt = (frames: number) =>
             requestAnimationFrame(() => {
-              if (!node.isConnected || document.activeElement === node) return;
+              const active = document.activeElement;
+              if (!node.isConnected || (active !== null && active !== document.body && active !== anchor())) return;
               node.focus();
               if (document.activeElement !== node && frames > 0) attempt(frames - 1);
             });

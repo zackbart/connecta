@@ -183,6 +183,33 @@ test("tool filters use resolved classification and schema catalog text stays ine
   await clean(page);
 });
 
+test("a tool's schema drawer keeps focus inside and hands it back to its tool however it closes", async ({ page }) => {
+  await session(page);
+  await page.goto(origin + "/connectors/github#tools");
+  const tool = page.getByRole("button", { name: "github.write", exact: true });
+  const drawer = page.locator(".dialog-content");
+  const inside = () => drawer.evaluate((node) => node.contains(node.ownerDocument.activeElement));
+  const closings: Array<[string, () => Promise<void>]> = [
+    ["Escape", () => page.keyboard.press("Escape")],
+    ["Close", () => drawer.getByRole("button", { name: "Close dialog", exact: true }).click()],
+    ["outside press", () => page.mouse.click(8, 400)],
+  ];
+  for (const [how, close] of closings) {
+    await tool.click();
+    await expect(drawer, how).toBeVisible();
+    await expect(drawer.locator(".dialog-title"), how).toHaveText("github.write");
+    await expect.poll(inside, { message: how }).toBe(true);
+    for (let press = 0; press < 6; press++) {
+      await page.keyboard.press(press % 2 ? "Shift+Tab" : "Tab");
+      expect(await inside(), `${how}: Tab ${press}`).toBe(true);
+    }
+    await close();
+    await expect(drawer, how).toHaveCount(0);
+    await expect(tool, how).toBeFocused();
+  }
+  await clean(page);
+});
+
 test("Activity keeps filters in history, groups requests, and leaves old rows ungrouped", async ({ page }) => {
   await session(page);
   await page.goto(origin + "/activity?connector=github&q=read");

@@ -2,7 +2,7 @@ import { Component } from "@effect/ui";
 import { Tabs } from "@effect/ui-kit";
 import { HtmlLocator } from "@effect/ui/html/testing";
 import { Locator, Scene, Story } from "@effect/ui/testing";
-import { Context, Effect, Layer, Option } from "effect";
+import { Context, Effect, Fiber, Layer, Option, Stream } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
 import { connectorSummary } from "../src/operator-ui/config-summary.js";
@@ -41,7 +41,7 @@ const { pageProjection } = await import("../src/operator-ui/app/pages/page-data.
 const { ConnectorsPageNoDeps } = await import("../src/operator-ui/app/pages/connectors.js");
 const { ConnectorMatrixNoDeps, TrackPopover } = await import("../src/operator-ui/app/pages/connector-matrix.js");
 const { ConnectorDetailPageNoDeps } = await import("../src/operator-ui/app/pages/connector.js");
-const { ConnectorAuthNoDeps, PrepareOAuth, SubmitCredential } =
+const { ConnectorAuthMessage, ConnectorAuthNoDeps, PrepareOAuth, SubmitCredential, credentialSubmissions } =
   await import("../src/operator-ui/app/pages/connector-auth.js");
 const { TakeRequestedFocus } = await import("../src/operator-ui/app/components/focus.js");
 const { Catalog } = await import("../src/operator-ui/app/pages/catalog.js");
@@ -685,30 +685,109 @@ describe("secrets never enter Effect UI state", () => {
         const data = detailData(editing, "slot", "#connection");
         expect(serialized(data, listData({ ...editing, page: "connections" }))).not.toContain(ISSUED);
         expect(serialized(data)).not.toContain(CANDIDATE);
-        const candidate = "candidate-7" as CandidateHandle;
+
+        const held = new Map<CandidateHandle, unknown>();
+        const hold = (body: unknown) => {
+          const handle = `candidate-${held.size + 1}` as CandidateHandle;
+          held.set(handle, body);
+          return handle;
+        };
+        const typed: Record<string, string> = { "credential-input-slot": `  ${CANDIDATE}  ` };
+        const button = new EventTarget();
+        const clicks = yield* Stream.runCollect(
+          Stream.take(
+            credentialSubmissions(
+              button,
+              hold,
+              (id) => typed[id] ?? "",
+              { connector: "slot", fields: [] },
+              Stream.empty,
+            ),
+            2,
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        button.dispatchEvent(new Event("click"));
+        typed["credential-input-slot"] = "   ";
+        button.dispatchEvent(new Event("click"));
+        const [submitted, refused] = yield* Fiber.join(clicks);
+        expect(submitted).toEqual({ _tag: "Held", candidate: "candidate-1" });
+        expect(refused).toEqual({ _tag: "Refused", copy: "Paste a credential before saving." });
+        expect(held.get("candidate-1" as CandidateHandle)).toEqual({ value: CANDIDATE });
+        expect(serialized(submitted, refused)).not.toContain(CANDIDATE);
+
         const s = yield* Scene.make(ConnectorAuthNoDeps, data.auth!);
         s.expectMount(SubmitCredential({ connector: "slot", fields: [] }))
           .expect(Locator.attr("id", "credential-input-slot"))
           .toHaveAttribute("type", "password")
           .expect(Locator.attr("id", "credential-input-slot"))
           .toHaveAttribute("value", false)
-          .mounted(SubmitCredential, { _tag: "Held", candidate })
+          .mounted(SubmitCredential, submitted!)
           .expectExact(
             connectorCommands.RequestPageWrite.make({
-              request: { _tag: "SaveCredential", connector: "slot", candidate, verify: "skip" },
+              request: {
+                _tag: "SaveCredential",
+                connector: "slot",
+                candidate: "candidate-1" as CandidateHandle,
+                verify: "skip",
+              },
             }),
           );
         expect(serialized(s.pending, s.props)).not.toContain(CANDIDATE);
         s.resolve(connectorCommands.RequestPageWrite, Component.noop)
-          .mounted(SubmitCredential, { _tag: "Refused", copy: "Paste a credential before saving." })
+          .mounted(SubmitCredential, refused!)
           .expectExact(
             connectorCommands.RefuseCredential.make({ connector: "slot", copy: "Paste a credential before saving." }),
           )
           .resolve(connectorCommands.RefuseCredential, Component.noop);
+
         expect(Object.keys((SubmitCredential.args as unknown as { fields: object }).fields).sort()).toEqual([
           "connector",
           "fields",
         ]);
+        const fieldsOf = Object.fromEntries(
+          Object.entries(ConnectorAuthMessage.cases).map(([tag, message]) => [tag, Object.keys(message.fields).sort()]),
+        );
+        expect(fieldsOf.HeldCredentialCandidate).toEqual(["_tag", "candidate", "verify"]);
+        expect(fieldsOf.RefusedCredentialCandidate).toEqual(["_tag", "copy"]);
+      }),
+    ));
+
+  it("holds every field of a multi-field credential and emits none of them", () =>
+    story(
+      Effect.gen(function* () {
+        const bodies: unknown[] = [];
+        const typed: Record<string, string> = {
+          "credential-input-notes-0": "acme",
+          "credential-input-notes-1": CANDIDATE,
+        };
+        const button = new EventTarget();
+        const clicks = yield* Stream.runCollect(
+          Stream.take(
+            credentialSubmissions(
+              button,
+              (body) => {
+                bodies.push(body);
+                return "candidate-1" as CandidateHandle;
+              },
+              (id) => typed[id] ?? "",
+              { connector: "notes", fields: ["workspace", "token"] },
+              Stream.empty,
+            ),
+            2,
+          ),
+        ).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        button.dispatchEvent(new Event("click"));
+        typed["credential-input-notes-0"] = "";
+        button.dispatchEvent(new Event("click"));
+        const emitted = yield* Fiber.join(clicks);
+        expect(emitted).toEqual([
+          { _tag: "Held", candidate: "candidate-1" },
+          { _tag: "Refused", copy: "Fill every field before saving." },
+        ]);
+        expect(bodies).toEqual([{ values: { workspace: "acme", token: CANDIDATE } }]);
+        expect(serialized(emitted)).not.toContain(CANDIDATE);
       }),
     ));
 
