@@ -261,6 +261,80 @@ test("Activity keeps filters in history, groups requests, and leaves old rows un
   await clean(page);
 });
 
+test("page headings take focus across Effect UI and island pages, and Activity's Retry returns to its heading", async ({
+  page,
+}) => {
+  await session(page);
+  await page.goto(origin + "/connectors");
+  for (const [link, heading] of [
+    ["Activity", "#activityHeading"],
+    ["Settings", "#settingsHeading"],
+    ["Overview", "#overviewHeading"],
+    ["Activity", "#activityHeading"],
+    ["Connectors", "#connectionsHeading"],
+    ["Settings", "#settingsHeading"],
+  ] as const) {
+    await page.getByRole("link", { name: link, exact: true }).click();
+    await expect(page.locator(heading)).toBeFocused();
+  }
+  await page.route("**/ui/api/activity*", (route) => route.fulfill({ status: 500, json: { error: "unavailable" } }));
+  await page.goto(origin + "/activity");
+  await expect(page.locator("#activityError")).toContainText("Activity couldn't be loaded");
+  await page.unroute("**/ui/api/activity*");
+  await page.locator("#activityError").getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(page.locator("#activityHeading")).toBeFocused();
+  await expect(page.locator(".activity-item")).toHaveCount(3);
+  await clean(page);
+});
+
+test("an activity read keeps going when the page is left, and lands when the operator returns", async ({ page }) => {
+  await session(page);
+  await page.goto(origin + "/activity");
+  await expect(page.locator(".activity-item")).toHaveCount(3);
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  let held = 0;
+  await page.route("**/ui/api/activity*", async (route) => {
+    held++;
+    await released;
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => held).toBe(1);
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await expect(page.locator("#settingsHeading")).toBeFocused();
+  await page.getByRole("link", { name: "Activity", exact: true }).click();
+  await expect(page.locator("#activityHeading")).toBeFocused();
+  release();
+  await expect(page.locator(".activity-item")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+  expect(held).toBe(1);
+  await clean(page);
+});
+
+test("a connector's Activity tab shows only its calls, and its read lands after the tab is left", async ({ page }) => {
+  await session(page);
+  await page.goto(origin + "/connectors/slack#activity");
+  await expect(page.locator("#activityView")).toContainText("No calls yet");
+  await page.goto(origin + "/connectors/github#activity");
+  await expect(page.locator(".activity-item")).toHaveCount(3);
+  await expect(page.locator("#activityView").getByRole("group", { name: "Connector" })).toHaveCount(0);
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/ui/api/activity*", async (route) => {
+    await released;
+    await route.continue();
+  });
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.getByRole("tab", { name: "Tools", exact: true }).click();
+  await expect(page.locator("#activityView")).toHaveCount(0);
+  await page.getByRole("tab", { name: "Activity", exact: true }).click();
+  release();
+  await expect(page.locator(".activity-item")).toHaveCount(3);
+  await expect(page.getByRole("button", { name: "Refresh", exact: true })).toBeEnabled();
+  await clean(page);
+});
+
 test("legacy pages and connector tabs replace their URL and preserve handoff queries", async ({ page }) => {
   await session(page);
   for (const [oldPath, path, heading] of [

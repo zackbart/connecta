@@ -1,4 +1,4 @@
-import { Effect, Layer, ManagedRuntime, Scheduler } from "effect";
+import { Effect, Fiber, Layer, ManagedRuntime, Scheduler } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
 import type { UiData } from "../src/operator-ui/model.js";
@@ -252,6 +252,7 @@ async function loadStore(
   runtimes.push(runtime);
   return {
     store,
+    controller,
     clerk,
     fetchMock,
     configMock,
@@ -400,6 +401,26 @@ describe("operator store identity wiring", () => {
     // screen, and the collection stays idle so the new identity refetches.
     expect(store.getState()).toMatchObject({ activityEvents: [], activityPhase: "idle", activityNotice: null });
     expect(JSON.stringify(store.getState())).not.toContain("identity-a client");
+  });
+
+  it("finishes an activity read whose caller was interrupted, so the collection never stays loading", async () => {
+    const loaded = await loadStore({ id: "sess_a", getToken: async () => "token-a" });
+    await bootMaintainer(loaded);
+    const slow = deferred<Response>();
+    loaded.fetchMock.mockImplementationOnce(() => slow.promise);
+    const caller = Effect.runFork(withMicrotasks(loaded.controller.loadActivity(true)));
+    await vi.waitFor(() =>
+      expect(loaded.fetchMock).toHaveBeenCalledWith(expect.stringMatching(/^\/ui\/api\/activity\?/), expect.anything()),
+    );
+    expect(loaded.store.getState().activityPhase).toBe("loading");
+    await Effect.runPromise(Fiber.interrupt(caller));
+    slow.resolve(Response.json({ events: [{ connectorId: "crm" }] }));
+    await vi.waitFor(() =>
+      expect(loaded.store.getState()).toMatchObject({
+        activityPhase: "ready",
+        activityEvents: [{ connectorId: "crm" }],
+      }),
+    );
   });
 
   it("gates without a session and never asks for operator data", async () => {

@@ -61,6 +61,12 @@ const SHAPES = {
     ["path", "M2.5 20a6.5 6.5 0 0 1 13 0M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14a6.5 6.5 0 0 1 3.5 6"],
   ],
   book: [["path", "M4 19.5V5a2 2 0 0 1 2-2h14v15H6.5a2.5 2.5 0 0 0 0 5H20"]],
+  search: [
+    ["circle", "11", "11", "7.5"],
+    ["path", "m20.5 20.5-4.2-4.2"],
+  ],
+  minus: [["path", "M5 12h14"]],
+  cloud: [["path", "M17.5 19H8a6 6 0 1 1 1.3-11.9A7 7 0 0 1 22 11.5 4 4 0 0 1 17.5 19z"]],
 } satisfies Record<string, ReadonlyArray<Shape>>;
 
 export type IconName = keyof typeof SHAPES;

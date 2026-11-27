@@ -1,7 +1,7 @@
 // The configuration snapshot as glanceable tiles for Settings and a
 // connector's Configuration card. Pure: it maps `describeConfig()` and its
 // provenance to labels and formatted values, and the components in
-// app/config-tiles.tsx only draw them. A key this file does not know still
+// app/components/config-tiles.ts only draw them. A key this file does not know still
 // becomes a tile with a label made from its name, so nothing in the snapshot
 // disappears when the serializer grows a field.
 
@@ -13,7 +13,7 @@ type Sources = Readonly<Record<string, "default" | "config">>;
 /** How a value reads: bytes as KB or MB, durations in their largest whole unit, counts with separators. */
 type ValueFormat = "bytes" | "ms" | "seconds" | "days" | "count" | "toggle" | "text";
 
-/** Icon names the tiles draw; app/icons.tsx defines each one. */
+/** Icon names the tiles draw; app/components/icons.ts defines each one. */
 type ConfigIcon = "lock" | "activity" | "key" | "shield" | "box" | "plug" | "globe" | "user" | "users" | "book";
 
 /** A value with a short label. `set` means deployment code set it; otherwise it is a default. */

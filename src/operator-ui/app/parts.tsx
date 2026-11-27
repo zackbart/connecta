@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import type { Notice, OperatorState, Tone } from "../view.js";
 import { loadFailureCopy } from "../view.js";
 import { fixPrompt, type FixPromptKind } from "../fix-prompts.js";
-import type { AccessChip } from "../endpoints.js";
 import { productName } from "./config.js";
 import { Icon } from "./icons.js";
 import { retryLoad } from "./bridge.js";
@@ -180,10 +179,6 @@ export function LoadFailure({ state }: { state: OperatorState }) {
   );
 }
 
-export function Unavailable({ children }: { children: ReactNode }) {
-  return <div className="unavailable">{children}</div>;
-}
-
 /**
  * A second, in-page click for a row action that takes something away. It
  * renders where the first click happened, names the connector by its title,
@@ -299,17 +294,4 @@ export function CopyButton({
 
 function CopyIcon({ done }: { done: boolean }) {
   return <Icon name={done ? "check" : "copy"} size={15} />;
-}
-
-/** A person's colored initials, or an agent's mark: who someone is at a glance. */
-export function MemberMark({ chip, muted }: { chip: Pick<AccessChip, "kind" | "initials" | "hue">; muted?: boolean }) {
-  return chip.kind === "agent" ? (
-    <span className={muted ? "agent-mark muted" : "agent-mark"} aria-hidden="true">
-      <Icon name="agent" size={12} />
-    </span>
-  ) : (
-    <span className={`avatar hue-${chip.hue}`} aria-hidden="true">
-      {chip.initials}
-    </span>
-  );
 }

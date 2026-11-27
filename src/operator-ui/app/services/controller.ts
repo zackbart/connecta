@@ -35,7 +35,6 @@ export interface OperatorControllerShape {
   readonly focusHandled: Effect.Effect<void>;
   readonly closeForRecovery: Effect.Effect<void>;
   readonly setConnectorFilter: (filter: string) => Effect.Effect<void>;
-  readonly setActivitySearch: (search: string) => Effect.Effect<void>;
   readonly askConfirm: (connectorId: string, action: PendingConfirm["action"]) => Effect.Effect<void>;
   readonly cancelConfirm: (returnFocusTo: string) => Effect.Effect<void>;
   readonly editCredential: (connector: string | null) => Effect.Effect<void>;

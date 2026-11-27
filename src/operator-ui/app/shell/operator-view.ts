@@ -22,6 +22,8 @@ const CONTENT_OWNERS = [
   "connector",
   "endpoints",
   "tokens",
+  "activity",
+  "settings",
   "island",
 ] as const;
 export type ContentOwner = (typeof CONTENT_OWNERS)[number];
@@ -68,6 +70,8 @@ const MAINTAINER_PAGES: Partial<Record<OperatorPage, ContentOwner>> = {
   connector: "connector",
   endpoints: "endpoints",
   tokens: "tokens",
+  activity: "activity",
+  settings: "settings",
 };
 
 function contentOwner(state: OperatorState, sessionPresumed: boolean): ContentOwner {

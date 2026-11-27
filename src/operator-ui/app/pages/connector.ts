@@ -24,7 +24,9 @@ import { Icon } from "../components/icons.js";
 import { Card, StateBlock } from "../components/parts.js";
 import { keepSame, keepSameContractState, keepShownHealth, opaque } from "../components/projection.js";
 import { OperatorController } from "../services/controller.js";
-import { HostConnectorActivity, HostConnectorConfig } from "../shell/island.js";
+import { OperatorRoute } from "../shell/routes.js";
+import { BadgeRow, StatTiles } from "../components/config-tiles.js";
+import { ActivityData, activityProjection, ActivityView } from "./activity.js";
 import { Catalog } from "./catalog.js";
 import { ConnectorAuth, ConnectorAuthProps, ConnectorDiagnostics } from "./connector-auth.js";
 import { RefreshConnector, RetryOperatorLoad, ShowConnectorTab } from "./connector-commands.js";
@@ -40,6 +42,7 @@ export const ConnectorData = Schema.Struct({
   contractState: ContractStateView,
   refreshDisabled: Schema.Boolean,
   activityReadable: Schema.Boolean,
+  activity: Schema.NullOr(Schema.Struct({ data: ActivityData, route: OperatorRoute })),
   auth: Schema.NullOr(ConnectorAuthProps),
 });
 export type ConnectorData = typeof ConnectorData.Type;
@@ -48,6 +51,7 @@ export interface ConnectorLocation {
   readonly id: string | null;
   readonly hash: string;
   readonly handoff: string | null;
+  readonly route: OperatorRoute | null;
 }
 
 const withoutUnmanagedCredential = () => {
@@ -66,18 +70,26 @@ export const connectorProjection = () => {
   const contractState = keepSameContractState();
   const connector = withoutUnmanagedCredential();
   const auth = keepSame<ConnectorAuthProps>();
+  const activityData = activityProjection();
+  const activity = keepSame<{ data: ActivityData; route: OperatorRoute }>();
   const stable = keepSame<ConnectorData>();
   return (state: OperatorState, steady: SteadyHealth, location: ConnectorLocation): ConnectorData => {
     const { id } = location;
     const raw = id === null ? undefined : state.data?.connectors.find((row) => row.id === id);
     const fragment = location.hash.replace(/^#/, "");
+    const tab = (TABS as ReadonlyArray<string>).includes(fragment) ? (fragment as Tab) : "tools";
+    const readable = activityReadable(state);
     return stable({
       id,
-      tab: (TABS as ReadonlyArray<string>).includes(fragment) ? (fragment as Tab) : "tools",
+      tab,
       health: health(maintainerContract(state), steady),
       contractState: contractState(contractStateView(state)),
       refreshDisabled: !state.admissionValid || raw?.status === "loading",
-      activityReadable: activityReadable(state),
+      activityReadable: readable,
+      activity:
+        readable && tab === "activity" && location.route
+          ? activity({ data: activityData(state), route: location.route })
+          : null,
       auth:
         raw && id !== null
           ? auth({
@@ -136,7 +148,16 @@ const ConnectionTab = (h: H, data: ConnectorData, id: string) => {
       title: "Diagnostics",
       children: [ConnectorDiagnostics(h, live, data.auth?.connector ?? null)],
     }),
-    h.div.class("island").onMount(HostConnectorConfig({ summary, name })),
+    Card(h, {
+      className: "connector-config",
+      label: "Connector configuration",
+      title: "Configuration",
+      children: [
+        BadgeRow(h, summary.badges, `${name} setup`),
+        summary.auth.length ? BadgeRow(h, summary.auth, `${name} auth`) : null,
+        StatTiles(h, { tiles: summary.tiles, label: `${name} settings`, compact: true }),
+      ],
+    }),
   );
 };
 
@@ -181,17 +202,16 @@ const DetailTabs = (h: H, data: ConnectorData, id: string) => {
         tabs
           .panel({ element: h.div.class("tabs-content"), value: "connection" })
           ?.children(ConnectionTab(h, data, id)) ?? null,
-        tabs
-          .panel({ element: h.div.class("tabs-content"), value: "activity" })
-          ?.children(
-            h.div
-              .class("connector-activity")
-              .children(
-                data.activityReadable
-                  ? h.div.class("island").onMount(HostConnectorActivity({ connector: id }))
-                  : StateBlock(h, { copy: "Activity isn't available." }),
-              ),
-          ) ?? null,
+        tabs.panel({ element: h.div.class("tabs-content"), value: "activity" })?.children(
+          h.div.class("connector-activity").children(
+            data.activityReadable && data.activity
+              ? ActivityView(h, {
+                  key: id,
+                  props: { route: data.activity.route, activity: data.activity.data, connectorId: id },
+                })
+              : StateBlock(h, { copy: "Activity isn't available." }),
+          ),
+        ) ?? null,
       ),
   });
 };

@@ -5,9 +5,12 @@ import type { SteadyHealth } from "../../health.js";
 import { contractRecovering, type OperatorState } from "../../view.js";
 import type { IssuedTokenHandle } from "../services/controller.js";
 import type { ContentOwner } from "../shell/operator-view.js";
+import { OperatorRoute } from "../shell/routes.js";
+import { ActivityData, activityProjection, ActivityView } from "./activity.js";
 import { ConnectorData, ConnectorDetailPage, connectorProjection } from "./connector.js";
 import { ConnectorsData, ConnectorsPage, connectorsProjection } from "./connectors.js";
 import { EndpointsData, EndpointsPage, endpointsProjection } from "./endpoints.js";
+import { SettingsData, SettingsPage, settingsProjection } from "./settings.js";
 import { TokensData, TokensPage, tokensProjection } from "./tokens.js";
 
 export const PageData = UiSchema.TaggedEnum({
@@ -15,6 +18,8 @@ export const PageData = UiSchema.TaggedEnum({
   Connector: { data: ConnectorData },
   Endpoints: { data: EndpointsData, recovering: Schema.Boolean },
   Tokens: { data: TokensData },
+  Activity: { data: ActivityData, route: OperatorRoute },
+  Settings: { data: SettingsData },
 });
 export type PageData = typeof PageData.Type;
 
@@ -23,14 +28,25 @@ const searchOf = (url: string) => new URLSearchParams(url.includes("?") ? url.sl
 const connectorId = (route: Router.Location["route"]): string | null =>
   route._tag === "Connector" ? (route as unknown as { readonly params: { readonly id: string } }).params.id : null;
 
+const NO_FILTERS = OperatorRoute.Activity({ search: {} });
+
+const routeOf = (route: Router.Location["route"], tag: OperatorRoute["_tag"]): OperatorRoute | null =>
+  route._tag === tag ? (route as OperatorRoute) : null;
+
 export const pageProjection = () => {
   const list = connectorsProjection();
   const detail = connectorProjection();
   const endpoints = endpointsProjection();
   const tokens = tokensProjection();
+  const activity = activityProjection();
+  const settings = settingsProjection();
   let last: PageData | null = null;
   const keep = (next: PageData): PageData =>
-    last?._tag === next._tag && last.data === next.data ? last : (last = next);
+    last?._tag === next._tag &&
+    last.data === next.data &&
+    (next._tag !== "Activity" || (last._tag === "Activity" && last.route === next.route))
+      ? last
+      : (last = next);
   return (
     content: ContentOwner,
     state: OperatorState,
@@ -51,12 +67,18 @@ export const pageProjection = () => {
             id: connectorId(location.route),
             hash: location.hash,
             handoff: searchOf(location.url).get("h"),
+            route: routeOf(location.route, "Connector"),
           }),
         }),
       );
     if (content === "endpoints")
       return PageData.Endpoints({ data: endpoints(state, steady(state)), recovering: contractRecovering(state) });
     if (content === "tokens") return PageData.Tokens({ data: tokens(state, issuedToken()) });
+    if (content === "activity")
+      return keep(
+        PageData.Activity({ data: activity(state), route: routeOf(location.route, "Activity") ?? NO_FILTERS }),
+      );
+    if (content === "settings") return keep(PageData.Settings({ data: settings(state) }));
     return null;
   };
 };
@@ -70,4 +92,8 @@ export const PageView = <M>(h: Html.H<M>, page: PageData, view: ContentOwner) =>
         ? EndpointsPage(h, { props: { data: page.data, recovering: page.recovering } })
         : page._tag === "Tokens" && view === "tokens"
           ? TokensPage(h, { props: { data: page.data } })
-          : null;
+          : page._tag === "Activity" && view === "activity"
+            ? ActivityView(h, { props: { route: page.route, activity: page.data, connectorId: null } })
+            : page._tag === "Settings" && view === "settings"
+              ? SettingsPage(h, { props: { settings: page.data } })
+              : null;

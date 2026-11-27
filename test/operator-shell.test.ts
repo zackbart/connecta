@@ -1,14 +1,13 @@
 import { Component, Router } from "@effect/ui";
 import { Dialog, Tabs } from "@effect/ui-kit";
-import { HtmlLocator } from "@effect/ui/html/testing";
+import { HtmlLocator, HtmlScene } from "@effect/ui/html/testing";
 import { Locator, Scene, Story } from "@effect/ui/testing";
 import { Context, Effect, Fiber, Layer, Option, Stream } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
-import { connectorSummary } from "../src/operator-ui/config-summary.js";
 import { steadyHealth } from "../src/operator-ui/health.js";
 import type { UiData } from "../src/operator-ui/model.js";
-import { initialState, type OperatorState } from "../src/operator-ui/view.js";
+import { initialState, type OperatorState, type UiActivityEvent } from "../src/operator-ui/view.js";
 import { projectView, type OperatorView } from "../src/operator-ui/app/shell/operator-view.js";
 import type {
   CandidateHandle,
@@ -37,8 +36,10 @@ const bridge = await import("../src/operator-ui/app/bridge.js");
 const { OperatorNav } = await import("../src/operator-ui/app/shell/nav.js");
 const { OperatorRoute } = await import("../src/operator-ui/app/shell/routes.js");
 const { OverviewPageNoDeps, overviewProjection } = await import("../src/operator-ui/app/pages/overview.js");
+const { ActivityViewNoDeps, activityProjection, LoadActivity, RetryCollection } =
+  await import("../src/operator-ui/app/pages/activity.js");
+const { SettingsPageNoDeps, settingsProjection } = await import("../src/operator-ui/app/pages/settings.js");
 const { CopyButton, CopyText, WaitBeforeReset } = await import("../src/operator-ui/app/components/copy-button.js");
-const { HostConnectorConfig } = await import("../src/operator-ui/app/shell/island.js");
 const { ConnectorHealth } = await import("../src/operator-ui/app/services/health.js");
 const endpointsPage = await import("../src/operator-ui/app/pages/endpoints.js");
 const tokensPage = await import("../src/operator-ui/app/pages/tokens.js");
@@ -57,7 +58,11 @@ const { TakeRequestedFocus } = await import("../src/operator-ui/app/components/f
 const { Catalog } = await import("../src/operator-ui/app/pages/catalog.js");
 const serverFixture = "./fixtures/operator-visual.js";
 const { createOperatorVisualFixture } = (await import(serverFixture)) as {
-  createOperatorVisualFixture: () => Promise<{ contract: OperatorUiContractV2; data: UiData }>;
+  createOperatorVisualFixture: () => Promise<{
+    contract: OperatorUiContractV2;
+    data: UiData;
+    activity: { events: UiActivityEvent[] };
+  }>;
 };
 const fixture = await createOperatorVisualFixture();
 
@@ -220,7 +225,9 @@ describe("overview page", () => {
         const shell = { navHint: { activity: false }, account: null, sessionPresumed: false, clerkSignedIn: false };
         const overview = projectView(state, shell);
         expect([overview.content, overview.islandOwnsFocus]).toEqual(["overview", false]);
-        expect(projectView({ ...state, page: "settings" }, shell)).toMatchObject({
+        expect(
+          projectView({ ...state, role: "member", contract: { ...fixture.contract, role: "member" } }, shell),
+        ).toMatchObject({
           content: "island",
           islandOwnsFocus: true,
         });
@@ -460,7 +467,7 @@ describe("connector pages", () => {
     expect(detailData(state, "slack", "#nope").tab).toBe("tools");
     const handoff = pageOf({ ...state, page: "connector" }, "/connectors/slack?h=signed", "#connection");
     expect(handoff?._tag === "Connector" && handoff.data.auth?.handoff).toBe("signed");
-    expect(pageOf({ ...state, page: "settings" }, "/settings")).toBeNull();
+    expect(pageOf({ ...state, page: "settings" }, "/settings")?._tag).toBe("Settings");
   });
 
   it("filters the list, switches to the matrix, refreshes and follows a connector through the controller", () =>
@@ -520,7 +527,6 @@ describe("connector pages", () => {
     story(
       Effect.gen(function* () {
         const data = detailData(maintainerState(), "slot", "#connection");
-        const slot = fixture.contract.config!.connectors.find((config) => config.id === "slot")!;
         const s = yield* Scene.make(ConnectorDetailPageNoDeps, { data });
         expect(s.subscriptions).toContain('connectorReads:"slot"');
         s.expect(HtmlLocator.role("heading", { name: "Empty slot" }))
@@ -533,12 +539,10 @@ describe("connector pages", () => {
           .toHaveCount(3)
           .expect(HtmlLocator.role("region", { name: "Authentication" }))
           .toExist()
-          .expectMount(
-            HostConnectorConfig({
-              summary: connectorSummary(slot, fixture.contract.configSources ?? {}),
-              name: "Empty slot",
-            }),
-          )
+          .expect(HtmlLocator.role("region", { name: "Connector configuration" }))
+          .toExist()
+          .expect(HtmlLocator.role("list", { name: "Empty slot setup" }))
+          .toExist()
           .childEmit(Tabs, { _tag: "Selected", value: "tools", activationDirection: "left" })
           .expectExact(connectorCommands.ShowConnectorTab.make({ tab: "tools" }))
           .resolve(connectorCommands.ShowConnectorTab, Component.noop)
@@ -799,10 +803,228 @@ describe("tokens page", () => {
     ));
 });
 
+describe("activity and settings pages", () => {
+  const shell = { navHint: { activity: false }, account: null, sessionPresumed: false, clerkSignedIn: false };
+  const activityRoute = (search: Record<string, string> = {}) => OperatorRoute.Activity({ search });
+  const activityState = (patch: Partial<OperatorState> = {}) =>
+    maintainerState({
+      page: "activity",
+      data: { ...fixture.data, activityEnabled: true },
+      activityPhase: "ready",
+      activityEvents: fixture.activity.events,
+      ...patch,
+    });
+  const readyActivity = (state = activityState()) => {
+    const activity = activityProjection()(state);
+    if (activity._tag !== "Ready") throw new Error("expected loaded activity");
+    return activity;
+  };
+
+  it("are the content root's own components, so the shell spends their focus requests", () =>
+    story(
+      Effect.gen(function* () {
+        const activity = projectView(activityState({ pendingFocus: "activityHeading" }), shell);
+        expect([activity.content, activity.islandOwnsFocus]).toEqual(["activity", false]);
+        const settings = projectView(maintainerState({ page: "settings" }), shell);
+        expect([settings.content, settings.islandOwnsFocus]).toEqual(["settings", false]);
+        expect(projectView({ ...activityState(), role: "member" }, shell).content).toBe("island");
+        const s = yield* contentStory();
+        s.send({
+          _tag: "ChangedOperatorView",
+          view: activity,
+          overview: null,
+          page: { _tag: "Activity", data: readyActivity(), route: activityRoute() },
+        })
+          .expectExact(commands.FocusPendingTarget)
+          .resolve(commands.FocusPendingTarget, Component.noop);
+        expect(s.model.page?._tag).toBe("Activity");
+      }),
+    ));
+
+  it("projects activity's readability and load phases, reusing one projection until its inputs change", () => {
+    const project = activityProjection();
+    const state = activityState();
+    const ready = project(state);
+    expect(ready).toMatchObject({ _tag: "Ready", phase: "ready", more: false });
+    expect(project({ ...state, tokenBusy: !state.tokenBusy })).toBe(ready);
+    expect(project({ ...state, activityPhase: "loading" })).toMatchObject({ _tag: "Ready", phase: "loading" });
+    expect(project({ ...state, activityCursor: "older" })).toMatchObject({ more: true });
+    expect(project({ ...state, data: null })._tag).toBe("Waiting");
+    expect(project({ ...state, data: null, loadFailure: "network" })).toEqual({
+      _tag: "LoadFailure",
+      title: "Couldn't reach Connecta",
+      body: "Your browser couldn't connect. Retry.",
+    });
+    expect(project({ ...state, data: { ...fixture.data, activityEnabled: false } })._tag).toBe("Unavailable");
+    expect(project({ ...state, admissionValid: false })._tag).toBe("Ready");
+  });
+
+  it("writes its filters to the URL as new history entries and reads through the controller", () =>
+    story(
+      Effect.gen(function* () {
+        const route = activityRoute({ q: "read" });
+        const s = yield* HtmlScene.make(ActivityViewNoDeps, {
+          route,
+          activity: readyActivity(activityState({ activityCursor: "older" })),
+          connectorId: null,
+        });
+        s.expect(HtmlLocator.label("Search loaded activity"))
+          .toHaveValue("read")
+          .expect(HtmlLocator.role("group", { name: "Outcome" }))
+          .toExist()
+          .type(HtmlLocator.label("Search loaded activity"), "")
+          .expectExact(Router.PatchSearch.make({ route, patch: { q: undefined }, history: "push", scroll: false }))
+          .resolve(Router.PatchSearch, "navigated")
+          .click(HtmlLocator.role("button", { name: "Failed" }))
+          .expectExact(Router.PatchSearch.make({ route, patch: { outcome: "failed" }, history: "push", scroll: false }))
+          .resolve(Router.PatchSearch, "navigated")
+          .click(HtmlLocator.role("button", { name: "Refresh" }))
+          .expectExact(LoadActivity.make({ reset: true }))
+          .resolve(LoadActivity, Component.noop)
+          .click(HtmlLocator.role("button", { name: "Load older" }))
+          .expectExact(LoadActivity.make({ reset: false }))
+          .resolve(LoadActivity, Component.noop);
+      }),
+    ));
+
+  it("gives connector detail's Activity tab the same view, scoped to its connector and its route", () =>
+    story(
+      Effect.gen(function* () {
+        const state = activityState();
+        const data = detailData(state, "github", "#activity");
+        expect(data.activity?.route).toMatchObject({ _tag: "Connector", params: { id: "github" } });
+        expect(detailData(state, "github", "#tools").activity).toBeNull();
+        expect(
+          detailData({ ...state, data: { ...fixture.data, activityEnabled: false } }, "github", "#activity").activity,
+        ).toBeNull();
+        const s = yield* HtmlScene.make(ActivityViewNoDeps, {
+          route: data.activity!.route,
+          activity: data.activity!.data,
+          connectorId: "github",
+        });
+        s.expect(HtmlLocator.role("heading", { name: "Activity" }))
+          .toBeAbsent()
+          .expect(HtmlLocator.role("group", { name: "Connector" }))
+          .toBeAbsent()
+          .click(HtmlLocator.role("button", { name: "Refresh" }))
+          .expectExact(LoadActivity.make({ reset: true }))
+          .resolve(LoadActivity, Component.noop);
+      }),
+    ));
+
+  it("clears every filter but a connector tab's own, and retries a failed read", () =>
+    story(
+      Effect.gen(function* () {
+        const route = activityRoute({ q: "no-such-call", outcome: "failed" });
+        const s = yield* HtmlScene.make(ActivityViewNoDeps, {
+          route,
+          activity: readyActivity(),
+          connectorId: "github",
+        });
+        s.expect(HtmlLocator.role("heading", { name: "Activity" }))
+          .toBeAbsent()
+          .click(HtmlLocator.role("button", { name: "Clear filters" }))
+          .expectExact(
+            Router.PatchSearch.make({
+              route,
+              patch: { q: undefined, outcome: undefined, source: undefined },
+              history: "push",
+              scroll: false,
+            }),
+          )
+          .resolve(Router.PatchSearch, "navigated");
+        const failed = yield* HtmlScene.make(ActivityViewNoDeps, {
+          route: activityRoute(),
+          activity: readyActivity(
+            activityState({
+              activityEvents: [],
+              activityPhase: "error",
+              activityNotice: { message: "The deployment returned an error. Retry, or check its log.", tone: "error" },
+            }),
+          ),
+          connectorId: null,
+        });
+        failed
+          .expect(HtmlLocator.role("alert"))
+          .toHaveText(/Activity couldn't be loaded/)
+          .click(HtmlLocator.role("button", { name: "Retry" }))
+          .expectExact(RetryCollection)
+          .resolve(RetryCollection, Component.noop);
+      }),
+    ));
+
+  it("draws the configuration readout with nothing to edit, and offers Retry while it can't load", () =>
+    story(
+      Effect.gen(function* () {
+        const project = settingsProjection();
+        const state = maintainerState({ page: "settings" });
+        const settings = project(state);
+        expect(settings._tag).toBe("Ready");
+        expect(project({ ...state, tokenBusy: !state.tokenBusy })).toBe(settings);
+        const s = yield* HtmlScene.make(SettingsPageNoDeps, { settings });
+        s.expect(HtmlLocator.role("heading", { name: "Settings" }))
+          .toExist()
+          .expect(HtmlLocator.role("heading", { name: "Limits" }))
+          .toExist()
+          .expect(Locator.text("Defined in code"))
+          .toExist()
+          .expect(HtmlLocator.role("textbox"))
+          .toBeAbsent();
+        const failed = project(
+          maintainerState({
+            page: "settings",
+            contract: null,
+            data: null,
+            contractPhase: "error",
+            loadFailure: "server",
+          }),
+        );
+        const retry = yield* HtmlScene.make(SettingsPageNoDeps, { settings: failed });
+        retry
+          .click(HtmlLocator.role("button", { name: "Retry" }))
+          .expectExact(commands.RetryLoad)
+          .resolve(commands.RetryLoad, Component.noop);
+      }),
+    ));
+});
+
 describe("secrets never enter Effect UI state", () => {
   const ISSUED = "issued-agent-secret";
   const CANDIDATE = "candidate-credential-secret";
   const serialized = (...values: unknown[]) => JSON.stringify(values);
+
+  it("keeps an issued agent token out of the activity and settings props, and Settings carries only its summary", () =>
+    story(
+      Effect.gen(function* () {
+        const shell = { navHint: { activity: false }, account: null, sessionPresumed: false, clerkSignedIn: false };
+        const base = maintainerState({
+          createdToken: ISSUED,
+          createdTokenFor: "triage",
+          data: { ...fixture.data, activityEnabled: true },
+          activityEvents: fixture.activity.events,
+          activityPhase: "ready",
+        });
+        const activity = activityProjection()({ ...base, page: "activity" });
+        const settings = settingsProjection()({ ...base, page: "settings" });
+        expect(settings._tag).toBe("Ready");
+        expect(serialized(activity, settings)).not.toContain(ISSUED);
+        expect(Object.keys(settings).sort()).toEqual(["_tag", "maintainers", "summary"]);
+        const content = yield* contentStory();
+        content.send({
+          _tag: "ChangedOperatorView",
+          view: projectView({ ...base, page: "settings" }, shell),
+          overview: null,
+          page: { _tag: "Settings", data: settings },
+        });
+        content.send({
+          _tag: "ChangedOperatorView",
+          view: projectView({ ...base, page: "activity" }, shell),
+          overview: null,
+          page: { _tag: "Activity", data: activity, route: OperatorRoute.Activity({ search: {} }) },
+        });
+        expect(serialized(content.model, content.pending)).not.toContain(ISSUED);
+      }),
+    ));
 
   it("projects an issued agent token out of both shell Models", () =>
     story(
@@ -853,7 +1075,6 @@ describe("secrets never enter Effect UI state", () => {
           run: () => {},
           request: (request) => void requests.push(request),
           navigate: () => {},
-          location: () => ({ url: "/connectors/crm", hash: "" }),
         });
         bridge.saveCredential("crm", { values: { token: CANDIDATE } }, "test");
         bridge.saveCredential("crm", { value: CANDIDATE });
