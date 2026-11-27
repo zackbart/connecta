@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-27: The Endpoints, connection map and agent Tokens pages move to Effect UI (#1510, item 4), with @effect/ui and @effect/ui-kit moving from snapshot 03ad588 to fab0fba; React copies with no remaining React user are deleted. CI at ff03e251 (run 45920641556, build (package)) measures operator-ui/assets at 483,809 B gzip (raw 1,382.6 KB), ./ui at 558,584 B and examples/worker at 1,061,157 B; the root is unchanged. The operator-ui/assets cap moves 480,370 to 484,160 B (raw 1,374,300 to 1,382,950 B), the ./ui cap 555,790 to 558,930 B and the examples/worker cap 1,057,970 to 1,061,510 B, each about 350 B over CI.",
     "2026-11-26: The Connectors page, connector detail, its tool catalog, Connection tab and credential form, and the connector matrix move to Effect UI (#1510, item 3), with @effect/ui-kit Dialog and Tabs (about 31 KB minified with their internals) beside the Radix copies the remaining React pages still use. CI at 78e8bbf4 (run 45913987339, build (package)) measures operator-ui/assets at 480,016 B gzip, ./ui at 555,444 B and examples/worker at 1,057,621 B; the root is unchanged. The operator-ui/assets cap moves 463,800 to 480,370 B, the ./ui cap 539,430 to 555,790 B and the examples/worker cap 1,041,890 to 1,057,970 B, each about 350 B over CI. The raw operator-ui/assets cap moves 1,327,420 to 1,374,300 B, local measurement plus about 350 B.",
     "2026-11-26: The Overview page and the shared parts it uses move to Effect UI (#1510, item 2); its connection map stays a React island until item 4. CI at 0ead7b01 (run 45904119219, build (package)) measures operator-ui/assets at 463,447 B gzip (raw 1,327.1 KB), ./ui at 539,078 B and examples/worker at 1,041,542 B; the root is unchanged. The operator-ui/assets cap moves 461,890 to 463,800 B, the ./ui cap 537,080 to 539,430 B and the examples/worker cap 1,039,640 to 1,041,890 B, each about 350 B over CI. The raw operator-ui/assets cap moves 1,322,070 to 1,327,420 B, local measurement plus about 350 B.",
     "2026-11-26: The operator shell moves to Effect UI (#1510, item 1) while every page still ships as a React island, so the browser bundle carries Effect, @effect/ui and React together until item 7. CI at a390d072 (run 45895252840, build (package)) measures operator-ui/assets at 461,536 B, ./ui at 536,734 B and examples/worker at 1,039,288 B gzip. The operator-ui/assets cap moves 283,000 to 461,890 B, the ./ui cap 351,620 to 537,080 B and the examples/worker cap 854,020 to 1,039,640 B, each about 350 B over CI. The raw operator-ui/assets cap moves 785,000 to 1,322,070 B, local measurement plus about 350 B.",
@@ -209,7 +210,7 @@
     },
     "./ui": {
       "baselineGzip": 272943,
-      "maxGzip": 555790
+      "maxGzip": 558930
     },
     "./credentials": {
       "baselineGzip": 1459,
@@ -225,7 +226,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 1057970
+      "maxGzip": 1061510
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
@@ -237,8 +238,8 @@
     },
     "operator-ui/assets": {
       "baselineGzip": 218702,
-      "maxGzip": 480370,
-      "maxRaw": 1374300
+      "maxGzip": 484160,
+      "maxRaw": 1382950
     },
     "./google": {
       "baselineGzip": 62229,
