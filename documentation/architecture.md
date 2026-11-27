@@ -2166,37 +2166,15 @@ fixed words (a Test answers only `{ ok }`), log checked facts, and let the page
 pick a sentence by outcome. Credential handoff URLs exist only while the UI is
 mounted; OAuth callbacks never need it.
 
-The browser app is Effect inside, like the core. One `Layer` provides its
-services: configuration, storage, Clerk, the window and the transport
-(`app/services/platform.ts`), the state cell (`store.ts`), the operator API
-client (`api.ts`) and the controller (`operator.ts`). The API client is the
-only code that reaches the transport, so the two rules the page lives by are
-structural there: every request carries the session token the client reads
-itself (the controller holds an opaque session handle, never a token), the
-identity and admission are checked again synchronously in the call that
-invokes `fetch`, and a response is dropped once the identity that asked has
-changed. The client also
-withholds maintainer-only routes and connection writes the contract on screen
-does not allow. The Effect UI shell in `app/shell/` (top bar, navigation,
-account menu, gate, recovery banner and `BrowserRouter`) reads the controller's
-state through a Subscription and runs every write as a Command. The content
-root renders the Overview, the Connectors page, connector detail, Endpoints,
-Tokens, Activity, Settings, the member page and the page shown while a role is
-pending (`app/pages/`, with shared Effect UI parts in `app/components/`) as
-Effect UI components from projections of the controller's state. The top bar's
-search palette (ui-kit `Autocomplete`) and Appearance dialog are Effect UI
-components too; no React page remains.
-Page writes travel to the content root, whose Commands outlive the page that
-asked; a credential candidate reaches it only as an opaque handle the
-controller holds, and an OAuth tab opens in a native click listener. An issued
-agent token stays in the controller too; the Tokens page shows and copies it
-through an opaque handle. Activity's filters live in the URL, written with
-`Router.patchSearch`, and its reads run on a controller fiber, so leaving the
-page never strands one. One predicate in `app/shell/operator-view.ts` decides
-which of the gate, No access or a page owns the content, and the content root
-spends every focus request. Steady connector health is a service
-(`app/services/health.ts`) that both sides read, so a connector being read
-again keeps its last verdict across navigation.
+The browser app is Effect inside, like the core, and built on
+[Effect UI](https://github.com/Effect-TS/ui) (`@effect/ui` and
+`@effect/ui-kit`), bundled into the hashed `/ui/assets` script so a deployment
+never installs it. Two rules shape it: every operator request carries the
+current session's token, attached by the one service that sends requests, and
+a response from an identity that has since changed is dropped. No secret (a
+bearer token, a credential being entered, an issued agent token) enters Effect
+UI state. [Operator UI browser app](#operator-ui-browser-app-contributor) maps
+the services, pages and tests.
 
 Its appearance is one token layer, and it is not the UI's alone: every page
 connecta shows a person — the operator shell, the OAuth callback, a browser's
@@ -2242,6 +2220,89 @@ the way OAuth flights are: the owner settles a plain outcome
 inside its own request — a token, Google's refusal, or `abandoned` — and each
 follower waits on a promise of its own under its own signal and timer to the
 flight's deadline, never touching the owner's signal or response.
+
+### Operator UI browser app (contributor)
+
+`src/operator-ui/app/main.ts` mounts two Effect UI components with
+`BrowserHost`: the navigation (`app/shell/nav.ts`) and the content root
+(`app/shell/content.ts`). Both run on one Layer built by
+`operatorServicesLayer` in `app/services/layer.ts`, with `BrowserRouter` and
+the `PageWrites` queue beside it. `app/run.ts` is the browser bundle's only
+fiber starter, the counterpart of `src/runtime/run.ts`, and
+`test/purity.node.test.ts` keeps it out of the root import graph.
+
+**Services.** `app/services/platform.ts` provides `ShellConfig`,
+`BrowserStorage`, `ClerkClient`, `BrowserWindow` and `Transport`;
+`store.ts` the `OperatorStore` state cell; `api.ts` `OperatorApi`;
+`operator.ts` the `OperatorController` whose shape `controller.ts` declares;
+and `health.ts` `ConnectorHealth`, the steady connector verdicts both the nav
+and the content root read, so a connector being read again keeps its last
+verdict across navigation. Tests swap the platform Layer for fakes and keep
+the rest real.
+
+**`OperatorApi`** is the only code that reaches `Transport`. It reads the
+session token itself and attaches it, withholds maintainer-only routes and
+connection writes the contract on screen does not allow, and drops a response
+once the identity that asked has changed. The identity, admission and validity
+checks run again synchronously in the same call that hands the request to
+`fetch`, so a write approved under one identity is never dispatched under
+another.
+
+**`OperatorController`** owns the identity-fenced `OperatorState`: identity
+and read-cycle AbortControllers, revision fences, and no query cache or
+automatic mutation replay. It holds an opaque session handle, never a token.
+Its reads and writes run detached, on fibers it starts from its own service
+context, so a page that unmounts or a Command that is interrupted never
+strands a request or leaves a collection loading. Activity's reads run the
+same way; its filters live in the URL, written with `Router.patchSearch`.
+
+**Content root.** `contentOwner` in `app/shell/operator-view.ts` is the one
+predicate that decides whether the gate, No access, the pending page, the
+member page or a maintainer page owns the content. The content root projects
+the controller's state through `pageProjection` in `app/pages/page-data.ts`
+into one `PageData` case per page, keeping the previous value when a page's
+memoised projection is unchanged, and `PageView` renders the page that owns
+the content. The root spends every focus request through `FocusPendingTarget`.
+Pages live in `app/pages/`, and the parts they share (icons, marks, skeletons,
+contract states, dialogs, the copy button, the credential form, the connection
+map) in `app/components/`. Accessible primitives come from `@effect/ui-kit`:
+Dialog, Tabs, and Autocomplete for the ⌘K palette (`app/shell/controls.ts`).
+
+**Page writes.** A page sends a connection write (start or disconnect OAuth,
+save, remove or test a credential) as a `PageWrite` to the `PageWrites` queue
+(`app/shell/page-writes.ts`). The content root turns each into a Command, so
+the write outlives the page that asked. An OAuth tab opens inside the native
+click through the `PrepareOAuth` mount, before any Command runs.
+
+**No secrets in Effect UI state.** No bearer token, credential candidate or
+issued agent token enters a Model, message, Command argument or props. The
+bearer field and credential inputs are uncontrolled: the gate submits the
+bearer straight to the controller, and the credential form reads its fields
+from the DOM inside the click and hands them to
+`controller.holdCredentialCandidate`, so only an opaque `CandidateHandle`
+travels. An issued agent token stays in the controller; the Tokens page shows
+and copies it through an `IssuedTokenHandle`, and the copy Command reads the
+value only when it runs. `CopyButton` receives only endpoint URLs and setup
+commands.
+
+**Tests.** `test/operator-store.test.ts` drives the controller built from its
+Layer over a fake platform: identity changes, superseded responses, dispatch-time
+revalidation, token issuance lifetimes and slot revisions.
+`test/operator-shell.test.ts` runs the shell, content root and pages as Effect
+UI Story and Scene tests; its "secrets never enter Effect UI state" cases build
+the content root's props and Models from a controller holding an issued token,
+send keystrokes carrying a sentinel through every credential field, and assert
+that none reaches a handler, a pending Command or props. `test/browser/`
+checks the built bundle in Chromium, including visual snapshots.
+
+**Effect UI pin.** Effect UI is not published to npm yet, so `@effect/ui` and
+`@effect/ui-kit` are devDependencies pinned to one pkg.pr.new commit snapshot
+(`https://pkg.pr.new/Effect-TS/ui/@effect/<package>@<sha>`), with integrity
+recorded in `pnpm-lock.yaml`. Bump them in a PR of their own: move both URLs to
+the same SHA, confirm their `effect` peer range accepts the exact Effect pin,
+and confirm the lockfile still resolves one `effect` copy. Then run the full
+`check`, `test:browser` with unchanged visual snapshots, and the bundle caps.
+Switch to npm versions once both publish.
 
 ## Import-graph purity
 
@@ -3554,6 +3615,7 @@ src/
   activity.ts         optional history factory and best-effort recorder
   auth/               Cloudflare Access, clerk (optional peer), downstream OAuth (remote and static)
   executors/          the QuickJS pool and child (Node only)
+  operator-ui/        the operator UI: pure view rules, styles, and the Effect UI app in app/
   node.ts             listen() (Node only)
   d1.ts, sqlite.ts    the two storage drivers; storage/ holds the SQL core and key families
 ```

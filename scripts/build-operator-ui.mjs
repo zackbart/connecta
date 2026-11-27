@@ -41,8 +41,6 @@ const result = await build({
     },
   ],
   format: "iife",
-  jsx: "automatic",
-  jsxImportSource: "react",
   define: { "process.env.NODE_ENV": '"production"' },
   legalComments: "eof",
   metafile: true,

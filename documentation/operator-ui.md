@@ -738,11 +738,13 @@ read-cycle AbortControllers, revision fences, and no query cache or automatic
 mutation replay. The identity, admission and validity checks run synchronously
 inside the transport, in the same call that hands the request to `fetch`, so a
 write approved under one identity is never dispatched under another. Pages send
-writes to the shell, which runs each as an Effect UI Command. No secret enters
-an Effect UI Model, message or Command argument: the bearer field is an
-uncontrolled input submitted by a mount straight to the controller, a
-credential candidate travels as a one-shot handle the controller holds, and the
-shell receives a projection of the state that carries no issued token. Browser-only view models ship inside the hashed bundle, with
+connection writes to the content root, which runs each as an Effect UI Command
+that outlives the page. No secret enters an Effect UI Model, message, Command
+argument or props: the bearer field is an uncontrolled input submitted by a
+mount straight to the controller, a credential candidate travels as a one-shot
+handle the controller holds, and an issued agent token is shown and copied
+through a handle, so the shell and pages receive projections that carry no
+token. Browser-only view models ship inside the hashed bundle, with
 no duplicate standalone server modules. The shared contract owns the unchanged
 `OperatorPage` union exported from `@zackbart/connecta/ui`. An Access-only shell selects
 Access even when the HTML request has no trusted context; only authenticated
@@ -925,12 +927,16 @@ late answers after cancellation.
 The browser reads only v2 and checks `role` before reading a
 maintainer-only field. `src/operator-ui/app/services/` holds the Effect
 services (`platform.ts` for configuration, storage, Clerk, the window and the
-transport; `api.ts` for the operator API client and its admission checks;
-`store.ts` for the state cell; `operator.ts` for the controller), and
-`src/operator-ui/app/shell/` the Effect UI shell, routes and Commands, with the
-pages in `src/operator-ui/app/pages/`. `test/operator-store.test.ts`
-drives the controller service built from its Layer, and
-`test/operator-shell.test.ts` runs the shell components as Effect UI stories. `test/fixtures/operator-contract-v2.ts` holds
+transport; `api.ts` for `OperatorApi` and its admission checks; `store.ts` for
+the state cell; `operator.ts` for the controller; `health.ts` for steady
+connector health; `layer.ts` composes them), `src/operator-ui/app/shell/` the
+navigation, content root, routes, page-write queue and Commands, and
+`src/operator-ui/app/pages/` and `app/components/` the pages and their shared
+parts. [Operator UI browser app](./architecture.md#operator-ui-browser-app-contributor)
+maps how they fit together, the no-secrets rule and the `@effect/ui` snapshot
+pin. `test/operator-store.test.ts` drives the controller service built from
+its Layer, and `test/operator-shell.test.ts` runs the shell, content root and
+pages as Effect UI Story and Scene tests. `test/fixtures/operator-contract-v2.ts` holds
 maintainer and member fixtures, and `test/helpers/operator-member-view.ts`
 checks a member response's exact shape and compares its values with a
 projection built from config, membership, the member's own partition status,

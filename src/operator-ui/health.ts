@@ -33,8 +33,8 @@ type HealthState = Pick<OperatorState, "generation" | "contract" | "data" | "con
 /**
  * The next steady evidence. A settled connector takes its current row; one
  * being read again keeps its previous evidence when this identity has any.
- * Returns `previous` itself when nothing changed, so it can live in React
- * state. A new identity starts empty.
+ * Returns `previous` itself when nothing changed, so views memoised on it
+ * keep their input. A new identity starts empty.
  */
 export function steadyHealth(state: HealthState, previous: SteadyHealth | null): SteadyHealth {
   const same = previous?.generation === state.generation ? previous : null;
