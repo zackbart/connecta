@@ -235,6 +235,11 @@ executable file in `spec/coverage.json`.
   area modules carry `@stability unstable` within the 4.x LTS line. Keep one
   resolved copy across deployments, Alchemy included. Replacing
   either MCP SDK edge needs proof of wire contracts and request lifetimes.
+- `@effect/ui` and `@effect/ui-kit` are operator UI devDependencies pinned to
+  one pkg.pr.new commit snapshot until they publish to npm. Bump both to the
+  same SHA in their own PR, with a peer range that accepts the exact Effect pin
+  and one resolved `effect` copy; see
+  [Operator UI browser app](./documentation/architecture.md#operator-ui-browser-app-contributor).
 - Run `pnpm run format` before committing; CI checks formatting.
 - Keep Oxlint and Knip clean. Remove dead declarations instead of suppressing.
 - Commits use imperative behavior summaries with issue refs in parentheses:

@@ -51,6 +51,12 @@ retaining the snapshot. Late reads, role/identity changes and concurrent polls
 exercise publication fences. Browser recovery and flow suites use real routes to
 check a usable shell with a stalled connector, OAuth return and scoped Refresh.
 
+`test/operator-shell.test.ts` runs the Effect UI shell, content root and pages
+as Story and Scene tests. Its secrecy cases build props and Models from a
+controller holding an issued token and type a sentinel into every credential
+field, and fail if a token or typed value reaches a Model, message, Command
+argument or props.
+
 ## Browser behavior evidence
 
 | Suite                                    | Assertions                                                                                                                                                                                 |
@@ -59,7 +65,7 @@ check a usable shell with a stalled connector, OAuth return and scoped Refresh.
 | `test/browser/operator-overview.spec.ts` | Overview health, counts and map edges; per-caller status and principal-refusal copy without secret fix prompts.                                                                            |
 | `test/browser/operator-console.spec.ts`  | Token issue/rotate/revoke confirmations and once-only secret display; member credential fields and OAuth connect/reconnect/disconnect controls.                                            |
 | `test/browser/operator-pages.spec.ts`    | Resolved read/write filters, inert schema text, Activity history/grouping, and legacy URL redirects.                                                                                       |
-| `test/browser/operator-shell.spec.ts`    | Clerk loader and child-script behavior under CSP, with inline and foreign scripts blocked.                                                                                                 |
+| `test/browser/operator-shell.spec.ts`    | Clerk loader and child-script behavior under CSP, with inline and foreign scripts blocked; the ⌘K palette and Appearance dialog's keyboard and focus.                                      |
 | `test/browser/operator-ui.spec.ts`       | Identity changes cancel reads and close popups, OAuth polling stays scoped, token mutations use real routes and distinct revisions, and declared agents show scoped credentials and usage. |
 
 Screenshots cover presentation. Keep unit and server tests for INV-6 sentinels,

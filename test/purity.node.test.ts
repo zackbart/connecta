@@ -257,7 +257,7 @@ function sourceFiles(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = join(dir, entry.name);
     if (entry.isDirectory()) return sourceFiles(full);
-    return /\.tsx?$/.test(entry.name) ? [full] : [];
+    return entry.name.endsWith(".ts") ? [full] : [];
   });
 }
 
@@ -284,7 +284,6 @@ function codeOnly(file: string): string {
       compilerOptions: {
         target: ts.ScriptTarget.ESNext,
         module: ts.ModuleKind.ESNext,
-        jsx: ts.JsxEmit.Preserve,
         removeComments: true,
       },
     }).outputText;
@@ -305,8 +304,8 @@ function testGraph(entry: string): Set<string> {
       if (!spec.startsWith(".")) continue;
       const base = resolve(dirname(file), spec);
       const stem = base.replace(/\.js$/, "");
-      const target = [`${stem}.ts`, `${stem}.tsx`, join(base, "index.ts"), base].find(
-        (candidate) => /\.tsx?$/.test(candidate) && existsSync(candidate),
+      const target = [`${stem}.ts`, join(base, "index.ts"), base].find(
+        (candidate) => candidate.endsWith(".ts") && existsSync(candidate),
       );
       if (target && !visited.has(target)) queue.push(target);
     }

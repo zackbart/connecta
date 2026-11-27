@@ -3,13 +3,10 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": [],
-    "jsx": "react-jsx",
-    "jsxImportSource": "react",
     "noEmit": true
   },
   "include": [
     "src/operator-ui/app/**/*.ts",
-    "src/operator-ui/app/**/*.tsx",
     "src/operator-ui/model.ts",
     "src/operator-ui/view.ts",
     // These suites drive the browser app, so they belong to the browser

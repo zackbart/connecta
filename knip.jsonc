@@ -58,7 +58,6 @@
       ],
       "project": [
         "src/**/*.ts",
-        "src/**/*.tsx",
         "src/**/*.css",
         "examples/**/*.ts",
         "scripts/**/*.mjs",
