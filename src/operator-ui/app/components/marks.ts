@@ -1,6 +1,9 @@
 import type { Html } from "@effect/ui/html";
-import { hueOf } from "../../endpoints.js";
+import { monogram } from "../../connection-map.js";
+import { hueOf, initialsOf } from "../../endpoints.js";
+import { actorLabel, actorStableId, type UiActivityActor } from "../../view.js";
 import { Icon } from "./icons.js";
+import { MemberMark } from "./parts.js";
 
 export const decorative: Readonly<Record<string, string>> = { "aria-hidden": "true", focusable: "false" };
 
@@ -68,5 +71,42 @@ export const SplitBar = <M>(h: Html.H<M>, read: number, write: number) => {
       write
         ? h.rect.class("split-write").attrs({ x: String(readWidth), width: String(100 - readWidth), height: "6" })
         : null,
+    );
+};
+
+export const ConnectorMark = <M>(h: Html.H<M>, id: string, title: string, size?: "sm" | "lg") =>
+  h.span
+    .class("connector-mark", "avatar", `hue-${hueOf(`connector:${id}`) % 6}`, size)
+    .attr("aria-hidden", "true")
+    .children(monogram(title || id));
+
+type ActorShape =
+  | { readonly kind: "human"; readonly text: string; readonly initials: string; readonly hue: number }
+  | { readonly kind: "agent" | "other"; readonly text: string };
+
+function actorShape(actor?: UiActivityActor): ActorShape {
+  const name = actor?.label || actor?.id;
+  if (actor?.kind === "access_token" && name) return { kind: "agent", text: name };
+  if (actor?.kind && actor.id && name) {
+    const key = actor.namespace ? `${actor.namespace}:${actor.id}` : actor.id;
+    return { kind: "human", text: name, initials: initialsOf(name), hue: hueOf(key) };
+  }
+  return { kind: "other", text: actorLabel(actor) };
+}
+
+export const ActorChip = <M>(h: Html.H<M>, actor: UiActivityActor | undefined) => {
+  const shape = actorShape(actor);
+  const stable = actorStableId(actor);
+  return h.span
+    .class("actor-chip", shape.kind)
+    .attr("title", stable ? `${actorLabel(actor)} · ${stable}` : actorLabel(actor))
+    .children(
+      shape.kind === "other"
+        ? h.span
+            .class("actor-unknown")
+            .attr("aria-hidden", "true")
+            .children(Icon(h, "user", 11))
+        : MemberMark(h, shape.kind === "human" ? shape : { kind: "agent", initials: "", hue: 0 }),
+      h.span.class("actor-chip-text").children(shape.text),
     );
 };

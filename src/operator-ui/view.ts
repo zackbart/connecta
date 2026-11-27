@@ -531,7 +531,6 @@ export interface OperatorState {
   activityNotice: Notice | null;
   activityEvents: UiActivityEvent[];
   activityCursor: string | null;
-  activitySearch: string;
 }
 
 /** Who the contract says this viewer is, or null before it loads. */
@@ -635,7 +634,6 @@ function identityScopedState() {
     activityNotice: null,
     activityEvents: [],
     activityCursor: null,
-    activitySearch: "",
   } satisfies Partial<OperatorState>;
 }
 

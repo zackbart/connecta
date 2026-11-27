@@ -1,8 +1,5 @@
 import { monogram } from "../connection-map.js";
-import { hueOf, initialsOf } from "../endpoints.js";
-import { actorLabel, actorStableId, type UiActivityActor } from "../view.js";
-import { MemberMark } from "./parts.js";
-import { Icon } from "./icons.js";
+import { hueOf } from "../endpoints.js";
 
 /**
  * Small glanceable marks shared by Endpoints, the matrix and Tokens. Each is
@@ -10,12 +7,7 @@ import { Icon } from "./icons.js";
  * meaning. Sizes and fractions are SVG attributes, never inline styles.
  */
 
-/**
- * Who and what, drawn small: a connector's monogram and a caller's chip. A
- * connector is a rounded square with its first letter, a person a round
- * avatar, an agent a square agent glyph, so the three never read alike. Each
- * keeps one tint everywhere it appears.
- */
+/** A connector drawn small: a rounded square with its first letter, one tint everywhere it appears. */
 
 export function ConnectorMark({
   id,
@@ -35,42 +27,6 @@ export function ConnectorMark({
       aria-hidden="true"
     >
       {monogram(title || id)}
-    </span>
-  );
-}
-
-type ActorShape =
-  | { kind: "human"; text: string; initials: string; hue: number }
-  | { kind: "agent" | "other"; text: string };
-
-/** A caller as a chip reads it: an agent token by agent name, a person by label or id, anything else by kind. */
-function actorShape(actor?: UiActivityActor): ActorShape {
-  const name = actor?.label || actor?.id;
-  if (actor?.kind === "access_token" && name) return { kind: "agent", text: name };
-  if (actor?.kind && actor.id && name) {
-    // The same key the endpoint chips use, so a person keeps one color.
-    const key = actor.namespace ? `${actor.namespace}:${actor.id}` : actor.id;
-    return { kind: "human", text: name, initials: initialsOf(name), hue: hueOf(key) };
-  }
-  return { kind: "other", text: actorLabel(actor) };
-}
-
-export function ActorChip({ actor }: { actor?: UiActivityActor | undefined }) {
-  const shape = actorShape(actor);
-  const stable = actorStableId(actor);
-  return (
-    <span
-      className={`actor-chip ${shape.kind}`}
-      title={stable ? `${actorLabel(actor)} · ${stable}` : actorLabel(actor)}
-    >
-      {shape.kind === "other" ? (
-        <span className="actor-unknown" aria-hidden="true">
-          <Icon name="user" size={11} />
-        </span>
-      ) : (
-        <MemberMark chip={shape.kind === "human" ? shape : { kind: "agent", initials: "", hue: 0 }} />
-      )}
-      <span className="actor-chip-text">{shape.text}</span>
     </span>
   );
 }

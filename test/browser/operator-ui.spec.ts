@@ -362,6 +362,17 @@ test("Change token returns to the gate with focus on the field, which sends each
   expect(requests.every((request) => request.authorization === `Bearer ${TOKEN}`)).toBe(true);
 });
 
+for (const path of ["/activity", "/settings"]) {
+  test(`Change token from ${path} focuses the token field`, async ({ page }) => {
+    await openAuthenticated(page, path);
+    await expect(page.locator(`${path.replace("/", "#")}Heading`)).toBeVisible();
+    await page.getByRole("button", { name: "Account", exact: true }).click();
+    await page.getByRole("button", { name: "Change token" }).click();
+    await expect(page.locator("#gate")).toBeVisible();
+    await expect(page.locator("#token")).toBeFocused();
+  });
+}
+
 for (const path of ["/ui/api/config?live=cached", "/ui/connectors/oauth"]) {
   test(`INV-4 INV-7: switching identity aborts a slow ${path} and publishes only the next viewer`, async ({ page }) => {
     await openAuthenticated(page);

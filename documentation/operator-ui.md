@@ -949,7 +949,8 @@ the page's styles.
 
 `src/operator-ui/config-summary.ts` maps the snapshot and its provenance to
 those tiles: one table of limit labels, the formatters, and the walk that turns
-an unmapped key into an Other tile. `app/config-tiles.tsx` draws them.
+an unmapped key into an Other tile. `app/components/config-tiles.ts` draws them, on
+Settings and on a connector's Configuration card.
 `test/browser/operator-flows.spec.ts` checks Settings provenance through the
 production UI and real routes.
 

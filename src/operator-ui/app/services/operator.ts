@@ -991,8 +991,8 @@ export const operatorControllerLayer = Layer.effect(
 
     let activityRevision = 0;
     const loadActivity = (reset: boolean) =>
-      Effect.gen(function* () {
-        if (!maintainerNow() || !state().data?.activityEnabled) return;
+      Effect.suspend(() => {
+        if (!maintainerNow() || !state().data?.activityEnabled) return Effect.void;
         const identityCurrent = fence();
         const revision = ++activityRevision;
         const current = () => identityCurrent() && revision === activityRevision;
@@ -1004,21 +1004,24 @@ export const operatorControllerLayer = Layer.effect(
         const params = new URLSearchParams({ limit: "50" });
         const cursor = state().activityCursor;
         if (!reset && cursor) params.set("cursor", cursor);
-        const result = yield* Effect.result(api.request(`/ui/api/activity?${params}`, "GET", current));
-        if (!current()) return;
-        if (result._tag === "Success" && result.success && Array.isArray(result.success.events)) {
+        const read = Effect.gen(function* () {
+          const result = yield* Effect.result(api.request(`/ui/api/activity?${params}`, "GET", current));
+          if (!current()) return;
+          if (result._tag === "Success" && result.success && Array.isArray(result.success.events)) {
+            set({
+              activityPhase: "ready",
+              activityEvents: [...(reset ? [] : state().activityEvents), ...result.success.events],
+              activityCursor: result.success.nextCursor ?? null,
+            });
+            return;
+          }
+          const facts = result._tag === "Failure" ? factsOf(result.failure) : factsOf(new RequestFailure("refused"));
           set({
-            activityPhase: "ready",
-            activityEvents: [...(reset ? [] : state().activityEvents), ...result.success.events],
-            activityCursor: result.success.nextCursor ?? null,
+            activityPhase: "error",
+            activityNotice: failure(collectionFailureCopy("activity", facts, productName)),
           });
-          return;
-        }
-        const facts = result._tag === "Failure" ? factsOf(result.failure) : factsOf(new RequestFailure("refused"));
-        set({
-          activityPhase: "error",
-          activityNotice: failure(collectionFailureCopy("activity", facts, productName)),
         });
+        return Fiber.join(start(read));
       });
 
     const loadCurrent = (exposeRetry = false) => guardedRecoveryRead(loadData, exposeRetry);
@@ -1682,7 +1685,6 @@ export const operatorControllerLayer = Layer.effect(
         if (state().confirming || state().tokenConfirm) set({ confirming: null, tokenConfirm: null });
       }),
       setConnectorFilter: (connectorFilter) => Effect.sync(() => set({ connectorFilter })),
-      setActivitySearch: (activitySearch) => Effect.sync(() => set({ activitySearch })),
       askConfirm: (connectorId, action) =>
         Effect.sync(() => {
           if (memberDispatch(connectorId, CONFIRM_ACTION[action]) === null) return;

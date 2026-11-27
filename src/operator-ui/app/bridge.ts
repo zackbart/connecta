@@ -9,21 +9,12 @@ export interface IslandHost {
   readonly run: (effect: Effect.Effect<void>) => void;
   readonly request: (request: IslandRequest) => void;
   readonly navigate: (href: string, replace: boolean) => void;
-  readonly location: () => { readonly url: string; readonly hash: string };
 }
 
 let host: IslandHost | null = null;
-const locationListeners = new Set<() => void>();
-let locationSnapshot: IslandLocation | null = null;
 
 export function installIslandHost(next: IslandHost): void {
   host = next;
-  locationChanged();
-}
-
-export function locationChanged(): void {
-  locationSnapshot = null;
-  for (const listener of locationListeners) listener();
 }
 
 function current(): IslandHost {
@@ -38,56 +29,6 @@ export function useOperatorState(): OperatorState {
   return useSyncExternalStore(subscribeState, stateSnapshot);
 }
 
-export interface IslandLocation {
-  readonly pathname: string;
-  readonly searchStr: string;
-  readonly search: Readonly<Record<string, string>>;
-  readonly hash: string;
-}
-
-function readLocation(): IslandLocation {
-  if (locationSnapshot) return locationSnapshot;
-  const { url, hash } = current().location();
-  const at = url.indexOf("?");
-  const pathname = at < 0 ? url : url.slice(0, at);
-  const search = at < 0 ? "" : url.slice(at);
-  locationSnapshot = {
-    pathname,
-    searchStr: search,
-    search: Object.fromEntries(new URLSearchParams(search)),
-    hash: hash.replace(/^#/, ""),
-  };
-  return locationSnapshot;
-}
-
-function subscribeLocation(listener: () => void): () => void {
-  locationListeners.add(listener);
-  return () => locationListeners.delete(listener);
-}
-
-export function useLocation(): IslandLocation {
-  return useSyncExternalStore(subscribeLocation, readLocation);
-}
-
-export interface NavigateOptions {
-  readonly to: string;
-  readonly search?: Readonly<Record<string, unknown>>;
-  readonly hash?: string;
-  readonly replace?: boolean;
-}
-
-export function useNavigate(): (options: NavigateOptions) => void {
-  return ({ to, search, hash, replace }) => {
-    const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(search ?? {})) {
-      if (value !== undefined && value !== null && value !== "") params.set(key, String(value));
-    }
-    const query = params.toString();
-    current().navigate(`${to}${query ? `?${query}` : ""}${hash ? `#${hash}` : ""}`, replace === true);
-    locationChanged();
-  };
-}
-
 const run = (select: (controller: OperatorControllerShape) => Effect.Effect<void>) => {
   const active = current();
   active.run(select(active.controller));
@@ -97,13 +38,9 @@ export function navigate(page: OperatorPage, href: string): void {
   const active = current();
   active.run(active.controller.navigated(page, new URL(href, window.location.href).pathname));
   active.navigate(href, false);
-  locationChanged();
 }
 
 export const retryLoad = () => run((c) => c.retryLoad);
-export const retryCollection = () => run((c) => c.retryCollection);
-export const loadActivity = (reset: boolean) => run((c) => c.loadActivity(reset));
-export const setActivitySearch = (search: string) => run((c) => c.setActivitySearch(search));
 export const askConfirm = (id: string, action: PendingConfirm["action"]) => run((c) => c.askConfirm(id, action));
 export const cancelConfirm = (returnFocusTo: string) => run((c) => c.cancelConfirm(returnFocusTo));
 export const editCredential = (id: string | null) => run((c) => c.editCredential(id));
