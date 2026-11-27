@@ -2,8 +2,6 @@ import { useEffect } from "react";
 import { contractRecovering, displayRole, pageDescription, PAGE_META, type OperatorState } from "../view.js";
 import { productDescription } from "./config.js";
 import { SettingsPage } from "./config-page.js";
-import { EndpointsPage } from "./endpoints.js";
-import { TokensPage } from "./tokens.js";
 import { ActivityPage } from "./activity.js";
 import { MemberPage } from "./member.js";
 import { ContractState } from "./contract-state.js";
@@ -34,8 +32,6 @@ function CurrentPage({ state }: { state: OperatorState }) {
   if (role === "member" || state.role === "member") return <MemberPage state={state} account={accountLabel()} />;
   if (role !== "maintainer") return <RolePending state={state} />;
   if (state.page === "settings") return <SettingsPage state={state} />;
-  if (state.page === "endpoints") return <EndpointsPage state={state} />;
-  if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
   return null;
 }

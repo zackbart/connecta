@@ -708,9 +708,10 @@ program, follows no redirects, and prints no raw HTTP failure body.
 
 The operator shell runs on Effect UI (`@effect/ui` and `@effect/ui-kit`): the
 top bar, page navigation, account menu, sign-in gate, No access page, recovery
-banner, router and Overview page are Effect UI components mounted with
-`BrowserHost`, and `BrowserRouter` owns the URL. The other pages, the
-Overview's connection map, and the shell's search and Appearance dialogs still
+banner, router and the Overview (with its connection map), Connectors,
+connector detail, Endpoints and Tokens pages are Effect UI components mounted
+with `BrowserHost`, and
+`BrowserRouter` owns the URL. The other pages and the shell's search and Appearance dialogs still
 render as React islands (React, Radix and cmdk) through stream mounts while the
 migration in issue #1510 continues. Esbuild bundles
 the authored CSS with an explicit browser reset; it generates no utility classes.

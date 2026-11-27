@@ -7,6 +7,8 @@ export type CredentialBody = { value: string } | { values: Record<string, string
 
 export type CandidateHandle = string & Brand.Brand<"CandidateHandle">;
 
+export type IssuedTokenHandle = string & Brand.Brand<"IssuedTokenHandle">;
+
 export type PreparedOAuth = { readonly refused: true } | { readonly refused: false; readonly tab: Window | null };
 
 export interface OperatorControllerShape {
@@ -61,6 +63,8 @@ export interface OperatorControllerShape {
   readonly removeCredential: (connector: string) => Effect.Effect<void>;
   readonly testCredential: (connector: string) => Effect.Effect<void>;
   readonly prepareRotation: (name: string) => "asked" | "issue" | "none";
+  readonly issuedTokenHandle: () => IssuedTokenHandle | null;
+  readonly issuedToken: (handle: IssuedTokenHandle) => string | null;
   readonly rotateAgentToken: (name: string) => Effect.Effect<void>;
   readonly revokeAgentToken: (name: string) => Effect.Effect<void>;
   readonly confirmTokenAction: Effect.Effect<void>;

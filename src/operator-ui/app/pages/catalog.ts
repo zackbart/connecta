@@ -1,9 +1,8 @@
 import { UiSchema } from "@effect/ui";
-import { Dialog } from "@effect/ui-kit";
 import { Html } from "@effect/ui/html";
 import { Schema } from "effect";
 import type { OperatorTool } from "../../contract.js";
-import { Icon } from "../components/icons.js";
+import { Dialog } from "../components/dialog.js";
 import { Badge, SegmentedControl, StateBlock } from "../components/parts.js";
 import { opaque } from "../components/projection.js";
 
@@ -104,46 +103,27 @@ export const Catalog = Html.component({
             .children(visible.map((tool) => ToolRow(h, tool)))
         : StateBlock(h, { copy: tools.length ? "No matching tools" : "No live tools." }),
       Dialog(h, {
-        props: { open: selected !== null },
-        onEmit: {
-          RequestedOpen: () => undefined,
-          RequestedClose: () => CatalogMessage.RequestedCloseSchema(),
-          Settled: () => undefined,
-        },
-        view: (dialog) =>
-          h.div
-            .class("dialog-host")
-            .children(
-              dialog
-                .portal(h.dialog)
-                ?.children(
-                  dialog.backdrop(h.div.class("dialog-overlay")),
-                  dialog
-                    .popup(h.div.class("dialog-content", "drawer-content"))
-                    .children(
-                      dialog.title(h.h2.class("dialog-title")).children(selected?.address ?? "Tool schema"),
-                      dialog.description(h.p.class("dialog-description")).children("Tool schema"),
-                      selected
-                        ? h.div
-                            .class("schema-drawer")
-                            .children(
-                              h.div
-                                .class("schema-badges")
-                                .children(ClassBadge(h, selected.classification), AnnotationBadges(h, selected)),
-                              selected.description
-                                ? h.p.class("schema-description").children(selected.description)
-                                : null,
-                              SchemaBlock(h, "Input schema", selected.inputSchema),
-                              SchemaBlock(h, "Output schema", selected.outputSchema),
-                              selected.annotations ? SchemaBlock(h, "Annotations", selected.annotations) : null,
-                            )
-                        : null,
-                      dialog
-                        .close(h.button.class("btn", "quiet", "dialog-close").attr("aria-label", "Close dialog"))
-                        .children(Icon(h, "close", 18)),
-                    ),
-                ),
-            ),
+        key: "schema",
+        open: selected !== null,
+        drawer: true,
+        title: selected?.address ?? "Tool schema",
+        description: "Tool schema",
+        onClose: CatalogMessage.RequestedCloseSchema(),
+        children: [
+          selected
+            ? h.div
+                .class("schema-drawer")
+                .children(
+                  h.div
+                    .class("schema-badges")
+                    .children(ClassBadge(h, selected.classification), AnnotationBadges(h, selected)),
+                  selected.description ? h.p.class("schema-description").children(selected.description) : null,
+                  SchemaBlock(h, "Input schema", selected.inputSchema),
+                  SchemaBlock(h, "Output schema", selected.outputSchema),
+                  selected.annotations ? SchemaBlock(h, "Annotations", selected.annotations) : null,
+                )
+            : null,
+        ],
       }),
     );
   },

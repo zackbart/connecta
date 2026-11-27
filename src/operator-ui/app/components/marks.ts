@@ -1,5 +1,8 @@
 import type { Html } from "@effect/ui/html";
 import { hueOf } from "../../endpoints.js";
+import { Icon } from "./icons.js";
+
+export const decorative: Readonly<Record<string, string>> = { "aria-hidden": "true", focusable: "false" };
 
 export const Monogram = <M>(h: Html.H<M>, id: string, title: string, size: "sm" | "md" = "md") =>
   h.span
@@ -44,4 +47,26 @@ export const EndpointName = <M>(h: Html.H<M>, pool: string | null, label: string
 export const RunsAs = <M>(h: Html.H<M>, label: string) => {
   const at = label.indexOf(" · ");
   return at < 0 ? [label] : [h.span.class("runs-as-kind").children(label.slice(0, at)), label.slice(at)];
+};
+
+export const AgentMark = <M>(h: Html.H<M>) =>
+  h.span
+    .class("agent-mark", "md")
+    .attr("aria-hidden", "true")
+    .children(Icon(h, "agent", 12));
+
+export const SplitBar = <M>(h: Html.H<M>, read: number, write: number) => {
+  const total = read + write;
+  const readWidth = total ? (read / total) * 100 : 0;
+  return h.svg
+    .class("split-bar")
+    .attrs({ viewBox: "0 0 100 6", preserveAspectRatio: "none" })
+    .attrs(decorative)
+    .children(
+      h.rect.class("split-track").attrs({ width: "100", height: "6" }),
+      read ? h.rect.class("split-read").attrs({ width: String(readWidth), height: "6" }) : null,
+      write
+        ? h.rect.class("split-write").attrs({ x: String(readWidth), width: String(100 - readWidth), height: "6" })
+        : null,
+    );
 };

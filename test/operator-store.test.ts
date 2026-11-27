@@ -61,6 +61,9 @@ function controllerHarness(controller: OperatorControllerShape) {
     confirmTokenAction: () => run(controller.confirmTokenAction),
     cancelTokenAction: (returnFocusTo?: string) => run(controller.cancelTokenAction(returnFocusTo)),
     dismissCreatedToken: () => run(controller.dismissCreatedToken),
+    closeForRecovery: () => run(controller.closeForRecovery),
+    issuedTokenHandle: controller.issuedTokenHandle,
+    issuedToken: controller.issuedToken,
   };
 }
 
@@ -710,6 +713,29 @@ describe("operator collection ordering", () => {
   const none = (name: string) => ({ name, state: "none" as const, revision: `${name}-none` });
   const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW, revision: `${name}-issued` });
 
+  it("forgets an issued token's handle once the reveal leaves, so a later reveal never reuses it", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" }, undefined, "tokens");
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon")] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_twice", agent: issued("simon") }));
+    await store.rotateAgentToken("simon");
+    const first = store.issuedTokenHandle()!;
+    expect(store.issuedToken(first)).toBe("cta_twice");
+    await store.routeChanged("/connectors");
+    expect(store.getState().createdToken).toBeNull();
+    await store.routeChanged("/tokens");
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon")] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_twice", agent: issued("simon") }));
+    await store.rotateAgentToken("simon");
+    const second = store.issuedTokenHandle()!;
+    expect(second).not.toBe(first);
+    expect(store.issuedToken(first)).toBeNull();
+    expect(store.issuedToken(second)).toBe("cta_twice");
+  });
+
   it("refuses an issuance response for another agent and reveals nothing", async () => {
     const loaded = await loadStore({
       id: "session",
@@ -1298,7 +1324,14 @@ describe("round 5 independent review probes", () => {
       tokens: [revoked],
       unresolvedSlots: ["triage"],
     });
+    const handle = store.issuedTokenHandle()!;
+    expect(handle).not.toContain("cta_once");
+    expect(store.issuedTokenHandle()).toBe(handle);
+    expect(store.issuedToken(handle)).toBe("cta_once");
+    expect(store.issuedToken("issued-0" as typeof handle)).toBeNull();
     store.dismissCreatedToken();
+    expect(store.issuedTokenHandle()).toBeNull();
+    expect(store.issuedToken(handle)).toBeNull();
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [revoked] }));
     await store.loadAccessTokens();
     store.routeChanged("/connections");
@@ -1334,6 +1367,12 @@ describe("token confirmations live in the row", () => {
     // Cancel sends nothing.
     store.cancelTokenAction("token-revoke-simon-ada");
     expect(store.getState()).toMatchObject({ tokenConfirm: null, pendingFocus: "token-revoke-simon-ada" });
+    // Recovery closes the question too, and its confirm then has nothing to send.
+    await store.revokeAgentToken("simon-ada");
+    await store.closeForRecovery();
+    expect(store.getState().tokenConfirm).toBeNull();
+    await store.confirmTokenAction();
+    expect(writes(fetchMock)).toEqual([]);
     // Asked again; a list read lands before the confirm: the slot moved, so nothing is sent.
     await store.rotateAgentToken("simon-ada");
     fetchMock.mockResolvedValueOnce(Response.json({ agents: [simon] }));

@@ -8,7 +8,5 @@ export const IslandRequest = UiSchema.TaggedEnum({
   SaveCredential: { connector: Schema.String, candidate: CandidateHandle, verify: Schema.Literals(["test", "skip"]) },
   RemoveCredential: { connector: Schema.String },
   TestCredential: { connector: Schema.String },
-  RotateAgentToken: { name: Schema.String },
-  ConfirmTokenAction: {},
 });
 export type IslandRequest = typeof IslandRequest.Type;

@@ -14,7 +14,8 @@ import { ConfirmBar, focusableId, NoticeLine, Pill, pillStatus, StateBlock } fro
 import { Icon } from "./icons.js";
 import { ConnectorMark } from "./marks.js";
 import { Button } from "./primitives.js";
-import { ClientSetupDialog, EndpointLine, endpointUrl, type SetupTarget } from "./endpoints.js";
+import { ClientSetupDialog, EndpointLine, type SetupTarget } from "./endpoints.js";
+import { endpointUrl } from "./pages/endpoints.js";
 import { useCloseOnRecovery } from "./contract-state.js";
 import {
   askConfirm,
