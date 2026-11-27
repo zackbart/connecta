@@ -1,5 +1,6 @@
 {
   "notes": [
+    "2026-11-27: The Activity and Settings pages move to Effect UI (#1510, item 5), and connector detail's Activity tab and Configuration card follow, deleting the React activity, config tiles and bridge location layer. CI at 42cc4d3d (run 45924848501, build (package)) measures operator-ui/assets at 484,484 B gzip (raw 1,381.2 KB), ./ui at 559,342 B and examples/worker at 1,062,005 B; the root is unchanged. The operator-ui/assets cap moves 484,160 to 484,830 B, the ./ui cap 558,930 to 559,690 B and the examples/worker cap 1,061,510 to 1,062,360 B, each about 350 B over CI; the raw cap is unchanged.",
     "2026-11-27: The Endpoints, connection map and agent Tokens pages move to Effect UI (#1510, item 4), with @effect/ui and @effect/ui-kit moving from snapshot 03ad588 to fab0fba; React copies with no remaining React user are deleted. CI at ff03e251 (run 45920641556, build (package)) measures operator-ui/assets at 483,809 B gzip (raw 1,382.6 KB), ./ui at 558,584 B and examples/worker at 1,061,157 B; the root is unchanged. The operator-ui/assets cap moves 480,370 to 484,160 B (raw 1,374,300 to 1,382,950 B), the ./ui cap 555,790 to 558,930 B and the examples/worker cap 1,057,970 to 1,061,510 B, each about 350 B over CI.",
     "2026-11-26: The Connectors page, connector detail, its tool catalog, Connection tab and credential form, and the connector matrix move to Effect UI (#1510, item 3), with @effect/ui-kit Dialog and Tabs (about 31 KB minified with their internals) beside the Radix copies the remaining React pages still use. CI at 78e8bbf4 (run 45913987339, build (package)) measures operator-ui/assets at 480,016 B gzip, ./ui at 555,444 B and examples/worker at 1,057,621 B; the root is unchanged. The operator-ui/assets cap moves 463,800 to 480,370 B, the ./ui cap 539,430 to 555,790 B and the examples/worker cap 1,041,890 to 1,057,970 B, each about 350 B over CI. The raw operator-ui/assets cap moves 1,327,420 to 1,374,300 B, local measurement plus about 350 B.",
     "2026-11-26: The Overview page and the shared parts it uses move to Effect UI (#1510, item 2); its connection map stays a React island until item 4. CI at 0ead7b01 (run 45904119219, build (package)) measures operator-ui/assets at 463,447 B gzip (raw 1,327.1 KB), ./ui at 539,078 B and examples/worker at 1,041,542 B; the root is unchanged. The operator-ui/assets cap moves 461,890 to 463,800 B, the ./ui cap 537,080 to 539,430 B and the examples/worker cap 1,039,640 to 1,041,890 B, each about 350 B over CI. The raw operator-ui/assets cap moves 1,322,070 to 1,327,420 B, local measurement plus about 350 B.",
@@ -210,7 +211,7 @@
     },
     "./ui": {
       "baselineGzip": 272943,
-      "maxGzip": 558930
+      "maxGzip": 559690
     },
     "./credentials": {
       "baselineGzip": 1459,
@@ -226,7 +227,7 @@
     },
     "examples/worker": {
       "baselineGzip": 649045,
-      "maxGzip": 1061510
+      "maxGzip": 1062360
     },
     "./auth/access-tokens": {
       "baselineGzip": 4222,
@@ -238,7 +239,7 @@
     },
     "operator-ui/assets": {
       "baselineGzip": 218702,
-      "maxGzip": 484160,
+      "maxGzip": 484830,
       "maxRaw": 1382950
     },
     "./google": {
