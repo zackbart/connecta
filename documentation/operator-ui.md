@@ -738,9 +738,11 @@ Access viewer switch becomes visible only through a response tagged with the
 new viewer, as described above, and the server authorizes every request as
 the viewer it admits. A connection write the operator started keeps running
 when they navigate to another page. The UI keeps no query cache and never
-replays a write. Bearer tokens, credentials being entered and issued agent
-tokens are held only by that request layer, never in the page's rendered
-state. Browser-only view models ship inside the hashed bundle, with
+replays a write. A bearer token or credential being entered stays in its
+native input field until it is submitted, then only the request layer holds
+it. An issued agent token is written once into its dialog for the operator to
+copy and is otherwise held only by the request layer. None of these values
+enters the UI's page state or messages. Browser-only view models ship inside the hashed bundle, with
 no duplicate standalone server modules. The shared contract owns the unchanged
 `OperatorPage` union exported from `@zackbart/connecta/ui`. An Access-only shell selects
 Access even when the HTML request has no trusted context; only authenticated

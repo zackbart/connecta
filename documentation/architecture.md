@@ -2263,7 +2263,7 @@ authorization is what binds such a request to the viewer.
 **`OperatorController`** owns the identity-fenced `OperatorState`: identity
 and read-cycle AbortControllers, revision fences, and no query cache or
 automatic mutation replay. It holds an opaque session handle, never a token.
-Request lifetimes fall into three classes:
+Request lifetimes follow four paths:
 
 - **Detached reads.** Connector reads, recovery reads (`guardedRecoveryRead`) and
   Activity reads run on fibers the controller starts from its own service
@@ -2274,10 +2274,15 @@ Request lifetimes fall into three classes:
   These writes are owned by the content root's Commands through `PageWrite`
   (below), so they survive navigation away from the page that asked, but
   interrupting the content root's Command itself would interrupt the request.
-- **Token actions.** The Tokens page's Commands (load, issue or rotate, and
-  the confirmed rotate or revoke) hand the controller's effect to
+- **Token actions.** The Tokens page's Commands (Refresh, issue or rotate,
+  and the confirmed rotate or revoke) hand the controller's effect to
   `Effect.forkDetach`, so they outlive both the page and the Command.
   Endpoints' Retry does the same with the recovery read.
+- **Automatic page loads.** The content root's `LoadPageCollections` Command
+  runs `loadPageCollections`, which awaits the token-list load inline, like a
+  connection write: it survives navigation because the content root owns the
+  Command, not because it is detached. The Activity load it starts is a
+  detached read, as above.
 
 **Content root.** `contentOwner` in `app/shell/operator-view.ts` is the one
 predicate that decides whether the gate, No access, the pending page, the
