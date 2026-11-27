@@ -135,6 +135,17 @@ export const operatorControllerLayer = Layer.effect(
     const cancel = (timer: Timer) => timer?.interruptUnsafe();
     const wait = (promise: () => Promise<void>) => Effect.promise(promise);
 
+    let issued: { readonly secret: string; readonly handle: IssuedTokenHandle } | null = null;
+    let issuedSequence = 0;
+    yield* Effect.acquireRelease(
+      Effect.sync(() =>
+        store.subscribe(() => {
+          if (issued && state().createdToken !== issued.secret) issued = null;
+        }),
+      ),
+      (unsubscribe) => Effect.sync(unsubscribe),
+    );
+
     let identityReads = new AbortController();
     let viewerKey: string | null = null;
     let signedOut = false;
@@ -168,7 +179,6 @@ export const operatorControllerLayer = Layer.effect(
       recoveryTimer = undefined;
       forgetSlotFence();
       heldCandidates.clear();
-      issued = null;
       store.replace({ ...resetIdentity(state(), notice), session });
     }
 
@@ -1589,15 +1599,11 @@ export const operatorControllerLayer = Layer.effect(
       return "asked";
     }
 
-    let issued: { readonly secret: string; readonly handle: IssuedTokenHandle } | null = null;
-    let issuedSequence = 0;
-
     function issuedTokenHandle(): IssuedTokenHandle | null {
       const secret = state().createdToken;
-      if (!secret) issued = null;
-      else if (issued?.secret !== secret)
-        issued = { secret, handle: `issued-${++issuedSequence}` as IssuedTokenHandle };
-      return issued?.handle ?? null;
+      if (!secret) return null;
+      if (issued?.secret !== secret) issued = { secret, handle: `issued-${++issuedSequence}` as IssuedTokenHandle };
+      return issued.handle;
     }
 
     function issuedToken(handle: IssuedTokenHandle): string | null {
@@ -1701,10 +1707,7 @@ export const operatorControllerLayer = Layer.effect(
           if (state().tokenConfirm)
             set({ tokenConfirm: null, ...(returnFocusTo ? { pendingFocus: returnFocusTo } : {}) });
         }),
-      dismissCreatedToken: Effect.sync(() => {
-        issued = null;
-        set({ createdToken: null, createdTokenFor: null });
-      }),
+      dismissCreatedToken: Effect.sync(() => set({ createdToken: null, createdTokenFor: null })),
       loadOperatorContract,
       refreshConnector,
       stopConnectorReads,

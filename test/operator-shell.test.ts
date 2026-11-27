@@ -1,8 +1,7 @@
-import { Component } from "@effect/ui";
-import { Tabs } from "@effect/ui-kit";
+import { Component, Router } from "@effect/ui";
+import { Dialog, Tabs } from "@effect/ui-kit";
 import { HtmlLocator } from "@effect/ui/html/testing";
 import { Locator, Scene, Story } from "@effect/ui/testing";
-import { Dialog } from "@effect/ui-kit";
 import { Context, Effect, Fiber, Layer, Option, Stream } from "effect";
 import { describe, expect, it, vi } from "vitest";
 import type { OperatorUiContractV2 } from "../src/operator-ui/contract.js";
@@ -32,7 +31,7 @@ vi.mock("../src/operator-ui/app/config.js", () => ({
 
 const { AccountMenu } = await import("../src/operator-ui/app/shell/account-menu.js");
 const commands = await import("../src/operator-ui/app/shell/commands.js");
-const { OperatorContent } = await import("../src/operator-ui/app/shell/content.js");
+const { OperatorContent, operatorContentProps } = await import("../src/operator-ui/app/shell/content.js");
 const { Gate, GateMessage } = await import("../src/operator-ui/app/shell/gate.js");
 const bridge = await import("../src/operator-ui/app/bridge.js");
 const { OperatorNav } = await import("../src/operator-ui/app/shell/nav.js");
@@ -221,7 +220,7 @@ describe("overview page", () => {
         const shell = { navHint: { activity: false }, account: null, sessionPresumed: false, clerkSignedIn: false };
         const overview = projectView(state, shell);
         expect([overview.content, overview.islandOwnsFocus]).toEqual(["overview", false]);
-        expect(projectView({ ...state, page: "connections" }, shell)).toMatchObject({
+        expect(projectView({ ...state, page: "settings" }, shell)).toMatchObject({
           content: "island",
           islandOwnsFocus: true,
         });
@@ -771,6 +770,7 @@ describe("tokens page", () => {
         });
         s.expectMount(tokensPage.AskTokenQuestion({ name: "triage", action: "rotate" }))
           .expectMount(tokensPage.AskTokenQuestion({ name: "triage", action: "revoke" }))
+          .expectMount(TakeRequestedFocus())
           .expect(HtmlLocator.role("group", { name: /^Revoke triage's token\?/ }))
           .toExist()
           .click(HtmlLocator.role("button", { name: /^Revoke$/ }))
@@ -1017,6 +1017,46 @@ describe("secrets never enter Effect UI state", () => {
           expect(serialized(content.model, content.pending, page.model, page.pending)).not.toContain(ISSUED);
           page.resolve(tokensPage.IssueAgentToken, Component.noop);
         }
+      }),
+    ));
+
+  it("builds the content root's props on /tokens from a controller holding an issued token, with only its handle", () =>
+    story(
+      Effect.gen(function* () {
+        const state = maintainerState({
+          page: "tokens",
+          tokenPhase: "ready",
+          createdToken: ISSUED,
+          createdTokenFor: "triage",
+        });
+        const controller = {
+          ...controllerHolding(ISSUED),
+          state: () => state,
+          changes: Stream.make(state),
+          navHint: () => ({ activity: false }),
+          accountLabel: () => null,
+          sessionPresumed: () => false,
+          clerkSignedIn: () => false,
+        } as unknown as OperatorControllerShape;
+        const props = yield* operatorContentProps.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(OperatorController, controller),
+              Layer.succeed(ConnectorHealth, { steady: (current: OperatorState) => steadyHealth(current, null) }),
+              Router.memory({ routes: OperatorRoute, url: "/tokens" }),
+            ),
+          ),
+        );
+        expect(props.view.content).toBe("tokens");
+        expect(props.page).toMatchObject({ _tag: "Tokens", data: { issued: { handle: HANDLE, name: "triage" } } });
+        expect(serialized(props)).not.toContain(ISSUED);
+        const content = yield* Story.make(OperatorContent, props);
+        content
+          .expectExact(commands.BootOperator, commands.CanonicalizeLocation)
+          .resolve(commands.BootOperator, Component.noop)
+          .resolve(commands.CanonicalizeLocation, Component.noop);
+        expect(content.model.page?._tag).toBe("Tokens");
+        expect(serialized(content.model, content.pending)).not.toContain(ISSUED);
       }),
     ));
 

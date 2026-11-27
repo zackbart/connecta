@@ -713,6 +713,29 @@ describe("operator collection ordering", () => {
   const none = (name: string) => ({ name, state: "none" as const, revision: `${name}-none` });
   const issued = (name: string) => ({ name, state: "issued" as const, issuedAt: NOW, revision: `${name}-issued` });
 
+  it("forgets an issued token's handle once the reveal leaves, so a later reveal never reuses it", async () => {
+    const loaded = await loadStore({ id: "session", getToken: async () => "token" }, undefined, "tokens");
+    const { store, fetchMock } = loaded;
+    await bootMaintainer(loaded);
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon")] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_twice", agent: issued("simon") }));
+    await store.rotateAgentToken("simon");
+    const first = store.issuedTokenHandle()!;
+    expect(store.issuedToken(first)).toBe("cta_twice");
+    await store.routeChanged("/connectors");
+    expect(store.getState().createdToken).toBeNull();
+    await store.routeChanged("/tokens");
+    fetchMock.mockResolvedValueOnce(Response.json({ agents: [none("simon")] }));
+    await store.loadAccessTokens();
+    fetchMock.mockResolvedValueOnce(Response.json({ token: "cta_twice", agent: issued("simon") }));
+    await store.rotateAgentToken("simon");
+    const second = store.issuedTokenHandle()!;
+    expect(second).not.toBe(first);
+    expect(store.issuedToken(first)).toBeNull();
+    expect(store.issuedToken(second)).toBe("cta_twice");
+  });
+
   it("refuses an issuance response for another agent and reveals nothing", async () => {
     const loaded = await loadStore({
       id: "session",
